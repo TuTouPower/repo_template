@@ -1,0 +1,5 @@
+artifacts/
+data/
+.scratch/
+node_modules/
+*.log
