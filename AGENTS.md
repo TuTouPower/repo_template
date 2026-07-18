@@ -107,8 +107,7 @@
 
 - spike 非必需，仅在技术选型或未知风险需要实验验证时创建。
 - 创建 `docs/spikes/SNN_slug/`，从 `docs/templates/spike/` 复制 `report.md`；SNN 取 `docs/spikes/` 与 `docs/archive/spikes/` 中最大 ID 加一。
-- 有实验代码时再创建 `code/`；代码入库保留，但不代表可用于生产。
-- 结论被采纳后新建正式 task，在 `src/` 重新实现，不直接搬运实验代码。
+- 有实验代码时再创建 `docs/spikes/SNN_slug/code/`；代码可入库保留，仅作为验证材料。
 - 得出结论并决定是否采纳后，将 spike 移入 `docs/archive/spikes/`。
 
 ## 硬约束
