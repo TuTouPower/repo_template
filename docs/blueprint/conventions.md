@@ -20,10 +20,8 @@
 | `spec.md` | 背景；范围；非范围；验收标准；依赖与约束 |
 | `plan.md` | 步骤及验证；风险与回退；完结时需更新的 blueprint 条目 |
 | `log.md` | 进展；踩坑；中途决策；偏离 plan 的原因；关键验证结果 |
-| `handoff.md` | from_owner；to_owner；branch；head_commit；状态；已完成；未完成；陷阱；下一步 |
 
 - `log.md` 记录有追溯价值的事项，不写命令流水账。
-- `handoff.md` 一次交接追加一个段落，不删除或改写历史记录；from_owner 和 to_owner 写在段落标题，其余字段写在正文。
 - task review 发生时再创建 `reviews/`，无需预建空目录。
 
 ## review 文件模板
@@ -42,12 +40,12 @@ task review 和独立 review 共用 `docs/templates/review/`。
 - target_owner
 - branch
 - base_commit
-- head_commit
+- head（开发循环内评审时为工作区未提交改动）
 - reviewed_at
 - findings
 - conclusion
 
-finding 使用稳定 ID，如 `r01_f001`。review 结论只适用于记录的 `base_commit..head_commit`；目标 head 变化后创建新一轮报告，不改写旧报告。
+finding 使用稳定 ID，如 `r01_f001`。review 结论只适用于记录的 base_commit 到 head 的快照；进入下一开发循环后创建新一轮报告，不改写旧报告。
 
 reviewer 对评审对象只读，只能创建自己的 review 报告；不得修改被评审代码、被评审文档、`adoption.md`、其他 reviewer 报告或历史记录。
 

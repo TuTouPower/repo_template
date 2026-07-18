@@ -5,11 +5,11 @@
 - target：`{被评审路径或范围}`
 - target_owner：{owner}
 - branch：`{branch}`
-- base_commit：`{sha}`
-- head_commit：`{sha}`
+- base_commit：`{sha；本循环起点}`
+- head：`{sha；开发循环内评审写“工作区”}`
 - reviewed_at：{YYYY-MM-DD HH:MM UTC+8}
 
-reviewer 对 target 只读，只能写本报告。结论仅适用于上述 commit 快照。
+reviewer 对 target 只读，只能写本报告。结论仅适用于上述改动快照。
 
 ## Findings
 
