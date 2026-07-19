@@ -6,7 +6,7 @@
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- `TNNN_`、`RNN_`、`SNN_` 是工作项类型前缀例外；前缀后 slug 仍使用小写 `snake_case`。
+- `TNNN_`、`SNN_` 是工作项类型前缀例外；前缀后 slug 仍使用小写 `snake_case`。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
@@ -20,55 +20,68 @@
 | `spec.md` | 背景；范围；非范围；验收标准；依赖与约束 |
 | `plan.md` | 步骤及验证；风险与回退；完结时需更新的 blueprint 条目 |
 | `log.md` | 进展；踩坑；中途决策；偏离 plan 的原因；关键验证结果 |
+| `review_code.md` | task review 报告（文档+代码 agent 写） |
+| `review_test.md` | task review 报告（测试 agent 写） |
+| `adoption.md` | review 处置清单 |
+| `task_report.md` | task 完结报告 |
 
 - `log.md` 记录有追溯价值的事项，不写命令流水账。
-- task review 发生时再创建 `reviews/`，无需预建空目录。
 
-## review 文件模板
+## task review
 
-task review 和独立 review 共用 `docs/templates/review/`。
+task review 在单 task 流程 step 6 进行，对照 task spec 评审当前未提交改动（working tree）。
 
-### review 报告
+- 两个 sub agent 并行评审，各从 `docs/templates/task/review.md` 复制模板，独立成报告：
+    - 文档+代码 agent：核对实现与 spec 一致性、文档真实性，写 `review_code.md`，finding 用 `TNNN_code_fNNN` 编号。
+    - 测试 agent：核对测试覆盖与端到端行为，写 `review_test.md`，finding 用 `TNNN_test_fNNN` 编号。
+- 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM, 触发:原因)` 小节，只写本轮新发现和复核结论；历史轮次内容保留不覆盖。finding ID 跨轮次全局续编。
+- reviewer 对评审对象只读，只能创建自己的报告；不得修改被评审代码、被评审文档、`adoption.md`、他人报告或历史记录。
 
-文件名：`rNN_<reviewer>_<focus>.md`。rNN 在所属评审集合内递增唯一：task review 在该 task 的 `reviews/` 目录内编号，独立 review 在对应 `RNN_slug/` 目录内编号。
+### review 报告字段
 
-必填字段：
+- task：`TNNN_slug`
+- spec：`docs/tasks/TNNN_slug/spec.md`
+- target：本 task 未提交改动（working tree）
+- reviewed_at：`YYYY-MM-DD HH:MM UTC+8`
+- findings：分类别前缀的 `TNNN_code_fNNN` / `TNNN_test_fNNN`，每条含严重度、位置、问题、建议
+- conclusion：各 agent 总体判断
 
-- reviewer
-- focus
-- target
-- target_owner
-- branch
-- base_commit
-- head（开发循环内评审时为工作区未提交改动）
-- reviewed_at
-- findings
-- conclusion
+## task adoption
 
-finding 使用稳定 ID，如 `r01_f001`。review 结论只适用于记录的 base_commit 到 head 的快照；进入下一开发循环后创建新一轮报告，不改写旧报告。
+`adoption.md` 在单 task 流程 step 7 由 owner 写，逐条处置 `review.md` 的 finding。
 
-reviewer 对评审对象只读，只能创建自己的 review 报告；不得修改被评审代码、被评审文档、`adoption.md`、其他 reviewer 报告或历史记录。
+| finding_id | decision | rationale | status |
+|------------|----------|-----------|--------|
+| TNNN_code_f001 | 采纳 / 不采纳 | {一句话理由} | 已修 / 遗留-原因 / 无需修改 |
 
-### adoption
+字段说明：
 
-`adoption.md` 使用以下字段：
+- `decision`：采纳 / 不采纳。
+- `rationale`：一句话理由。
+- `status`：
+    - `已修`：在本 task commit 内修复。
+    - `遗留-原因`：未在本 commit 修复，原因写在 `-原因` 后。
+    - `无需修改`：不采纳项专用。
 
-| finding_id | decision | rationale | resolution | verification |
-|------------|----------|-----------|------------|--------------|
+处置路径：采纳且能当场修的立即修复（触代码或测试回 step 4 黑盒；仅文档改动区分笔误/事实，事实类触发局部重审）；不采纳的标 `无需修改`；不能当场修的标 `遗留-原因`。adoption 由 owner 自主决策，不经用户审阅，随 task commit 入库。
 
-`resolution` 取值：
+续写规则：首次复制模板写入；后续处置在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM)` 小节，对应本轮 review 的 finding；同 finding 在不同轮次决策变化各占一行，保留历史。
 
-- `pending`：决策已记录，尚未落地。
-- `commit:<sha>`：已由此前存在的 commit 落地。
-- `not_required`：拒绝，或无需修改被评审对象。
+## specs_index
 
-流程分两阶段：作者先记录 decision 和 rationale，用户审阅后再落地采纳项；落地 commit 已存在后，finalization 阶段补写 SHA。禁止引用包含当前 adoption 修改的 commit。
+`docs/specs_index.md` 是需求索引。task 黑盒验证通过后更新进度；全 task done 后状态改 `done`。
+
+| slug | 状态 | task 清单 | spec 路径 | 归档路径 |
+|------|------|----------|----------|---------|
+| `<slug>` | active / done / dropped | T001, T002 | `docs/specs/<slug>.md` | `docs/archive/specs/<slug>.md` |
+
+新需求开始时**不登记** specs_index；第一个 task 黑盒通过后才首次写入。
 
 ## blueprint 更新时机
 
 - spec 和 plan 记录尚未确认的目标与方案。
 - 实施和 review 期间不把未稳定状态写成长期真相。
-- review、adoption 和验证完成后，在 finalization 阶段更新受影响的 blueprint。
+- review、adoption 处置全部完成且最后一次黑盒验证通过后，在单 task 流程 step 8 更新受影响的 blueprint。
 - 长工作若需要中途形成稳定长期真相，应拆成独立 task，并在该 task 完结时更新 blueprint。
 
 ## spike 文件模板
