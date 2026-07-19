@@ -11,7 +11,7 @@
 | `docs/tasks_index.md`                      | task ID、状态、owner、branch                   | 接到新需求或流转状态时   |
 | `docs/tasks/TNNN_slug/spec.md` `plan.md` | 范围与验收标准；步骤、风险、blueprint 更新清单 | 执行或审阅 task 时       |
 | `docs/tasks/TNNN_slug/log.md`              | 进展、偏离、决策和关键验证                     | 接手或排查 task 时按需读 |
-| `docs/tasks/TNNN_slug/task_report.md`     | 处置摘要、遗留、commit 清单                   | task 完结后审阅          |
+| `docs/tasks/TNNN_slug/task_report.md`     | task 完结报告                                 | task 完结后审阅          |
 | `docs/tasks/TNNN_slug/review_code.md` `review_test.md` `adoption.md` | 两路 review 报告 + adoption 处置清单 | review 环节 |
 | `docs/handoff.md`                          | 项目级交接                                     | 接手工作时第一个读       |
 | `docs/blueprint/conventions.md`            | 内容字段、命名、task/review 格式               | 写代码或文档前           |
@@ -33,7 +33,7 @@
 | `docs/specs/<slug>.md`                     | 需求 spec：已验证的实现与验收（累积） | task 黑盒验证通过后累积；全 task done 后随归档            |
 | `docs/tasks_index.md`                      | task ID、状态、owner、branch         | 新需求和状态流转时更新                                    |
 | `docs/tasks/TNNN_slug/`                    | active task 工作区                   | owner 写 task 文档；reviewer 只写自己的 review 报告       |
-| `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策 | 由 `/multi-model-review` 和 `/multi-model-adoption` skill 生成；落地拆 task |
+| `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策 | 由 `/multi-model-review` 和 `/multi-model-adoption` skill 生成；本地无独立 review 模板；落地拆 task |
 | `docs/spikes/SNN_slug/`                    | 当前 spike                           | `report.md` 必需；有实验代码时再建 `code/`            |
 | `docs/templates/`                          | task、task review+adoption、spike 模板 | 复制使用，不代表 active 数据                              |
 | `docs/guides/`                             | 给人看的使用指南                     | 不承载 agent 行为规则                                     |
@@ -46,6 +46,7 @@
 
 - specs driven：spec 和 plan 先行，一起写完交用户一次性审核；用户明确不审则跳过。
 - TDD：开发循环内可测试部分先写失败测试（红），再实现到通过（绿）。
+- 长期真相延后：未稳定方案留在 task；长工作需中途形成稳定长期真相时拆独立 task，在该 task 完结时更新 blueprint。
 
 ## 开发工作流
 
@@ -68,7 +69,7 @@
   → `docs/specs/<slug>.md` 移入 `docs/archive/specs/`
 ```
 
-状态只使用：`backlog`、`active`、`done`、`dropped`。
+tasks_index 状态只使用：`backlog`、`active`、`done`、`dropped`。specs_index 仅 `active`、`done`、`dropped`（无 backlog，未登记前放弃的需求不入 index）。
 
 ### 新需求拆分与创建 task
 
@@ -82,7 +83,7 @@
 
 一个 task 产出一个 commit，步骤：
 
-1. 写 `docs/tasks/TNNN_slug/spec.md` + `docs/tasks/TNNN_slug/plan.md`。
+1. 写 `docs/tasks/TNNN_slug/spec.md` + `docs/tasks/TNNN_slug/plan.md`，交用户审核（明确不审则跳过），通过后再 step 2。
 2. 可测试部分先写红。
 3. 实现变绿，任务量不大由自己完成，任务量大可派 sub agent。
 4. agent-verify 黑盒验证：运行项目黑盒测试命令，具体命令不在本文件规定。
@@ -90,19 +91,19 @@
 6. review：派两个 sub agent 并行评审当前未提交改动，均对照 task spec 判断代码、文档、测试是否仍满足最初需求。两 agent 各自从 `docs/templates/task/review.md` 复制模板，独立成报告。
     - 文档+代码 agent：核对实现与 spec 是否一致、文档是否真实反映代码状态，写 `docs/tasks/TNNN_slug/review_code.md`，填 `reviewer_focus=文档+代码`，finding 用 `TNNN_code_fNNN` 编号。
     - 测试 agent：核对测试覆盖与端到端行为是否对应 spec 验收标准，写 `docs/tasks/TNNN_slug/review_test.md`，填 `reviewer_focus=测试`，finding 用 `TNNN_test_fNNN` 编号。
-    - 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM, 触发:原因)` 小节，只写本轮新发现和复核结论；首次及历史轮次内容保留不覆盖。finding ID 跨轮次全局续编（如 `TNNN_code_f003` 接上次最大号）。
+    - 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM UTC+8, 触发:原因)` 小节，只写本轮新发现和复核结论；首次及历史轮次内容保留不覆盖。finding ID 跨轮次全局续编（如 `TNNN_code_f003` 接上次最大号）。
     - reviewer 对评审对象只读，不得修改被评审代码、`docs/tasks/TNNN_slug/adoption.md`、他人报告。
-7. owner adoption：读 `docs/tasks/TNNN_slug/review_code.md` 和 `docs/tasks/TNNN_slug/review_test.md`逐条写 `docs/tasks/TNNN_slug/adoption.md`（文件不存在从 `docs/templates/task/adoption.md` 复制模板；已存在则续写追加，禁止覆盖）。
-    - 续写规则：首次复制模板写入；后续处置在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM)` 小节，对应本轮 review 的 finding；同 finding 在不同轮次决策变化各占一行，保留历史。
+7. owner adoption：读 `docs/tasks/TNNN_slug/review_code.md` 和 `docs/tasks/TNNN_slug/review_test.md`，逐条写 `docs/tasks/TNNN_slug/adoption.md`（文件不存在从 `docs/templates/task/adoption.md` 复制模板；已存在则续写追加，禁止覆盖）。
+    - 续写规则：首次复制模板写入；后续处置在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，对应本轮 review 的 finding；同 finding 在不同轮次决策变化各占一行，保留历史。
     - 采纳且能当场修的立即修复，`status` 标 `已修`：
         - 触代码或测试回到 step 4 重新黑盒验证；
-        - 仅文档改动区分：笔误类（错字、格式）直接继续；事实类（改 spec、AGENTS.md、blueprint、验收标准）触发对应 agent 局部重审，重审发现新问题回到本 step 处置。
+        - 仅文档改动区分：笔误类（错字、格式）直接继续；事实类触发局部重审，按改动范围分流——改 spec / AGENTS.md / blueprint / 验收标准两路都重审，改实现仅 `review_code` 重审，改测试仅 `review_test` 重审；重审发现新问题回到本 step 处置。
     - 不采纳的 `status` 标 `无需修改`，只记 `rationale`。
-    - 不能当场修的 `status` 标 `遗留-原因`，在 `docs/tasks/TNNN_slug/task_report.md` 遗留问题中体现。
+    - 不能当场修的 `status` 标 `遗留`，`rationale` 写明原因，在 `docs/tasks/TNNN_slug/task_report.md` 遗留问题中体现。
 8. 收尾
-    - 更新长期文档：`docs/blueprint/`、`docs/guides/`、`docs/blueprint/decisions.md`（非显然决策）。前置：review、adoption 处置全部完成，最后一次黑盒验证通过。
+    - 更新长期文档：`docs/blueprint/`（含 `decisions.md` 的非显然决策）、`docs/guides/`。前置：review、adoption 处置全部完成，最后一次黑盒验证通过。
     - 更新 `docs/tasks/TNNN_slug/log.md`：追加本 task 进展、决策与关键验证，勾选验收标准。
-    - 写 `docs/tasks/TNNN_slug/task_report.md`（从 `docs/templates/task/task_report.md` 复制模板）：对照 spec 验收标准逐条勾选；adoption 处置摘要（N 采纳 / M 不采纳 / K 无需修改，每条一行）；遗留问题（若有，注明原因）。不记 commit SHA，本报告所在 commit 即 task commit，SHA 由 `git log --grep TNNN` 查。
+    - 写 `docs/tasks/TNNN_slug/task_report.md`（从 `docs/templates/task/task_report.md` 复制模板）：对照 spec 验收标准逐条勾选；adoption 处置摘要（已修 N / 遗留 K / 无需修改 M，每条一行）；遗留问题（若有，注明原因）。不记 commit SHA，本报告所在 commit 即 task commit，SHA 由 `git log --grep TNNN` 查。
     - 更新 `docs/tasks_index.md`：本 task 状态改 `done`。
     - 归档：将 `docs/tasks/TNNN_slug/` 移入 `docs/archive/tasks/`。
 9. commit：本 task 所有改动（代码、测试、文档、log、adoption、task_report、index 更新、归档移动）作为一个 commit。
@@ -110,7 +111,7 @@
 ### dropped
 
 - backlog 被放弃：index 改为 `dropped`，备注原因；无目录可归档。
-- active 被放弃：在 `docs/tasks/TNNN_slug/log.md` 记录终止原因，确保半成品不留在目标分支，将目录移入 `docs/archive/tasks/`，index 改为 `dropped`。
+- active 被放弃：在 `docs/tasks/TNNN_slug/log.md` 记录终止原因，确保不把半成品合入默认分支，将目录移入 `docs/archive/tasks/`，index 改为 `dropped`。
 - 恢复需求：新建新 ID，并在新旧任务备注中互相引用。
 
 ## handoff
@@ -129,3 +130,4 @@
 ## 硬约束
 
 - {密钥规则、禁写路径、平台限制等项目特有约束，按需填写。}
+- `{blackbox_cmd}`：项目黑盒验证命令，复制模板时填写；单 task 流程 step 4 调用。

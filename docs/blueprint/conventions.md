@@ -1,6 +1,6 @@
 # 约定（内容细节）
 
-行为规则和工作顺序见 `AGENTS.md`。本文只定义各类文档字段、命名和记录格式。
+行为规则和工作顺序见 `AGENTS.md`。本文只定义各类文档字段、命名和记录格式；流程不再重复，需要时引用 AGENTS.md 对应 step。
 
 ## 命名与格式
 
@@ -13,7 +13,7 @@
 
 ## task 文件模板
 
-所有 active task 固定使用以下文件。任务很小时内容可以简短，但不合并文件。
+所有 active task 固定使用以下文件。任务很小时内容可以简短，但不合并文件。创建与使用流程见 AGENTS.md 单 task 流程。
 
 | 文件 | 字段 |
 |------|------|
@@ -27,62 +27,44 @@
 
 - `log.md` 记录有追溯价值的事项，不写命令流水账。
 
-## task review
+## review 报告字段
 
-task review 在单 task 流程 step 6 进行，对照 task spec 评审当前未提交改动（working tree）。
-
-- 两个 sub agent 并行评审，各从 `docs/templates/task/review.md` 复制模板，独立成报告：
-    - 文档+代码 agent：核对实现与 spec 一致性、文档真实性，写 `review_code.md`，finding 用 `TNNN_code_fNNN` 编号。
-    - 测试 agent：核对测试覆盖与端到端行为，写 `review_test.md`，finding 用 `TNNN_test_fNNN` 编号。
-- 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM, 触发:原因)` 小节，只写本轮新发现和复核结论；历史轮次内容保留不覆盖。finding ID 跨轮次全局续编。
-- reviewer 对评审对象只读，只能创建自己的报告；不得修改被评审代码、被评审文档、`adoption.md`、他人报告或历史记录。
-
-### review 报告字段
+`review_code.md` / `review_test.md` 共用以下字段；流程（两 agent 并行、续写规则、权限）见 AGENTS.md step 6。
 
 - task：`TNNN_slug`
 - spec：`docs/tasks/TNNN_slug/spec.md`
 - target：本 task 未提交改动（working tree）
+- reviewer_focus：`文档+代码` / `测试`
 - reviewed_at：`YYYY-MM-DD HH:MM UTC+8`
 - findings：分类别前缀的 `TNNN_code_fNNN` / `TNNN_test_fNNN`，每条含严重度、位置、问题、建议
-- conclusion：各 agent 总体判断
+- conclusion：本 agent 总体判断
 
-## task adoption
+`reviewer_focus` 与 finding 前缀映射：`文档+代码` → `code`，`测试` → `test`。
 
-`adoption.md` 在单 task 流程 step 7 由 owner 写，逐条处置 `review.md` 的 finding。
+## adoption 字段
+
+`adoption.md` 字段表；处置流程见 AGENTS.md step 7。
 
 | finding_id | decision | rationale | status |
 |------------|----------|-----------|--------|
-| TNNN_code_f001 | 采纳 / 不采纳 | {一句话理由} | 已修 / 遗留-原因 / 无需修改 |
+| TNNN_code_f001 | 采纳 / 不采纳 | {一句话理由} | 已修 / 遗留 / 无需修改 |
 
 字段说明：
 
 - `decision`：采纳 / 不采纳。
-- `rationale`：一句话理由。
+- `rationale`：一句话理由；`遗留` 项在此写未修原因。
 - `status`：
     - `已修`：在本 task commit 内修复。
-    - `遗留-原因`：未在本 commit 修复，原因写在 `-原因` 后。
+    - `遗留`：未在本 commit 修复。
     - `无需修改`：不采纳项专用。
 
-处置路径：采纳且能当场修的立即修复（触代码或测试回 step 4 黑盒；仅文档改动区分笔误/事实，事实类触发局部重审）；不采纳的标 `无需修改`；不能当场修的标 `遗留-原因`。adoption 由 owner 自主决策，不经用户审阅，随 task commit 入库。
+## specs_index 字段
 
-续写规则：首次复制模板写入；后续处置在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM)` 小节，对应本轮 review 的 finding；同 finding 在不同轮次决策变化各占一行，保留历史。
-
-## specs_index
-
-`docs/specs_index.md` 是需求索引。task 黑盒验证通过后更新进度；全 task done 后状态改 `done`。
+`docs/specs_index.md` 字段表；首次写入规则与状态流转见 AGENTS.md。
 
 | slug | 状态 | task 清单 | spec 路径 | 归档路径 |
 |------|------|----------|----------|---------|
 | `<slug>` | active / done / dropped | T001, T002 | `docs/specs/<slug>.md` | `docs/archive/specs/<slug>.md` |
-
-新需求开始时**不登记** specs_index；第一个 task 黑盒通过后才首次写入。
-
-## blueprint 更新时机
-
-- spec 和 plan 记录尚未确认的目标与方案。
-- 实施和 review 期间不把未稳定状态写成长期真相。
-- review、adoption 处置全部完成且最后一次黑盒验证通过后，在单 task 流程 step 8 更新受影响的 blueprint。
-- 长工作若需要中途形成稳定长期真相，应拆成独立 task，并在该 task 完结时更新 blueprint。
 
 ## spike 文件模板
 
