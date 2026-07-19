@@ -19,6 +19,8 @@
 | `docs/templates/` | task / task review+adoption / spike 模板 | 创建对应工作项时复制 | 复制使用，不代表 active 数据 |
 | `docs/guides/` | 给人看的使用指南 | 按需 | 不承载 agent 行为规则 |
 | `docs/archive/` | 完结或终止的 spec、task、review、spike | 追溯历史时 | 镜像原路径，只进不出；内部文件只准新增，不准修改 |
+| `schemas/` | 跨服务接口契约（OpenAPI / proto / GraphQL） | 实现或消费服务前 | 改契约走 task 流程；类型落点见 `docs/blueprint/conventions.md` |
+| `config/` | 配置文件（默认 + 环境覆盖 + `.env.example`） | 部署、调试、新增服务时 | 真值不入库，`.env` 由 `.env.example` 复制填写 |
 | `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 正常开发 | 正常开发 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | — | 不入库；临时日志放 `.scratch/` |
 
