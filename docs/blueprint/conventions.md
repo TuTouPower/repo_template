@@ -79,11 +79,15 @@
 
 ## specs_index 字段
 
-`docs/specs_index.md` 字段表；首次写入规则与状态流转见 AGENTS.md。
+`docs/specs_index.md` 是当前生效 spec 清单；写入规则见 AGENTS.md「需求完整周期」。
 
-| slug | 状态 | task 清单 | spec 路径 | 归档路径 |
-|------|------|----------|----------|---------|
-| `<slug>` | active / done / dropped | T001, T002 | `docs/specs/<slug>.md` | `docs/archive/specs/<slug>.md` |
+| slug | task 清单 | 最后固化时间 |
+|------|----------|--------------|
+| `<slug>` | T001, T002 | YYYY-MM-DD |
+
+- 表内 = 生效；废弃时整行删除。
+- 历史清单由 `docs/archive/specs/` 目录承载，不重复 index。
+- task 期间不写本表；全需求 task done 才首次写入。
 
 ## spike 文件模板
 
