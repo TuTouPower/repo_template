@@ -1,7 +1,7 @@
 # Task review TNNN
 
 - task：`TNNN_slug`
-- spec：`docs/tasks/TNNN_slug/spec.md`
+- spec：`spec.md`（同目录，随归档移动仍有效）
 - target：本 task 未提交改动（working tree）
 - reviewer_focus：{文档+代码 / 测试}
 - reviewed_at：{YYYY-MM-DD HH:MM UTC+8}

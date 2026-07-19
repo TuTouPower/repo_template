@@ -73,7 +73,7 @@ tasks_index 状态只使用：`backlog`、`active`、`done`、`dropped`。specs_
 
 ### 新需求拆分与创建 task
 
-1. 读 `docs/tasks_index.md`，按 tasks 与 archive 中最大 ID 加一分配 TNNN。需求拆分时一次分配多个 ID。
+1. 读 `docs/tasks_index.md` 全部行（含 backlog，未建目录的也算），取最大 ID 加一分配 TNNN。需求拆分时一次分配多个 ID。
 2. 暂不开始：登记为 `backlog`，不建目录。
 3. 开始执行：登记为 `active`，填写 owner 和 branch，创建 `docs/tasks/TNNN_slug/`。
 4. 从 `docs/templates/task/` 创建 `docs/tasks/TNNN_slug/spec.md`、`docs/tasks/TNNN_slug/plan.md`、`docs/tasks/TNNN_slug/log.md`。
@@ -102,16 +102,16 @@ tasks_index 状态只使用：`backlog`、`active`、`done`、`dropped`。specs_
     - 不能当场修的 `status` 标 `遗留`，`rationale` 写明原因，在 `docs/tasks/TNNN_slug/task_report.md` 遗留问题中体现。
 8. 收尾
     - 更新长期文档：`docs/blueprint/`（含 `decisions.md` 的非显然决策）、`docs/guides/`。前置：review、adoption 处置全部完成，最后一次黑盒验证通过。
-    - 更新 `docs/tasks/TNNN_slug/log.md`：追加本 task 进展、决策与关键验证，勾选验收标准。
+    - 更新 `docs/tasks/TNNN_slug/log.md`：追加本 task 进展、决策与关键验证。
     - 写 `docs/tasks/TNNN_slug/task_report.md`（从 `docs/templates/task/task_report.md` 复制模板）：对照 spec 验收标准逐条勾选；adoption 处置摘要（已修 N / 遗留 K / 无需修改 M，每条一行）；遗留问题（若有，注明原因）。不记 commit SHA，本报告所在 commit 即 task commit，SHA 由 `git log --grep TNNN` 查。
     - 更新 `docs/tasks_index.md`：本 task 状态改 `done`。
     - 归档：将 `docs/tasks/TNNN_slug/` 移入 `docs/archive/tasks/`。
-9. commit：本 task 所有改动（代码、测试、文档、log、adoption、task_report、index 更新、归档移动）作为一个 commit。
+9. commit：本 task 所有改动（代码、测试、文档、log、adoption、task_report、index 更新、归档移动）作为一个 commit。commit subject 必须含 task ID（如 `feat(T001_slug): ...`），保证 `git log --grep TNNN` 可追溯。
 
 ### dropped
 
 - backlog 被放弃：index 改为 `dropped`，备注原因；无目录可归档。
-- active 被放弃：在 `docs/tasks/TNNN_slug/log.md` 记录终止原因，确保不把半成品合入默认分支，将目录移入 `docs/archive/tasks/`，index 改为 `dropped`。
+- active 被放弃：在 `docs/tasks/TNNN_slug/log.md` 记录终止原因；撤销该 task 对 `docs/specs/<slug>.md` 和 `docs/specs_index.md` 的增量（回退到 task 前状态）；确保不把半成品合入默认分支；将目录移入 `docs/archive/tasks/`；index 改为 `dropped`，specs_index 同步移除该 task 进度或标 dropped。
 - 恢复需求：新建新 ID，并在新旧任务备注中互相引用。
 
 ## handoff
