@@ -36,7 +36,7 @@
 
 **需求 / task / commit**
 
-- 一个**需求**拆成 N 个 **task**，一个 **task** = 一个 **commit**。
+- 一个**需求**拆成 N 个 **task**（TNNN，独立分支 `task_tnnn_slug`，独立可验证结果），一个 **task** = 一个 **commit**。需求过大就拆细 task，不在 task 内拆 commit。
 - **循环执行所有 task**，每个 task 走一遍"单 task 流程"。
 
 ### 新需求拆分与创建 task
@@ -87,7 +87,6 @@
     - 把 `docs/specs/<slug>.md` 移入 `docs/archive/specs/<slug>.md`。
     - 从 `docs/specs_index.md` 删除对应行。
     - 不动 `docs/archive/tasks/` 历史归档。
-    - 若被新需求替代：在新需求的 spec 里引用旧 slug；旧 spec 文件头注明 `被 <新 slug> 替代，归档于 YYYY-MM-DD`。
 - 恢复需求：新建新 ID，并在新旧任务备注中互相引用。
 
 ## handoff

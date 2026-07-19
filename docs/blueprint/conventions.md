@@ -48,7 +48,7 @@
 
 ## review 报告字段
 
-`review_code.md` / `review_test.md` 共用以下字段；流程（两 agent 并行、续写规则、权限）见 AGENTS.md step 6。
+`review_code.md` / `review_test.md` 共用以下字段；流程（两 agent 并行、续写规则、权限）见 AGENTS.md step 5。
 
 - task：`TNNN_slug`
 - spec：`docs/tasks/TNNN_slug/spec.md`
@@ -62,7 +62,7 @@
 
 ## adoption 字段
 
-`adoption.md` 字段表；处置流程见 AGENTS.md step 7。
+`adoption.md` 字段表；处置流程见 AGENTS.md step 6。
 
 | finding_id | decision | rationale | status |
 |------------|----------|-----------|--------|
@@ -79,7 +79,7 @@
 
 ## specs_index 字段
 
-`docs/specs_index.md` 是当前生效 spec 清单；写入规则见 AGENTS.md「需求完整周期」。
+`docs/specs_index.md` 是当前生效 spec 清单；写入规则见 AGENTS.md「目录与读写规则」。
 
 | slug | task 清单 | 最后固化时间 |
 |------|----------|--------------|
