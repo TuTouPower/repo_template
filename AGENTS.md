@@ -1,46 +1,26 @@
+# {项目名}
+
 {一句话介绍：这个项目是什么、给谁用。}
 
 本文件是 agent 行为入口，包含工作流规则与按需导航。只读取当前任务需要的文档，禁止无目的全量加载。
 
-## 按需阅读
+## 目录与读写规则
 
-| 文档                                         | 内容                                           | 何时读                   |
-| -------------------------------------------- | ---------------------------------------------- | ------------------------ |
-| `docs/specs_index.md`                      | 需求 slug、状态、task 进度                     | 追溯已验证的需求时       |
-| `docs/specs/<slug>.md`                     | 需求已验证的实现与验收（累积）                 | 追溯需求时按需读         |
-| `docs/tasks_index.md`                      | task ID、状态、owner、branch                   | 接到新需求或流转状态时   |
-| `docs/tasks/TNNN_slug/spec.md` `plan.md` | 范围与验收标准；步骤、风险、blueprint 更新清单 | 执行或审阅 task 时       |
-| `docs/tasks/TNNN_slug/log.md`              | 进展、偏离、决策和关键验证                     | 接手或排查 task 时按需读 |
-| `docs/tasks/TNNN_slug/task_report.md`     | task 完结报告                                 | task 完结后审阅          |
-| `docs/tasks/TNNN_slug/review_code.md` `review_test.md` `adoption.md` | 两路 review 报告 + adoption 处置清单 | review 环节 |
-| `docs/handoff.md`                          | 项目级交接                                     | 接手工作时第一个读       |
-| `docs/blueprint/conventions.md`            | 内容字段、命名、task/review 格式               | 写代码或文档前           |
-| `docs/blueprint/architecture.md`           | 当前模块划分、数据流、进程和 seam              | 修改跨模块行为前         |
-| `docs/blueprint/domain.md`                 | 当前领域概念、术语和命名                       | 接触新业务概念时         |
-| `docs/blueprint/decisions.md`              | 已确认的非显然决策                             | 需要理解历史取舍时       |
-| `docs/reviews/review_<TS>/`                | 独立 review（多模型报告 + adoption 决策）       | 审阅全代码 / diff / 指定范围时 |
-| `docs/spikes/SNN_slug/report.md`           | 实验问题、证据和结论                           | 技术选型或未知风险验证时 |
-| `docs/templates/`                          | task / task review+adoption / spike 模板       | 创建对应工作项时复制     |
-| `docs/guides/`                             | 给人看的使用指南                               | 按需                     |
-| `docs/archive/`                            | 完结或终止的历史记录                           | 追溯历史时               |
-
-## 目录与写入规则
-
-| 路径                                         | 用途                                 | 写入规则                                                  |
-| -------------------------------------------- | ------------------------------------ | --------------------------------------------------------- |
-| `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策 | finalization 阶段更新；实施和 review 期间不写入未稳定结论 |
-| `docs/specs_index.md`                      | 需求 slug、状态、task 进度           | task 黑盒验证通过后更新；全 task done 后状态改 done       |
-| `docs/specs/<slug>.md`                     | 需求 spec：已验证的实现与验收（累积） | task 黑盒验证通过后累积；全 task done 后随归档            |
-| `docs/tasks_index.md`                      | task ID、状态、owner、branch         | 新需求和状态流转时更新                                    |
-| `docs/tasks/TNNN_slug/`                    | active task 工作区                   | owner 写 task 文档；reviewer 只写自己的 review 报告       |
-| `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策 | 由 `/multi-model-review` 和 `/multi-model-adoption` skill 生成；本地无独立 review 模板；落地拆 task |
-| `docs/spikes/SNN_slug/`                    | 当前 spike                           | `report.md` 必需；有实验代码时再建 `code/`            |
-| `docs/templates/`                          | task、task review+adoption、spike 模板 | 复制使用，不代表 active 数据                              |
-| `docs/guides/`                             | 给人看的使用指南                     | 不承载 agent 行为规则                                     |
-| `docs/handoff.md`                          | 项目级交接                           | 只追加，不删改历史                                        |
-| `docs/archive/`                            | 完结或终止的 spec、task、review、spike | 镜像原路径，只进不出。绝不准修改内部文件，只能新增文件  |
-| `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源             | 正常开发                                                  |
-| `artifacts/` `data/` `.scratch/`       | 产物、运行数据、一次性草稿           | 不入库；临时日志放`.scratch/`                           |
+| 路径 | 用途 | 读取规则 | 写入规则 |
+| ---- | ---- | -------- | -------- |
+| `docs/specs_index.md` | 需求 slug、状态、task 进度 | 追溯已验证需求时 | task 黑盒验证通过后更新；全 task done 后状态改 done |
+| `docs/specs/<slug>.md` | 需求 spec：已验证的实现与验收（累积） | 追溯需求时按需 | task 黑盒验证通过后累积；全 task done 后随归档 |
+| `docs/tasks_index.md` | task ID、状态、owner、branch | 接到新需求或状态流转时 | 新需求和状态流转时更新 |
+| `docs/tasks/TNNN_slug/` | active task 工作区 | 执行或审阅 task 时 | `spec.md` `plan.md` `log.md` `task_report.md` `adoption.md` 由 owner 写；`review_code.md` `review_test.md` 由 reviewer 写，reviewer 对他人报告只读 |
+| `docs/handoff.md` | 项目级交接 | 接手工作时第一个读 | 只追加，不删改历史 |
+| `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策 | 修改跨模块行为前读 `architecture.md`；写代码或文档前读 `conventions.md`；接触新业务概念时读 `domain.md`；理解历史取舍时读 `decisions.md` | finalization 阶段更新；实施和 review 期间不写入未稳定结论 |
+| `docs/reviews/review_<TS>/` | 独立 review：多模型报告 + adoption 决策 | 审阅全代码 / diff / 指定范围时 | 由 `/multi-model-review` 和 `/multi-model-adoption` skill 生成；本地无独立 review 模板；落地拆 task |
+| `docs/spikes/SNN_slug/` | 当前 spike | 技术选型或未知风险验证时 | `report.md` 必需；有实验代码时再建 `code/` |
+| `docs/templates/` | task / task review+adoption / spike 模板 | 创建对应工作项时复制 | 复制使用，不代表 active 数据 |
+| `docs/guides/` | 给人看的使用指南 | 按需 | 不承载 agent 行为规则 |
+| `docs/archive/` | 完结或终止的 spec、task、review、spike | 追溯历史时 | 镜像原路径，只进不出；内部文件只准新增，不准修改 |
+| `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 正常开发 | 正常开发 |
+| `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | — | 不入库；临时日志放 `.scratch/` |
 
 ## 开发原则
 
@@ -84,9 +64,9 @@ tasks_index 状态只使用：`backlog`、`active`、`done`、`dropped`。specs_
 一个 task 产出一个 commit，步骤：
 
 1. 写 `docs/tasks/TNNN_slug/spec.md` + `docs/tasks/TNNN_slug/plan.md`，交用户审核（明确不审则跳过），通过后再 step 2。
-2. 可测试部分先写红。
-3. 实现变绿，任务量不大由自己完成，任务量大可派 sub agent。
-4. agent-verify 黑盒验证：运行项目黑盒测试命令，具体命令不在本文件规定。
+2. 可测试部分先写红（运行 `{test_cmd}` 看失败）。
+3. 实现变绿（运行 `{test_cmd}` 看通过），任务量不大由自己完成，任务量大可派 sub agent。
+4. agent-verify 黑盒验证：运行 `{blackbox_cmd}`。
 5. 更新受影响文档（仅本 task 黑盒验证已通过的部分）：`docs/specs/<slug>.md`（累积本 task 已验证的实现与验收）、`docs/specs_index.md`（同步需求状态与 task 进度）、`README.md` 等。不含 `docs/tasks/` 进度记录、`docs/blueprint/`（blueprint 在 step 8 收尾更新）。
 6. review：派两个 sub agent 并行评审当前未提交改动，均对照 task spec 判断代码、文档、测试是否仍满足最初需求。两 agent 各自从 `docs/templates/task/review.md` 复制模板，独立成报告。
     - 文档+代码 agent：核对实现与 spec 是否一致、文档是否真实反映代码状态，写 `docs/tasks/TNNN_slug/review_code.md`，填 `reviewer_focus=文档+代码`，finding 用 `TNNN_code_fNNN` 编号。
@@ -130,4 +110,6 @@ tasks_index 状态只使用：`backlog`、`active`、`done`、`dropped`。specs_
 ## 硬约束
 
 - {密钥规则、禁写路径、平台限制等项目特有约束，按需填写。}
+- `{test_cmd}`：日常测试命令（单测 / 集成 / 单文件），复制模板时填写；TDD 红/绿循环（step 2、3）调用。命令多（分层测试、E2E、CI 复现）时改写为指向 `docs/guides/testing.md` 的链接。
 - `{blackbox_cmd}`：项目黑盒验证命令，复制模板时填写；单 task 流程 step 4 调用。
+- 测试规范（命名、层级、回归规则）见 `docs/blueprint/conventions.md` "编码与测试"小节，不在此重复。
