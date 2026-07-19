@@ -57,8 +57,8 @@
 2. 可测试部分先写红（运行 `{test_cmd}` 看失败）。
 3. 实现变绿（运行 `{test_cmd}` 看通过），任务量不大由自己完成，任务量大可派 sub agent。
 4. agent-verify 黑盒验证：运行 `{blackbox_cmd}`。
-5. review：派两个 sub agent 并行评审当前未提交改动，均对照 task spec 判断代码、文档、测试是否仍满足最初需求。两 agent 各自从 `docs/templates/task/review.md` 复制模板，独立成报告。
-    - 文档+代码 agent：核对实现与 spec 是否一致、文档是否真实反映代码状态，写 `docs/tasks/TNNN_slug/review_code.md`，填 `reviewer_focus=文档+代码`，finding 用 `TNNN_code_fNNN` 编号。
+5. review：派两个 sub agent 并行评审当前未提交改动，均对照 task spec 判断代码、测试是否仍满足最初需求。两 agent 各自从 `docs/templates/task/review.md` 复制模板，独立成报告。
+    - 代码 agent：核对实现与 spec 是否一致，写 `docs/tasks/TNNN_slug/review_code.md`，填 `reviewer_focus=代码`，finding 用 `TNNN_code_fNNN` 编号。
     - 测试 agent：核对测试覆盖与端到端行为是否对应 spec 验收标准，写 `docs/tasks/TNNN_slug/review_test.md`，填 `reviewer_focus=测试`，finding 用 `TNNN_test_fNNN` 编号。
     - 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM UTC+8, 触发:原因)` 小节，只写本轮新发现和复核结论；首次及历史轮次内容保留不覆盖。finding ID 跨轮次全局续编（如 `TNNN_code_f003` 接上次最大号）。
     - reviewer 对评审对象只读，不得修改被评审代码、`docs/tasks/TNNN_slug/adoption.md`、他人报告。

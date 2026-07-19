@@ -39,7 +39,7 @@
 | `spec.md` | 背景；范围；非范围；验收标准；依赖与约束 |
 | `plan.md` | 步骤及验证；风险与回退；完结时需更新的 blueprint 条目 |
 | `log.md` | 进展；踩坑；中途决策；偏离 plan 的原因；关键验证结果 |
-| `review_code.md` | task review 报告（文档+代码 agent 写） |
+| `review_code.md` | task review 报告（代码 agent 写） |
 | `review_test.md` | task review 报告（测试 agent 写） |
 | `adoption.md` | review 处置清单 |
 | `task_report.md` | task 完结报告 |
@@ -53,12 +53,12 @@
 - task：`TNNN_slug`
 - spec：`docs/tasks/TNNN_slug/spec.md`
 - target：本 task 未提交改动（working tree）
-- reviewer_focus：`文档+代码` / `测试`
+- reviewer_focus：`代码` / `测试`
 - reviewed_at：`YYYY-MM-DD HH:MM UTC+8`
 - findings：分类别前缀的 `TNNN_code_fNNN` / `TNNN_test_fNNN`，每条含严重度、位置、问题、建议
 - conclusion：本 agent 总体判断
 
-`reviewer_focus` 与 finding 前缀映射：`文档+代码` → `code`，`测试` → `test`。
+`reviewer_focus` 与 finding 前缀映射：`代码` → `code`，`测试` → `test`。
 
 ## adoption 字段
 
