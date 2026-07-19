@@ -9,7 +9,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 3. **当前与历史分离**：active 工作放 `tasks/`、`reviews/`、`spikes/`，完结或终止后移入 `archive/`。
 4. **模板不冒充工作项**：task、review、spike 模板集中在 `docs/templates/`，不占用真实 ID。
 5. **长期真相延后更新**：未稳定方案留在 task；review、adoption 和验证完成后再更新 blueprint。
-6. **评审快照固定**：review 绑定固定改动快照（base_commit 到 head），adoption 只后向引用已存在的 resolution commit。
+6. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/review/adoption/task_report 闭环。review 和 adoption 在 commit 前完成。
 7. **specs driven + TDD**：spec 和 plan 先行并过用户审核；开发循环内先写红再变绿，review 在 commit 前。
 
 ## 初始化新项目
@@ -20,7 +20,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 4. 保持 `CLAUDE.md -> AGENTS.md` 软链接。
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md` 初稿；`decisions.md` 初始可为空。
-7. 确认 `docs/tasks/index.md` 没有伪 active 数据。
+7. 确认 `docs/tasks_index.md`、`docs/specs_index.md` 无伪 active 数据。
 
 README 应改成项目自身介绍，不继续保留模板说明。
 
@@ -34,9 +34,12 @@ README 应改成项目自身介绍，不继续保留模板说明。
 ├── docs/
 │   ├── blueprint/             # 当前架构、领域、约定、决策
 │   ├── guides/                # 给人看的使用指南
-│   ├── templates/             # task / review / spike 模板
-│   ├── tasks/                 # active task 与任务索引
-│   ├── reviews/               # 当前独立 review
+│   ├── templates/             # task / task review+adoption / spike 模板
+│   ├── tasks/                 # active task 工作区
+│   ├── tasks_index.md         # task 索引
+│   ├── specs/                 # 需求 spec（task 黑盒验证后累积）
+│   ├── specs_index.md         # 需求索引
+│   ├── reviews/               # 当前独立 review（review_<TS> 目录）
 │   ├── spikes/                # 当前 spike
 │   ├── handoff.md             # 项目级交接
 │   └── archive/               # 完结或终止的历史记录
