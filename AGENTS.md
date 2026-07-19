@@ -38,12 +38,11 @@
 
 - 一个**需求**拆成 N 个 **task**，一个 **task** = 一个 **commit**。
 - **循环执行所有 task**，每个 task 走一遍"单 task 流程"。
-- tasks_index 状态：`backlog`、`active`、`done`、`dropped`。
 
 ### 新需求拆分与创建 task
 
 1. 读 `docs/tasks_index.md` 全部行（含 backlog，未建目录的也算），取最大 ID 加一分配 TNNN。需求拆分时一次分配多个 ID。
-  - 单个 task 必须独立可验证结果，有工程意义。
+  - 单个 task 必须结果独立可验证，有工程意义。
   - 需求过大就拆细 task，不在 task 内拆 commit。
 2. 循环每个 task，为每个 task 一次性完成：
   - 登记 `docs/tasks_index.md`（标 `backlog`）；
