@@ -6,7 +6,8 @@
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- `TNNN_`、`SNN_` 是工作项类型前缀例外；前缀后 slug 仍使用小写 `snake_case`。任务 ID 占位符统一写 `{TID}`（值为 T001、T042 等）。
+- 任务 ID：**只用** `{TID}`（取值 `T001`、`T042` 等；目录 `docs/tasks/{TID}_slug/`；finding `{TID}_code_f001`）。**不要写 `TNNN`**。分支名用 `task_{tid}_{slug}`，`{tid}` 为 `{TID}` 的小写（`T001` → `t001`）。
+- `SNN_` 是 spike ID 前缀例外；前缀后 slug 仍使用小写 `snake_case`。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
@@ -32,97 +33,65 @@
 
 ## task 文件模板
 
-active task 使用以下文件。任务很小时内容可以简短，但不合并文件。创建与使用流程见 AGENTS.md 单 task 流程。
-
-| 文件 | 字段 | 是否必有 |
+| 文件 | 谁写 | 是否必有 |
 |------|------|----------|
-| `spec.md` | 背景；范围；非范围；验收标准；依赖与约束 | 是（验收标准非空） |
-| `plan.md` | 步骤及验证；风险与回退；完结时需更新的 blueprint 条目 | 是 |
-| `log.md` | **diff_anchor**（标题下首行）；进展；踩坑；中途决策；偏离 plan 的原因；关键验证结果 | 是 |
-| `review_code.md` | task review 报告（代码 agent 写） | 是（进入 review 后） |
-| `review_test.md` | task review 报告（测试 agent 写） | 是（进入 review 后） |
-| `adoption.md` | review 处置清单 | **可选**：仅 review 非零 finding / 进入 adoption 时存在 |
-| `task_report.md` | task 完结报告 | 是（收尾时） |
+| `spec.md` | owner | 是（验收标准非空） |
+| `plan.md` | owner | 是 |
+| `task.md` | owner | 是（过程总账：front matter + 过程记录 / Review 处置 / 收尾报告） |
+| `review_code.md` | code reviewer | 进入 review 后 |
+| `review_test.md` | test reviewer | 进入 review 后 |
 
-- `log.md` 记录有追溯价值的事项，不写命令流水账。
+不再使用独立的 `log.md` / `adoption.md` / `task_report.md`。
+
+### `task.md` front matter
+
+```yaml
+---
+tid: T001
+slug: example_slug
+diff_anchor: "<SHA>"
+branch: task_t001_example_slug
+owner: ""
+status: backlog   # backlog | active | done | dropped
+# spec_path: 可选，默认 <task_dir>/spec.md
+---
+```
+
+- `scripts/render_review_prompts.sh --task-dir ...` 读取 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
+- 正文结构见 `docs/templates/task/task.md`。
 
 ## review 报告字段
 
-`review_code.md` / `review_test.md` 共用以下字段；流程见 AGENTS.md step 5；完整 reviewer 提示词见 `docs/templates/task/review_prompt_code.md` 和 `docs/templates/task/review_prompt_test.md`。报告结构以 prompt 输出格式为准，`docs/templates/task/review.md` 仅空骨架参考。
+`review_code.md` / `review_test.md` 以渲染后的 prompt 输出格式为准。模板源：
 
-- task：`{TID}_slug`
-- spec：`spec.md`（同目录相对路径，随归档移动仍有效）
-- diff_anchor：task 开始时的 HEAD SHA
-- target：`git diff <diff_anchor>`（相对工作区；见 AGENTS.md「review target」）
-- reviewer_focus：`代码` / `测试`
-- round：`1` / `2`（默认同一 task 最多 2 轮；用户批准可追加）
-- reviewed_at：`YYYY-MM-DD HH:MM UTC+8`
-- findings：分类别前缀的 `{TID}_code_fNNN` / `{TID}_test_fNNN`，每条含严重度、位置、问题、建议；标题格式 `### {TID}_code_f001 - {标题}`（ASCII 连字符两侧空格）
-- conclusion：前轮复核（Round 2 写）+ 本轮新发现数 + 总体判断
-- verdict：末行 `verdict: PASS` 或 `verdict: FAIL`
+- `docs/templates/prompts/code_review_prompt.md`
+- `docs/templates/prompts/test_review_prompt.md`
+- `docs/templates/prompts/share_review_prompt.md`（共享规则、严重度、PASS）
 
-**PASS 判定式**（唯一）：`PASS ⟺ 本轮 finding 数 = 0 ∧（无前轮 ∨ 前轮 finding 全部已修或已撤回）`。
+owner 用 `scripts/render_review_prompts.sh --task-dir docs/tasks/{TID}_{slug}` 生成 prompt。`docs/templates/task/review.md` 仅空骨架。
 
-- Round 1：无前轮 → 退化为 0 finding 即 PASS，可直接收尾。
-- Round 2：前轮全修/撤回且本轮 0 新 finding → PASS；否则 FAIL → blocked。
-
-`reviewer_focus` 与 finding 前缀映射：`代码` → `code`，`测试` → `test`。
-
-### 严重度三级（唯一完整定义；AGENTS 与 prompt 引用本文）
-
-默认所有 finding 必须处置（已修 / 遗留+用户批准 / 撤回）。严重度表示优先级，不表示可忽略。
-
-#### critical
-
-- **实现轴**：bug / 安全 / 数据丢失 / broken functionality
-- **测试轴**：测了假行为致 AC 看似覆盖但实际未验证；删除关键 AC 的测试；mock 掉被测逻辑本身
-
-#### important
-
-本 task 在修复前不可信，例如：
-
-- **实现轴**：verbatim 重复、swallowed errors、spec AC 缺失实现、违反 spec 不变量
-- **测试轴**：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
-- 危险模式扫描命中项（见 `review_prompt_test.md`）**最低 important**，不得标 minor
-
-#### minor
-
-风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。
-
-## adoption 字段
-
-`adoption.md` 字段表；处置流程见 AGENTS.md step 6。默认严格模式：finding 必须处置。误报经原 reviewer **撤回** 或用户裁决后可不改代码。
+## Review 处置字段（写在 `task.md`）
 
 | finding_id | severity | status | rationale | fix_ref |
 |------------|----------|--------|-----------|---------|
-| T001_code_f001 | critical/important/minor | 已修 | {一句话说明} | {文件:行 或路径} |
-| T001_test_f001 | ... | 遗留 | {需拆新 task 的依据} | - |
-| T001_code_f002 | ... | 撤回 | {reviewer 撤回依据摘要} | review 追加记录位置 |
+| T001_code_f001 | critical/important/minor | 已修 | … | 文件:行 |
+| T001_test_f001 | … | 遗留 | … | - |
+| T001_code_f002 | … | 撤回 | … | review 追加位置 |
 
-字段说明：
-
-- `severity`：原 finding 严重度。
-- `status`：
-    - `已修`：在本 task commit 内修复。
-    - `遗留`：实现层无法在本 task 解决（需拆新 task）；task 不得 done 直到用户显式批准 exception。
-    - `撤回`：原 reviewer 确认误报并追加撤回记录，或用户明确裁决不成立。
-- `rationale`：对应 status 的一句话说明。
-- `fix_ref`：`已修` 指向修复位置；`遗留`/`撤回` 填 `-` 或审查记录位置。
-
-用户批准 exception 时：**不改写** review 报告中的 `verdict` 与 finding 正文；在 `tasks_index` 备注与 `task_report` 分栏记录用户处置。
+- `status`：`已修` / `遗留` / `撤回`
+- exception（有遗留）：不改写 `review_*`；`task.md` 收尾报告写清；收尾口头报告；`tasks_index` 可备注 `done_with_exception`
 
 ## specs_index 字段
 
-`docs/specs_index.md` 是当前生效 spec 清单；写入规则见 AGENTS.md「目录与读写规则」与「需求完结」。
+`docs/specs_index.md` 是当前生效 spec 清单；每个 task **step 7 收尾**累积更新。
 
-| slug | task 清单 | 最后固化时间 |
+| slug | task 清单 | 最后更新时间 |
 |------|----------|--------------|
 | `<slug>` | T001, T002 | YYYY-MM-DD |
 
 - 表内 = 生效；废弃时整行删除。
-- 历史清单由 `docs/archive/specs/` 目录承载，不重复 index。
-- task 期间不写本表；全需求 task done 后由「需求完结」首次写入。
-- 替代旧需求时可在备注记 `supersedes: <old_slug>`。
+- 历史在 `docs/archive/specs/`。
+- 替代旧需求可在备注 `supersedes: <old_slug>`。
 
 ## spike 文件模板
 
@@ -146,3 +115,4 @@ active task 使用以下文件。任务很小时内容可以简短，但不合�
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带任务 ID，如 `tests/unit/parser/T042_empty_token.test.ts`。
+- 文件过大、圈复杂度默认阈值见 `docs/templates/prompts/code_review_prompt.md`。项目覆盖写在本小节。

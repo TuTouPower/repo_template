@@ -24,7 +24,21 @@
 
 - 背景：AGENTS 要求拆分建目录，tasks_index 曾写 backlog 不建目录，冲突。
 - 选项：A 拆分即建目录；B active 才建目录；C 建目录不强制填。
-- 结论：A，并要求验收标准非空；未填模板的 dropped backlog 可不归档。
+- 结论：A，并要求验收标准非空。
+- 替代：无
+
+## 007 dropped 任务目录一律归档（2026-07-21）
+
+- 背景：曾写「未实质填写的 backlog 可不归档、删目录即可」；用户要求一律归档。
+- 选项：A 空模板可不归档；B 一律进 `docs/archive/tasks/`。
+- 结论：B。backlog / active 的 dropped 均归档，无例外。
+- 替代：收紧 002 附属的「可不归档」表述。
+
+## 008 task.md 合并 owner 过程文档（2026-07-21）
+
+- 背景：log / adoption / task_report 过碎，agent 易漏写。
+- 选项：A 合并为 `task.md`（YAML front matter + 正文）；B 整文件 JSON；C 保持三分。
+- 结论：A。保留 spec/plan/review_code/review_test；`render_review_prompts.sh` 从 front matter 读 tid/slug/diff_anchor。
 - 替代：无
 
 ## 003 严格模式误报经原 reviewer 撤回（2026-07-21）
@@ -34,9 +48,23 @@
 - 结论：A。默认仍须处置；撤回或用户裁决后可不改代码。
 - 替代：无
 
-## 004 用户 exception 不改写 reviewer verdict（2026-07-21）
+## 004 exception 不改写 reviewer verdict（2026-07-21）
 
-- 背景：遗留/降级后若把 FAIL 改成 PASS，质量门禁语义崩溃。
+- 背景：遗留后若把 FAIL 改成 PASS，质量门禁语义崩溃。
 - 选项：A verdict 不动 + tasks_index/task_report 记 exception；B 新 PASS_WITH_EXCEPTION；C 改写报告为 PASS。
-- 结论：A。技术结论与风险接受分离。
+- 结论：A。技术结论与工作流 done 分离。
 - 替代：无
+
+## 005 exception 无需用户显式批准（2026-07-21）
+
+- 背景：遗留若每次等用户批准会卡住 agent 收尾；需要可审计的放行方式。
+- 选项：A 无需批准，task_report 专节 + 收尾口头报告；B 保持显式批准；C 禁止遗留只能拆 task。
+- 结论：A。`遗留` 可随 `done`；`tasks_index` 备注 `done_with_exception`；必须写入报告并口头告知用户。
+- 替代：放宽 004 中「用户批准」前提，保留「不改写 verdict」。
+
+## 006 specs 在每个 task 收尾时累积写入（2026-07-21）
+
+- 背景：曾改为「全需求 task done 后才写 docs/specs/」；用户要求每个 task 在过黑盒后的**收尾**阶段写 specs，不是黑盒 step 立刻写。
+- 选项：A step 4 黑盒立刻写；B 仅需求完结写一次；C step 7 收尾写（须已过黑盒）。
+- 结论：C。写点只在 step 7；step 4 只做黑盒、不写 specs。
+- 替代：推翻 T001 adoption 项 8「需求完结才写」；纠正误落在 step 4 的写点。
