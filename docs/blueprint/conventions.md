@@ -6,7 +6,7 @@
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- 任务 ID：**只用** `{TID}`（取值 `T001`、`T042` 等；目录 `docs/tasks/{TID}_slug/`；finding `{TID}_code_f001`）。**不要写 `TNNN`**。分支名用 `task_{tid}_{slug}`，`{tid}` 为 `{TID}` 的小写（`T001` → `t001`）。
+- 任务 ID **一律大写** `{TID}`（`T001`、`T042`…）。目录 `docs/tasks/{TID}_{slug}/`，分支 `task_{TID}_{slug}`，finding `{TID}_code_f001`。不用小写 `t001`，不用 `TNNN`。
 - `SNN_` 是 spike ID 前缀例外；前缀后 slug 仍使用小写 `snake_case`。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
@@ -47,19 +47,19 @@
 
 ```yaml
 ---
-tid: T001
+tid: T001          # 与 {TID} 同形，始终大写 T001，禁止 t001
 slug: example_slug
 diff_anchor: "<SHA>"
-branch: task_t001_example_slug
+branch: task_T001_example_slug
 owner: ""
 status: backlog   # backlog | active | done | dropped
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
 ```
 
-- `scripts/render_review_prompts.sh --task-dir ...` 读取 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
+- front matter 键名 `tid` 仅作 YAML 字段名；**取值必须是大写 `{TID}` 字符串**。
+- `scripts/render_review_prompts.sh --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
 - 正文结构见 `docs/templates/task/task.md`。
-
 ## review 报告字段
 
 `review_code.md` / `review_test.md` 以渲染后的 prompt 输出格式为准。模板源：

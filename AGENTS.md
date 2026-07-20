@@ -36,7 +36,7 @@
 
 **需求 / task / commit**
 
-- 一个**需求**拆成 N 个 **task**（ID 占位符一律 `{TID}`，取值如 `T001`；独立分支 `task_{tid}_{slug}`，其中 `{tid}` 为 `{TID}` 的小写，如 `t001`；独立可验证结果），一个 **task** = 一个 **commit**。需求过大就拆细 task，不在 task 内拆 commit。
+- 一个**需求**拆成 N 个 **task**。任务 ID **一律大写** `{TID}`（如 `T001`），目录 `docs/tasks/{TID}_{slug}/`，分支 `task_{TID}_{slug}`（如 `task_T001_foo`），finding `{TID}_code_f001`。一个 **task** = 一个 **commit**。需求过大就拆细 task，不在 task 内拆 commit。
 - **循环执行所有 task**，每个 task 走一遍「单 task 流程」。
 - `tasks_index` 状态：`backlog` / `active` / `done` / `dropped`。有遗留时备注 `done_with_exception` 及 finding ID。
 
@@ -68,7 +68,7 @@ step 5    Round 1 双轴 review
 
 步骤：
 
-1. 创建并切换分支 `task_{tid}_{slug}`；校验当前分支与 `tasks_index.branch` 一致。登记 active + owner + branch。在 `task.md` front matter 写入实值 `diff_anchor`（当前 HEAD）、`branch`、`owner`、`status: active`。校验 `spec.md` 验收标准非空。
+1. 创建并切换分支 `task_{TID}_{slug}`；校验当前分支与 `tasks_index.branch` 一致。登记 active + owner + branch。在 `task.md` front matter 写入实值 `diff_anchor`（当前 HEAD）、`branch`、`owner`、`status: active`。校验 `spec.md` 验收标准非空。
 2. 可测试部分先写红（`{test_cmd}`）。
 3. 实现变绿（`{test_cmd}`）；可派 sub agent。
 4. 黑盒（`{blackbox_cmd}`）。通过后进入 review / 收尾。
@@ -96,7 +96,7 @@ step 5    Round 1 双轴 review
     - 后置 task 受影响则改其 spec/plan。
     - 目录移入 `docs/archive/tasks/`。
     - 有遗留则口头逐条说明。
-8. 一个 commit 含本 task 全部改动。subject 含 task ID。只在 `task_{tid}_{slug}` 上工作。
+8. 一个 commit 含本 task 全部改动。subject 含 `{TID}`。只在 `task_{TID}_{slug}` 上工作。
 
 ### review target
 

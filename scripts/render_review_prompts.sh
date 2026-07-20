@@ -103,6 +103,12 @@ if [[ -z "$fm_tid" || -z "$fm_slug" || -z "$fm_diff_anchor" ]]; then
     exit 1
 fi
 
+# tid 必须是大写任务 ID（T001），禁止 t001
+if [[ ! "$fm_tid" =~ ^T[0-9]+$ ]]; then
+    echo "tid must be uppercase task id like T001 (got '$fm_tid')" >&2
+    exit 1
+fi
+
 # task_dir relative to repo for placeholders when under repo
 rel_task_dir="$task_dir"
 case "$task_dir" in

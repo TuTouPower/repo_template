@@ -2,15 +2,15 @@
 tid: T001
 slug: example_slug
 diff_anchor: "<SHA>"
-branch: task_t001_example_slug
+branch: task_T001_example_slug
 owner: ""
 status: backlog
 ---
 
-# Task {tid}_{slug}
+# Task {TID}_{slug}
 
 owner 过程总账。reviewer **只写** `review_code.md` / `review_test.md`，不改本文件。  
-`diff_anchor` / `tid` / `slug` 等机器字段只在上方 YAML front matter；改 anchor 时同步改 front matter。
+front matter 的 `tid` **取值与 `{TID}` 相同、一律大写**（`T001`，禁止 `t001`）。改 `diff_anchor` 时只改 front matter。
 
 ## 过程记录
 
@@ -34,11 +34,11 @@ owner 过程总账。reviewer **只写** `review_code.md` / `review_test.md`，�
 
 | finding_id | severity | status | rationale | fix_ref |
 |------------|----------|--------|-----------|---------|
-| {tid}_code_f001 | critical/important/minor | 已修 | {一句话} | {文件:行} |
+| {TID}_code_f001 | critical/important/minor | 已修 | {一句话} | {文件:行} |
 
 ## 收尾报告
 
-本 task 所在 commit 即 task commit，SHA 由 `git log --grep {tid}` 查，不在此记。
+本 task 所在 commit 即 task commit，SHA 由 `git log --grep {TID}` 查，不在此记。
 
 ### 验收标准勾选
 
