@@ -2,16 +2,7 @@
 
 只记录已经确认、影响后续工作的非显然决策。追加新条目，不重写历史；决策被替代时，新条目通过“替代”字段引用旧编号。
 
-条目格式：
-
-```markdown
-## NNN 标题（YYYY-MM-DD）
-
-- 背景：为什么需要决策
-- 选项：考虑过什么
-- 结论：选了什么，为什么
-- 替代：旧决策编号；无则写“无”
-```
+每条结构：`## NNN 标题（YYYY-MM-DD）`，下接 `- 背景` / `- 选项` / `- 结论` / `- 替代` 四项；替代填旧编号，无则写「无」。
 
 ## 001 review 证据源用 working tree 相对 diff_anchor（2026-07-21）
 
@@ -38,7 +29,7 @@
 
 - 背景：log / adoption / task_report 过碎，agent 易漏写。
 - 选项：A 合并为 `task.md`（YAML front matter + 正文）；B 整文件 JSON；C 保持三分。
-- 结论：A。保留 spec/plan/review_code/review_test；`render_review_prompts.sh` 从 front matter 读 tid/slug/diff_anchor。
+- 结论：A。保留 spec/plan/review_code/review_test；`render_review_prompts.py` 从 front matter 读 tid/slug/diff_anchor。
 - 替代：无
 
 ## 003 严格模式误报经原 reviewer 撤回（2026-07-21）

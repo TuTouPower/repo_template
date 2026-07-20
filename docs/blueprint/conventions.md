@@ -55,16 +55,16 @@ branch: t001_example_slug
 ---
 ```
 
-- task 状态（`backlog` / `active` / `blocked` / `done` / `dropped`）的权威在 `docs/tasks_index.md`，不在 front matter。
-- `scripts/render_review_prompts.sh --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
+- task 状态（`backlog` / `active` / `blocked` / `done` / `dropped`）的权威在 `docs/tasks_index.json`（通过 `scripts/task.py` 操作），不在 front matter。
+- `scripts/render_review_prompts.py --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
 - 正文结构见 `docs/templates/task/task.md`。
 
 ## review 报告字段
 
-`review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.sh` 渲染结果为准。
+`review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.py` 渲染结果为准。
 
-- 提示词正文存于 `docs/templates/review/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.sh` 读取并填占位符。
-- 用法：`scripts/render_review_prompts.sh --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
+- 提示词正文存于 `docs/templates/review/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
+- 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
 - 产物路径：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`（gitignore，不入库）。
 - `docs/templates/task/review.md` 仅空骨架。
 
@@ -77,7 +77,7 @@ branch: t001_example_slug
 | t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
-- `blocked`：见 `AGENTS.md`「blocked」；`tasks_index` 同步为 `blocked`
+- `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review`
 
 ## specs_index 字段
 

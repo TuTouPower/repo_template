@@ -14,9 +14,11 @@
 | -------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `docs/specs_index.md`                      | 当前生效 spec 清单（在表即生效）          | 追溯已固化需求时                                                                                                                  | task**收尾**时更新；废弃时删除行                                                       |
 | `docs/specs/<slug>.md`                     | 需求级 spec（按已完成 task 累积）         | 追溯需求实现与验收时                                                                                                              | task**收尾**时累积更新；废弃时移入 `docs/archive/specs/`                             |
-| `docs/tasks_index.md`                      | tid、状态、branch                         | 接到新需求或状态流转时                                                                                                            | 新需求和状态流转时更新                                                                       |
+| `docs/tasks_index.json`                    | 活跃 task：tid、状态、branch               | 接到新需求或状态流转时                                                                                                            | **只能通过 `scripts/task.py` 操作**；禁止直接编辑                                         |
+| `docs/archive/tasks_index.json`            | 归档 task（`done` / `dropped`）            | 追溯历史 tid 时                                                                                                                  | `scripts/task.py finish` / `drop` 自动移入；禁止直接编辑                                   |
 | `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
+| `docs/bugs.md`                            | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                  | 发现不立即修复的 bug 追加新条目；修复后在原条目追加「修复」行，不删原条目                    |
 | `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策      | 改跨模块行为前读`architecture.md`；写代码或文档前读 `conventions.md`；新业务概念读 `domain.md`；历史取舍读 `decisions.md` | finalization 时更新；实施与 review 期间仅写入已稳定结论                                      |
 | `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策   | 审阅全代码 / diff / 指定范围时                                                                                                    | 用户命令后生成                                                                               |
 | `docs/spikes/{sid}_{slug}/`                | 当前 spike                                | 技术选型或未知风险验证时                                                                                                          | `report.md` 必需；有实验代码再建 `code/`                                                 |
@@ -50,22 +52,17 @@
 - 门禁默认上限：
   - `max_verify_round = 5`（黑盒验证轮次上限）；
   - `max_review_round = 2`（双审轮次上限）。
-- `tasks_index` 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
-- `blocked`：
-  - 黑盒轮次达 `max_verify_round` 仍未过，或双审 `round` 达 `max_review_round` 仍 `overall=FAIL`；
-  - **默认不收尾**，停自动推进，口头说明原因，等用户决定：
-    - 加轮次继续（计数累计，新上限由用户指定）
-    - `dropped`
+- task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。存于 `docs/tasks_index.json`，**只能通过 `scripts/task.py` 操作**；`done` / `dropped` 由脚本自动移入 `docs/archive/tasks_index.json`。
 
 ### 新需求拆分与创建 task
 
-1. 读 `docs/tasks_index.md`（含 backlog），取最大 `tid` 加一分配；可一次分配多个。
+1. 跑 `scripts/task.py list` 看现有 task（活跃 + 归档），新 task 从最大 `tid` 加一分配（脚本自动扫主 + archive）；可一次分配多个。
 2. 对每个 task：
-   - 在 `docs/tasks_index.md` 表中新增一行：`tid` / 标题 / `status: backlog` / `branch` 留空 / `备注` 留空；
-   - 创建 task 目录 `docs/tasks/{tid}_{slug}/`；
+   - 跑 `scripts/task.py add --title "..." --slug "..."`：脚本分配 `tid`、写 `status: backlog`、`branch` 留空；
+   - 创建 task 目录 `docs/tasks/{tid}_{slug}/`（`tid`/`slug` 从脚本输出取）；
    - 从 `docs/templates/task/` 复制并填写 `spec.md`、`plan.md`、`task.md`（front matter：`tid`/`slug`；`diff_anchor` 可占位，**开干**时写实值）。
 
-### 单 task 流程
+### 单 task 流程图
 
 下图只示意分支；**以步骤正文为权威**。
 
@@ -103,13 +100,11 @@ flowchart TD
     BLK -->|用户加轮后过门禁| S7
     S7 --> S8
 ```
-
-步骤：
+### 单 task 详细步骤
 
 - **Step 1：开干**
 
-  - 创建并切换工作分支；校验 `git branch --show-current` 与 `tasks_index.branch` 一致。
-  - `tasks_index`：该行 `status` 改为 `active`，填 `branch`。
+  - 创建并切换工作分支；跑 `scripts/task.py start <tid>`（状态 → `active`，自动填 `branch` 为 `{tid}_{slug}`），再校验 `git branch --show-current` 与之一致。
   - `task.md` front matter：写入 `diff_anchor`（当前 HEAD SHA）、`branch`（`tid`/`slug` 在 backlog 已填）。
   - `spec.md` 验收标准非空后再进入 **Step 2**。
 - **Step 2：红**
@@ -126,9 +121,10 @@ flowchart TD
   - **未通过** 且黑盒轮次 **≥ `max_verify_round`** → **blocked**（见下「blocked」）。
 - **Step 5：双审**
 
+  - 跑 `git add -N` 把 untracked 文件以 intent-to-add 形式纳入索引，让 `git diff {diff_anchor}` 能显示其完整内容；随后 `git status` / `git diff --stat` 甄别，把与本 task 无关的文件（编辑器临时文件、IDE 缓存、`.scratch/` 等）用 `git reset <path>` 移出索引，只留本 task 实际产出文件进入审阅（`diff_anchor` 取自 `task.md` front matter）。
   - 渲染 reviewer 提示词：
     ```bash
-    scripts/render_review_prompts.sh \
+    scripts/render_review_prompts.py \
       --task-dir docs/tasks/{tid}_{slug} \
       --out-dir .scratch/review_prompts
     ```
@@ -144,7 +140,7 @@ flowchart TD
   - 跑状态脚本：
 
     ```bash
-    scripts/check_review_status.sh --task-dir docs/tasks/{tid}_{slug}
+    scripts/check_review_status.py --task-dir docs/tasks/{tid}_{slug}
     ```
 
     读 `code_verdict` / `test_verdict` / `overall` / `round` / `max_review_round`。
@@ -153,13 +149,13 @@ flowchart TD
 
     - **是（改了代码或测试）** → 回 **Step 3** → **Step 4** → **Step 5** → **Step 6**。
     - **否（未改代码或测试）** → 改必要文档后 **直接收尾**（不再开下一轮双审）。典型：仅文档、全标 `撤回`、或认为无需再实现。`review_*` verdict **不改写**。
-  - **`overall=FAIL` 且 `round ≥ max_review_round`**：在 `## Review 处置` 追加本轮表，未修项 status 全部填完 → **blocked**（见下）：**不得**自动进 **Step 7**。
+  - **`overall=FAIL` 且 `round ≥ max_review_round`**：在 `## Review 处置` 追加本轮表，未修项 status 全部填完 → **blocked**（见下）。
 - **Step 7：收尾**
 
   - 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`（本 task 对应累积）。
   - 更新本 task 影响到的 `docs/blueprint/`、`docs/guides/`、`README.md`、API 文档等。
   - 写全 `task.md`「收尾报告」（验收勾选、两轴 verdict、遗留列出）。
-  - `tasks_index` 该行 `status` → `done`。
+  - 跑 `scripts/task.py finish <tid>`：状态 → `done`，自动移入 `docs/archive/tasks_index.json`。
   - 后置 task（非 `done`）受影响则修订其 `spec.md` / `plan.md`。
   - 将 task 目录移入 `docs/archive/tasks/`。
 - **Step 8：提交**
@@ -170,27 +166,20 @@ flowchart TD
 
 ### blocked
 
-门禁打满仍未过时进入，**不是** `done`。
-
 | 触发                                                  | 动作                                                                                                                   |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 黑盒轮次达`max_verify_round` 仍未通过               | 过程记录写明原因与轮次；`task.md` / `tasks_index` → `blocked`；备注 `blocked: blackbox`；口头说明；停自动推进 |
-| 双审`overall=FAIL` 且 `round ≥ max_review_round` | 处置表填完；`blocked`；备注 `blocked: review`；口头说明；停自动推进                                                |
+| 黑盒轮次达`max_verify_round` 仍未通过               | 过程记录写明原因与轮次；`scripts/task.py block <tid> --reason blackbox`；`task.md` 过程记录同步说明；口头说明；停自动推进 |
+| 双审`overall=FAIL` 且 `round ≥ max_review_round` | 处置表填完；`scripts/task.py block <tid> --reason review`；`task.md` 过程记录同步说明；口头说明；停自动推进                |
 
 进入 blocked 后，agent **必须停下来向用户请求选择**（不得自行决定下一步，不得自动推进）。把下述两个选项呈现给用户并等待显式答复：
 
-- **加轮**：用户批准加轮并指定新上限（新 `max_verify_round` / 新 `max_review_round`）；agent 把 `status` 回 `active`；**计数累计不清零**。黑盒加轮从 **Step 3** 再跑黑盒；双审加轮继续跑 **Step 5** → **Step 6**。
-- **dropped**：走 task dropped。
-
-### review target
-
-- 审查证据固定为：以 `diff_anchor` 为基线的 `git diff`，且**必须覆盖本 task 新增文件**。双审前先 `git add -N` 把新文件以 intent-to-add 形式纳入索引，`git diff` 才会显示其完整内容；否则 untracked 文件不进审阅。`diff_anchor` 取自 `task.md` front matter。
-- 同步主线时更新 front matter 的 `diff_anchor`，并在 `task.md`「过程记录」记一笔。
-
-### task dropped
-
-- backlog：`tasks_index` → `dropped` + 原因；目录一律进 `docs/archive/tasks/`；做一个提交。
-- active / blocked：`task.md`「过程记录」写终止原因；半成品代码保留在 task 分支（不合并主线）；task 目录移入 `docs/archive/tasks/`；若已写过 specs，撤销本 task 对 specs 的增量；**必须做一个提交**（含 `task.md`、`tasks_index`、归档移动、半成品代码），否则切工作区或清理时丢失。
+- **加轮**：用户批准加轮并指定新上限（新 `max_verify_round` / 新 `max_review_round`）；
+  - 跑 `scripts/task.py resume <tid>`（状态 → `active`）；
+  - 在 `task.md` 过程记录写新上限；**计数累计不清零**。
+  - 黑盒加轮从 **Step 3** 再跑黑盒；双审加轮继续跑 **Step 5** → **Step 6**。
+- **dropped**：
+  - backlog：`scripts/task.py drop <tid> --reason "..."`（自动移入 archive）；task 目录进 `docs/archive/tasks/`；做一个提交。
+  - active / blocked：`task.md`「过程记录」写终止原因；`scripts/task.py drop <tid> --reason "..."`；半成品代码保留在 task 分支（不合并主线）；task 目录移入 `docs/archive/tasks/`；**必须做一个提交**（含 `task.md`、JSON 改动、归档移动、半成品代码），否则切工作区或清理时丢失。
 
 ## handoff
 
@@ -207,6 +196,7 @@ flowchart TD
 
 ## 硬约束
 
+- `docs/tasks_index.json` 与 `docs/archive/tasks_index.json` **只能由 `scripts/task.py` 修改**。agent 禁止直接编辑这两个 JSON。脚本失败必须停下提示用户，禁止在未告知用户的情况下手工修 JSON。
 - {密钥规则、禁写路径、平台限制等项目特有约束，按需填写。}
 - `{test_cmd}`：日常测试（单测/集成/单文件）；**红** / **绿** 使用。命令多时改为指向 `docs/guides/testing.md`。
 - `{blackbox_cmd}`：黑盒验证；**黑盒** 使用。
@@ -214,8 +204,8 @@ flowchart TD
 
 ## 文档修改规范
 
-结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
-同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
-存在多种合理理解时，先澄清再做跨文档修改。
-优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
-完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步。
+- 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
+- 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
+- 存在多种合理理解时，先澄清再做跨文档修改。
+- 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
+- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步。
