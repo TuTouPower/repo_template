@@ -36,7 +36,7 @@
 
 **需求 / task / commit**
 
-- 一个**需求**拆成 N 个 **task**。任务 ID **一律大写** `{TID}`（如 `T001`），目录 `docs/tasks/{TID}_{slug}/`，分支 `task_{TID}_{slug}`（如 `task_T001_foo`），finding `{TID}_code_f001`。一个 **task** = 一个 **commit**。需求过大就拆细 task，不在 task 内拆 commit。
+- 一个**需求**拆成 N 个 **task**。任务 ID **一律大写** `{TID}`（如 `T001`），目录 `docs/tasks/{TID}_{slug}/`，分支 `{TID}_{slug}`（如 `T001_foo`），finding `{TID}_code_f001`。一个 **task** = 一个 **commit**。需求过大就拆细 task，不在 task 内拆 commit。
 - **循环执行所有 task**，每个 task 走一遍「单 task 流程」。
 - `tasks_index` 状态：`backlog` / `active` / `done` / `dropped`。有遗留时备注 `done_with_exception` 及 finding ID。
 
@@ -52,23 +52,59 @@
 
 ### 单 task 流程
 
-一个 task 产出一个 commit。过程总账在 **`task.md`**（YAML front matter + 正文：过程记录 / Review 处置 / 收尾报告）。review 默认最多 2 轮：
+一个 task 产出一个 commit。过程总账在 **`task.md`**（YAML front matter + 正文：过程记录 / Review 处置 / 收尾报告）。review 默认最多 2 轮。
 
 ```
-step 1–4  分支 / 红绿 / 黑盒
-    ↓
-step 5    Round 1 双轴 review
-    ├─ 两路均 PASS ──→ step 7 收尾 → step 8 commit
-    └─ FAIL → step 6 处置（写入 task.md）→ Round 2 → …
+【实现段】
+
+  [1] 建分支 / 登记 active / 写 task.md front matter / 校验 spec
+        │
+        ▼
+  [2] 写红测试
+        │
+        ▼
+  [3] 实现到绿  ◄──────────────────────────────┐
+        │                                       │
+        ▼                                       │
+  [4] 黑盒验证  ◄───────────────────────────┐   │
+        │                                   │   │
+        ▼                                   │   │
+【review 循环】                             │   │
+                                            │   │
+  [5] 双轴 review（渲染 prompt → 写报告）    │   │
+        │                                   │   │
+        ├── 两路均 PASS ────────────────────┼───┼──► [7]
+        │                                   │   │
+        └── 任一路 FAIL                     │   │
+                │                           │   │
+                ▼                           │   │
+  [6] 处置 finding → 写入 task.md           │   │
+      （已修 / 遗留 / 撤回）                 │   │
+                │                           │   │
+                ├── 改了代码或测试 ─────────┘   │
+                │     回到 [3] → [4] → [5]      │
+                │     （仍属当前/下一 Round）    │
+                │                               │
+                ├── 仅文档/处置、且未满 2 轮     │
+                │     回到 [5] 作下一 Round ────┘
+                │
+                └── 已结束 review 循环
+                      （Round 1 全 PASS 不会进 6；
+                       Round 2 后无论 PASS/FAIL，
+                       未修项须标完）
+                            │
+                            ▼
+【收尾段】
+
+  [7] 收尾：specs、task.md 收尾报告、index done、归档
+        │     有遗留 → 口头报告
+        ▼
+  [8] 一个 commit（含本 task 全部改动）
 ```
-
-**verdict: PASS**：本轮 0 finding，且前轮均已修或已撤回。完整判定见 `docs/templates/prompts/share_review_prompt.md`。
-
-**exception**：`task.md` Review 处置中有 `遗留` 仍可 `done`；不改写 `review_*` 的 verdict/finding；在 `task.md` 收尾报告写清并口头报告。
 
 步骤：
 
-1. 创建并切换分支 `task_{TID}_{slug}`；校验当前分支与 `tasks_index.branch` 一致。登记 active + owner + branch。在 `task.md` front matter 写入实值 `diff_anchor`（当前 HEAD）、`branch`、`owner`、`status: active`。校验 `spec.md` 验收标准非空。
+1. 创建并切换分支 `{TID}_{slug}`；校验当前分支与 `tasks_index.branch` 一致。登记 active + owner + branch。在 `task.md` front matter 写入实值 `diff_anchor`（当前 HEAD）、`branch`、`owner`、`status: active`。校验 `spec.md` 验收标准非空。
 2. 可测试部分先写红（`{test_cmd}`）。
 3. 实现变绿（`{test_cmd}`）；可派 sub agent。
 4. 黑盒（`{blackbox_cmd}`）。通过后进入 review / 收尾。
@@ -96,7 +132,7 @@ step 5    Round 1 双轴 review
     - 后置 task 受影响则改其 spec/plan。
     - 目录移入 `docs/archive/tasks/`。
     - 有遗留则口头逐条说明。
-8. 一个 commit 含本 task 全部改动。subject 含 `{TID}`。只在 `task_{TID}_{slug}` 上工作。
+8. 一个 commit 含本 task 全部改动。subject 含 `{TID}`。只在 `{TID}_{slug}` 上工作。
 
 ### review target
 
