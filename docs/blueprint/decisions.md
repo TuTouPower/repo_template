@@ -67,4 +67,4 @@
 - 背景：曾改为「全需求 task done 后才写 docs/specs/」；用户要求每个 task 在过黑盒后的**收尾**阶段写 specs，不是黑盒 step 立刻写。
 - 选项：A step 4 黑盒立刻写；B 仅需求完结写一次；C step 7 收尾写（须已过黑盒）。
 - 结论：C。写点只在 step 7；step 4 只做黑盒、不写 specs。
-- 替代：推翻 T001 adoption 项 8「需求完结才写」；纠正误落在 step 4 的写点。
+- 替代：推翻 t001 adoption 项 8「需求完结才写」；纠正误落在 step 4 的写点。

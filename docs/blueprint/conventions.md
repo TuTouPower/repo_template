@@ -6,8 +6,8 @@
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- 任务 ID **一律大写** `{TID}`（`T001`、`T042`…）。目录 `docs/tasks/{TID}_{slug}/`，分支 `{TID}_{slug}`，finding `{TID}_code_f001`。不用小写 `t001`，不用 `TNNN`。
-- `SNN_` 是 spike ID 前缀例外；前缀后 slug 仍使用小写 `snake_case`。
+- task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`。
+- spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
@@ -47,10 +47,10 @@
 
 ```yaml
 ---
-tid: T001          # 与 {TID} 同形，大写
+tid: t001          # 键 tid；值小写 t001
 slug: example_slug
 diff_anchor: "<SHA>"
-branch: T001_example_slug
+branch: t001_example_slug
 status: backlog   # backlog | active | done | dropped
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
@@ -64,7 +64,7 @@ status: backlog   # backlog | active | done | dropped
 `review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.sh` 渲染结果为准。
 
 - 提示词正文嵌在该脚本内（code 轴 / test 轴 / 共享规则含严重度与 PASS），**不在** `docs/templates/`。
-- 用法：`scripts/render_review_prompts.sh --task-dir docs/tasks/{TID}_{slug} --out-dir .scratch/review_prompts`
+- 用法：`scripts/render_review_prompts.sh --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
 - 产物路径：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`（gitignore，不入库）。
 - `docs/templates/task/review.md` 仅空骨架。
 
@@ -72,9 +72,9 @@ status: backlog   # backlog | active | done | dropped
 
 | finding_id | severity | status | rationale | fix_ref |
 |------------|----------|--------|-----------|---------|
-| T001_code_f001 | critical/important/minor | 已修 | … | 文件:行 |
-| T001_test_f001 | … | 遗留 | … | - |
-| T001_code_f002 | … | 撤回 | … | review 追加位置 |
+| t001_code_f001 | critical/important/minor | 已修 | … | 文件:行 |
+| t001_test_f001 | … | 遗留 | … | - |
+| t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
 - exception（有遗留）：不改写 `review_*`；`task.md` 收尾报告写清；收尾口头报告；`tasks_index` 可备注 `done_with_exception`
@@ -85,7 +85,7 @@ status: backlog   # backlog | active | done | dropped
 
 | slug | task 清单 | 最后更新时间 |
 |------|----------|--------------|
-| `<slug>` | T001, T002 | YYYY-MM-DD |
+| `<slug>` | t001, t002 | YYYY-MM-DD |
 
 - 表内 = 生效；废弃时整行删除。
 - 历史在 `docs/archive/specs/`。
@@ -93,7 +93,7 @@ status: backlog   # backlog | active | done | dropped
 
 ## spike 文件模板
 
-`report.md` 包含：问题；成功判据；尝试；证据；结论；是否采纳；后续 task ID。
+`report.md` 包含：问题；成功判据；尝试；证据；结论；是否采纳；后续 `tid`。
 
 实验代码存在时创建 `code/`。实验代码入库保留，仅作为验证材料。
 
@@ -112,5 +112,5 @@ status: backlog   # backlog | active | done | dropped
 
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
-- 修 bug 时在对应测试层补回归用例，文件名带任务 ID，如 `tests/unit/parser/T042_empty_token.test.ts`。
+- 修 bug 时在对应测试层补回归用例，文件名带 `tid`，如 `tests/unit/parser/t042_empty_token.test.ts`。
 - 文件过大、圈复杂度默认阈值见 `scripts/render_review_prompts.sh` 内嵌 code 轴文案。项目覆盖写在本小节。

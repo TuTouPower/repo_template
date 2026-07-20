@@ -1,15 +1,15 @@
 ---
-tid: T001
+tid: t001
 slug: example_slug
 diff_anchor: "<SHA>"
-branch: T001_example_slug
+branch: t001_example_slug
 status: backlog
 ---
 
-# Task {TID}_{slug}
+# Task {tid}_{slug}
 
 过程总账。reviewer **只写** `review_code.md` / `review_test.md`，不改本文件。  
-`tid` 与 `{TID}` 同形、大写。改 `diff_anchor` 时只改 front matter。
+front matter 键 `tid`，值形如 `t001`。改 `diff_anchor` 时只改 front matter。
 
 ## 过程记录
 
@@ -37,11 +37,11 @@ status: backlog
 
 | finding_id | severity | status | rationale | fix_ref |
 |------------|----------|--------|-----------|---------|
-| {TID}_code_f001 | critical/important/minor | 已修 | {一句话} | {文件:行} |
+| {tid}_code_f001 | critical/important/minor | 已修 | {一句话} | {文件:行} |
 
 ## 收尾报告
 
-本 task 所在 commit 即 task commit，SHA 由 `git log --grep {TID}` 查，不在此记。
+本 task 所在 commit 即 task commit，SHA 由 `git log --grep {tid}` 查，不在此记。
 
 ### 验收标准勾选
 

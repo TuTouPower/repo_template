@@ -1,6 +1,6 @@
-# Task report T001
+# Task report t001
 
-本报告所在 commit 即 task commit，SHA 由 `git log --grep T001` 查，不在此记录。
+本报告所在 commit 即 task commit，SHA 由 `git log --grep t001` 查，不在此记录。
 
 ## spec 验收标准勾选
 

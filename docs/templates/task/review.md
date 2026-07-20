@@ -1,9 +1,9 @@
-# Task review {TID}（reviewer_focus: {代码/测试}）
+# Task review {tid}（reviewer_focus: {代码/测试}）
 
 字段骨架参考。正式报告结构以 `scripts/render_review_prompts.sh` 渲染产物（`.scratch/review_prompts/*`）中的输出格式为准。
 
 
-- task：`{TID}_slug`
+- task：`{tid}_slug`
 - spec：`spec.md`（同目录相对路径）
 - diff_anchor：`<SHA>`
 - target：`git diff <diff_anchor>`
@@ -12,7 +12,7 @@
 
 ## Findings
 
-### {TID}_code_f001 - {标题}
+### {tid}_code_f001 - {标题}
 
 - 严重度：{critical / important / minor}
 - 位置：`path:line` 或测试名

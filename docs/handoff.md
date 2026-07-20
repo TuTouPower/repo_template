@@ -9,7 +9,7 @@
 ```markdown
 ## YYYY-MM-DD HH:MM UTC+8 from_owner → to_owner
 
-- 当前焦点：{task ID 或议题}
+- 当前焦点：{tid 或议题}
 - branch：`{branch；无则写“无”}`
 - head_commit：`{已存在的 commit SHA；无则写“无”}`
 - 已完成：{列点}

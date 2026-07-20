@@ -1,7 +1,7 @@
-# Task review T001（reviewer_focus: 测试）
+# Task review t001（reviewer_focus: 测试）
 
-- task：`T001_workflow_adoption_fix`
-- spec：`docs/tasks/T001_workflow_adoption_fix/spec.md`
+- task：`t001_workflow_adoption_fix`
+- spec：`docs/tasks/t001_workflow_adoption_fix/spec.md`
 - diff_anchor：`ba66be5ffeb0decc94e5cb92e9accd7bb6382a2a`
 - target：`git diff ba66be5ffeb0decc94e5cb92e9accd7bb6382a2a`
 - round：1
@@ -20,7 +20,7 @@
 ### 审查范围与证据
 
 - 仓库内 `tests/unit/`、`tests/integration/`、`tests/e2e/` 均为空目录；全仓无 `*.py`/`*.js`/`*.ts` 等可运行测试源码。
-- 工作区交付物为文档/模板（`AGENTS.md`、`README.md`、`docs/blueprint/*`、`docs/templates/task/*`、`docs/tasks_index.md`、`docs/tasks/T001_*` 等）；`docs/templates/task/review_prompt.md` 已不在模板树中。
+- 工作区交付物为文档/模板（`AGENTS.md`、`README.md`、`docs/blueprint/*`、`docs/templates/task/*`、`docs/tasks_index.md`、`docs/tasks/t001_*` 等）；`docs/templates/task/review_prompt.md` 已不在模板树中。
 - 无测试文件新增/修改/删除 → 危险模式（恒真断言、`.skip`/`.only`、mock 误用、删 expect 等）**仅针对测试代码**，本轮不适用。
 - **本 task 无测试改动**。
 

@@ -3,8 +3,8 @@
 # 提示词正文嵌在本脚本内（不在 docs/templates/ 下）。
 #
 # 用法：
-#   scripts/render_review_prompts.sh --task-dir docs/tasks/T001_my_slug
-#   scripts/render_review_prompts.sh --task docs/tasks/T001_my_slug/task.md
+#   scripts/render_review_prompts.sh --task-dir docs/tasks/t001_my_slug
+#   scripts/render_review_prompts.sh --task docs/tasks/t001_my_slug/task.md
 #   scripts/render_review_prompts.sh --task-dir ... --out-dir .scratch/review_prompts
 #
 # 必填 front matter：tid, slug, diff_anchor
@@ -102,8 +102,8 @@ if [[ -z "$fm_tid" || -z "$fm_slug" || -z "$fm_diff_anchor" ]]; then
     exit 1
 fi
 
-if [[ ! "$fm_tid" =~ ^T[0-9]+$ ]]; then
-    echo "tid must be uppercase task id like T001 (got '$fm_tid')" >&2
+if [[ ! "$fm_tid" =~ ^t[0-9]+$ ]]; then
+    echo "tid must be lowercase task id like t001 (got '$fm_tid')" >&2
     exit 1
 fi
 
@@ -129,9 +129,9 @@ emit_code_axis() {
 
 ## 任务
 
-你是 task `{TID}` 的代码 reviewer，审查 `git diff {diff_anchor}`（相对当前工作区），对照 `{spec_path}` 的验收标准，从**规格合规(实现层)** 和 **代码质量/正确性** 两个角度出 finding 清单。
+你是 task `{tid}` 的代码 reviewer，审查 `git diff {diff_anchor}`（相对当前工作区），对照 `{spec_path}` 的验收标准，从**规格合规(实现层)** 和 **代码质量/正确性** 两个角度出 finding 清单。
 
-输出到 `{task_dir}/review_code.md`，finding 前缀 `{TID}_code_fNNN`（从 f001 起，跨轮全局续编）。
+输出到 `{task_dir}/review_code.md`，finding 前缀 `{tid}_code_fNNN`（从 f001 起，跨轮全局续编）。
 
 ## 评审维度
 
@@ -212,9 +212,9 @@ emit_code_axis() {
 ## 输出格式
 
 ```markdown
-# Task review {TID}（reviewer_focus: 代码）
+# Task review {tid}（reviewer_focus: 代码）
 
-- task：`{TID}_{slug}`
+- task：`{tid}_{slug}`
 - spec：`{spec_path}`
 - diff_anchor：`{diff_anchor}`
 - target：`git diff {diff_anchor}`
@@ -223,7 +223,7 @@ emit_code_axis() {
 
 ## Findings
 
-### {TID}_code_f001 - {标题}
+### {tid}_code_f001 - {标题}
 
 - 严重度：{critical / important / minor}
 - 位置：`path:line` 或符号名
@@ -258,9 +258,9 @@ emit_test_axis() {
 
 ## 任务
 
-你是 task `{TID}` 的测试 reviewer，审查 `git diff {diff_anchor}`（相对当前工作区），对照 `{spec_path}` 的验收标准，从**测试可信**、**覆盖**、**危险模式扫描** 三个角度出 finding 清单。
+你是 task `{tid}` 的测试 reviewer，审查 `git diff {diff_anchor}`（相对当前工作区），对照 `{spec_path}` 的验收标准，从**测试可信**、**覆盖**、**危险模式扫描** 三个角度出 finding 清单。
 
-输出到 `{task_dir}/review_test.md`，finding 前缀 `{TID}_test_fNNN`（从 f001 起，跨轮全局续编）。
+输出到 `{task_dir}/review_test.md`，finding 前缀 `{tid}_test_fNNN`（从 f001 起，跨轮全局续编）。
 
 ## 评审维度
 
@@ -317,9 +317,9 @@ diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试�
 ## 输出格式
 
 ```markdown
-# Task review {TID}（reviewer_focus: 测试）
+# Task review {tid}（reviewer_focus: 测试）
 
-- task：`{TID}_{slug}`
+- task：`{tid}_{slug}`
 - spec：`{spec_path}`
 - diff_anchor：`{diff_anchor}`
 - target：`git diff {diff_anchor}`
@@ -328,7 +328,7 @@ diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试�
 
 ## Findings
 
-### {TID}_test_f001 - {标题}
+### {tid}_test_f001 - {标题}
 
 - 严重度：{critical / important / minor}
 - 位置：`path:line` 或测试名
@@ -387,11 +387,11 @@ emit_share() {
 
 ### 重审追加
 
-Round 2 在对应报告文件末尾追加 `## Round 2 (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。finding ID 跨轮全局续编。
+Round 2 在对应报告文件末尾追加 `## Round 2 (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。
 
 ### 撤回配合
 
-若对某 finding 举证争议，你可在报告末尾追加撤回记录（finding ID + 撤回理由）。撤回后该 finding 不再强制改代码。
+若对某 finding 举证争议，你可在报告末尾追加撤回记录（`finding_id` + 撤回理由）。撤回后该 finding 不再强制改代码。
 
 
 ### verdict PASS 判定
@@ -427,7 +427,7 @@ __PROMPT_SHARE_EOF__
 
 apply_placeholders() {
     sed \
-        -e "s|{TID}|${tid}|g" \
+        -e "s|{tid}|${tid}|g" \
         -e "s|{slug}|${slug}|g" \
         -e "s|{spec_path}|${spec_path}|g" \
         -e "s|{task_dir}|${task_dir_ph}|g" \

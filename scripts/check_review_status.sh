@@ -2,7 +2,7 @@
 # 读 task 目录下 review 报告，输出两路 verdict 与当前轮次（供 step 6 处置用）。
 #
 # 用法：
-#   scripts/check_review_status.sh --task-dir docs/tasks/T001_foo
+#   scripts/check_review_status.sh --task-dir docs/tasks/t001_foo
 #
 # 输出（stdout，一行键值，便于脚本/人读）：
 #   code_verdict=PASS|FAIL|MISSING

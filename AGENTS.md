@@ -4,11 +4,13 @@
 
 ## 命名（本文件内只在此定义）
 
-- `{TID}`：任务 ID，形如 `T001`、`T042`（大写 `T` + 数字）。
+- `{tid}`：task 编号，形如 `t001`、`t042`（小写 `t` + 数字）。
+- `{sid}`：spike 编号，形如 `s001`、`s003`（小写 `s` + 数字）。
 - `{slug}`：小写 `snake_case`。
-- 工作区目录：`docs/tasks/{TID}_{slug}/`
-- 工作分支：`{TID}_{slug}`（如 `T001_foo`）
-- finding：`{TID}_code_fNNN` / `{TID}_test_fNNN`
+- 工作区目录：`docs/tasks/{tid}_{slug}/`
+- 工作分支：`{tid}_{slug}`（如 `t001_foo`）
+- finding：`{tid}_code_fNNN` / `{tid}_test_fNNN`
+- spike 目录：`docs/spikes/{sid}_{slug}/`
 - 下文「task 目录 / 工作分支」均指上式。
 
 ## 目录与读写规则
@@ -17,12 +19,12 @@
 | -------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `docs/specs_index.md`                      | 当前生效 spec 清单（在表即生效）          | 追溯已固化需求时                                                                                                                  | task**收尾**时更新；废弃时删除行                                                       |
 | `docs/specs/<slug>.md`                     | 需求级 spec（按已完成 task 累积）         | 追溯需求实现与验收时                                                                                                              | task**收尾**时累积更新；废弃时移入 `docs/archive/specs/`                             |
-| `docs/tasks_index.md`                      | task ID、状态、branch                     | 接到新需求或状态流转时                                                                                                            | 新需求和状态流转时更新                                                                       |
-| `docs/tasks/{TID}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
+| `docs/tasks_index.md`                      | tid、状态、branch                         | 接到新需求或状态流转时                                                                                                            | 新需求和状态流转时更新                                                                       |
+| `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
 | `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策      | 改跨模块行为前读`architecture.md`；写代码或文档前读 `conventions.md`；新业务概念读 `domain.md`；历史取舍读 `decisions.md` | finalization 时更新；实施与 review 期间仅写入已稳定结论                                      |
 | `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策   | 审阅全代码 / diff / 指定范围时                                                                                                    | 用户命令后生成                                                                               |
-| `docs/spikes/SNN_slug/`                    | 当前 spike                                | 技术选型或未知风险验证时                                                                                                          | `report.md` 必需；有实验代码再建 `code/`                                                 |
+| `docs/spikes/{sid}_{slug}/`                | 当前 spike                                | 技术选型或未知风险验证时                                                                                                          | `report.md` 必需；有实验代码再建 `code/`                                                 |
 | `docs/templates/`                          | task / spike 等模板                       | 创建工作项时复制                                                                                                                  | 复制使用，不代表 active 数据                                                                 |
 | `docs/guides/`                             | 给人看的使用指南                          | 按需                                                                                                                              | 给人读，不写入 agent 行为规则                                                                |
 | `docs/archive/`                            | 完结或终止的历史                          | 追溯历史时                                                                                                                        | 镜像原路径，只进；内部文件只准新增                                                           |
@@ -48,7 +50,7 @@
 
 ### 新需求拆分与创建 task
 
-1. 读 `docs/tasks_index.md`（含 backlog），取最大 ID 加一分配 `{TID}`；可一次分配多个。
+1. 读 `docs/tasks_index.md`（含 backlog），取最大 `tid` 加一分配；可一次分配多个。
 2. 对每个 task：
    - 登记 `backlog`；
    - 创建 task 目录；
@@ -107,7 +109,7 @@ flowchart TD
    - 渲染 reviewer 提示词（正文嵌在脚本内，从 `task.md` front matter 填占位符；产物不入库）：
      ```bash
      scripts/render_review_prompts.sh \
-       --task-dir docs/tasks/{TID}_{slug} \
+       --task-dir docs/tasks/{tid}_{slug} \
        --out-dir .scratch/review_prompts
      ```
    - 将 `.scratch/review_prompts/code_review_prompt.md` 与 `.scratch/review_prompts/test_review_prompt.md` 全文分别发给 code reviewer、test reviewer。
@@ -119,7 +121,7 @@ flowchart TD
    - 跑状态脚本：
 
      ```bash
-     scripts/check_review_status.sh --task-dir docs/tasks/{TID}_{slug}
+     scripts/check_review_status.sh --task-dir docs/tasks/{tid}_{slug}
      ```
 
      读 `code_verdict` / `test_verdict` / `overall` / `round`。`max_round` 默认 **2**（满 2 轮后不再开新一轮双审）。
@@ -134,13 +136,13 @@ flowchart TD
    - 须已过 **黑盒**。更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`（本 task 对应累积）。
    - 更新本 task 影响到的 `docs/blueprint/`、`docs/guides/`、`README.md`、API 文档等。
    - 写全 `task.md`「收尾报告」（验收勾选、两轴 verdict、exception/遗留）；front matter `status: done`。
-   - `tasks_index` → `done`。若有遗留：备注 `done_with_exception` 及 finding ID，并对用户口头说明每条遗留。
+   - `tasks_index` → `done`。若有遗留：备注 `done_with_exception` 及 `finding_id`，并对用户口头说明每条遗留。
    - 后置 task 受影响则修订其 `spec.md` / `plan.md`。
    - 将 task 目录移入 `docs/archive/tasks/`。
 8. **提交**
 
    - 本 task 全部改动（含 specs、文档、归档移动）做一个 commit。
-   - subject 含 `{TID}`；只在本 task 工作分支上提交。合并进默认分支由外部流程负责。
+   - subject 含 `{tid}`；只在本 task 工作分支上提交。合并进默认分支由外部流程负责。
 
 ### review target
 
@@ -161,7 +163,7 @@ flowchart TD
 ## spike
 
 - 选型或未知风险时用；非默认必做。
-- 建 `docs/spikes/SNN_slug/`，复制 `docs/templates/spike/report.md`；SNN 取 spikes 与 archive 中最大 ID 加一。
+- 建 `docs/spikes/{sid}_{slug}/`，复制 `docs/templates/spike/report.md`；`sid` 取 spikes 与 archive 中最大编号加一。
 - 有实验代码再建 `code/`；可入库，仅作验证材料。
 - 结论后移入 `docs/archive/spikes/`。
 

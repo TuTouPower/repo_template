@@ -1,6 +1,6 @@
-# Task review T001（reviewer_focus: 代码）
+# Task review t001（reviewer_focus: 代码）
 
-- task：`T001_workflow_adoption_fix`
+- task：`t001_workflow_adoption_fix`
 - spec：`spec.md`
 - diff_anchor：`ba66be5ffeb0decc94e5cb92e9accd7bb6382a2a`
 - target：`git diff ba66be5ffeb0decc94e5cb92e9accd7bb6382a2a`
