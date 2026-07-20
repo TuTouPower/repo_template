@@ -23,7 +23,7 @@
 - [ ] Round 1 零 finding 可直接收尾；Round 2 FAIL 为 blocked，不自动回 step 6 无限循环
 - [ ] 拆分阶段要求填写 spec/plan（验收标准非空）；step 7 不写 `docs/specs/`；存在「需求完结」固化 specs 路径
 - [ ] backlog 建目录规则与 `tasks_index.md` 一致；未填模板 dropped 可不归档
-- [ ] 单 task step 1 创建/切换 `task_tnnn_slug` 并校验分支；`log.md` 模板含 `diff_anchor`
+- [ ] 单 task step 1 创建/切换 `Tnnn_slug` 并校验分支；`log.md` 模板含 `diff_anchor`
 - [ ] 旧 `review_prompt.md` 已从树中删除；新 prompt 含零发现合法、finding 边界、`.fill()` 调查制、`read-only 边界`、项目根用 `git rev-parse`
 - [ ] 严格模式含 reviewer 撤回争议路径；用户批准 exception 不改写 reviewer verdict，tasks_index / task_report 可记录
 - [ ] README 与 AGENTS 语义一致（含 schemas/config、specs 固化时机）

@@ -6,7 +6,7 @@
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- 任务 ID **一律大写** `{TID}`（`T001`、`T042`…）。目录 `docs/tasks/{TID}_{slug}/`，分支 `task_{TID}_{slug}`，finding `{TID}_code_f001`。不用小写 `t001`，不用 `TNNN`。
+- 任务 ID **一律大写** `{TID}`（`T001`、`T042`…）。目录 `docs/tasks/{TID}_{slug}/`，分支 `{TID}_{slug}`，finding `{TID}_code_f001`。不用小写 `t001`，不用 `TNNN`。
 - `SNN_` 是 spike ID 前缀例外；前缀后 slug 仍使用小写 `snake_case`。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
@@ -35,9 +35,9 @@
 
 | 文件 | 谁写 | 是否必有 |
 |------|------|----------|
-| `spec.md` | owner | 是（验收标准非空） |
-| `plan.md` | owner | 是 |
-| `task.md` | owner | 是（过程总账：front matter + 过程记录 / Review 处置 / 收尾报告） |
+| `spec.md` | 实现侧 | 是（验收标准非空） |
+| `plan.md` | 实现侧 | 是 |
+| `task.md` | 实现侧 | 是（过程总账：front matter + 过程记录 / Review 处置 / 收尾报告） |
 | `review_code.md` | code reviewer | 进入 review 后 |
 | `review_test.md` | test reviewer | 进入 review 后 |
 
@@ -47,28 +47,26 @@
 
 ```yaml
 ---
-tid: T001          # 与 {TID} 同形，始终大写 T001，禁止 t001
+tid: T001          # 与 {TID} 同形，大写
 slug: example_slug
 diff_anchor: "<SHA>"
-branch: task_T001_example_slug
-owner: ""
+branch: T001_example_slug
 status: backlog   # backlog | active | done | dropped
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
 ```
 
-- front matter 键名 `tid` 仅作 YAML 字段名；**取值必须是大写 `{TID}` 字符串**。
 - `scripts/render_review_prompts.sh --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
 - 正文结构见 `docs/templates/task/task.md`。
+
 ## review 报告字段
 
-`review_code.md` / `review_test.md` 以渲染后的 prompt 输出格式为准。模板源：
+`review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.sh` 渲染结果为准。
 
-- `docs/templates/prompts/code_review_prompt.md`
-- `docs/templates/prompts/test_review_prompt.md`
-- `docs/templates/prompts/share_review_prompt.md`（共享规则、严重度、PASS）
-
-owner 用 `scripts/render_review_prompts.sh --task-dir docs/tasks/{TID}_{slug}` 生成 prompt。`docs/templates/task/review.md` 仅空骨架。
+- 提示词正文嵌在该脚本内（code 轴 / test 轴 / 共享规则含严重度与 PASS），**不在** `docs/templates/`。
+- 用法：`scripts/render_review_prompts.sh --task-dir docs/tasks/{TID}_{slug} --out-dir .scratch/review_prompts`
+- 产物路径：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`（gitignore，不入库）。
+- `docs/templates/task/review.md` 仅空骨架。
 
 ## Review 处置字段（写在 `task.md`）
 
@@ -115,4 +113,4 @@ owner 用 `scripts/render_review_prompts.sh --task-dir docs/tasks/{TID}_{slug}` 
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带任务 ID，如 `tests/unit/parser/T042_empty_token.test.ts`。
-- 文件过大、圈复杂度默认阈值见 `docs/templates/prompts/code_review_prompt.md`。项目覆盖写在本小节。
+- 文件过大、圈复杂度默认阈值见 `scripts/render_review_prompts.sh` 内嵌 code 轴文案。项目覆盖写在本小节。
