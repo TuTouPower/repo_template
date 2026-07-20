@@ -1,0 +1,60 @@
+## 共享规则（两 reviewer 都遵守）
+
+### read-only 边界
+
+不改代码、不改测试、不改 spec / plan / `task.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
+
+### 不信任 implementer 自述
+
+`task.md`（过程记录 / 收尾报告）是 claim 不是证据。一切以 `git diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
+
+### 零发现合法与 finding 边界
+
+- clean review（0 finding）是有效输出；**禁止凑数**。
+- 范围内问题进 finding 表；范围外问题仅在结论段提示，**不进** finding 表。
+
+### Pre-Report Gate（每条 finding 报前自问）
+
+任一「否」即降级或丢弃：
+
+1. 能否引精确 `file:line` 或测试名？
+2. 能否描述具体失败场景（输入 / 状态 / 坏结果）？
+3. 是否读了周边上下文？
+4. 严重度是否可辩护？
+
+### 重审追加
+
+Round 2 在对应报告文件末尾追加 `## Round 2 (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。
+
+### 撤回配合
+
+若对某 finding 举证争议，你可在报告末尾追加撤回记录（`finding_id` + 撤回理由）。撤回后该 finding 不再强制改代码。
+
+
+### verdict PASS 判定
+
+`PASS ⟺ 本轮 finding 数 = 0 ∧（无前轮 ∨ 前轮 finding 全部已修或已撤回）`。
+
+- Round 1：无前轮 → 0 finding 即 PASS。
+- Round 2：前轮全修/撤回且本轮 0 新 finding → PASS；否则 FAIL。
+
+## 严重度三级（完整定义）
+
+严重度表示优先级，不表示可忽略。默认所有 finding 须在 adoption 阶段处置（已修 / 遗留 / 撤回）。
+
+### critical
+
+- **实现轴**：bug / 安全 / 数据丢失 / broken functionality
+- **测试轴**：测了假行为致 AC 看似覆盖但实际未验证；删除关键 AC 的测试；mock 掉被测逻辑本身
+
+### important
+
+本 task 在修复前不可信，例如：
+
+- **实现轴**：verbatim 重复、swallowed errors、spec AC 缺失实现、违反 spec 不变量
+- **测试轴**：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
+- 危险模式扫描命中项（见测试轴 prompt）**最低 important**，不得标 minor
+
+### minor
+
+风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。
