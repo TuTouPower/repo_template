@@ -9,10 +9,10 @@
 #   test_verdict=PASS|FAIL|MISSING
 #   overall=PASS|FAIL|INCOMPLETE
 #   round=N          # 取两份报告 front 字段 round 的最大值；缺省时按 ## Round 小节推断，至少 1
-#   next_action=finalize|fix_and_reimplement|re_review
-#     finalize: overall=PASS，或 overall=FAIL 且已达 max_round（默认 2）
-#     re_review: overall=FAIL 且 round < max_round
-#     fix_and_reimplement: overall=FAIL（是否回 [3] 由是否改了代码/测试决定）
+#   next_action=finalize|blocked|fix_and_reimplement|re_review|incomplete
+#     finalize: overall=PASS（可收尾）
+#     blocked: overall=FAIL 且 round >= max_round（默认 2；不得自动收尾，等用户）
+#     re_review / fix_and_reimplement: overall=FAIL 且 round < max_round（是否回绿由是否改代码/测试决定）
 
 set -euo pipefail
 
@@ -118,9 +118,9 @@ next_action="fix_and_reimplement"
 if [[ "$overall" == "PASS" ]]; then
     next_action="finalize"
 elif [[ "$overall" == "FAIL" && "$round" -ge "$max_round" ]]; then
-    next_action="finalize"
+    next_action="blocked"
 elif [[ "$overall" == "FAIL" && "$round" -lt "$max_round" ]]; then
-    next_action="re_review"
+    next_action="fix_and_reimplement"
 elif [[ "$overall" == "INCOMPLETE" ]]; then
     next_action="incomplete"
 fi

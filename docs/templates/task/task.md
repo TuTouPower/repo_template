@@ -24,7 +24,7 @@ front matter 键 `tid`，值形如 `t001`。改 `diff_anchor` 时只改 front ma
 逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
 - `已修`：本 task 内已按 finding 改完
-- `遗留`：本 task 解决不了；可 done，须在下方「Exception / 遗留」与口头报告中列出
+- `遗留`：本 task 解决不了；满轮后进 blocked 或用户放行 exception 后，在「Exception / 遗留」与口头报告中列出
 - `撤回`：误报；须原 reviewer 在对应 `review_*.md` 末尾追加撤回记录后，再在本表标 `撤回`
 
 ### Round 1 零 finding

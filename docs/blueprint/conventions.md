@@ -51,7 +51,7 @@ tid: t001          # 键 tid；值小写 t001
 slug: example_slug
 diff_anchor: "<SHA>"
 branch: t001_example_slug
-status: backlog   # backlog | active | done | dropped
+status: backlog   # backlog | active | blocked | done | dropped
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
 ```
@@ -77,7 +77,8 @@ status: backlog   # backlog | active | done | dropped
 | t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
-- exception（有遗留）：不改写 `review_*`；`task.md` 收尾报告写清；收尾口头报告；`tasks_index` 可备注 `done_with_exception`
+- exception：仅门禁通过后的 `遗留`，或 **blocked 经用户显式放行** 后收尾；不改写 `review_*`；`task.md` 收尾报告写清；口头报告；`tasks_index` 备注 `done_with_exception`
+- `blocked`：见 `AGENTS.md`「blocked」；`tasks_index` / front matter 同步为 `blocked`
 
 ## specs_index 字段
 
