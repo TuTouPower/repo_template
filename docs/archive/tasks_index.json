@@ -1,0 +1,12 @@
+{
+  "tasks": [
+    {
+      "tid": "t001",
+      "title": "落地 multi-model-adoption：工作流与模板一致性",
+      "slug": "workflow_adoption_fix",
+      "status": "done",
+      "branch": "t001_workflow_adoption_fix",
+      "note": "review_20260720_2346"
+    }
+  ]
+}
