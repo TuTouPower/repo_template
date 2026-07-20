@@ -8,8 +8,9 @@
 
 ## adoption 处置摘要
 
-- 已修 N 项 / 遗留 K 项 / 无需修改 M 项
-- {每条一行：finding_id — 决策一句话}
+- 已修 N 项 / 遗留 K 项
+- {每条一行：finding_id — 处置一句话}
+- {Round 2 verdict：PASS / FAIL（FAIL 必有用户显式批准的降级/拆 task/重写依据）}
 
 ## 遗留问题
 

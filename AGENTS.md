@@ -18,7 +18,7 @@
 | `docs/spikes/SNN_slug/` | 当前 spike | 技术选型或未知风险验证时 | `report.md` 必需；有实验代码时再建 `code/` |
 | `docs/templates/` | task / task review+adoption / spike 模板 | 创建对应工作项时复制 | 复制使用，不代表 active 数据 |
 | `docs/guides/` | 给人看的使用指南 | 按需 | 不承载 agent 行为规则 |
-| `docs/archive/` | 完结或终止的 spec、task、review、spike | 追溯历史时 | 镜像原路径，只进不出；内部文件只准新增，不准修改 |
+| `docs/archive/` | 完结或终止的 spec、task、review、spike 等 | 追溯历史时 | 镜像原路径，只进不出；内部文件只准新增，不准修改 |
 | `schemas/` | 跨服务接口契约（OpenAPI / proto / GraphQL） | 实现或消费服务前 | 改契约走 task 流程；类型落点见 `docs/blueprint/conventions.md` |
 | `config/` | 配置文件（默认 + 环境覆盖 + `.env.example`） | 部署、调试、新增服务时 | 真值不入库，`.env` 由 `.env.example` 复制填写 |
 | `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 正常开发 | 正常开发 |
@@ -53,26 +53,27 @@
 
 一个 task 产出一个 commit，步骤：
 
-1. 登记 `docs/tasks_index.md`（标 `active`，填 owner 和 branch）
+1. 登记 `docs/tasks_index.md`（标 `active`，填 owner 和 branch）；记录 `diff_anchor`（当前 HEAD SHA）到 `docs/tasks/TNNN_slug/log.md`（首行 `diff_anchor: <SHA>`），作为 review 阶段 `git diff <diff_anchor>...HEAD` 的基准。
 2. 可测试部分先写红（运行 `{test_cmd}` 看失败）。
 3. 实现变绿（运行 `{test_cmd}` 看通过），任务量不大由自己完成，任务量大可派 sub agent。
 4. agent-verify 黑盒验证：运行 `{blackbox_cmd}`。
-5. review：派两个 sub agent 并行评审当前未提交改动，均对照 task spec 判断代码、测试是否仍满足最初需求。两 agent 各自从 `docs/templates/task/review.md` 复制模板，独立成报告。
-    - 代码 agent：核对实现与 spec 是否一致，写 `docs/tasks/TNNN_slug/review_code.md`，填 `reviewer_focus=代码`，finding 用 `TNNN_code_fNNN` 编号。
-    - 测试 agent：核对测试覆盖与端到端行为是否对应 spec 验收标准，写 `docs/tasks/TNNN_slug/review_test.md`，填 `reviewer_focus=测试`，finding 用 `TNNN_test_fNNN` 编号。
-    - 续写规则：首次复制模板写入；后续局部重审在文件末尾追加 `## 局部重审 N (YYYY-MM-DD HH:MM UTC+8, 触发:原因)` 小节，只写本轮新发现和复核结论；首次及历史轮次内容保留不覆盖。finding ID 跨轮次全局续编（如 `TNNN_code_f003` 接上次最大号）。
-    - reviewer 对评审对象只读，不得修改被评审代码、`docs/tasks/TNNN_slug/adoption.md`、他人报告。
-6. owner adoption：读 `docs/tasks/TNNN_slug/review_code.md` 和 `docs/tasks/TNNN_slug/review_test.md`，逐条写 `docs/tasks/TNNN_slug/adoption.md`（文件不存在从 `docs/templates/task/adoption.md` 复制模板；已存在则续写追加，禁止覆盖）。
-    - 续写规则：首次复制模板写入；后续处置在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，对应本轮 review 的 finding；同 finding 在不同轮次决策变化各占一行，保留历史。
-    - 采纳且能当场修的立即修复，`status` 标 `已修`：
-        - 触代码或测试回到 step 4 重新黑盒验证；
-        - 仅文档改动区分：笔误类（错字、格式）直接继续；事实类触发局部重审，按改动范围分流——改 spec / AGENTS.md / blueprint / 验收标准两路都重审，改实现仅 `review_code` 重审，改测试仅 `review_test` 重审；重审发现新问题回到本 step 处置。
-    - 不采纳的 `status` 标 `无需修改`，只记 `rationale`。
-    - 不能当场修的 `status` 标 `遗留`，`rationale` 写明原因，在 `docs/tasks/TNNN_slug/task_report.md` 遗留问题中体现。
-7. 收尾
+5. review Round 1：派两个 sub agent 并行评审 `git diff <diff_anchor>...HEAD`，各自对照 task spec 出 finding 清单。
+    - 代码 agent：从 `docs/templates/task/review_prompt_code.md` 整体注入提示词（替换 `{TID}`/`{slug}`/`{spec_path}`/`{task_dir}`/`{diff_anchor}`），独立成报告到 `docs/tasks/TNNN_slug/review_code.md`，finding 用 `TNNN_code_fNNN` 编号。
+    - 测试 agent：从 `docs/templates/task/review_prompt_test.md` 整体注入提示词，独立成报告到 `docs/tasks/TNNN_slug/review_test.md`，finding 用 `TNNN_test_fNNN` 编号。
+    - 共享规则（两 agent 都遵守）：read-only、不信任 implementer 自述、Pre-Report Gate、重审追加（首次复制 `review.md` 模板；后续在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，不覆盖；finding ID 跨轮全局续编）。
+    - 末行 `verdict: PASS`（0 finding，跳过 step 6 直接进 step 7）/ `verdict: FAIL`（有 finding，进 step 6）。
+    - 严重度三级：`critical`（bug/安全/数据丢失）/ `important`（本 task 不可信直到修：verbatim 重复、swallowed errors、恒真断言、弱化断言、删 expect、mock 误用、AC 缺失实现或测试）/ `minor`（风格、覆盖可更广）。**所有 finding 必须修，任一未修即 FAIL**。
+6. owner adoption + 修复：
+    - 读 `review_code.md` 和 `review_test.md`，逐条 finding **全部立即修复**，`status` 标 `已修`。写 `docs/tasks/TNNN_slug/adoption.md`（文件不存在从 `docs/templates/task/adoption.md` 复制模板；已存在则在文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，禁止覆盖）。
+    - 触代码或测试 -> 回 step 3 重新跑 `{test_cmd}`，再回 step 4 黑盒验证；仅文档笔误类（错字、格式）直接继续；仅文档事实类触发局部重审，按改动范围分流——改 spec / AGENTS.md / blueprint / 验收标准两路都重审，改实现仅 `review_code` 重审，改测试仅 `review_test` 重审；重审发现新问题回到本 step 处置。
+    - **严格模式：无"无需修改"出口**，reviewer 出的 finding 必须采纳修复。严重度只表示优先级，不表示可忽略。
+    - "遗留"仅限实现层无法在本 task 解决（需拆新 task）的极少数情况：`rationale` 必须含"已确认无法在本 task 修复"的依据 + 后续 task 计划，在 `task_report.md` 遗留问题中体现，task 不得 done 直到用户显式批准。
+    - 处置完进 step 5 Round 2（重审）：两 reviewer 复核前轮 finding 是否真修 + 扫新 finding，末行 `verdict: PASS`（全修且无新 finding）进 step 7 / `verdict: FAIL`（任一未修 / 修不彻底 / 有新 finding）回本 step 继续。
+    - **2 轮上限**：同一 task 最多 2 轮 review。Round 2 仍 FAIL -> task 不得 done，需用户决策（降级 / 拆 task / 重写），在 `task_report.md` 记录 blocked 原因。
+7. 收尾（前置：两 reviewer Round 2 均 `verdict: PASS`，或遗留项经用户显式批准保留）
     - 更新本次 task 受影响文档：`docs/blueprint/`（含 `decisions.md` 的非显然决策）、`docs/specs/`、`docs/guides/`、`README.md`、API 文档等。
     - 更新 `docs/tasks/TNNN_slug/log.md`：追加本 task 进展、决策与关键验证。
-    - 写 `docs/tasks/TNNN_slug/task_report.md`（从 `docs/templates/task/task_report.md` 复制模板）：对照 spec 验收标准逐条勾选；adoption 处置摘要（已修 N / 遗留 K / 无需修改 M，每条一行）；遗留问题（若有，注明原因）。不记 commit SHA，本报告所在 commit 即 task commit，SHA 由 `git log --grep TNNN` 查。
+    - 写 `docs/tasks/TNNN_slug/task_report.md`（从 `docs/templates/task/task_report.md` 复制模板）：对照 spec 验收标准逐条勾选；adoption 处置摘要（已修 N / 遗留 K，每条一行；Round 2 verdict）；遗留问题（若有，注明原因）。不记 commit SHA，本报告所在 commit 即 task commit，SHA 由 `git log --grep TNNN` 查。
     - 更新 `docs/tasks_index.md`：本 task 状态改 `done`。
     - 若后置 task 存在，查看本 task 结果是否修订后置 task，若影响则修订后置 task 的 `spec.md` / `plan.md`。
     - 归档：将 `docs/tasks/TNNN_slug/` 移入 `docs/archive/tasks/`。

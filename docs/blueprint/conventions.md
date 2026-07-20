@@ -48,34 +48,47 @@
 
 ## review 报告字段
 
-`review_code.md` / `review_test.md` 共用以下字段；流程（两 agent 并行、续写规则、权限）见 AGENTS.md step 5。
+`review_code.md` / `review_test.md` 共用以下字段；流程（两 agent 并行、续写规则、权限）见 AGENTS.md step 5；完整 reviewer 提示词见 `docs/templates/task/review_prompt_code.md` 和 `docs/templates/task/review_prompt_test.md`。
 
 - task：`TNNN_slug`
 - spec：`docs/tasks/TNNN_slug/spec.md`
-- target：本 task 未提交改动（working tree）
+- diff_anchor：task 开始时的 HEAD SHA（reviewer 用 `git diff <diff_anchor>...HEAD` 看改动）
+- target：`git diff <diff_anchor>...HEAD`
 - reviewer_focus：`代码` / `测试`
+- round：`1` / `2`（同一 task 最多 2 轮 review）
 - reviewed_at：`YYYY-MM-DD HH:MM UTC+8`
 - findings：分类别前缀的 `TNNN_code_fNNN` / `TNNN_test_fNNN`，每条含严重度、位置、问题、建议
-- conclusion：本 agent 总体判断
+- conclusion：前轮复核（Round 2 写）+ 本轮新发现数 + 总体判断
+- verdict：末行 `verdict: PASS`（0 finding 或前轮全修且无新 finding）/ `verdict: FAIL`（有 finding 或前轮未修透）
 
 `reviewer_focus` 与 finding 前缀映射：`代码` → `code`，`测试` → `test`。
 
+### 严重度三级（所有 finding 必修，严格模式）
+
+- `critical`：bug / 安全 / 数据丢失 / broken functionality
+- `important`：本 task 不可信直到修——verbatim 重复、swallowed errors、恒真断言、弱化断言、删 expect、mock 误用、spec AC 缺失实现或测试
+- `minor`：风格、覆盖可更广、命名优化、注释补充
+
+严重度表示优先级，不表示可忽略。任一 finding 未修，verdict 即 FAIL。
+
 ## adoption 字段
 
-`adoption.md` 字段表；处置流程见 AGENTS.md step 6。
+`adoption.md` 字段表；处置流程见 AGENTS.md step 6。严格模式：所有 finding 必须采纳修复，无"无需修改"出口。
 
-| finding_id | decision | rationale | status |
-|------------|----------|-----------|--------|
-| TNNN_code_f001 | 采纳 / 不采纳 | {一句话理由} | 已修 / 遗留 / 无需修改 |
+| finding_id | severity | status | rationale | fix_ref |
+|------------|----------|--------|-----------|---------|
+| TNNN_code_f001 | critical/important/minor | 已修 | {一句话说明} | {文件:行 或 commit} |
+| TNNN_test_f001 | ... | 遗留 | {需拆新 task 的依据} | - |
 
 字段说明：
 
-- `decision`：采纳 / 不采纳。
-- `rationale`：一句话理由；`遗留` 项在此写未修原因。
+- `severity`：原 finding 严重度。
 - `status`：
     - `已修`：在本 task commit 内修复。
-    - `遗留`：未在本 commit 修复。
-    - `无需修改`：不采纳项专用。
+    - `遗留`：实现层无法在本 task 解决（需拆新 task）；task 不得 done 直到用户显式批准。
+    - （严格模式无"无需修改"出口。）
+- `rationale`：`已修` 写一句话说明修复要点；`遗留` 写无法当场修的依据和后续 task 计划。
+- `fix_ref`：`已修` 指向修复位置（`文件:行` 或 commit SHA）；`遗留` 填 `-`。
 
 ## specs_index 字段
 
