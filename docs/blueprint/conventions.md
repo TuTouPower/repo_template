@@ -51,11 +51,11 @@ tid: t001          # 键 tid；值小写 t001
 slug: example_slug
 diff_anchor: "<SHA>"
 branch: t001_example_slug
-status: backlog   # backlog | active | blocked | done | dropped
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
 ```
 
+- task 状态（`backlog` / `active` / `blocked` / `done` / `dropped`）的权威在 `docs/tasks_index.md`，不在 front matter。
 - `scripts/render_review_prompts.sh --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
 - 正文结构见 `docs/templates/task/task.md`。
 
@@ -63,7 +63,7 @@ status: backlog   # backlog | active | blocked | done | dropped
 
 `review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.sh` 渲染结果为准。
 
-- 提示词正文嵌在该脚本内（code 轴 / test 轴 / 共享规则含严重度与 PASS），**不在** `docs/templates/`。
+- 提示词正文存于 `docs/templates/review/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.sh` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.sh --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
 - 产物路径：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`（gitignore，不入库）。
 - `docs/templates/task/review.md` 仅空骨架。
@@ -77,8 +77,7 @@ status: backlog   # backlog | active | blocked | done | dropped
 | t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
-- exception：仅门禁通过后的 `遗留`，或 **blocked 经用户显式放行** 后收尾；不改写 `review_*`；`task.md` 收尾报告写清；口头报告；`tasks_index` 备注 `done_with_exception`
-- `blocked`：见 `AGENTS.md`「blocked」；`tasks_index` / front matter 同步为 `blocked`
+- `blocked`：见 `AGENTS.md`「blocked」；`tasks_index` 同步为 `blocked`
 
 ## specs_index 字段
 
@@ -114,4 +113,4 @@ status: backlog   # backlog | active | blocked | done | dropped
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带 `tid`，如 `tests/unit/parser/t042_empty_token.test.ts`。
-- 文件过大、圈复杂度默认阈值见 `scripts/render_review_prompts.sh` 内嵌 code 轴文案。项目覆盖写在本小节。
+- 文件过大、圈复杂度默认阈值见 `docs/templates/review/code_prompt.txt`。项目覆盖写在本小节。

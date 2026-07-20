@@ -75,3 +75,11 @@
 - 选项：A 仍自动收尾 + exception；B 永久死锁；C `blocked` + 停自动推进，用户加轮 / dropped / 显式 exception 后才可收尾。
 - 结论：C。状态增加 `blocked`；黑盒未过不得进双审；收尾前置为黑盒通过且双审 PASS，或用户对 blocked 显式 exception。
 - 替代：收紧 005 中「无需批准」边界；与早期 Round2 FAIL→blocked 意图对齐。
+- **现以 010 为准**：取消 exception 路径。
+
+## 010 取消 exception 收尾路径（2026-07-21）
+
+- 背景：exception 路径允许 blocked 任务经用户放行后绕过门禁直接收尾，留下 `done_with_exception` 状态。语义复杂、与「门禁」互斥，实际无人使用。
+- 选项：A 保留 exception；B 取消 exception，blocked 后只剩 加轮 / dropped 两个出口。
+- 结论：B。blocked 必须 加轮 或 dropped，无第三条路。`tasks_index` 不再出现 `done_with_exception`。
+- 替代：废止 004、005、009 中的 exception 分支；conventions.md 与 task.md 模板同步删除 exception 字段与说明。
