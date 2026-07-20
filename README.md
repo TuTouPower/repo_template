@@ -8,9 +8,8 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 2. **按需导航**：`AGENTS.md` 说明什么场景读取什么文档，避免全量加载。
 3. **当前与历史分离**：active 工作放 `tasks/`、`reviews/`、`spikes/`，完结或终止后移入 `archive/`。
 4. **模板不冒充工作项**：task、review、spike 模板集中在 `docs/templates/`，不占用真实 `tid` / `sid`。
-5. **长期真相延后更新**：未稳定方案留在 task；review、adoption 和验证完成后再更新 blueprint。
-6. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/双轴 review/`task.md` 过程总账闭环。review 与处置在 **commit 前** 完成；review 证据源为 `git diff <diff_anchor>`（相对工作区，见 `task.md` front matter）。
-7. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；每个 task **收尾时**累积写入 `docs/specs/`（须已过黑盒）。
+5. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/双轴 review/`task.md` 过程总账闭环。review 与处置在 **commit 前** 完成；review 证据源为以 `diff_anchor` 为基线的 `git diff`（`diff_anchor` 取自 `task.md` front matter）。
+6. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；每个 task **收尾时**累积写入 `docs/specs/`（须已过黑盒）。
 
 ## 初始化新项目
 
@@ -20,7 +19,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 4. 保持 `CLAUDE.md -> AGENTS.md` 软链接。
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md` 初稿；`decisions.md` 初始可为空。
-7. 确认 `docs/tasks_index.md`、`docs/specs_index.md` 无伪 active 数据。
+7. 确认 `docs/tasks_index.json`、`docs/specs_index.md` 无伪 active 数据。
 
 README 应改成项目自身介绍，不继续保留模板说明。
 
@@ -34,13 +33,14 @@ README 应改成项目自身介绍，不继续保留模板说明。
 ├── docs/
 │   ├── blueprint/             # 当前架构、领域、约定、决策
 │   ├── guides/                # 给人看的使用指南
-│   ├── templates/             # task / task review+adoption / spike 模板
+│   ├── templates/             # task / task review / spike 模板
 │   ├── tasks/                 # task 工作区（backlog 起含开发中 spec）
-│   ├── tasks_index.md         # task 索引
+│   ├── tasks_index.json       # task 索引（活跃；通过 scripts/task.py 操作）
 │   ├── specs/                 # 需求 spec（每个 task 收尾时累积，须已过黑盒）
 │   ├── specs_index.md         # 需求索引（随 task 收尾更新）
 │   ├── reviews/               # 当前独立 review（review_<TS> 目录）
 │   ├── spikes/                # 当前 spike
+│   ├── bugs.md                # 已知未修复 bug 追加式记录
 │   ├── handoff.md             # 项目级交接
 │   └── archive/               # 完结或终止的历史记录
 ├── schemas/                   # 跨服务接口契约

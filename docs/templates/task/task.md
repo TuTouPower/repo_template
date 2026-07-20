@@ -7,8 +7,7 @@ branch: t001_example_slug
 
 # Task {tid}_{slug}
 
-过程总账。reviewer **只写** `review_code.md` / `review_test.md`，不改本文件。  
-front matter 键 `tid`，值形如 `t001`。改 `diff_anchor` 时只改 front matter。
+过程总账。reviewer **只写** `review_code.md` / `review_test.md`，不改本文件。
 
 ## 过程记录
 
@@ -18,7 +17,7 @@ front matter 键 `tid`，值形如 `t001`。改 `diff_anchor` 时只改 front ma
 
 ## Review 处置
 
-**本文件本小节 = 处置表唯一落点。** 双审结束后在此追加轮次小节与表格；不要写到 `review_code.md` / `review_test.md`，也不要另建 `adoption.md`。
+**本文件本小节 = 处置表唯一落点。** 双审结束后在此追加轮次小节与表格；不要写到 `review_code.md` / `review_test.md`，也不要另建其他文件。
 
 逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 

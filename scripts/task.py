@@ -37,8 +37,11 @@ TID_RE = re.compile(r"^t([0-9]+)$")
 def load(path: Path) -> dict:
     if not path.exists():
         return {"tasks": []}
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return {"tasks": []}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(text)
     except json.JSONDecodeError as e:
         sys.exit(f"JSON parse error in {path}: {e}\n请把错误提示给用户，不要手工修 JSON。")
     if "tasks" not in data or not isinstance(data["tasks"], list):

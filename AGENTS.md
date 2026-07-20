@@ -14,11 +14,11 @@
 | -------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `docs/specs_index.md`                      | 当前生效 spec 清单（在表即生效）          | 追溯已固化需求时                                                                                                                  | task**收尾**时更新；废弃时删除行                                                       |
 | `docs/specs/<slug>.md`                     | 需求级 spec（按已完成 task 累积）         | 追溯需求实现与验收时                                                                                                              | task**收尾**时累积更新；废弃时移入 `docs/archive/specs/`                             |
-| `docs/tasks_index.json`                    | 活跃 task：tid、状态、branch               | 接到新需求或状态流转时                                                                                                            | **只能通过 `scripts/task.py` 操作**；禁止直接编辑                                         |
-| `docs/archive/tasks_index.json`            | 归档 task（`done` / `dropped`）            | 追溯历史 tid 时                                                                                                                  | `scripts/task.py finish` / `drop` 自动移入；禁止直接编辑                                   |
+| `docs/tasks_index.json`                    | 活跃 task：tid、状态、branch              | 接到新需求或状态流转时                                                                                                            | **只能通过 `scripts/task.py` 操作**；禁止直接编辑                                    |
+| `docs/archive/tasks_index.json`            | 归档 task（`done` / `dropped`）       | 追溯历史 tid 时                                                                                                                   | `scripts/task.py finish` / `drop` 自动移入；禁止直接编辑                                 |
 | `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
-| `docs/bugs.md`                            | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                  | 发现不立即修复的 bug 追加新条目；修复后在原条目追加「修复」行，不删原条目                    |
+| `docs/bugs.md`                             | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                   | 发现不立即修复的 bug 追加新条目；修复后在原条目追加「修复」行，不删原条目                    |
 | `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策      | 改跨模块行为前读`architecture.md`；写代码或文档前读 `conventions.md`；新业务概念读 `domain.md`；历史取舍读 `decisions.md` | finalization 时更新；实施与 review 期间仅写入已稳定结论                                      |
 | `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策   | 审阅全代码 / diff / 指定范围时                                                                                                    | 用户命令后生成                                                                               |
 | `docs/spikes/{sid}_{slug}/`                | 当前 spike                                | 技术选型或未知风险验证时                                                                                                          | `report.md` 必需；有实验代码再建 `code/`                                                 |
@@ -34,15 +34,13 @@
 
 - specs driven：先拆 task 并填写 spec/plan（验收标准非空）；后置 task 的 spec/plan 随前置完成修订。
 - TDD：可测部分先红后绿。
-- 长期真相延后：未稳定方案留在 task；中途要固化长期真相则拆独立 task，task 完结时更新 blueprint。
 
 ## 开发工作流
 
 ### 总览
 
 - 一个**需求**拆成 N 个 **task**（每个结果独立可验证；过大则继续拆；一个 task 内一个 commit）。
-- 每个 task 走一遍「单 task 流程」。
-- 实现侧过程写在 `task.md`。
+- 每个 task 走一遍「单 task 详细步骤」。
 
 ### 命名
 
@@ -52,7 +50,7 @@
 - 门禁默认上限：
   - `max_verify_round = 5`（黑盒验证轮次上限）；
   - `max_review_round = 2`（双审轮次上限）。
-- task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。存于 `docs/tasks_index.json`，**只能通过 `scripts/task.py` 操作**；`done` / `dropped` 由脚本自动移入 `docs/archive/tasks_index.json`。
+- task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### 新需求拆分与创建 task
 
@@ -100,6 +98,7 @@ flowchart TD
     BLK -->|用户加轮后过门禁| S7
     S7 --> S8
 ```
+
 ### 单 task 详细步骤
 
 - **Step 1：开干**
@@ -166,10 +165,10 @@ flowchart TD
 
 ### blocked
 
-| 触发                                                  | 动作                                                                                                                   |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 触发                                                  | 动作                                                                                                                          |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | 黑盒轮次达`max_verify_round` 仍未通过               | 过程记录写明原因与轮次；`scripts/task.py block <tid> --reason blackbox`；`task.md` 过程记录同步说明；口头说明；停自动推进 |
-| 双审`overall=FAIL` 且 `round ≥ max_review_round` | 处置表填完；`scripts/task.py block <tid> --reason review`；`task.md` 过程记录同步说明；口头说明；停自动推进                |
+| 双审`overall=FAIL` 且 `round ≥ max_review_round` | 处置表填完；`scripts/task.py block <tid> --reason review`；`task.md` 过程记录同步说明；口头说明；停自动推进               |
 
 进入 blocked 后，agent **必须停下来向用户请求选择**（不得自行决定下一步，不得自动推进）。把下述两个选项呈现给用户并等待显式答复：
 
