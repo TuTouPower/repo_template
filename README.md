@@ -9,8 +9,8 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 3. **当前与历史分离**：active 工作放 `tasks/`、`reviews/`、`spikes/`，完结或终止后移入 `archive/`。
 4. **模板不冒充工作项**：task、review、spike 模板集中在 `docs/templates/`，不占用真实 ID。
 5. **长期真相延后更新**：未稳定方案留在 task；review、adoption 和验证完成后再更新 blueprint。
-6. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/review/adoption/task_report 闭环。review 和 adoption 在 commit 前完成。
-7. **specs driven + TDD**：spec 和 plan 先行并过用户审核；开发循环内先写红再变绿，review 在 commit 前。
+6. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/review/adoption/task_report 闭环。review 和 adoption 在 **commit 前** 完成；review 证据源为 `git diff <diff_anchor>`（工作区相对 task 起点），不是 `...HEAD`。
+7. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；需求全部 task done 后固化 `docs/specs/`。
 
 ## 初始化新项目
 
@@ -35,14 +35,16 @@ README 应改成项目自身介绍，不继续保留模板说明。
 │   ├── blueprint/             # 当前架构、领域、约定、决策
 │   ├── guides/                # 给人看的使用指南
 │   ├── templates/             # task / task review+adoption / spike 模板
-│   ├── tasks/                 # active task 工作区
+│   ├── tasks/                 # task 工作区（backlog 起含开发中 spec）
 │   ├── tasks_index.md         # task 索引
-│   ├── specs/                 # 需求 spec（task 黑盒验证后累积）
-│   ├── specs_index.md         # 需求索引
+│   ├── specs/                 # 需求 spec（全需求 task done 后固化）
+│   ├── specs_index.md         # 需求索引（task 期间不写）
 │   ├── reviews/               # 当前独立 review（review_<TS> 目录）
 │   ├── spikes/                # 当前 spike
 │   ├── handoff.md             # 项目级交接
 │   └── archive/               # 完结或终止的历史记录
+├── schemas/                   # 跨服务接口契约
+├── config/                    # 配置（默认 + 环境覆盖 + .env.example）
 ├── src/
 ├── tests/
 │   ├── unit/
