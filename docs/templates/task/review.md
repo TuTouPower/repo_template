@@ -1,6 +1,6 @@
 # Task review {TID}（reviewer_focus: {代码/测试}）
 
-字段骨架参考。正式报告结构以 `review_prompt_code.md` / `review_prompt_test.md` 输出格式为准。
+字段骨架参考。正式报告结构以 `scripts/render_review_prompts.sh` 渲染后的 prompt 输出格式为准。
 
 - task：`{TID}_slug`
 - spec：`spec.md`（同目录相对路径）

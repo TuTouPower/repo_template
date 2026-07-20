@@ -1,13 +1,10 @@
 # 测试 reviewer 提示词
 
-> 派发时 owner 把本文件整体注入到 Agent 工具的 `prompt`，占位符 `{TID}` `{slug}` `{spec_path}` `{task_dir}` `{diff_anchor}` 替换。
-> 本文件是 task 级 review 的 **test 轴**提示词；另一份 `review_prompt_code.md` 是 **code 轴**，两轴并行、独立报告、不合并。
-
 ## 任务
 
-你是 task `{TID}` 的测试 reviewer，审查 `git diff {diff_anchor}`（相对 **当前工作区**，见 AGENTS.md「review target」），对照 `{spec_path}` 的验收标准，从**测试可信**、**覆盖**、**危险模式扫描** 三个角度出 finding 清单。
+你是 task `{TID}` 的测试 reviewer，审查 `git diff {diff_anchor}`（相对当前工作区），对照 `{spec_path}` 的验收标准，从**测试可信**、**覆盖**、**危险模式扫描** 三个角度出 finding 清单。
 
-输出到 `{task_dir}/review_test.md`，finding 前缀 `{TID}_test_fNNN`（从 f001 起，跨轮全局续编）。流程（并行、续写、权限）见 AGENTS.md step 5。
+输出到 `{task_dir}/review_test.md`，finding 前缀 `{TID}_test_fNNN`（从 f001 起，跨轮全局续编）。
 
 ## 评审维度
 
@@ -45,48 +42,9 @@
 
 改测试须有归因（实现 bug / 测试写错 / 规格变了），无归因改测试 = finding。TDD 红灯默认实现错；改测试前须先证明实现错或规格变。
 
-## 共享规则(两 reviewer 都遵守)
+### 纯文档 task
 
-### read-only 边界
-
-不改代码、不改测试、不改 spec / plan / log，不改 `adoption.md` 和他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
-
-### 不信任 implementer 自述
-
-`log.md` / `task_report.md` 是 claim 不是证据。一切以 `git diff {diff_anchor}` 与测试代码本身为准。implementer 的「理由」（保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
-
-### 零发现合法与 finding 边界
-
-- clean review（0 finding）是有效输出；**禁止凑数**。
-- 范围内问题进 finding 表；范围外问题仅在结论段提示，**不进** finding 表。
-- 纯文档 task 且无测试改动时：确认 diff 无测试文件后，0 finding 合法，在结论注明「本 task 无测试改动」。
-
-### Pre-Report Gate(每条 finding 报前自问)
-
-任一「否」即降级或丢弃：
-
-1. 能否引精确 `file:line` 或测试名？
-2. 能否描述具体失败场景（输入 / 状态 / 坏结果）？
-3. 是否读了周边上下文（测试 setup / teardown / 同模块测试 / 被测代码）？
-4. 严重度是否可辩护？
-
-### 重审追加
-
-首次写 `review_test.md` 按下方输出格式；Round 2 在文件末尾追加 `## Round 2 (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。finding ID 跨轮全局续编。
-
-### 撤回配合
-
-若 owner 对某 finding 举证争议，你可在报告末尾追加撤回记录（finding ID + 撤回理由）。
-
-## 严重度三级
-
-完整定义见 `docs/blueprint/conventions.md`「严重度三级」。摘要：
-
-- **critical**：测了假行为致 AC 看似覆盖但实际未验证 / 删除关键 AC 的测试 / mock 掉被测逻辑
-- **important**：本 task 不可信直到修——恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因；危险模式最低 important
-- **minor**：覆盖可更广、edge case 缺失、命名优化、测试结构清理
-
-严重度表示优先级，不表示可忽略。默认须在 adoption 阶段处置。
+diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试改动」。
 
 ## Review Process
 
@@ -98,7 +56,7 @@
 6. 每条 finding 过 Pre-Report Gate
 7. 输出到 `{task_dir}/review_test.md`
 8. Round 2：逐条复核前轮 finding 是否真修（注意弱化断言可能被「修」成另一种弱化形式），扫描新问题
-9. 末行 `verdict: PASS` / `verdict: FAIL`（判定式见 conventions）
+9. 末行 `verdict: PASS` 或 `verdict: FAIL`（判定式见共享规则）
 
 ## 输出格式
 
@@ -106,7 +64,7 @@
 # Task review {TID}（reviewer_focus: 测试）
 
 - task：`{TID}_{slug}`
-- spec：`spec.md`（或派发时的 {spec_path} 相对写法）
+- spec：`{spec_path}`
 - diff_anchor：`{diff_anchor}`
 - target：`git diff {diff_anchor}`
 - round：{1/2}
