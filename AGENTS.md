@@ -16,6 +16,7 @@
 | `docs/specs/<slug>.md`                     | 需求级 spec（按已完成 task 累积）         | 追溯需求实现与验收时                                                                                                              | task**收尾**时累积更新；废弃时移入 `docs/archive/specs/`                             |
 | `docs/tasks_index.json`                    | 活跃 task：tid、状态、branch              | 接到新需求或状态流转时                                                                                                            | **只能通过 `scripts/task.py` 操作**；禁止直接编辑                                    |
 | `docs/archive/tasks_index.json`            | 归档 task（`done` / `dropped`）       | 追溯历史 tid 时                                                                                                                   | `scripts/task.py finish` / `drop` 自动移入；禁止直接编辑                                 |
+| `docs/archive/tasks_audit.log`             | rewind/purge 审计（append-only）       | 追溯状态撤回与误建删除时                                                                                                          | `scripts/task.py rewind` / `purge` 独占 append；禁止编辑或截断                          |
 | `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
 | `docs/bugs.md`                             | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                   | 发现不立即修复的 bug 追加新条目；修复后在原条目追加「修复」行，不删原条目                    |
@@ -51,6 +52,9 @@
   - `max_verify_round = 5`（黑盒验证轮次上限）；
   - `max_review_round = 2`（双审轮次上限）。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
+- 状态撤回（带审计，写入 `docs/archive/tasks_audit.log`）：
+  - `rewind`：`active->backlog`、`blocked->active`（或 `blocked->backlog` 跨步）；仅作用于 active 文件，archive（`done`/`dropped`）不可 rewind。误 `start`/`block`/`resume` 用它。
+  - `purge`：`backlog->deleted`（从 JSON 删除条目，不进 archive，审计留快照）；仅限从未开干（无 task 目录、无未合并 commit）的误建。有 commit 的误建用 `drop`。
 
 ### 新需求拆分与创建 task
 
@@ -96,6 +100,14 @@ flowchart TD
     D3 -->|否| DOC --> S7
     D2 -->|是| W_FAIL2 --> BLK
     BLK -->|用户加轮后过门禁| S7
+    RW["rewind：状态撤回（active->backlog / blocked->active）"]
+    PG["purge：误建删除（仅 backlog 无目录）"]
+    AUDIT["append docs/archive/tasks_audit.log"]
+    S1 -.误开干.-> RW
+    BLK -.误阻断.-> RW
+    RW --> AUDIT
+    S1 -.误建.-> PG
+    PG --> AUDIT
     S7 --> S8
 ```
 
@@ -196,6 +208,7 @@ flowchart TD
 ## 硬约束
 
 - `docs/tasks_index.json` 与 `docs/archive/tasks_index.json` **只能由 `scripts/task.py` 修改**。agent 禁止直接编辑这两个 JSON。脚本失败必须停下提示用户，禁止在未告知用户的情况下手工修 JSON。
+- `docs/archive/tasks_audit.log` **只能由 `scripts/task.py rewind` / `purge` 以 append 模式写入**。agent 禁止编辑、截断或删除。rewind/purge 失败必须停下提示用户，禁止不告知用户就手工修审计 log。
 - {密钥规则、禁写路径、平台限制等项目特有约束，按需填写。}
 - `{test_cmd}`：日常测试（单测/集成/单文件）；**红** / **绿** 使用。命令多时改为指向 `docs/guides/testing.md`。
 - `{blackbox_cmd}`：黑盒验证；**黑盒** 使用。
@@ -205,6 +218,7 @@ flowchart TD
 
 - 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
 - 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
+- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket 编号（`(D24-N3)` `(S15)`）、来源或实现位置标注（括注如 `(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`，叙述如"本节根据 X 决定 Y"）。
 - 存在多种合理理解时，先澄清再做跨文档修改。
 - 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
-- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步。
+- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。
