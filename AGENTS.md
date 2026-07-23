@@ -19,7 +19,7 @@
 | `docs/archive/tasks_audit.log`             | rewind/purge 审计（append-only）       | 追溯状态撤回与误建删除时                                                                                                          | `scripts/task.py rewind` / `purge` 独占 append；禁止编辑或截断                          |
 | `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
-| `docs/bugs.md`                             | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                   | 发现不立即修复的 bug 追加新条目；修复后在原条目追加「修复」行，不删原条目                    |
+| `docs/bugs.md`                             | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                   | 发现不立即修复的 bug 追加新条目；修复后在原条目末尾追加含 task ID 的「修复」行，不删除或改写旧记录 |
 | `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策      | 改跨模块行为前读`architecture.md`；写代码或文档前读 `conventions.md`；新业务概念读 `domain.md`；历史取舍读 `decisions.md` | finalization 时更新；实施与 review 期间仅写入已稳定结论                                      |
 | `docs/reviews/review_<TS>/`                | 独立 review：多模型报告 + adoption 决策   | 审阅全代码 / diff / 指定范围时                                                                                                    | 用户命令后生成                                                                               |
 | `docs/spikes/{sid}_{slug}/`                | 当前 spike                                | 技术选型或未知风险验证时                                                                                                          | `report.md` 必需；有实验代码再建 `code/`                                                 |
@@ -33,8 +33,8 @@
 
 ## 开发原则
 
-- specs driven：先拆 task 并填写 spec/plan（验收标准非空）；后置 task 的 spec/plan 随前置完成修订。
-- TDD：可测部分先红后绿。
+- specs driven：先拆 task 并填写 spec/plan（行为验收标准须非空）；版本号、底层库选型、目录结构等不写进行为 AC。
+- TDD：可测部分先红后绿；测试须触达生产逻辑。
 
 ## 开发工作流
 
@@ -62,62 +62,42 @@
 2. 对每个 task：
    - 跑 `scripts/task.py add --title "..." --slug "..."`：脚本分配 `tid`、写 `status: backlog`、`branch` 留空；
    - 创建 task 目录 `docs/tasks/{tid}_{slug}/`（`tid`/`slug` 从脚本输出取）；
-   - 从 `docs/templates/task/` 复制并填写 `spec.md`、`plan.md`、`task.md`（front matter：`tid`/`slug`；`diff_anchor` 可占位，**开干**时写实值）。
+   - 从 `docs/templates/task/` 复制模板；
+   - 只读当前仓库，按现状填写 `spec.md`、`plan.md`、`task.md`（front matter：`tid`/`slug`；`diff_anchor` 可占位，**开干**时写实值）；
+   - 新建 task 时不写任何代码；凡需编码或运行验证的工作写入 plan，待执行 task 时再做；
+   - 若需 spike：写入 spec 与 plan，真正执行 task 时再做 spike 验证。
 
 ### 单 task 流程图
 
-下图只示意分支；**以步骤正文为权威**。
+下图只示意主分支；**以步骤正文为权威**。blocked 后的加轮 / dropped 见「blocked」节。
 
 ```mermaid
 flowchart TD
-    S1["Step 1：开干"]
-    S2["Step 2：红"]
-    S3["Step 3：绿"]
-    S4["Step 4：黑盒"]
-    B1{"黑盒过?"}
-    B2{"黑盒轮次≥max_verify_round?"}
-    S5["Step 5：双审"]
-    D1{"Step 6：PASS?"}
-    W_PASS["记零 finding"]
-    D2{"轮次≥max_review_round?"}
-    W_FAIL1["写处置"]
-    W_FAIL2["写处置·标完"]
-    D3{"改代码/测试?"}
-    DOC["改文档·标完"]
-    BLK["blocked 等用户"]
-    S7["Step 7：收尾"]
-    S8["Step 8：提交"]
-
-    S1 --> S2 --> S3 --> S4 --> B1
-    B1 -->|是| S5 --> D1
-    B1 -->|否| B2
-    B2 -->|否| S3
-    B2 -->|是| BLK
-    D1 -->|是| W_PASS --> S7
-    D1 -->|否| D2
-    D2 -->|否| W_FAIL1 --> D3
-    D3 -->|是| S3
-    D3 -->|否| DOC --> S7
-    D2 -->|是| W_FAIL2 --> BLK
-    BLK -->|用户加轮后过门禁| S7
-    RW["rewind：状态撤回（active->backlog / blocked->active）"]
-    PG["purge：误建删除（仅 backlog 无目录）"]
-    AUDIT["append docs/archive/tasks_audit.log"]
-    S1 -.误开干.-> RW
-    BLK -.误阻断.-> RW
-    RW --> AUDIT
-    S1 -.误建.-> PG
-    PG --> AUDIT
-    S7 --> S8
+    S1["Step 1：开干 + 前置检查"] --> S2["Step 2：红"]
+    S2 --> S3["Step 3：绿"]
+    S3 --> S4["Step 4：黑盒"]
+    S4 --> B1{"黑盒通过?"}
+    B1 -->|否且轮次未满| S3
+    B1 -->|否且轮次已满| BLK["blocked"]
+    B1 -->|是| S5["Step 5：双审"]
+    S5 --> D{"Step 6 overall?"}
+    D -->|PASS| S7["Step 7：收尾"]
+    D -->|FAIL 且 round < max| W1["写处置表"]
+    W1 --> C1{"改了代码/测试?"}
+    C1 -->|是| S3
+    C1 -->|否| DOC["改必要文档"] --> S7
+    D -->|FAIL 且 round ≥ max| W2["写处置表"] --> BLK
+    S7 --> S8["Step 8：提交"]
 ```
 
 ### 单 task 详细步骤
 
-- **Step 1：开干**
-
+- **Step 1：开干与前置检查**
+  - 若项目定义了 `{doctor_cmd}` 则运行；未定义则在过程记录写「无」。失败则停止，先解决环境问题或完成 spike，不进入红绿循环、不推进 task 状态。
   - 创建并切换工作分支；跑 `scripts/task.py start <tid>`（状态 → `active`，自动填 `branch` 为 `{tid}_{slug}`），再校验 `git branch --show-current` 与之一致。
   - `task.md` front matter：写入 `diff_anchor`（当前 HEAD SHA）、`branch`（`tid`/`slug` 在 backlog 已填）。
   - `spec.md` 验收标准非空后再进入 **Step 2**。
+  - 若 spec/plan 要求 spike，先执行；文档查询不能替代兼容实验。
 - **Step 2：红**
 
   - 可测试部分先写失败测试；运行 `{test_cmd}` 确认失败。
@@ -165,7 +145,7 @@ flowchart TD
 
   - 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`（本 task 对应累积）。
   - 更新本 task 影响到的 `docs/blueprint/`、`docs/guides/`、`README.md`、API 文档等。
-  - 写全 `task.md`「收尾报告」（验收勾选、两轴 verdict、遗留列出）。
+  - 写全 `task.md`「收尾报告」（引用 spec AC 与验证证据，不复制 AC 正文；记录两轴 verdict 和遗留）。
   - 跑 `scripts/task.py finish <tid>`：状态 → `done`，自动移入 `docs/archive/tasks_index.json`。
   - 后置 task（非 `done`）受影响则修订其 `spec.md` / `plan.md`。
   - 将 task 目录移入 `docs/archive/tasks/`。
@@ -200,7 +180,7 @@ flowchart TD
 
 ## spike
 
-- 选型或未知风险时用；非默认必做。
+- 用于必须靠实验确认的事项：新 major、非标准 provider、协议兼容、平台差异、性能或工具行为；非默认必做。
 - 建 `docs/spikes/{sid}_{slug}/`，复制 `docs/templates/spike/report.md`；`sid` 取 spikes 与 archive 中最大编号加一。
 - 有实验代码再建 `code/`；可入库，仅作验证材料。
 - 结论后移入 `docs/archive/spikes/`。
@@ -210,6 +190,7 @@ flowchart TD
 - `docs/tasks_index.json` 与 `docs/archive/tasks_index.json` **只能由 `scripts/task.py` 修改**。agent 禁止直接编辑这两个 JSON。脚本失败必须停下提示用户，禁止在未告知用户的情况下手工修 JSON。
 - `docs/archive/tasks_audit.log` **只能由 `scripts/task.py rewind` / `purge` 以 append 模式写入**。agent 禁止编辑、截断或删除。rewind/purge 失败必须停下提示用户，禁止不告知用户就手工修审计 log。
 - {密钥规则、禁写路径、平台限制等项目特有约束，按需填写。}
+- `{doctor_cmd}`：可选环境前置检查；只检查运行时、包管理器、命令、env key 存在性、服务健康与平台条件；不自动安装或升级，不做破坏性写入。
 - `{test_cmd}`：日常测试（单测/集成/单文件）；**红** / **绿** 使用。命令多时改为指向 `docs/guides/testing.md`。
 - `{blackbox_cmd}`：黑盒验证；**黑盒** 使用。
 - 测试规范见 `docs/blueprint/conventions.md`「编码与测试」。
