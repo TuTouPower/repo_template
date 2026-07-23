@@ -7,9 +7,8 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 1. **行为入口唯一**：`AGENTS.md` 定义 agent 必须遵守的工作流和权责。
 2. **按需导航**：`AGENTS.md` 说明什么场景读取什么文档，避免全量加载。
 3. **当前与历史分离**：active 工作放 `tasks/`、`reviews/`、`spikes/`，完结或终止后移入 `archive/`。
-4. **模板不冒充工作项**：task、review、spike 模板集中在 `docs/templates/`，不占用真实 `tid` / `sid`。
-5. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/双轴 review/`task.md` 过程总账闭环。review 与处置在 **commit 前** 完成；review 证据源为以 `diff_anchor` 为基线的 `git diff`（`diff_anchor` 取自 `task.md` front matter）。
-6. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；每个 task **收尾时**累积写入 `docs/specs/`（须已过黑盒）。
+4. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/双轴 review/`task.md` 过程总账闭环。代码轴和测试轴固定由两个独立 reviewer 并行完成；review 与处置在 **commit 前** 完成。证据源为以 `diff_anchor` 为基线的 `git diff`（`diff_anchor` 取自 `task.md` front matter）。
+5. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；每个 task **收尾时**累积写入 `docs/specs/`（须已过黑盒）。
 
 ## 初始化新项目
 
@@ -40,7 +39,7 @@ README 应改成项目自身介绍，不继续保留模板说明。
 │   ├── specs_index.md         # 需求索引（随 task 收尾更新）
 │   ├── reviews/               # 当前独立 review（review_<TS> 目录）
 │   ├── spikes/                # 当前 spike
-│   ├── bugs.md                # 已知未修复 bug 追加式记录
+│   ├── bugs.md                # Bug 追加记录（现象、影响、修复 task）
 │   ├── handoff.md             # 项目级交接
 │   └── archive/               # 完结或终止的历史记录
 ├── schemas/                   # 跨服务接口契约

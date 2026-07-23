@@ -21,8 +21,9 @@
 
 ## 结论
 
-- 前轮 finding 复核（Round 2 才写）：{逐条说明已修 / 未修 / 修不彻底 / 撤回}
+- 前轮 finding 复核（Round 2 才写）：{逐条说明已消除 / 仍存在 / 修不彻底 / 同意撤回；以 diff 为准}
 - 本轮新发现：{N 条}
-- 总体判断：{一句话}
+- 总体判断：{一句话；只有未解决 critical / important 时 FAIL，仅有 minor 时可 PASS}
+- 系统性 follow-up：{已有 tid，或建议标题与 slug；无则写“无”}
 
 verdict: FAIL

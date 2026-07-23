@@ -7,14 +7,16 @@
 数据：
   docs/tasks_index.json          活跃 task（backlog/active/blocked）
   docs/archive/tasks_index.json  归档 task（done/dropped）
+  docs/tasks/{tid}_{slug}/       活跃 task 工作区
+  docs/archive/tasks/{tid}_{slug}/  finish/drop 时随条目一并归档
 
 命令：
   task.py add --title TITLE --slug SLUG [--note NOTE]
   task.py start TID
   task.py block TID --reason blackbox|review
   task.py resume TID
-  task.py finish TID
-  task.py drop TID --reason TEXT
+  task.py finish TID              # done + 索引归档 + 目录归档
+  task.py drop TID --reason TEXT  # dropped + 索引归档 + 目录归档
   task.py rewind TID [--to backlog|active] --reason TEXT
   task.py purge TID --reason TEXT
   task.py list [--status STATUS]
@@ -24,6 +26,7 @@
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -33,6 +36,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_PATH = REPO_ROOT / "docs/tasks_index.json"
 ARCHIVE_PATH = REPO_ROOT / "docs/archive/tasks_index.json"
 AUDIT_PATH = REPO_ROOT / "docs/archive/tasks_audit.log"
+TASKS_DIR = REPO_ROOT / "docs" / "tasks"
+ARCHIVE_TASKS_DIR = REPO_ROOT / "docs" / "archive" / "tasks"
 
 VALID_STATUSES = ("backlog", "active", "blocked", "done", "dropped")
 # 仅 active 文件内可 rewind 的状态及其顺序（防 forward）
@@ -198,18 +203,55 @@ def cmd_resume(args):
     print(f"{args.tid} status=active (resumed)")
 
 
-def _move_to_archive(data: dict, tid: str) -> dict:
+def task_dir_paths(task: dict) -> tuple[Path, Path]:
+    """返回 (活跃目录, 归档目录) docs/tasks/{tid}_{slug} 与 docs/archive/tasks/{tid}_{slug}。"""
+    name = f"{task['tid']}_{task['slug']}"
+    return TASKS_DIR / name, ARCHIVE_TASKS_DIR / name
+
+
+def _move_index_to_archive(data: dict, tid: str) -> dict:
+    """从 active JSON 移除并写入 archive JSON；调用前 task 状态须已更新。"""
     arc = load(ARCHIVE_PATH)
     t = find(data["tasks"], tid)
     if not t:
         sys.exit(f"{tid} not found in active tasks")
     data["tasks"] = [x for x in data["tasks"] if x["tid"] != tid]
-    # archive 不允许同 tid 重复
     if find(arc["tasks"], tid):
         sys.exit(f"{tid} already exists in archive (数据冲突，请提示用户)")
     arc["tasks"].append(t)
     save(ARCHIVE_PATH, arc)
+    save(ACTIVE_PATH, data)
     return t
+
+
+def archive_task_directory(task: dict) -> str:
+    """将 task 工作区移入 docs/archive/tasks/。
+
+    - 源不存在：警告并跳过（例如 backlog 从未建目录）
+    - 目标已存在：失败退出（调用方应在改 JSON 前预检）
+    不做 git commit，由 task Step 8 一并提交。
+    """
+    src, dst = task_dir_paths(task)
+    if not src.is_dir():
+        rel = src.relative_to(REPO_ROOT) if src.is_relative_to(REPO_ROOT) else src
+        msg = f"task directory missing: {rel} (skipped)"
+        print(f"WARNING: {msg}", file=sys.stderr)
+        return msg
+    if dst.exists():
+        rel = dst.relative_to(REPO_ROOT) if dst.is_relative_to(REPO_ROOT) else dst
+        sys.exit(f"archive task directory already exists: {rel} (数据冲突，请提示用户)")
+    ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    rel_dst = dst.relative_to(REPO_ROOT) if dst.is_relative_to(REPO_ROOT) else dst
+    return f"moved task directory -> {rel_dst}"
+
+
+def _preflight_archive_dir(task: dict) -> None:
+    """改 JSON 前检查归档目录目标不冲突。"""
+    src, dst = task_dir_paths(task)
+    if src.is_dir() and dst.exists():
+        rel = dst.relative_to(REPO_ROOT) if dst.is_relative_to(REPO_ROOT) else dst
+        sys.exit(f"archive task directory already exists: {rel} (数据冲突，请提示用户)")
 
 
 def cmd_finish(args):
@@ -218,11 +260,11 @@ def cmd_finish(args):
     if not t:
         sys.exit(f"{args.tid} not found in active tasks")
     require_status(t, "active")
+    _preflight_archive_dir(t)
     t["status"] = "done"
-    save(ACTIVE_PATH, data)
-    _move_to_archive(data, args.tid)
-    save(ACTIVE_PATH, data)
-    print(f"{args.tid} status=done (archived)")
+    _move_index_to_archive(data, args.tid)
+    dir_msg = archive_task_directory(t)
+    print(f"{args.tid} status=done (archived); {dir_msg}")
 
 
 def cmd_drop(args):
@@ -230,13 +272,13 @@ def cmd_drop(args):
     t = find(data["tasks"], args.tid)
     if not t:
         sys.exit(f"{args.tid} not found in active tasks")
+    _preflight_archive_dir(t)
     t["status"] = "dropped"
     note = f"dropped: {args.reason}"
     t["note"] = f"{t['note']}; {note}" if t.get("note") else note
-    save(ACTIVE_PATH, data)
-    _move_to_archive(data, args.tid)
-    save(ACTIVE_PATH, data)
-    print(f"{args.tid} status=dropped (archived)")
+    _move_index_to_archive(data, args.tid)
+    dir_msg = archive_task_directory(t)
+    print(f"{args.tid} status=dropped (archived); {dir_msg}")
 
 
 def cmd_rewind(args):
@@ -293,7 +335,7 @@ def cmd_purge(args):
         sys.exit(f"{args.tid} not found in active tasks")
     require_status(t, "backlog")
     # 校验 task 目录不存在（已开干的不能 purge）
-    task_dirs = [d for d in (REPO_ROOT / "docs" / "tasks").glob(f"{args.tid}_*") if d.is_dir()]
+    task_dirs = [d for d in TASKS_DIR.glob(f"{args.tid}_*") if d.is_dir()]
     if task_dirs:
         sys.exit(
             f"{args.tid} has task directory {task_dirs[0].name}; "
@@ -384,11 +426,11 @@ def main():
     r.add_argument("tid")
     r.set_defaults(func=cmd_resume)
 
-    f = sub.add_parser("finish", help="active -> done；移入 archive")
+    f = sub.add_parser("finish", help="active -> done；JSON 与 task 目录一并归档")
     f.add_argument("tid")
     f.set_defaults(func=cmd_finish)
 
-    d = sub.add_parser("drop", help="任意状态 -> dropped；移入 archive")
+    d = sub.add_parser("drop", help="任意状态 -> dropped；JSON 与 task 目录一并归档")
     d.add_argument("tid")
     d.add_argument("--reason", required=True)
     d.set_defaults(func=cmd_drop)

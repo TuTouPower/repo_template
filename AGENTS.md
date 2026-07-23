@@ -17,7 +17,8 @@
 | `docs/tasks_index.json`                    | 活跃 task：tid、状态、branch              | 接到新需求或状态流转时                                                                                                            | **只能通过 `scripts/task.py` 操作**；禁止直接编辑                                    |
 | `docs/archive/tasks_index.json`            | 归档 task（`done` / `dropped`）       | 追溯历史 tid 时                                                                                                                   | `scripts/task.py finish` / `drop` 自动移入；禁止直接编辑                                 |
 | `docs/archive/tasks_audit.log`             | rewind/purge 审计（append-only）       | 追溯状态撤回与误建删除时                                                                                                          | `scripts/task.py rewind` / `purge` 独占 append；禁止编辑或截断                          |
-| `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md` |
+| `docs/tasks/{tid}_{slug}/`                 | task 工作区（backlog 起即存在）           | 执行或审阅 task 时                                                                                                                | 实现侧：`spec.md` `plan.md` `task.md`；reviewer：`review_code.md` `review_test.md`；`finish`/`drop` 时由脚本移入 `docs/archive/tasks/` |
+| `docs/archive/tasks/{tid}_{slug}/`         | 已归档 task 工作区                        | 追溯历史 task 文档时                                                                                                              | 仅由 `scripts/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增        |
 | `docs/handoff.md`                          | 项目级交接                                | 接手工作时第一个读                                                                                                                | 只追加                                                                                       |
 | `docs/bugs.md`                             | 已知未修复 bug 追加式记录                 | 追溯已知 bug 时                                                                                                                   | 发现不立即修复的 bug 追加新条目；修复后在原条目末尾追加含 task ID 的「修复」行，不删除或改写旧记录 |
 | `docs/blueprint/`                          | 当前长期真相：架构、领域、约定、决策      | 改跨模块行为前读`architecture.md`；写代码或文档前读 `conventions.md`；新业务概念读 `domain.md`；历史取舍读 `decisions.md` | finalization 时更新；实施与 review 期间仅写入已稳定结论                                      |
@@ -144,14 +145,13 @@ flowchart TD
 - **Step 7：收尾**
 
   - 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`（本 task 对应累积）。
-  - 更新本 task 影响到的 `docs/blueprint/`、`docs/guides/`、`README.md`、API 文档等。
+  - 更新本 task 影响到的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
   - 写全 `task.md`「收尾报告」（引用 spec AC 与验证证据，不复制 AC 正文；记录两轴 verdict 和遗留）。
-  - 跑 `scripts/task.py finish <tid>`：状态 → `done`，自动移入 `docs/archive/tasks_index.json`。
   - 后置 task（非 `done`）受影响则修订其 `spec.md` / `plan.md`。
-  - 将 task 目录移入 `docs/archive/tasks/`。
+  - 跑 `scripts/task.py finish <tid>`：状态 → `done`，自动将条目移入 `docs/archive/tasks_index.json`，task 目录移入 `docs/archive/tasks/`。
 - **Step 8：提交**
 
-  - 本 task 全部改动（含 specs、文档、归档移动）做一个 commit。
+  - 本 task 全部改动（含 specs、文档、脚本已完成的归档移动）做一个 commit。
   - subject 含 `{tid}`；只在本 task 工作分支上提交。合并进默认分支由外部流程负责。
   - **blocked 未放行前**：不把本 task 当 done 提交；可在分支上保留工作区，不归档。
 
@@ -169,8 +169,8 @@ flowchart TD
   - 在 `task.md` 过程记录写新上限；**计数累计不清零**。
   - 黑盒加轮从 **Step 3** 再跑黑盒；双审加轮继续跑 **Step 5** → **Step 6**。
 - **dropped**：
-  - backlog：`scripts/task.py drop <tid> --reason "..."`（自动移入 archive）；task 目录进 `docs/archive/tasks/`；做一个提交。
-  - active / blocked：`task.md`「过程记录」写终止原因；`scripts/task.py drop <tid> --reason "..."`；半成品代码保留在 task 分支（不合并主线）；task 目录移入 `docs/archive/tasks/`；**必须做一个提交**（含 `task.md`、JSON 改动、归档移动、半成品代码），否则切工作区或清理时丢失。
+  - backlog：`scripts/task.py drop <tid> --reason "..."`（JSON 与 task 目录一并归档；无目录则跳过）；做一个提交。
+  - active / blocked：`task.md`「过程记录」写终止原因；`scripts/task.py drop <tid> --reason "..."`（JSON 与 task 目录一并归档）；半成品代码保留在 task 分支（不合并主线）；**必须做一个提交**（含 `task.md`、JSON 改动、归档移动、半成品代码），否则切工作区或清理时丢失。
 
 ## handoff
 

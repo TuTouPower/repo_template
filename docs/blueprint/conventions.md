@@ -32,6 +32,10 @@
 - 数据库 schema 跟 migration 工具走，工具约定优先于本文件。
 - 多种类型并存时，按主消费方归类；归属不清记入 `docs/blueprint/decisions.md`。
 
+## 模板与工作项隔离
+
+task、review、spike 模板集中在 `docs/templates/`，占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。
+
 ## task 文件模板
 
 | 文件 | 谁写 | 是否必有 |
@@ -66,7 +70,7 @@ branch: t001_example_slug
 
 - 提示词正文存于 `docs/templates/review/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
-- 产物路径：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`（gitignore，不入库）。
+- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`；固定派两个独立 reviewer 并行完成代码轴、测试轴。
 - `docs/templates/task/review.md` 仅空骨架。
 
 ## Review 处置字段（写在 `task.md`）
@@ -78,6 +82,7 @@ branch: t001_example_slug
 | t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
+- critical / important 是 blocking；minor 非阻断，但仍须处置。minor 遗留写 rationale；已有 follow-up task 时 tid 写入 `fix_ref`。
 - `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review`
 
 ## specs_index 字段

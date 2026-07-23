@@ -17,17 +17,19 @@ branch: t001_example_slug
 
 ## Review 处置
 
-**本文件本小节 = 处置表唯一落点。** 双审结束后在此追加轮次小节与表格；不要写到 `review_code.md` / `review_test.md`，也不要另建其他文件。
+本文件本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不要写到 `review_code.md` / `review_test.md`，也不要另建其他文件。
 
 逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
 - `已修`：本 task 内已按 finding 改完
-- `遗留`：本 task 解决不了；满轮后进 blocked，在「遗留」与口头报告中列出
+- `遗留`：本 task 不处理；critical / important 遗留仍阻断，minor 遗留不阻断且须写 rationale；已有 follow-up task 时将 tid 写入 `fix_ref`
 - `撤回`：误报；须原 reviewer 在对应 `review_*.md` 末尾追加撤回记录后，再在本表标 `撤回`
 
-### Round 1 零 finding
+### Round 1 场景
 
-两轴均 0 finding 时写：「Round 1 零 finding，未进处置表。」不必建表。
+- **无 finding**：写「Round 1 零 finding，未进处置表。」
+- **仅有 minor（无 critical / important）**：仍建表，逐条处置 minor。
+- **有 critical / important**：建表，逐条填 status（不得留空）。
 
 ### Round N (YYYY-MM-DD HH:MM UTC+8)
 
@@ -41,11 +43,15 @@ branch: t001_example_slug
 
 本 task 所在 commit 即 task commit，SHA 由 `git log --grep {tid}` 查，不在此记。
 
-### 验收标准勾选
+### 验收
 
-- [ ] {从 spec.md 复制逐条}
+- spec：[`spec.md`](spec.md)
+- 结果：全部满足 / 未满足
+- 证据：{测试、黑盒或人工检查结果；按需引用 AC 编号，不复制 AC 正文}
 
 ### Reviewer verdict
+
+取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。未开的轮次写 N/A。
 
 - Round 1 code：PASS / FAIL
 - Round 1 test：PASS / FAIL

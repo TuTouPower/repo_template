@@ -9,8 +9,11 @@
   code_verdict=PASS|FAIL|MISSING
   test_verdict=PASS|FAIL|MISSING
   overall=PASS|FAIL|INCOMPLETE
-  round=N               # 取两份报告 front 字段 round 的最大值；缺省时按 ## Round 小节推断，至少 1
+  round=N               # 单文件：max(「- round:」字段值, 「## Round N」标题编号)；
+                        # 两文件再取 max，至少 1。多轮追加时以最高编号为准。
   max_review_round=N    # 当前双审上限（默认 2；blocked 后用户加轮则由调用方传入新值）
+
+verdict 取文件中最后一条「verdict: PASS|FAIL」（多轮追加以末轮为准）。
 """
 
 import argparse
@@ -38,12 +41,10 @@ def extract_round(path: Path) -> int:
     if not path.is_file():
         return 0
     text = path.read_text(encoding="utf-8")
-    m = ROUND_FIELD_RE.findall(text)
-    if m:
-        return int(m[-1])
-    headers = ROUND_HEADER_RE.findall(text)
-    if headers:
-        return len(headers)
+    rounds = [int(value) for value in ROUND_FIELD_RE.findall(text)]
+    rounds.extend(int(value) for value in ROUND_HEADER_RE.findall(text))
+    if rounds:
+        return max(rounds)
     if VERDICT_RE.search(text):
         return 1
     return 0
