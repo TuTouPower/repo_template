@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """render_review_prompts.py - 从 task.md front matter 渲染 code/test reviewer 完整 prompt。
 
-提示词正文存于 docs/templates/review/ 下三个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt）。
+提示词正文存于 docs/reviews/prompts/ 下三个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt）。
 
 用法：
   python3 scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATES_DIR = REPO_ROOT / "docs/templates/review"
+TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
 PLACEHOLDER_RE = re.compile(r"\{(tid|slug|spec_path|task_dir|diff_anchor)\}")
 
 

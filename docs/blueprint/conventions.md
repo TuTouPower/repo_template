@@ -34,7 +34,15 @@
 
 ## 模板与工作项隔离
 
-task、review、spike 模板集中在 `docs/templates/`，占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。
+模板就近放在领域目录下，**不是** active 工作项：
+
+| 模板 | 路径 |
+|------|------|
+| task 文件 | `docs/tasks/task_template/`（`spec.md` / `plan.md` / `task.md` / `review.md`） |
+| spike 报告 | `docs/spikes/report_template.md` |
+| 双审 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`） |
+
+占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。`docs/tasks/task_template/` 不得出现在 `tasks_index.json`。
 
 ## task 文件模板
 
@@ -62,16 +70,16 @@ branch: t001_example_slug
 
 - task 状态（`backlog` / `active` / `blocked` / `done` / `dropped`）的权威在 `docs/tasks_index.json`（通过 `scripts/task.py` 操作），不在 front matter。
 - `scripts/render_review_prompts.py --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
-- 正文结构见 `docs/templates/task/task.md`。
+- 正文结构见 `docs/tasks/task_template/task.md`。
 
 ## review 报告字段
 
 `review_code.md` / `review_test.md` 以 `scripts/render_review_prompts.py` 渲染结果为准。
 
-- 提示词正文存于 `docs/templates/review/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
+- 提示词正文存于 `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
 - 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`；固定派两个独立 reviewer 并行完成代码轴、测试轴。
-- `docs/templates/task/review.md` 仅空骨架。
+- `docs/tasks/task_template/review.md` 仅空骨架。
 
 ## Review 处置字段（写在 `task.md`）
 
@@ -87,7 +95,7 @@ branch: t001_example_slug
 
 ## specs_index 字段
 
-`docs/specs_index.md` 是当前生效 spec 清单；每个 task **step 7 收尾**累积更新。
+`docs/specs_index.md` 是当前生效 spec 清单；每个 task **`tasks-run` Step 7 收尾**累积更新。
 
 | slug | task 清单 | 最后更新时间 |
 |------|----------|--------------|
@@ -108,4 +116,4 @@ branch: t001_example_slug
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带 `tid`，如 `tests/unit/parser/t042_empty_token.test.ts`。
-- 文件过大、圈复杂度默认阈值见 `docs/templates/review/code_prompt.txt`。项目覆盖写在本小节。
+- 文件过大、圈复杂度默认阈值见 `docs/reviews/prompts/code_prompt.txt`。项目覆盖写在本小节。

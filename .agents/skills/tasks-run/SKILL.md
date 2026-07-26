@@ -96,7 +96,7 @@ flowchart TD
 
 ### Step 6：处置
 
-- 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/templates/task/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
+- 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
 - `max_review_round` 取 `AGENTS.md` 默认（4）或 `task.md` 过程记录中用户加轮后的新上限：
   ```bash
   scripts/check_review_status.py \

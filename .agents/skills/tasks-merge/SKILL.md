@@ -30,7 +30,7 @@ disable-model-invocation: true
    - `spec.md`：背景、范围、非范围、依赖与约束逐节合并去重；**验收标准取并集**，逐条保持可独立验证；矛盾的 AC 停下问用户，不自行取舍。
    - `plan.md`：步骤按依赖顺序重排并去重；风险与回退合并；`Finalization 时更新的 blueprint` 取并集。
    - `task.md`：`tid` / `slug` 改为目标；`diff_anchor` 保持占位；`## 过程记录` 追加一行「合并自 {源 tid 列表}」。
-   - 新建目标时从 `docs/templates/task/` 复制三份模板再填。
+   - 新建目标时从 `docs/tasks/task_template/` 复制三份模板再填。
 
 5. **更新目标条目**：
 

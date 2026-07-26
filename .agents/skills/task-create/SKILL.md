@@ -26,7 +26,7 @@ disable-model-invocation: true
 3. **每个 task 落盘**：
    1. `scripts/task.py add --title "..." --slug "..."`
    2. 建 `docs/tasks/{tid}_{slug}/`
-   3. 从 `docs/templates/task/` 复制 `spec.md` / `plan.md` / `task.md`
+   3. 从 `docs/tasks/task_template/` 复制 `spec.md` / `plan.md` / `task.md`
    4. 只读仓库，填写：
       - `spec.md`：行为 AC 非空；版本号/库/目录不进 AC
       - `plan.md`：步骤、验证、风险；编码/spike 待执行
