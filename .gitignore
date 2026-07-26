@@ -5,3 +5,11 @@ node_modules/
 *.log
 __pycache__/
 *.py[cod]
+
+# 本地密钥
+.env
+.env.*
+!.env.example
+
+# 例外：审计日志必须入库
+!docs/archive/tasks_audit.log

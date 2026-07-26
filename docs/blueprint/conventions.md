@@ -1,6 +1,6 @@
 # 约定（内容细节）
 
-行为规则和工作顺序见 `AGENTS.md`。本文只定义各类文档字段、命名和记录格式；流程不再重复，需要时引用 AGENTS.md 对应 step。
+行为规则和工作顺序见 `AGENTS.md`。本文只定义各类文档字段、命名和记录格式；流程不再重复，需要时引用 `AGENTS.md` 对应小节或 `.agents/skills/tasks-run/SKILL.md` 对应 Step。
 
 ## 命名与格式
 

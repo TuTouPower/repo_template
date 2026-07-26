@@ -11,7 +11,7 @@
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 单文件：max(「- round:」字段值, 「## Round N」标题编号)；
                         # 两文件再取 max，至少 1。多轮追加时以最高编号为准。
-  max_review_round=N    # 当前双审上限（默认 2；blocked 后用户加轮则由调用方传入新值）
+  max_review_round=N    # 当前双审上限（默认 4，与 AGENTS.md 一致；blocked 后用户加轮则由调用方传入新值）
 
 verdict 取文件中最后一条「verdict: PASS|FAIL」（多轮追加以末轮为准）。
 """
@@ -57,7 +57,7 @@ def main():
         epilog=__doc__,
     )
     p.add_argument("--task-dir", required=True)
-    p.add_argument("--max-review-round", type=int, default=2)
+    p.add_argument("--max-review-round", type=int, default=4)
     args = p.parse_args()
 
     task_dir = Path(args.task_dir)

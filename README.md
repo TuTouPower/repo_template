@@ -4,59 +4,28 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 
 ## 设计原则
 
-1. **行为入口唯一**：`AGENTS.md` 定义 agent 必须遵守的工作流和权责。
-2. **按需导航**：`AGENTS.md` 说明什么场景读取什么文档，避免全量加载。
-3. **当前与历史分离**：active 工作放 `tasks/`、`reviews/`、`spikes/`，完结或终止后移入 `archive/`。
-4. **task 即 commit**：一个 task 对应一个 commit，含 spec/plan/红绿/黑盒/双轴 review/`task.md` 过程总账闭环。代码轴和测试轴固定由两个独立 reviewer 并行完成；review 与处置在 **commit 前** 完成。证据源为以 `diff_anchor` 为基线的 `git diff`（`diff_anchor` 取自 `task.md` front matter）。
-5. **specs driven + TDD**：拆分 task 时即 **填写** spec 和 plan（验收标准非空）；开发循环内先写红再变绿；每个 task **收尾时**累积写入 `docs/specs/`（须已过黑盒）。
+1. **行为入口唯一**：规则、状态机、门禁、目录权责在 [`AGENTS.md`](AGENTS.md)；操作步骤在 `.agents/skills/`（`.claude/skills/*` 软链）。
+2. **skill 仅用户触发**：`description: none` + `disable-model-invocation`；禁止 agent 凭语义自行开跑。路由表见 `AGENTS.md`「Task 工作流入口」。
+3. **当前与历史分离**：active 在 `docs/tasks` 等；完结/过时/已修迁 `docs/archive/`。
+4. **commit 策略**：创建期可一批 backlog；执行期一 task 一 commit。细节见 `AGENTS.md`。
+5. **specs driven + TDD**：创建填 spec/plan（行为 AC 非空）；执行期先红后绿；收尾累积 `docs/specs/`。
+
+路径与读写规则以 `AGENTS.md`「目录与读写规则」为准，本 README 不重复目录树。
 
 ## 初始化新项目
 
-1. 复制模板到新项目目录。
+1. 用 `git clone` 或 `cp -a` 复制模板到新项目目录；**禁止** `cp -r`（会把软链展开成副本，导致 `.agents/skills/` 与 `.claude/skills/` 分叉）。
 2. 初始化版本控制。
-3. 全局替换 `{project_name}`，填写项目一句话介绍和 `AGENTS.md` 硬约束。
-4. 保持 `CLAUDE.md -> AGENTS.md` 软链接。
+3. 全局替换 `{project_name}`，填写项目一句话介绍和 `AGENTS.md` 硬约束（含 `{doctor_cmd}` / `{test_cmd}` / `{blackbox_cmd}`）。
+4. 保持全部软链：`CLAUDE.md -> AGENTS.md`，以及 `.claude/skills/* -> ../../.agents/skills/*`。
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md` 初稿；`decisions.md` 初始可为空。
 7. 确认 `docs/tasks_index.json`、`docs/specs_index.md` 无伪 active 数据。
 
 README 应改成项目自身介绍，不继续保留模板说明。
 
-## 目录概览
-
-```text
-{project_name}/
-├── AGENTS.md                  # agent 行为入口与按需导航
-├── CLAUDE.md -> AGENTS.md     # Claude Code 兼容软链接
-├── README.md                  # 项目介绍
-├── docs/
-│   ├── blueprint/             # 当前架构、领域、约定、决策
-│   ├── guides/                # 给人看的使用指南
-│   ├── templates/             # task / task review / spike 模板
-│   ├── tasks/                 # task 工作区（backlog 起含开发中 spec）
-│   ├── tasks_index.json       # task 索引（活跃；通过 scripts/task.py 操作）
-│   ├── specs/                 # 需求 spec（每个 task 收尾时累积，须已过黑盒）
-│   ├── specs_index.md         # 需求索引（随 task 收尾更新）
-│   ├── reviews/               # 当前独立 review（review_<TS> 目录）
-│   ├── spikes/                # 当前 spike
-│   ├── bugs.md                # Bug 追加记录（现象、影响、修复 task）
-│   ├── handoff.md             # 项目级交接
-│   └── archive/               # 完结或终止的历史记录
-├── schemas/                   # 跨服务接口契约
-├── config/                    # 配置（默认 + 环境覆盖 + .env.example）
-├── src/
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-├── scripts/
-├── assets/
-├── artifacts/                 # 不入库
-├── data/                      # 不入库
-└── .scratch/                  # 不入库的一次性草稿
-```
-
 ## 文档入口
 
-- Agent 工作规则：[`AGENTS.md`](AGENTS.md)
+- Agent 工作规则与目录权责：[`AGENTS.md`](AGENTS.md)
 - 内容与格式约定：[`docs/blueprint/conventions.md`](docs/blueprint/conventions.md)
+- 操作 skill：`.agents/skills/`（preflight / parallel / bug / create / debt / merge / run / hygiene / clean）

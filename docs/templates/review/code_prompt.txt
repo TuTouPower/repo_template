@@ -79,7 +79,7 @@
 3. `git diff {diff_anchor}` 看改动（相对工作区；**不要**只跑 `git diff {diff_anchor}...HEAD`）
 4. 逐条核对评审维度，每条 finding 过 Pre-Report Gate
 5. 输出到 `{task_dir}/review_code.md`
-6. Round 2：逐条复核前轮 finding 是否真修或已撤回，扫描修复过程引入的新问题
+6. Round N（N≥2）：逐条复核前轮 finding 是否真修或已撤回，扫描修复过程引入的新问题
 7. 末行 `verdict: PASS` 或 `verdict: FAIL`（判定式见共享规则）
 
 ## 输出格式
@@ -105,7 +105,7 @@
 
 ## 结论
 
-- 前轮 finding 复核（Round 2 才写）：{逐条说明已消除 / 仍存在 / 修不彻底 / 同意撤回；以 diff 为准}
+- 前轮 finding 复核（Round N≥2 才写）：{逐条说明已消除 / 仍存在 / 修不彻底 / 同意撤回；以 diff 为准}
 - 本轮新发现：{N 条}
 - 总体判断：{一句话；只有未解决 critical / important 时 FAIL，仅有 minor 时可 PASS}
 - 系统性 follow-up：{已有 tid，或建议标题与 slug；无则写“无”}

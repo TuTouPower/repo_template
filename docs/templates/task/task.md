@@ -51,12 +51,12 @@ branch: t001_example_slug
 
 ### Reviewer verdict
 
-取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。未开的轮次写 N/A。
+取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。按**实际发生**的轮次列出（默认上限见 `AGENTS.md` `max_review_round`，当前为 4）；未开的轮次不写或写 N/A。
 
 - Round 1 code：PASS / FAIL
 - Round 1 test：PASS / FAIL
-- Round 2 code：N/A / PASS / FAIL
-- Round 2 test：N/A / PASS / FAIL
+- Round N code：…（有第 N 轮则追加）
+- Round N test：…
 
 ### 遗留
 

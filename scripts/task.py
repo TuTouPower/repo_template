@@ -12,6 +12,7 @@
 
 命令：
   task.py add --title TITLE --slug SLUG [--note NOTE]
+  task.py edit TID [--title TITLE] [--note NOTE | --note-append NOTE]
   task.py start TID
   task.py block TID --reason blackbox|review
   task.py resume TID
@@ -171,6 +172,34 @@ def cmd_add(args):
     print(f"added {tid} '{task['title']}' status=backlog")
 
 
+def cmd_edit(args):
+    if args.title is None and args.note is None and args.note_append is None:
+        sys.exit("nothing to edit; pass --title and/or --note / --note-append")
+    if args.note is not None and args.note_append is not None:
+        sys.exit("--note and --note-append are mutually exclusive")
+    data = load(ACTIVE_PATH)
+    t = find(data["tasks"], args.tid)
+    if not t:
+        sys.exit(f"{args.tid} not found in active tasks (archived tasks are immutable)")
+    changed = []
+    if args.title is not None:
+        title = args.title.strip()
+        if not title:
+            sys.exit("title must not be empty")
+        changed.append(f"title={title!r}")
+        t["title"] = title
+    if args.note is not None:
+        t["note"] = args.note
+        changed.append(f"note={args.note!r}")
+    if args.note_append is not None:
+        if not args.note_append.strip():
+            sys.exit("--note-append must not be empty")
+        t["note"] = f"{t['note']}; {args.note_append}" if t.get("note") else args.note_append
+        changed.append(f"note+={args.note_append!r}")
+    save(ACTIVE_PATH, data)
+    print(f"{args.tid} updated: {', '.join(changed)}")
+
+
 def cmd_start(args):
     data = load(ACTIVE_PATH)
     t = find(data["tasks"], args.tid)
@@ -233,7 +262,7 @@ def archive_task_directory(task: dict) -> str:
 
     - 源不存在：警告并跳过（例如 backlog 从未建目录）
     - 目标已存在：失败退出（调用方应在改 JSON 前预检）
-    不做 git commit，由 task Step 8 一并提交。
+    不做 git commit，由 tasks-run Step 8（执行期 commit）一并提交。
     """
     src, dst = task_dir_paths(task)
     if not src.is_dir():
@@ -416,6 +445,13 @@ def main():
     a.add_argument("--slug", required=True)
     a.add_argument("--note", default="")
     a.set_defaults(func=cmd_add)
+
+    e = sub.add_parser("edit", help="修改活跃 task 的 title / note（不动 slug/branch/status）")
+    e.add_argument("tid")
+    e.add_argument("--title")
+    e.add_argument("--note", help="覆盖 note（传空串则清空）")
+    e.add_argument("--note-append", help="在现有 note 后追加")
+    e.set_defaults(func=cmd_edit)
 
     s = sub.add_parser("start", help="backlog -> active；branch 自动构造为 {tid}_{slug}")
     s.add_argument("tid")
