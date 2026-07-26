@@ -21,6 +21,11 @@ disable-model-invocation: true
 
 1. **盘点**（只读）：
    - `scripts/task.py list`：活跃 vs 归档是否与目录一致（残留目录、缺目录 → 报告，不私自 rm）。
+   - **list↔目录对照时排除模板**（非工作项，永不进 `tasks_index.json`，**禁止**当残留报告或删除）：
+     - `docs/tasks/task_template/`
+     - `docs/spikes/report_template.md`
+     - `docs/reviews/prompts/`
+     - 各领域下的 `.gitkeep`（若有）
    - `docs/handoff.md`、`docs/bugs.md`、`docs/guides/`、根目录杂散 md、明显草案。
    - `docs/archive/bugs.md`、`docs/archive/handoff.md` 是否已存在（只追加，不截断）。
 
@@ -39,8 +44,9 @@ disable-model-invocation: true
    - 仍生效 → 留原位，必要时改一句过时表述（最小块）。
    - 明确过时且有历史价值 → 迁 `docs/archive/` 镜像路径。
    - 无价值草稿且用户确认 → 可删；未确认不删。
+   - **不**把上述模板路径当过时文档归档或删除。
 
-5. **tasks_index 一致性**：用 `task.py list` 展示 active；发现 JSON 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` 等合法命令修。禁止手编 JSON。
+5. **tasks_index 一致性**：用 `task.py list` 展示 active；发现 JSON 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` 等合法命令修。禁止手编 JSON。对照目录时**跳过**步骤 1 列出的模板路径。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 
@@ -50,8 +56,10 @@ disable-model-invocation: true
 - **archive 只追加**：`docs/archive/bugs.md`、`docs/archive/handoff.md` 禁止截断、改写已归档条目。
 - **docs 侧可删迁**：从 active 文件移除已修/过时内容属于本 skill 职责，不是「篡改历史」。
 - **不挪 active task 目录**（归档只由 `finish` / `drop` 完成）。
+- **保护模板**：`docs/tasks/task_template/`、`docs/spikes/report_template.md`、`docs/reviews/prompts/` 永不当残留、不 rm、不迁 archive。
 - 不借机改 `src/` 业务逻辑；不批量 `finish` 未完成 task；不 `purge` 有目录/有 commit 的项。
 - 不把 skill / AGENTS 正文当「过时」误归档。
+- **`docs_repo/`**：仅本模板仓维护笔记；本 skill 不整理、不迁 archive、不要求新项目保留（新项目本就不该有该目录）。
 
 ## 完成
 
