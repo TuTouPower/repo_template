@@ -32,7 +32,17 @@ disable-model-invocation: true
 
    输出 `(no tasks)` 是正常空态。清单空且无跳过：回复「当前没有待做 task 需要 preflight」，结束。
 
-2. **逐 task 查缺口**。读 `docs/tasks/{tid}_{slug}/` 的 `spec.md`（依赖与约束、AC）、`plan.md`（步骤、风险）、`task.md`（过程记录、阻塞说明）。对照 `.env.example`（若有）与 spec/plan 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
+2. **跑机器门禁**（每个 task 各一次，只读）：
+
+   ```bash
+   scripts/task.py preflight {tid}
+   ```
+
+   它查占位符残留、契约区缺失或被改、依赖未完成、分支与 worktree 隔离、工作区脏项、索引↔目录↔分支一致性。FAIL 项直接进输出表，标「阻塞」。
+
+3. **逐 task 查用户侧缺口**。读 `docs/tasks/{tid}_{slug}/` 的 `spec.md`（契约区 AC、上下文区依赖与约束、未知契约清单）、`task.md`（实施笔记、阻塞说明）。对照 `.env.example`（若有）与 spec 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
+
+   spec 上下文区标 `UNVERIFIED` 的外部契约，若只有用户能核实（需账号、需线上环境），也算缺口。
 
    只记**必须用户提供、agent 不能编造**的缺口：
 
@@ -48,17 +58,17 @@ disable-model-invocation: true
 
    每条标严重度：**阻塞**（缺它 `/tasks-run` 跑不下去）/ **可后补**（能开干但某条 AC 或上线会缺）。
 
-3. **输出缺口表**：
+4. **输出缺口表**：
 
    ```markdown
    ## Preflight 结果
 
    范围：<实际查了什么>
 
-   | tid | 标题 | 状态 | 缺口 | 阻塞? | 请用户做什么 |
-   |-----|------|------|------|-------|--------------|
-   | t002 | … | active | 缺 OPENAI_API_KEY | 是 | 写入本地 .env（勿提交） |
-   | t003 | … | backlog | 无 | — | — |
+   | tid | 标题 | 状态 | preflight | 缺口 | 阻塞? | 请用户做什么 |
+   |-----|------|------|-----------|------|-------|--------------|
+   | t002 | … | active | PASS | 缺 OPENAI_API_KEY | 是 | 写入本地 .env（勿提交） |
+   | t003 | … | backlog | FAIL：spec 残留占位符 | 无 | 是 | 补全 spec 契约区 |
 
    跳过：
    - t009：status=done，非待做
@@ -70,7 +80,7 @@ disable-model-invocation: true
 
 ## 边界
 
-- 只读：不改代码、测试、JSON、环境。
+- 只读：不改代码、测试、task 状态、环境。`task.py preflight` 只读不写。
 - 不自动执行 `tasks-run`；无阻塞时只**提示**用户可自行 `/tasks-run`。
 
 ## 完成

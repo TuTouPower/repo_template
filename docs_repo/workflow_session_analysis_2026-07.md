@@ -1,5 +1,7 @@
 # Claude Code 会话实证分析与工作流改进建议（omni_usage, 2026-07）
 
+> 落地状态见 `decision_log.md`。§1/§3/§4/§5 的 P0 建议已实施；§2 的 `/goal` hook 与 §8 Electron ABI 属宿主与项目特有，不进通用模板（L28）。文中 PASS 率与遗留数来自单一项目样本，按「方向正确、数值待复测」对待。
+
 ## 元信息
 
 - **分析对象**：omni_usage 项目 Claude Code 会话日志（`~/.claude/projects/D--Kar-Code-omni-usage/`）

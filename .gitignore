@@ -11,5 +11,9 @@ __pycache__/
 .env.*
 !.env.example
 
+# 派生缓存：状态权威是 docs/tasks/{tid}_{slug}/task.md front matter
+docs/tasks_index.json
+docs/archive/tasks_index.json
+
 # 例外：审计日志必须入库
 !docs/archive/tasks_audit.log

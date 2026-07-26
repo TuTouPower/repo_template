@@ -12,28 +12,32 @@ disable-model-invocation: true
 
 | 路径 | 只保留 | 迁 archive |
 |------|--------|------------|
-| `docs/bugs.md` | 未修 bug | 已修条目 → `docs/archive/bugs.md`（整条追加） |
+| `docs/pending.md` | 未修 bug + 未处理遗留 | 已闭环条目 → `docs/archive/pending.md` 对应节（整条追加） |
+| `docs/findings.md` | 全部已验证发现 | **不迁**：发现是长期资产，失效时就地改写「现状」并注明日期 |
 | `docs/handoff.md` | 最新一版交接 | 过时段落 → `docs/archive/handoff.md`（整段追加） |
-| `docs/tasks_index.json` | 活跃 task（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
+| `docs/tasks/{tid}_{slug}/task.md` | 活跃 task 状态（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
 | 其它过时文档 | 仍生效的说明 | 明确过时且有历史价值 → `docs/archive/` 镜像路径 |
 
 ## 步骤
 
 1. **盘点**（只读）：
-   - `scripts/task.py list`：活跃 vs 归档是否与目录一致（残留目录、缺目录 → 报告，不私自 rm）。
-   - **list↔目录对照时排除模板**（非工作项，永不进 `tasks_index.json`，**禁止**当残留报告或删除）：
+   - `scripts/task.py doctor`：一次查全库 task 目录、front matter、孤儿分支与孤儿 worktree。FAIL 项报告用户，不私自 rm。
+   - `scripts/task.py list`：活跃 vs 归档是否与目录一致（该命令顺带重建派生 index）。
+   - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`
      - `docs/reviews/prompts/`
      - 各领域下的 `.gitkeep`（若有）
-   - `docs/handoff.md`、`docs/bugs.md`、`docs/guides/`、根目录杂散 md、明显草案。
-   - `docs/archive/bugs.md`、`docs/archive/handoff.md` 是否已存在（只追加，不截断）。
+   - `docs/handoff.md`、`docs/pending.md`、`docs/findings.md`、`docs/guides/`、根目录杂散 md、明显草案。
+   - `docs/archive/pending.md`、`docs/archive/handoff.md` 是否已存在（只追加，不截断）。
 
-2. **bugs**（补迁：`tasks-run` 收尾本应已迁；此处扫漏）：
-   - 未修（`修复：未修` 或等价）→ 留在 `docs/bugs.md`。
-   - 已修（有 `修复：tXXX` 等明确修复标记）→ **整条**从 `docs/bugs.md` 删掉，**追加**到 `docs/archive/bugs.md`。
+2. **pending**（补迁：`tasks-run` 收尾本应已迁；此处扫漏）：
+   - 未闭环（`修复：未修` / `处理：未开 task` 或等价）→ 留在 `docs/pending.md`。
+   - 已闭环（有 `修复：tXXX` / `处理：tXXX` 等明确标记）→ **整条**从 `docs/pending.md` 删掉，**追加**到 `docs/archive/pending.md` 的同名节。
    - 不改写条目历史字段；迁移时保持原标题与 bullet 原文。
-   - 不把「看起来过时」但未标已修的 bug 静默删掉；不确定则报告用户。
+   - 不把「看起来过时」但未标闭环的条目静默删掉；不确定则报告用户。
+   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`tasks-run` 收尾应已登记，此处扫漏）→ 补登到 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id 与原 tid。
+   - **扫 findings 漏抽**：`docs/archive/spikes/` 中已归档但结论未进 `docs/findings.md` 的 spike → 报告用户，由用户确认后补抽（不自行判断哪条结论值得留）。
 
 3. **handoff**：
    - `docs/handoff.md` 只留**当前有效**一节（或整理后的最新摘要）。
@@ -46,14 +50,16 @@ disable-model-invocation: true
    - 无价值草稿且用户确认 → 可删；未确认不删。
    - **不**把上述模板路径当过时文档归档或删除。
 
-5. **tasks_index 一致性**：用 `task.py list` 展示 active；发现 JSON 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` 等合法命令修。禁止手编 JSON。对照目录时**跳过**步骤 1 列出的模板路径。
+5. **task 状态一致性**：用 `task.py doctor` 的结论；发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。禁止手编 front matter 或派生 index。对照目录时**跳过**步骤 1 列出的模板路径。
+
+   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）已 gitignore，不入 commit；内容不对时跑 `task.py list` 重建即可，不算不一致项。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 
 ## 边界
 
-- **不手改** `docs/tasks_index.json` / `docs/archive/tasks_index.json`（只经 `scripts/task.py`）。
-- **archive 只追加**：`docs/archive/bugs.md`、`docs/archive/handoff.md` 禁止截断、改写已归档条目。
+- **不手改** task `front matter` 与派生 index JSON（只经 `scripts/task.py`）。
+- **archive 只追加**：`docs/archive/pending.md`、`docs/archive/handoff.md` 禁止截断、改写已归档条目。
 - **docs 侧可删迁**：从 active 文件移除已修/过时内容属于本 skill 职责，不是「篡改历史」。
 - **不挪 active task 目录**（归档只由 `finish` / `drop` 完成）。
 - **保护模板**：`docs/tasks/task_template/`、`docs/spikes/report_template.md`、`docs/reviews/prompts/` 永不当残留、不 rm、不迁 archive。
@@ -63,4 +69,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：迁入 archive 的 bugs/handoff 条目、docs 中保留的未修/最新内容、跳过项、仍需用户决定的不一致项。
+汇报：迁入 archive 的 pending/handoff 条目、docs 中保留的未闭环/最新内容、跳过项、仍需用户决定的不一致项。

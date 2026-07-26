@@ -33,19 +33,21 @@ disable-model-invocation: true
    git diff --name-only main...{branch}
    ```
 
-   基线占用集 = 各进行中 task 的已改文件 ∪ 其 spec/plan 推导的待改路径。分支存在但索引中查无对应 task，记为「孤儿分支」，一并列出并当作占用。
+   基线占用集 = 各进行中 task 的已改文件 ∪ 其 spec 推导的待改路径。分支存在但索引中查无对应 task，记为「孤儿分支」，一并列出并当作占用。
 
 2. **列候选**。`scripts/task.py list --status backlog`；用户点名 tid 时以点名为准。候选为空则回复「当前没有 backlog task 可分析」，结束。
 
-3. **推导每个候选的改动面**。读 `docs/tasks/{tid}_{slug}/spec.md`（范围、非范围、依赖与约束）与 `plan.md`（步骤、`Finalization 时更新的 blueprint`），推导：
+3. **推导每个候选的改动面**。读 `docs/tasks/{tid}_{slug}/spec.md` 契约区（范围、非范围）与上下文区（依赖与约束、blueprint 更新点），并读 `task.md` front matter 的 `depends_on`，推导：
 
    | 维度 | 内容 |
    |------|------|
    | 代码路径 | 预计新增/修改的 `src/` `tests/` `scripts/` 文件或目录 |
    | 共享契约 | `schemas/` `config/` `docs/blueprint/` 中会动的条目 |
-   | 顺序依赖 | plan 或 spec 中写明「依赖 tNNN」「在 X 之后」的前置 |
+   | 顺序依赖 | front matter `depends_on`，以及 spec 中写明「依赖 tNNN」「在 X 之后」的前置 |
 
-   plan 写得太粗、推不出改动面的，判为**待澄清**，不放进可并发组。
+   spec 范围写得太粗、推不出改动面的，判为**待澄清**，不放进可并发组。
+
+   `docs/tasks_index.json` 是派生缓存，不再是并发写冲突点；task 状态各写各的 `task.md`，不计入共享契约。
 
 4. **判冲突**。任一成立即冲突：
 
@@ -79,19 +81,19 @@ disable-model-invocation: true
    | tid | 原因 |
    |-----|------|
    | t006 | 与 t002 同改 schemas/user.json |
-   | t008 | plan 未写改动面，待澄清 |
+   | t008 | spec 范围未写清改动面，待澄清 |
 
    跳过：
    - t001：status=done，已归档
 
-   结论：可并发组 A（t005, t007）；执行仍为每个 tid 各自 /tasks-run，工作区需隔离（各自 git worktree），本 skill 不代为创建。
+   结论：可并发组 A（t005, t007）；执行仍为每个 tid 各自 /tasks-run。`task.py start` 默认为每个 task 建独立 worktree（`../{repo}_{tid}`），并发场景**必须**用 worktree，不得对并发 task 用 `--no-worktree`。本 skill 不代为创建。
    ```
 
 ## 边界
 
 - 只读：不改代码、测试、文档、JSON；不建分支、不建 worktree、不切分支、不执行 task。
 - 不自动调用 `tasks-run`；只输出分组，由用户决定怎么跑。
-- 推导基于 spec/plan 文字，属**估计**，须在输出中标明；plan 不明确时判待澄清，不猜。
+- 推导基于 spec 文字，属**估计**，须在输出中标明；spec 范围不明确时判待澄清，不猜。
 - 冲突存疑时按冲突处理（保守），不为提高并行度放宽判定。
 
 ## 完成

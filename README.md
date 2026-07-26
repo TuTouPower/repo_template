@@ -24,7 +24,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 4. 保持全部软链：`CLAUDE.md -> AGENTS.md`，以及 `.claude/skills/* -> ../../.agents/skills/*`。
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md` 初稿；`decisions.md` 初始可为空。
-7. 确认 `docs/tasks_index.json`、`docs/specs_index.md` 无伪 active 数据；`docs/tasks/task_template/` 仅作复制源。
+7. 确认 `docs/tasks/` 下无遗留 task 目录、`docs/specs_index.md` 无伪 active 数据；`docs/tasks/task_template/` 仅作复制源。
 
 README 应改成项目自身介绍，不继续保留模板说明。
 

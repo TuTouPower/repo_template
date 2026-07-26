@@ -1,17 +1,55 @@
-## 共享规则（两轴都遵守）
+## 共享规则（所有 reviewer 都遵守）
+
+## spec 契约区（判 AC 只看本区）
+
+{contract_section}
+
+## spec 上下文区（判测试覆盖核对本区）
+
+{context_section}
+
+上下文区是**已获批准的决策**，不是待商榷提案。「有意不测」列出的分支不出 finding；`UNVERIFIED` 契约只提示核实，不 blocking。上下文区写「无」或缺失时，按无特殊约定处理，不据此出 finding。
 
 ### read-only 边界
 
-不改代码、不改测试、不改 spec / plan / `task.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
+不改代码、不改测试、不改 `spec.md` / `task.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
 
 ### 不信任 implementer 自述
 
-`task.md`（过程记录 / 收尾报告）是 claim 不是证据。一切以 `git diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
+`task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以 `git diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
 
 ### 零发现合法与 finding 边界
 
 - clean review（0 finding）是有效输出；**禁止凑数**。
 - 范围内问题进 finding 表；范围外问题仅在结论段提示，**不进** finding 表。
+
+### blocking 硬阈值
+
+标 `critical` / `important`（即 blocking）的 finding，必须满足以下**至少一条**，否则降为 `minor` 或只写进结论段：
+
+1. **锚定 AC**：指明违反了契约区哪一条验收标准，且说明观察到的行为与该 AC 的差距。
+2. **可观测行为缺陷**：给出输入/状态与坏结果（崩溃、错答案、数据丢失、安全越权、资源泄漏、协议不兼容）。无对应 AC 时仍可 blocking——真 bug 不因 spec 没写而降级。
+
+以下一律**不得** blocking：
+
+- 「建议再测更细」「覆盖可更广」「可以补一个 case」类扩展建议 → `minor`，`category: coverage_gap`
+- spec 上下文区已列入「有意不测」的分支 → **不出 finding**（该决策已获批准）
+- 「未知契约清单」中标 `UNVERIFIED` 的外部契约 → 只在结论段提示核实，不 blocking
+- 风格、命名、注释、文件组织偏好 → `minor`，`category: nitpick`
+
+### finding 分类（必填）
+
+每条 finding 标 `category`，供噪音率与撤回率统计：
+
+| category | 含义 |
+|----------|------|
+| `bug` | 实现或测试的真实缺陷 |
+| `spec_drift` | 实现合理但 spec 描述过时/不符；处置为改 spec，不计 FAIL |
+| `duplicate` | 与本轮或前轮其他 finding、已有 follow-up task 同源 |
+| `nitpick` | 风格、命名、组织类偏好 |
+| `coverage_gap` | 测试覆盖可扩展，但无已知失败场景 |
+
+`spec_drift` / `duplicate` / `nitpick` / `coverage_gap` 默认 `minor`，不阻断。
 
 ### Pre-Report Gate（每条 finding 报前自问）
 
@@ -21,10 +59,11 @@
 2. 能否描述具体失败场景（输入 / 状态 / 坏结果）？
 3. 是否读了周边上下文？
 4. 严重度是否可辩护？
+5. 标 blocking 时，是否满足上面「blocking 硬阈值」的至少一条？
 
 ### 重审追加
 
-Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `AGENTS.md` `max_review_round`（当前 4）。
+Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `AGENTS.md` `max_review_round`。
 
 ### 撤回配合
 
@@ -55,17 +94,17 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 
 ### critical
 
-- **实现轴**：bug / 安全 / 数据丢失 / broken functionality
-- **测试轴**：测了假行为致 AC 看似覆盖但实际未验证；删除关键 AC 的测试；mock 掉被测逻辑本身
+- 实现：bug / 安全 / 数据丢失 / broken functionality
+- 测试：测了假行为致 AC 看似覆盖但实际未验证；删除关键 AC 的测试；mock 掉被测逻辑本身
 
 ### important
 
 本 task 在修复前不可信，例如：
 
-- **实现轴**：verbatim 重复、swallowed errors、spec AC 缺失实现、违反 spec 不变量
-- **测试轴**：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
-- 危险模式扫描命中项（见测试轴 prompt）**最低 important**，不得标 minor
+- 实现：verbatim 重复、swallowed errors、spec AC 缺失实现、违反 spec 不变量
+- 测试：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
+- 危险模式扫描命中项**最低 important**，不得标 minor：恒真断言（`expect(true).toBe(true)` / `assert True`）、删/反转 expect、注释掉断言、弱化断言（`toBe` → `toContain` / 正则 / `>=` / `toBeTruthy`）、`.skip` / `.only` / `@Ignore`、test 文件加 `eslint-disable` / `@ts-ignore` / `# type: ignore`、mock 关键副作用或被测逻辑本身、阈值（timeout/重试/容差）增大掩盖问题、条件跳过弱化断言（`if (cond) { expect(...) }`）、用 `.value =` 替代 AC 要求的拖拽/点击/键盘交互
 
 ### minor
 
-风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。
+风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。`spec_drift` / `duplicate` / `nitpick` / `coverage_gap` 默认落在本级。

@@ -1,3 +1,5 @@
+> 落地状态见 `decision_log.md`。本文教训已固化为默认 worktree 隔离与 `task.py preflight` 工作区门禁（L4）。
+
  责任在我。问题分三层：
 
   1. 分支不等于独立 worktree

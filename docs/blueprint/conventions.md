@@ -8,6 +8,7 @@
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
 - task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`。
 - spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
+- 总账编号：`docs/pending.md` 用 `bNNN`（未修 bug）与 `fNNN`（遗留待办）两套独立递增；`docs/findings.md` 用 `dNNN`。三套均不复用已用过的号。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
 - 例外：`docs/archive/tasks_audit.log` 使用 ISO8601 带时区（`2026-07-22T15:30:00+08:00`），机器 grep 友好；由 `scripts/task.py rewind`/`purge` 自动写入。
@@ -38,38 +39,55 @@
 
 | 模板 | 路径 |
 |------|------|
-| task 文件 | `docs/tasks/task_template/`（`spec.md` / `plan.md` / `task.md` / `review.md`） |
+| task 文件 | `docs/tasks/task_template/`（`spec.md` / `task.md` / `review.md`） |
 | spike 报告 | `docs/spikes/report_template.md` |
 | 双审 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`） |
 
-占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。`docs/tasks/task_template/` 不得出现在 `tasks_index.json`。
+占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。`scripts/task.py` 扫描 task 目录时跳过 `task_template/`。
 
 ## task 文件模板
 
 | 文件 | 谁写 | 是否必有 |
 |------|------|----------|
-| `spec.md` | 实现侧 | 是（验收标准非空） |
-| `plan.md` | 实现侧 | 是 |
-| `task.md` | 实现侧 | 是（过程总账：front matter + 过程记录 / Review 处置 / 收尾报告） |
+| `spec.md` | 实现侧 | 是（契约区 + 上下文区；契约区验收标准非空） |
+| `task.md` | 实现侧 | 是（过程总账：front matter + 实施笔记 / Review 处置 / 收尾报告） |
 | `review_code.md` | code reviewer | 进入 review 后 |
 | `review_test.md` | test reviewer | 进入 review 后 |
 
-不再使用独立的 `log.md` / `adoption.md` / `task_report.md`。
+不使用 `plan.md`：实施步骤在创建期无法准确预测，改由执行期写入 `task.md` 实施笔记；reviewer 需要的决策上下文归 `spec.md` 上下文区。
+
+### `spec.md` 两区
+
+| 区 | 内容 | 可变性 |
+|----|------|--------|
+| 契约区 | 范围 / 非范围 / 验收标准 / 可测试性声明 | `task.py start` 时锁 hash，执行期不改；`preflight` 检测漂移 |
+| 上下文区 | 有意不测 / 测试策略 / 未知契约清单 / 风险与回退 / 依赖与约束 / blueprint 更新点 | 执行期可补 |
+
+两区正文由 `scripts/render_review_prompts.py` 注入 reviewer prompt。reviewer 判 AC 只看契约区，判测试覆盖核对上下文区。
+
+需部署或人工环境才能验证的 AC 加 `[deploy]` 前缀。未核实的外部契约在「未知契约清单」标 `UNVERIFIED`。
 
 ### `task.md` front matter
 
 ```yaml
 ---
-tid: t001          # 键 tid；值小写 t001
+tid: t001              # 键 tid；值小写 t001
 slug: example_slug
-diff_anchor: "<SHA>"
-branch: t001_example_slug
+title: "task 标题"
+status: backlog        # backlog / active / blocked / done / dropped
+branch: ""             # start 时写入 {tid}_{slug}
+worktree: ""           # start 时写入 ../{repo}_{tid}
+review_level: full     # full / single / none
+depends_on: ""         # 前置 tid，逗号分隔
+diff_anchor: ""        # Step 1 实写当前 HEAD
+contract_hash: ""      # start 时锁定 spec 契约区 hash
+note: ""
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
 ```
 
-- task 状态（`backlog` / `active` / `blocked` / `done` / `dropped`）的权威在 `docs/tasks_index.json`（通过 `scripts/task.py` 操作），不在 front matter。
-- `scripts/render_review_prompts.py --task-dir ...` 读 `tid` / `slug` / `diff_anchor`（及可选 `spec_path`）生成两份 review prompt。
+- **front matter 是 task 状态的权威**，只经 `scripts/task.py` 修改；agent 不手改。`docs/tasks_index.json` 与 archive 版由脚本扫描各 `task.md` 派生，已 gitignore，不入库。
+- `scripts/render_review_prompts.py --task-dir ...` 读 `tid` / `slug` / `diff_anchor` / `review_level`（及可选 `spec_path`），连同 spec 两区正文生成 review prompt。
 - 正文结构见 `docs/tasks/task_template/task.md`。
 
 ## review 报告字段
@@ -78,20 +96,23 @@ branch: t001_example_slug
 
 - 提示词正文存于 `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
-- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`；固定派两个独立 reviewer 并行完成代码轴、测试轴。
-- `docs/tasks/task_template/review.md` 仅空骨架。
+- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 双审 / `single` 单审 / `none` 免审）。
+- 派 subagent 只传产物路径，不内联 prompt 正文。
+- `docs/tasks/task_template/review.md` 只写落点，不复制格式骨架——格式唯一定义在 prompt 模板。
 
 ## Review 处置字段（写在 `task.md`）
 
-| finding_id | severity | status | rationale | fix_ref |
-|------------|----------|--------|-----------|---------|
-| t001_code_f001 | critical/important/minor | 已修 | … | 文件:行 |
-| t001_test_f001 | … | 遗留 | … | - |
-| t001_code_f002 | … | 撤回 | … | review 追加位置 |
+| finding_id | severity | category | status | rationale | fix_ref |
+|------------|----------|----------|--------|-----------|---------|
+| t001_code_f001 | critical/important/minor | bug | 已修 | … | 文件:行 |
+| t001_test_f001 | … | coverage_gap | 遗留 | … | - |
+| t001_code_f002 | … | nitpick | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
+- `category`：`bug` / `spec_drift` / `duplicate` / `nitpick` / `coverage_gap`，抄自 reviewer 报告，供 `scripts/check_review_status.py` 统计撤回率。
 - critical / important 是 blocking；minor 非阻断，但仍须处置。minor 遗留写 rationale；已有 follow-up task 时 tid 写入 `fix_ref`。
-- `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review`
+- `spec_drift` 的处置是改 spec 上下文区，不计 FAIL。
+- `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review|infra`
 
 ## specs_index 字段
 
@@ -111,9 +132,16 @@ branch: t001_example_slug
 
 实验代码存在时创建 `code/`。实验代码入库保留，仅作为验证材料。
 
+收尾时抽一条可复用结论进 `docs/findings.md` 拿 `dNNN`，报告全文移入 `docs/archive/spikes/`：报告是过程，findings 是结论。
+
+## 总账与 findings
+
+`docs/pending.md` / `docs/findings.md` / `docs/blueprint/decisions.md` 的分工与界线见 `AGENTS.md`「总账分工」。本文件不重复。
+
 ## 编码与测试
 
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带 `tid`，如 `tests/unit/parser/t042_empty_token.test.ts`。
-- 文件过大、圈复杂度默认阈值见 `docs/reviews/prompts/code_prompt.txt`。项目覆盖写在本小节。
+- 实现变更让旧测试语义失效时：新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由。禁止就地把旧测试的预期改成当前实现的输出。
+- 文件过大、圈复杂度默认阈值见 `docs/reviews/prompts/code_prompt.txt`；两者默认不阻断 review。项目覆盖写在本小节。

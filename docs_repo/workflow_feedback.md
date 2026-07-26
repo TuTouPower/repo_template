@@ -1,5 +1,7 @@
 # 工作流反思与改进建议
 
+> 落地状态见 `decision_log.md`。改进 A（plan 三套模板）与 E（放开手改 index）已否决；「按读者切 spec/plan」已实施为 spec 契约区/上下文区二分，plan.md 已删除。
+
 源自 2026-07 在 omni_media 项目用 my-review skill 跨 16 份报告做 adoption、批量创建 15 个 task（t041-t055）时的实际体验。本文件记录工作流设计中的结构性问题与改进方向，作为后续项目的参考。
 
 ## 工作流的核心假设

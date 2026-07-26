@@ -1,29 +1,40 @@
 ---
-tid: t001
+tid: t000
 slug: example_slug
-diff_anchor: "<SHA>"
-branch: t001_example_slug
+title: "示例 task 标题"
+status: backlog
+branch: ""
+worktree: ""
+review_level: full
+depends_on: ""
+diff_anchor: ""
+contract_hash: ""
+note: ""
 ---
 
-# Task {tid}_{slug}
+# Task 过程总账
 
-过程总账。reviewer **只写** `review_code.md` / `review_test.md`，不改本文件。
+**front matter 是状态权威**，只经 `scripts/task.py` 修改；`docs/tasks_index.json` 由它派生。reviewer 只写 `review_code.md` / `review_test.md`，不改本文件。
 
-## 过程记录
+## 实施笔记
 
-只记有追溯价值的进展、踩坑、中途决策、偏离 plan、关键验证；不写命令流水账。
+执行期边做边写：实际步骤、踩坑、中途决策、偏离 spec、关键验证、blocked 原因与用户放行的新轮次上限。
 
-- 无事项时写：无
+创建期不预测实施步骤——那时尚未读代码，预测必然失准。只记有追溯价值的内容，不写命令流水账。无事项时写：无
 
 ## Review 处置
 
-本文件本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不要写到 `review_code.md` / `review_test.md`，也不要另建其他文件。
+本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不写进 `review_code.md` / `review_test.md`，也不另建文件。
 
 逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
 - `已修`：本 task 内已按 finding 改完
-- `遗留`：本 task 不处理；critical / important 遗留仍阻断，minor 遗留不阻断且须写 rationale；已有 follow-up task 时将 tid 写入 `fix_ref`
+- `遗留`：本 task 不处理。**内容登记到 `docs/pending.md`「遗留待办」节**，`fix_ref` 填拿到的 `fNNN`（已有 follow-up task 则填 tid）；本表只留引用与一句话 rationale。critical / important 遗留仍阻断，minor 遗留不阻断。
 - `撤回`：误报；须原 reviewer 在对应 `review_*.md` 末尾追加撤回记录后，再在本表标 `撤回`
+
+本 task 目录会随 `finish` 归档，遗留正文留在这里等于丢失——`fix_ref` 为空的 `遗留` 行不算处置完成。
+
+`category` 取自 reviewer 报告，用于统计噪音与撤回率：`bug` / `spec_drift` / `duplicate` / `nitpick` / `coverage_gap`。`spec_drift` 的处置是改 spec 上下文区，不计 FAIL。
 
 ### Round 1 场景
 
@@ -33,36 +44,32 @@ branch: t001_example_slug
 
 ### Round N (YYYY-MM-DD HH:MM UTC+8)
 
-（有 finding 时用本表；每条 finding 一行。）
+有 finding 时用本表；每条 finding 一行。
 
-| finding_id | severity | status | rationale | fix_ref |
-|------------|----------|--------|-----------|---------|
-| {tid}_code_f001 | critical/important/minor | 已修 | {一句话} | {文件:行} |
+| finding_id | severity | category | status | rationale | fix_ref |
+|------------|----------|----------|--------|-----------|---------|
+| t000_code_f001 | critical/important/minor | bug | 已修 | 一句话 | 文件:行 |
+| t000_test_f002 | minor | coverage_gap | 遗留 | 一句话 | f003 |
 
 ## 收尾报告
 
-本 task 所在 commit 即 task commit，SHA 由 `git log --grep {tid}` 查，不在此记。
+本 task 的 commit 用 `git log --grep <tid>` 查，不在此逐条记 SHA。
 
 ### 验收
 
 - spec：[`spec.md`](spec.md)
 - 结果：全部满足 / 未满足
-- 证据：{测试、黑盒或人工检查结果；按需引用 AC 编号，不复制 AC 正文}
+- 证据：测试、黑盒或人工检查结果；按需引用 AC 编号，不复制 AC 正文
 
 ### Reviewer verdict
 
-取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。按**实际发生**的轮次列出（默认上限见 `AGENTS.md` `max_review_round`，当前为 4）；未开的轮次不写或写 N/A。
+取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。按**实际发生**的轮次列出（上限见 `AGENTS.md` `max_review_round`）；未开的轮次不写或写 N/A。
 
 - Round 1 code：PASS / FAIL
 - Round 1 test：PASS / FAIL
-- Round N code：…（有第 N 轮则追加）
-- Round N test：…
 
-### 遗留
-
-- 无
-- 或：`{finding_id}`：原因；后续计划
+遗留不在此列出——见 `docs/pending.md`「遗留待办」，本文件处置表的 `fix_ref` 指向对应 `fNNN`。
 
 ### 结果摘要
 
-- {一句话；无额外说明可写「见上」}
+- 一句话；无额外说明可写「见上」

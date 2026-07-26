@@ -42,10 +42,11 @@ disable-model-invocation: true
 - `.git/`
 - **业务与契约正文**：`src/`、`tests/`、`schemas/`、`config/` 下的源码、测试、契约与配置（**不是**类别表里的垃圾名）。  
   类别表命中的垃圾**可清**，即使落在这些目录下（如 `src/**/__pycache__/`、`tests/**/.pytest_cache/`）。
-- `docs/` 下除 OS/编辑器垃圾文件名以外的一切（含 task 文档、specs、handoff/bugs）
+- `docs/` 下除 OS/编辑器垃圾文件名以外的一切（含 task 文档、specs、handoff/pending/findings）
 - `scripts/` 入库脚本；`.agents/`、`.claude/` skill 与软链
 - `AGENTS.md`、`README.md`、`CLAUDE.md`、`.gitignore`
-- `docs/tasks_index.json`、`docs/archive/tasks_index.json`、`docs/archive/tasks_audit.log`
+- `docs/archive/tasks_audit.log`
+- task worktree（`../{repo}_tNNN`）在仓库外，本 skill 不扫不删；清理由 `task.py finish` / `drop` 负责
 - 不确定是否垃圾 → **不删**，列入「需用户决定」
 
 ## 步骤
@@ -80,7 +81,7 @@ disable-model-invocation: true
    1. 再扫一遍，与 dry-run 同规则。
    2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
    3. **`scratch`**（仅点名 `apply scratch`）：
-      - `scripts/task.py list` 取 backlog/active/blocked；读各 `plan.md`，收集提及的 `.scratch/` 相对路径 → **跳过不删**。
+      - `scripts/task.py list` 取 backlog/active/blocked；读各 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。
       - 其余 `.scratch/` 内容删掉，保留空目录。
       - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
    4. `artifacts` / `data`：清内容、保留目录。
@@ -105,10 +106,11 @@ disable-model-invocation: true
 
 ## 边界
 
-- 不替代 `repo-hygiene`；不改业务逻辑；不手改 task JSON / audit log。
+- 不替代 `repo-hygiene`；不改业务逻辑；不手改 task front matter / audit log。
+- 派生 index JSON 已 gitignore，但它是 `task.py` 的缓存，**不列入清理类别**（误删只需重跑 `task.py list`，无须本 skill 介入）。
 - 不把「好久没动的源码/文档」当垃圾。
 - **commit**：默认不 commit。纯 gitignore 产物清理无跟踪 diff → 不 commit。仅当产生可跟踪 diff（如误提交的 `__pycache__`）且用户同意 → 单独维护期 commit；**不**擅自 commit。
-- 与 `repo-hygiene` 分工：本 skill = 文件系统垃圾；hygiene = handoff/bugs/过时文档迁 archive。
+- 与 `repo-hygiene` 分工：本 skill = 文件系统垃圾；hygiene = handoff/pending/过时文档迁 archive。
 
 ## 完成
 

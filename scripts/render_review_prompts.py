@@ -3,13 +3,15 @@
 
 提示词正文存于 docs/reviews/prompts/ 下三个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt）。
 
+reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 prompt，消除信息不对称。
+
 用法：
   python3 scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
   python3 scripts/render_review_prompts.py --task docs/tasks/t001_my_slug/task.md
   python3 scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
 
 必填 front matter：tid, slug, diff_anchor
-可选：spec_path（默认 <task_dir>/spec.md）
+可选：spec_path（默认 <task_dir>/spec.md）、review_level
 默认 stdout；--out-dir 时写入 code_review_prompt.md 与 test_review_prompt.md
 """
 
@@ -20,7 +22,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
-PLACEHOLDER_RE = re.compile(r"\{(tid|slug|spec_path|task_dir|diff_anchor)\}")
+PLACEHOLDER_RE = re.compile(
+    r"\{(tid|slug|spec_path|task_dir|diff_anchor|review_level|contract_section|context_section)\}"
+)
+CONTRACT_HEADING = "## 契约区"
+CONTEXT_HEADING = "## 上下文区"
 
 
 def parse_front_matter(task_path: Path) -> dict:
@@ -30,26 +36,29 @@ def parse_front_matter(task_path: Path) -> dict:
     end = text.find("\n---", 3)
     if end == -1:
         sys.exit(f"{task_path}: front matter not terminated")
-    fm_text = text[3:end]
     fm = {}
-    for line in fm_text.splitlines():
+    for line in text[3:end].splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" not in line:
+        if not line or line.startswith("#") or ":" not in line:
             continue
         key, _, val = line.partition(":")
-        key = key.strip()
-        val = val.strip().strip('"').strip("'")
-        fm[key] = val
+        fm[key.strip()] = val.strip().strip('"').strip("'")
     return fm
 
 
-def apply_placeholders(template: str, values: dict) -> str:
-    def repl(match):
-        return values[match.group(1)]
+def extract_section(spec_text: str, heading: str) -> str:
+    """抽取 spec 中某个二级小节正文（不含标题行），到下一个二级标题为止。"""
+    start = spec_text.find(heading)
+    if start == -1:
+        return ""
+    rest = spec_text[start + len(heading):]
+    end = rest.find("\n## ")
+    section = rest if end == -1 else rest[:end]
+    return section.strip()
 
-    return PLACEHOLDER_RE.sub(repl, template)
+
+def apply_placeholders(template: str, values: dict) -> str:
+    return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
 def render_review_prompts(
@@ -68,6 +77,7 @@ def render_review_prompts(
     template_paths = {
         "code": TEMPLATES_DIR / "code_prompt.txt",
         "test": TEMPLATES_DIR / "test_prompt.txt",
+        "general": TEMPLATES_DIR / "general_prompt.txt",
         "share": TEMPLATES_DIR / "share_prompt.txt",
     }
     for path in template_paths.values():
@@ -87,14 +97,37 @@ def render_review_prompts(
     except ValueError:
         rel_task_dir = str(task_dir)
 
+    spec_rel = fm.get("spec_path") or f"{rel_task_dir}/spec.md"
+    spec_abs = REPO_ROOT / spec_rel
+    if not spec_abs.is_file():
+        sys.exit(f"missing spec: {spec_rel}")
+    spec_text = spec_abs.read_text(encoding="utf-8")
+
+    contract = extract_section(spec_text, CONTRACT_HEADING)
+    if not contract:
+        sys.exit(f"{spec_rel}: 缺「{CONTRACT_HEADING}」小节；reviewer 无 AC 锚点，拒绝渲染")
+    context = extract_section(spec_text, CONTEXT_HEADING) or "（spec 未填上下文区）"
+
     values = {
         "tid": fm["tid"],
         "slug": fm["slug"],
-        "spec_path": fm.get("spec_path") or f"{rel_task_dir}/spec.md",
+        "spec_path": spec_rel,
         "task_dir": rel_task_dir,
         "diff_anchor": fm["diff_anchor"],
+        "review_level": fm.get("review_level") or "full",
+        "contract_section": contract,
+        "context_section": context,
     }
     shared = template_paths["share"].read_text(encoding="utf-8")
+    level = fm.get("review_level") or "full"
+
+    if level == "single":
+        return {
+            "general_review_prompt.md": apply_placeholders(
+                template_paths["general"].read_text(encoding="utf-8") + "\n" + shared,
+                values,
+            ),
+        }
 
     return {
         "code_review_prompt.md": apply_placeholders(
