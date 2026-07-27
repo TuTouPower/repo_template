@@ -26,10 +26,10 @@
 | # | 议题 | 出处（≥2 份） | 当前模板状态 | 建议裁决 |
 |---|---|---|---|---|
 | L1 | `tasks_index.json` 多分支 merge 冲突 | feedback §4/E、retrospective §1、11111#3、session §12 | JSON 仍是唯一权威；task.py 仍是唯一写者 | **P0**：状态写 per-task front matter，index 改 derived；见 §3.1 |
-| L2 | 双审 finding 无界 / 信噪比低 | session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3 | share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控 | **P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2 |
+| L2 | 审阅 finding 无界 / 信噪比低 | session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3 | share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控 | **P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2 |
 | L3 | reviewer 缺决策上下文 → 撤回率堆积 | session §1b、feedback 再评估节 | render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt | **P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无" |
 | L4 | branch ≠ worktree，未提交丢失 | record、retrospective §1、session §11 | tasks-run 未强制 worktree；tasks-parallel 仅提示 | **P0**：tasks-run Step 1 加工作区门禁；见 §3.3 |
-| L5 | 双审对所有 task 无差别（文档/格式也双审） | feedback §3/C、retrospective §2、retrospective_0 痛点 3 | 仍固定双审 | **P1**：`review_level: full\|single\|none` 进 spec front matter |
+| L5 | 审阅对所有 task 无差别（文档/格式也审阅） | feedback §3/C、retrospective §2、retrospective_0 痛点 3 | 仍固定审阅 | **P1**：`review_level: full\|single\|none` 进 spec front matter |
 | L6 | plan.md 实际弃用 / 退化为 spec 副本 | feedback §1+A、retrospective §4、session §1b | 模板仍是「步骤+风险+blueprint」，未按读者切 | **P1**：按读者重划——spec 吸收契约区+上下文区；plan 降为可选实施笔记；见 §3.4 |
 | L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retrospective_0 痛点 1、feedback §1 | spec 模板已约束"不写版本号/库/目录"；code_prompt 技术约束不判 blocking | **已吸收**；补一条：发现 spec 技术字段漂移时改 spec 不计 FAIL |
 | L8 | max_review_round 不够 / 语义模糊 | retrospective §3、retrospective_0 痛点 5、session §1 | 默认已抬到 4；round 语义仍混（出场次数 vs 闭环次数） | **P1**：round 定义为"同一批 finding 的回归轮次"；新 finding 不强制 N+1 |
@@ -74,7 +74,7 @@ session 分析的 PASS 率 29-30%、遗留 761 条，全部来自 omni_usage 一
 - omni_usage 是 Electron + 原生模块项目，测试基础设施弱（无单测层，全靠 smoke/e2e）——这类项目的 finding 信噪比天然偏低
 - 761 条遗留集中在 `87f4adb0` 一个会话的 8 个 task，若该会话恰好是 `/goal` hook 强制串行的尾部（context 接近 32MB 上限），reviewer 在极端 context 下的行为可能不代表正常态
 
-**不是说结论错**——双审无界是结构性问题，与项目无关。但审阅应标注：**PASS 率与遗留数来自单一项目样本，推广到全模板时按"方向正确、数值待校准"对待**。落地 L2 后应在下一个非 Electron 项目复测 PASS 率，确认改造效果。
+**不是说结论错**——审阅无界是结构性问题，与项目无关。但审阅应标注：**PASS 率与遗留数来自单一项目样本，推广到全模板时按"方向正确、数值待校准"对待**。落地 L2 后应在下一个非 Electron 项目复测 PASS 率，确认改造效果。
 
 ### 2.4 `archive/workflow_skill_split_proposal.md` 的"实施结果"缺位——三份审阅都提了，但有一层更深的
 

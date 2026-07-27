@@ -27,13 +27,11 @@ Bug 修复入口。产出 **backlog 修复 task**（可多个），不在本 ski
    - `docs/pending.md`：已有该 bug 条目时，spec 上下文区引用其 `bNNN`；没有条目且短期不修完时，按「未修 bug」节规范追加。本 skill 不修复，不写闭环标记。
    - `review_level` 默认 `full`（bug 说明既有防线失效，不降级）。
 
-6. **询问提交**。列出本次新建/修改的文档，询问用户是否提交；同意后才 commit（创建期可多 task 一批，subject 含 bug 简述或 tid 列表）。
+6. **询问提交**。列出本次新建/修改的文档，询问用户是否提交；同意后才 commit（一个 task 目录一个 commit，subject 含 bug 简述或 tid）。
 
 ## 边界
 
-- 复现/探索代码**只许** `.scratch/`；禁止写未 ignore 路径（`src/` `tests/` `scripts/` 等）。
 - 不 `start`、不做生产修复；红绿验证与修复均留给 `tasks-run`。
-- 未经用户同意不 commit 创建物。
 
 ## 完成
 

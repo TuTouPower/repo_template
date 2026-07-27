@@ -12,7 +12,7 @@
 
 ## TL;DR（按严重度）
 
-1. **双审 finding 信噪比灾难**：首轮 PASS 率仅 29-30%；单 task 累计处置最多 1454 条，撤回+遗留远超已修。根因不是 reviewer 太严（同模型无能力差），是 finding 定义无界 + 上下文不对称 → P0
+1. **审阅 finding 信噪比灾难**：首轮 PASS 率仅 29-30%；单 task 累计处置最多 1454 条，撤回+遗留远超已修。根因不是 reviewer 太严（同模型无能力差），是 finding 定义无界 + 上下文不对称 → P0
 2. **`/goal` hook 串行多 task 致单会话 context 溢出**：两个 19MB 会话、`Request too large` 中断、`2377` 次 error → P0
 3. **TDD 顺序违规 + 测试断言错误行为**：改测试适配实现、auth 改坏后仍过测 → P0
 4. **subagent 失控 + 503 无工作流出口**：13→8→2 agent 数量失守；11+ 次 503 后自定"容错上限"停手，不走 blocked → P1
@@ -20,7 +20,7 @@
 
 ## 实证数据概览
 
-| 会话 | 大小 | task 跨度 | 双审轮次分布 | 首轮 PASS | compact |
+| 会话 | 大小 | task 跨度 | 审阅轮次分布 | 首轮 PASS | compact |
 |---|---|---|---|---|---|
 | `6cc03e0d` (7-21~24) | 19MB | t041-t097 ~30 task | R1:103 / R2:76 / R3:6 | 19/66 = 29% | 0（手动 `/clear` 接力）|
 | `af3dbbf3` (7-24~25) | 19MB | t099-t105 7 task | R1:37 / R2:44 / R3-R5:16 | 16/54 = 30% | 1 |
@@ -31,7 +31,7 @@
 
 ## 结构性问题
 
-### 1. 双审 finding 信噪比（P0，本轮最严重）
+### 1. 审阅 finding 信噪比（P0，本轮最严重）
 
 **现象**
 
@@ -111,14 +111,14 @@ reviewer 提示词没要求"只报 AC 阻塞级"。于是"风格建议 / 边界�
 **现象**
 
 - `8bb084c7`：先启 13 个 background agent 被用户全停；切 `/code-review` 又启 8 个 finder 被自停；最终才收敛到 2 个
-- t099 双审连续 `11+` 次 `503 No available channel for model claude-opus-4-8`，助手自行解释为"容错上限"停手写 handoff，**未走 `block <tid>`**
-- CLAUDE.md `blocked` 表只覆盖"黑盒轮次达上限 / 双审 FAIL 满轮"两种触发，**无基础设施失败路径**
+- t099 审阅连续 `11+` 次 `503 No available channel for model claude-opus-4-8`，助手自行解释为"容错上限"停手写 handoff，**未走 `block <tid>`**
+- CLAUDE.md `blocked` 表只覆盖"黑盒轮次达上限 / 审阅 FAIL 满轮"两种触发，**无基础设施失败路径**
 
 **证据**：`8bb084c7` "13 background agents were stopped by the user"；t099 503 重试日志。
 
 **建议**
 
-- CLAUDE.md Step 5 加硬约束：**双审 subagent 总数 = 2**，禁止 fallback 扩容；503 时走 blocked，禁止扩 agent 绕过
+- CLAUDE.md Step 5 加硬约束：**审阅 subagent 总数 = 2**，禁止 fallback 扩容；503 时走 blocked，禁止扩 agent 绕过
 - 增加第三类 blocked 触发：**基础设施失败**（503 / 网络 / subagent 启动失败 N 次），`task.py block <tid> --reason infra`，要求口头报告 + 等用户放行
 - subagent 派发 prompt 用文件路径而非内联回显（同 §2）
 
@@ -203,7 +203,7 @@ reviewer 提示词没要求"只报 AC 阻塞级"。于是"风格建议 / 边界�
 
 | 问题 | 现有报告覆盖？ |
 |---|---|
-| 双审信噪比 / 首轮 PASS 29% | 否（新） |
+| 审阅信噪比 / 首轮 PASS 29% | 否（新） |
 | `/goal` hook context 溢出 | 否（新，omni_media 未用 `/goal`） |
 | subagent 失控 + 503 无出口 | 否（新） |
 | TDD 顺序违规 | 否（新） |
@@ -217,16 +217,16 @@ reviewer 提示词没要求"只报 AC 阻塞级"。于是"风格建议 / 边界�
 - **黑盒真实 Electron 运行时验证**（宽度 1200px / `maximum_size=[0,0]` / 重启恢复）扎实，不靠单测糊弄
 - **t098 收尾报告如实标注**"真实授权登录未验证"，未伪造结果
 - **调研类交叉验证** 6 个开源项目，多源一致后才下结论
-- **双审 FAIL 时 reviewer 真能抓 bug**：`not.toThrow` 不能证 unsub、`collect_upcoming_resets` 分支覆盖空洞、local-api `/v1/secrets` 在 `check_auth` 之前——都是高质量 finding
+- **审阅 FAIL 时 reviewer 真能抓 bug**：`not.toThrow` 不能证 unsub、`collect_upcoming_resets` 分支覆盖空洞、local-api `/v1/secrets` 在 `check_auth` 之前——都是高质量 finding
 
 ## 优先级汇总
 
 | P | 问题 | 关键动作 |
 |---|---|---|
-| P0 | 双审信噪比 | reviewer 加 AC 硬阈值 + review prompt 注入决策上下文 + Step 2 AC 断言清单（均不依赖换模型） |
+| P0 | 审阅信噪比 | reviewer 加 AC 硬阈值 + review prompt 注入决策上下文 + Step 2 AC 断言清单（均不依赖换模型） |
 | P0 | `/goal` context 溢出 | 每 task 切会话 + 单会话 `≤ 2` task + 强制 `/compact` |
 | P0 | TDD 顺序违规 | 旧绿测只删不改 + reviewer 复核改测试 |
-| P1 | subagent 失控 + 503 | 双审 `agent = 2` + infra blocked + 派发用文件路径 |
+| P1 | subagent 失控 + 503 | 审阅 `agent = 2` + infra blocked + 派发用文件路径 |
 | P1 | spec 脑补契约 | 未知契约清单必填 + 假设审计 |
 | P1 | bug → task 接口 | 只读调研后必须追加 `bugs.md` |
 | P1 | 任务建完又删 | `add` 后确认才进 Step 1 |

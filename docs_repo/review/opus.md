@@ -12,14 +12,14 @@
 
 > **当前工作流偏向"防止 agent 犯错"，对"agent 的执行效率"关注不够。**
 
-- workflow_feedback §一个根本性的观察：门禁/双审/blocked/索引同步是防错；plan 退化/双审无差别/依赖分散是低效。
-- workflow_retrospective：最大改进杠杆 = 去 task 分支 + 双审分级。
+- workflow_feedback §一个根本性的观察：门禁/审阅/blocked/索引同步是防错；plan 退化/审阅无差别/依赖分散是低效。
+- workflow_retrospective：最大改进杠杆 = 去 task 分支 + 审阅分级。
 - workflow_retrospective_0：噪音 finding 36%，真 bug 28%，噪音消耗的 turn 比真 bug 多。
-- session_analysis：首轮双审 PASS 率 29-30%，单 task 处置最多 1454 条。
+- session_analysis：首轮审阅 PASS 率 29-30%，单 task 处置最多 1454 条。
 
-我同意这个判断，且补充一层：**防错机制自身已产生新的失败模式**。双审本是质量兜底，现在成了最大噪音源（P0）；tasks_index 本是可追溯，现在成了最大 merge 冲突源（P0）；/goal hook 本为推进，现在撑爆 context（P0）。防错过了临界点后，收益递减、成本递增，reviewer 与主 agent 的博弈消耗超过 bug 本身。
+我同意这个判断，且补充一层：**防错机制自身已产生新的失败模式**。审阅本是质量兜底，现在成了最大噪音源（P0）；tasks_index 本是可追溯，现在成了最大 merge 冲突源（P0）；/goal hook 本为推进，现在撑爆 context（P0）。防错过了临界点后，收益递减、成本递增，reviewer 与主 agent 的博弈消耗超过 bug 本身。
 
-当前 AGENTS.md 已部分响应（`max_review_round` 从 2 提到 4、skill 拆分落地、task-bug/task-debt 路由补齐），但**最高 ROI 的三项未动**：双审分级、reviewer 上下文注入、task 粒度量化。详见 §3/§4/§5。
+当前 AGENTS.md 已部分响应（`max_review_round` 从 2 提到 4、skill 拆分落地、task-bug/task-debt 路由补齐），但**最高 ROI 的三项未动**：审阅分级、reviewer 上下文注入、task 粒度量化。详见 §3/§4/§5。
 
 ---
 
@@ -30,14 +30,14 @@
 - ✅ 未调用 skill 时 agent 仍能从 AGENTS.md 理解状态/门禁/禁区。
 - ✅ task-create 不进入 active、不改实现。
 - ✅ 两个 skill 不复制 AGENTS.md 完整规则。
-- ⚠️ **「固定两个独立 reviewer 未弱化」形式上满足，实质上被架空**——双审对所有 task 一视同仁，正是 retrospective_0 痛点 3 与 session_analysis P0 共同攻击的点。形式上双审还在，实质上 reviewer 在低价值 task 上凑 finding、在高价值 task 上报无界 finding，两头都不讨好。
+- ⚠️ **「固定两个独立 reviewer 未弱化」形式上满足，实质上被架空**——审阅对所有 task 一视同仁，正是 retrospective_0 痛点 3 与 session_analysis P0 共同攻击的点。形式上审阅还在，实质上 reviewer 在低价值 task 上凑 finding、在高价值 task 上报无界 finding，两头都不讨好。
 - ⚠️ **「中途恢复」部分满足**：tasks-run 有状态恢复表（backlog→Step1、active→Step2…），但 workflow_record.md 暴露的 worktree 事故不在恢复表覆盖范围——**分支 ≠ 隔离工作区**这一课，AGENTS.md 与 tasks-run 均未写入。Step 1 只校验 `git branch --show-current`，不校验「当前物理目录是否被其他 task 共享」。建议 Step 1 增加硬校验：`git worktree list` + 确认本 task 在独立 worktree 或主 worktree 无并发 task。
 
-提案 §「不解决的问题」有先见之明：skill 无程序级强制力。session_analysis §4（subagent 失控 13→8→2、503 后不走 blocked）正是这一弱点的实证——**blocked 触发条件只覆盖黑盒满轮与双审满轮两类，无基础设施失败路径**。AGENTS.md blocked 表至今只有两行。建议加第三行：基础设施失败（503/网络/subagent 启动失败 N 次）→ `block <tid> --reason infra`，禁止 agent 自定「容错上限」停手。
+提案 §「不解决的问题」有先见之明：skill 无程序级强制力。session_analysis §4（subagent 失控 13→8→2、503 后不走 blocked）正是这一弱点的实证——**blocked 触发条件只覆盖黑盒满轮与审阅满轮两类，无基础设施失败路径**。AGENTS.md blocked 表至今只有两行。建议加第三行：基础设施失败（503/网络/subagent 启动失败 N 次）→ `block <tid> --reason infra`，禁止 agent 自定「容错上限」停手。
 
 ---
 
-## 3. 双审信噪比：笔记诊断正确，但「按读者重划」方案只完成一半
+## 3. 审阅信噪比：笔记诊断正确，但「按读者重划」方案只完成一半
 
 session_analysis §1 的根因四层（角色保守偏差 / 信息不对称 / finding 无锚 / 同模型盲区）是我见过的对 reviewer 失效最准确的分析。结论「换模型不解决问题，根因在 prompt + 上下文 + 阈值」我同意。
 
@@ -75,7 +75,7 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 
 1. 「一个 commit」的初衷是可追溯 + 易回滚，但 21 task 实证显示它要么被违反（多修复点打包）、要么被架空（多 task 合一 commit），规则名存实亡。
 2. 「一主题 N commit」不损失可追溯——commit subject 含 tid，task.md 收尾引用全部 commit hash；反而比「强行一个巨型 commit」更易 review（每个 commit 原子）。
-3. 与双审分级联动：commit 级 review（每原子 commit 独立）或 task 级总 review（最后一次），可由 risk_level 决定。
+3. 与审阅分级联动：commit 级 review（每原子 commit 独立）或 task 级总 review（最后一次），可由 risk_level 决定。
 
 建议改 commit 策略：
 
@@ -87,21 +87,21 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 
 ---
 
-## 5. 双审分级 + max_review_round：当前用「统一提高上限」回避了「分级」
+## 5. 审阅分级 + max_review_round：当前用「统一提高上限」回避了「分级」
 
 笔记一致要求按风险分级：
 
-- workflow_feedback 改进 C：CRITICAL 双审+e2e / MEDIUM 单审 / LOW lint+自验收。
+- workflow_feedback 改进 C：CRITICAL 审阅+e2e / MEDIUM 单审 / LOW lint+自验收。
 - workflow_retrospective 改进 P1：spec front matter 加 `review_level: full|single|none`。
-- workflow_retrospective_0 痛点 3：双审对基础设施/CRUD 过重，minor-only FAIL 强制处置是浪费。
+- workflow_retrospective_0 痛点 3：审阅对基础设施/CRUD 过重，minor-only FAIL 强制处置是浪费。
 - session_analysis：max_review_round=2 偏紧（t102/t105 被加轮到 5）。
 
-**当前 AGENTS.md 的应对是把 `max_review_round` 从 2 统一提到 4**。这是用「抬高上限」回避「分级」——对复杂 task 仍可能不够（t044 用过 5 轮），对简单 task 仍是过度（文档/格式 task 走 4 轮双审是纯浪费）。
+**当前 AGENTS.md 的应对是把 `max_review_round` 从 2 统一提到 4**。这是用「抬高上限」回避「分级」——对复杂 task 仍可能不够（t044 用过 5 轮），对简单 task 仍是过度（文档/格式 task 走 4 轮审阅是纯浪费）。
 
 抬高上限只解决「复杂 task 不够」，不解决「简单 task 太重」，反而加重了后者。正确方向是分级，不是统一抬上限：
 
 - spec front matter 加 `review_level: full|single|none` 与 `complexity: high|medium|low`。
-- `full`（安全/资金/并发/鉴权）：双审 + max_review_round=4~5。
+- `full`（安全/资金/并发/鉴权）：审阅 + max_review_round=4~5。
 - `single`（普通 API/前端/测试）：单审 + max_review_round=2。
 - `none`（文档/配置/格式）：build+test 通过即可，max_review_round=0。
 - minor-only FAIL 不强制 round 2（round 2 阈值 = 至少 1 条 important/critical）。
@@ -160,11 +160,11 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 
 **workflow_feedback.md**：结构最完整（问题→保留→建议→待决策），「按读者重划 spec/plan」是全部笔记里最有理论价值的洞察。待决策项 6 条至今未决——建议不要等全量推行，先在一两个新 task 试点 review 分级 + spec 上下文区（笔记自己也这么建议）。
 
-**workflow_retrospective.md**：数据扎实（21 task/31 commit/343→370 测试），「做得好的设计」清单克制准确（specs driven、max 上限、blocked、adoption_decision 追溯链、双审抓真 bug 都该保留）。§1 merge 冲突三方案中推荐 C（不切分支）我持保留——见 §6，C 与并发模型冲突，B 才是根治。
+**workflow_retrospective.md**：数据扎实（21 task/31 commit/343→370 测试），「做得好的设计」清单克制准确（specs driven、max 上限、blocked、adoption_decision 追溯链、审阅抓真 bug 都该保留）。§1 merge 冲突三方案中推荐 C（不切分支）我持保留——见 §6，C 与并发模型冲突，B 才是根治。
 
 **workflow_retrospective_0.md**：finding 分类表（真 bug 28%/噪音 36%）是量化噪音的最好证据。「根因：发现横向需求默认绕过+标遗留，不开新 task 根治」是元改进——当前 AGENTS.md 已有 task-debt skill 对应「捞遗留/技术债建 task」，方向已补；但「reviewer 发现横向缺口时建议开新 task 而非标遗留」这条 reviewer prompt 侧未落实（code_prompt.txt 有「系统性 follow-up」字段，算半落实，需在 prompt 中强化「已有 follow-up tid 则引用，不重复 finding」）。
 
-**workflow_session_analysis_2026-07.md**：样本与方法最硬（80MB 日志、6 路并行 subagent、jq/grep 抽样），根因四层分析是全部笔记的高峰。优先级汇总表可直接当 roadmap。「亮点」清单（数据恢复纪律、黑盒真实运行时验证、如实标注未验证、交叉验证、双审抓真 bug）提醒：改进时别把孩子和洗澡水一起倒掉——双审在关键 task 上抓到 new Function RCE/余额泄漏/幂等缺口/local-api 越权，这些是真价值，分级是为了保住高价值场景的审阅精力，不是取消双审。
+**workflow_session_analysis_2026-07.md**：样本与方法最硬（80MB 日志、6 路并行 subagent、jq/grep 抽样），根因四层分析是全部笔记的高峰。优先级汇总表可直接当 roadmap。「亮点」清单（数据恢复纪律、黑盒真实运行时验证、如实标注未验证、交叉验证、审阅抓真 bug）提醒：改进时别把孩子和洗澡水一起倒掉——审阅在关键 task 上抓到 new Function RCE/余额泄漏/幂等缺口/local-api 越权，这些是真价值，分级是为了保住高价值场景的审阅精力，不是取消审阅。
 
 **workflow_record.md**：单点事故复盘，教训明确（branch ≠ worktree）。见 §2，建议固化为 tasks-run Step 1 的 worktree 隔离校验。
 
@@ -179,7 +179,7 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 | 优先级 | 项 | 来源 | 当前状态 | 动作 |
 |---|---|---|---|---|
 | P0 | reviewer 注入决策上下文 + AC 硬阈值 | session_analysis P0 / feedback 再评估 | 未做（render 无 plan 注入，prompt 无阈值） | 改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区 |
-| P0 | 双审按 risk_level 分级 | 三份笔记一致 | 未做（仅统一抬 max 到 4） | spec front matter 加 review_level + complexity；task.py 按级提示 |
+| P0 | 审阅按 risk_level 分级 | 三份笔记一致 | 未做（仅统一抬 max 到 4） | spec front matter 加 review_level + complexity；task.py 按级提示 |
 | P0 | tasks_index merge 冲突 | retrospective §1 / 11111 | 未做（仍分支+JSON 单点写） | 状态写 task.md front matter，JSON 改 derived data |
 | P1 | commit 策略改「一主题 N commit」 | feedback B / retrospective §7 | 未做（仍一 task 一 commit） | 改 AGENTS.md commit 策略；task.md 收尾列 commit hash |
 | P1 | blocked 加 infra 触发 | session_analysis §4 | 未做（blocked 表只两行） | AGENTS.md blocked 表加第三行 |
@@ -191,4 +191,4 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 | P3 | 环境前置 doctor + 已知陷阱文档 | retrospective_0 痛点 6 / session §9 | 未做 | 建 env_doctor task + known_pitfalls.md |
 | P3 | /goal 切会话 + 单会话 ≤2 task | session_analysis §2 | 本仓未引入 /goal，预防性 | 引入 /goal 时同步加约束 |
 
-**一句话**：四份笔记诊断高度一致且相互印证，方向（分级/按读者切/derived data/横向开 task）都对；当前模板仓吸收了约三成（skill 拆分、max 抬 4、task-debt/bug 路由），剩下七成（reviewer 上下文、双审分级、JSON 冲突、commit 粒度、blocked infra、worktree 校验、TDD 硬约束）是最该先做的。建议按 P0 三项先试点，不要全量推。
+**一句话**：四份笔记诊断高度一致且相互印证，方向（分级/按读者切/derived data/横向开 task）都对；当前模板仓吸收了约三成（skill 拆分、max 抬 4、task-debt/bug 路由），剩下七成（reviewer 上下文、审阅分级、JSON 冲突、commit 粒度、blocked infra、worktree 校验、TDD 硬约束）是最该先做的。建议按 P0 三项先试点，不要全量推。

@@ -34,7 +34,7 @@ disable-model-invocation: true
 
 ## 单 task 流程
 
-门禁数字以 `AGENTS.md`「命名与状态」为准。`{doctor_cmd}` / `{test_cmd}` / `{blackbox_cmd}` 见 `AGENTS.md` 硬约束。
+门禁默认：`max_verify_round = 5`（黑盒）；`max_review_round = 5`（审阅）。`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 见 `docs/blueprint/testing.md`。
 
 ```mermaid
 flowchart TD
@@ -44,15 +44,14 @@ flowchart TD
     S4 --> B1{"黑盒通过?"}
     B1 -->|否且未满轮| S3
     B1 -->|否且满轮| BLK["blocked"]
-    B1 -->|是| S5["5 双审"]
+    B1 -->|是| S5["5 审阅"]
     S5 --> D{"6 overall?"}
-    D -->|PASS| S7["7 收尾"]
+    D -->|PASS| S7["7 收尾+提交"]
     D -->|FAIL 未满轮| W["写处置表"]
     W --> C{"改了代码/测试?"}
     C -->|是| S3
     C -->|否| DOC["改必要文档"] --> S7
     D -->|FAIL 满轮| W2["写处置表"] --> BLK
-    S7 --> S8["8 提交"]
 ```
 
 **开始或继续每个 task 时，先重新读仓库判断入口**（`scripts/task.py show <tid>` + task 目录下 `spec.md` / `task.md` / `review_*.md` + 分支 + `git status` + `diff_anchor` + 测试与实施笔记）：
@@ -63,7 +62,7 @@ flowchart TD
 | `active`，无红灯证据 | Step 2 |
 | 红已有、实现未完 | Step 3 |
 | 绿过、黑盒未过 | Step 4 |
-| 黑盒过、无双审 | Step 5 |
+| 黑盒过、无审阅 | Step 5 |
 | 有 FAIL、未满轮 | Step 6 处置后按表回流 |
 | `blocked` | 停止整批，呈 blocked 选项 |
 | `done` / `dropped` | 跳过 |
@@ -74,11 +73,11 @@ flowchart TD
 2. `scripts/task.py start <tid>`。默认建 worktree `../{repo}_{tid}` 并软链 `.env`，同时锁定 spec 契约区 hash。
    - 只有**用户明确指令**不隔离时才加 `--no-worktree`。
    - **`cd` 进该 worktree 再改代码**；后续所有 Step 都在 worktree 内进行。
-3. `scripts/task.py preflight <tid>`：占位符、契约区、依赖、分支、worktree 隔离、工作区脏项、索引↔目录↔分支交叉校验。
+3. `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性。
    - **FAIL 必须先修**，不得绕过继续。
 4. `task.md` front matter 实写 `diff_anchor`（当前 HEAD）。
 5. spec 契约区行为 AC 非空再进 Step 2（preflight 已查）。
-6. spec 上下文区要求 spike：先做实验（见 `AGENTS.md`「spike」）；文档查询不能替代兼容实验。
+6. spec 上下文区要求 spike：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
 
 ### Step 2：红
 
@@ -92,9 +91,9 @@ flowchart TD
 
 ### Step 4：黑盒
 
-跑 `{blackbox_cmd}`。通过→Step 5。未通过且 `< max_verify_round` → 回 Step 3 再黑盒。未通过且 `≥ max_verify_round` → `block --reason blackbox`，整批停止。
+按 `docs/blueprint/testing.md` 中 `{blackbox_verify}` 的方法执行。通过→Step 5。未通过且 `< max_verify_round` → 回 Step 3 再黑盒。未通过且 `≥ max_verify_round` → `block --reason blackbox`，整批停止。
 
-### Step 5：双审
+### Step 5：审阅
 
 - `git add -N` 纳入本 task 产出；剔除无关/临时/`.scratch/`（`git reset <path>`）。
 - 渲染 prompt（spec 契约区与上下文区由脚本注入，reviewer 不再自行读 spec）：
@@ -115,7 +114,7 @@ flowchart TD
 
 - 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
 - `status=遗留` 的**内容**不写在 task.md：登记到 `docs/pending.md`「遗留待办」节拿 `fNNN`，`fix_ref` 填该 `fNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
-- `max_review_round` 取 `AGENTS.md` 默认或用户加轮后的新上限（实施笔记有记录）：
+- `max_review_round` 取本 skill 默认（5）或用户加轮后的新上限（实施笔记有记录）：
   ```bash
   scripts/check_review_status.py \
     --task-dir docs/tasks/{tid}_{slug} \
@@ -127,9 +126,11 @@ flowchart TD
 - `overall=PASS` → Step 7。
 - `FAIL` 且 `round < max`：填处置表 → 改了代码/测试则 Step 3→4→5→6；未改则改必要文档后直接 Step 7（不改写 review verdict）。
 - `FAIL` 且 `round ≥ max`：处置表填完 → `block --reason review`，整批停止。
-- **禁止**同一 round 内「复核翻 PASS」；修代码必须完整下一轮双审。
+- **禁止**同一 round 内「复核翻 PASS」；修代码必须完整下一轮审阅。
 
-### Step 7：收尾
+### Step 7：收尾与提交
+
+**7a 收尾文档**（在 worktree 内）：
 
 - 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`。
 - 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
@@ -139,17 +140,22 @@ flowchart TD
   2. **整条**从 `docs/pending.md` 移除，**追加**到 `docs/archive/pending.md` 的对应节（不截断 archive）。
   3. 无关联条目则跳过。
 - **遗留登记**（与 Step 6 呼应，收尾再核一遍）：处置表所有 `status=遗留` 的行，其 `fix_ref` 必须指向 `fNNN` 或 follow-up tid。仍为空的立即补登 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id。
-- **findings 抽取**：本 task 做过 spike，或产出可跨 task 复用的已验证事实（工具行为、平台差异、依赖坑、性能特征、被证伪的假设），抽一条进 `docs/findings.md` 拿 `dNNN`；spike 报告全文移入 `docs/archive/spikes/`。只记已验证的事实，推测不进。
+- **findings 抽取**：本 task 做过 spike，或产出可跨 task 复用的已验证事实（工具行为、平台差异、依赖坑、性能特征、被证伪的假设），结论总结写入 `docs/findings.md`。报告留在 spike 目录。只记已验证的事实，推测不进。
 - 排在其后且未 `done` 的 task 若受影响，修订其 `spec.md`。
-- `scripts/task.py finish <tid>`（目录归档 + worktree 移除 + 索引重建）。
-  - `finish` 会移除 worktree，**先 `cd` 回主仓再执行**，否则脚本会拒绝移除并要求手动清理。
 
-### Step 8：提交（执行期）
+**7b finish**（在 worktree 内执行；脚本检测到 cwd 在 worktree 内会保留 worktree）：
 
-- 本 task 执行期的改动**至少一个 commit**，可按逻辑拆多个原子 commit；每个 subject 都含 `{tid}`。
-- task = 一个可 review 的交付单元；commit = 实施原子。归档移动与文档更新随最后一个 commit。
-- 在 task 分支上提交；合并回主干用 `--no-ff` 保留 task 边界。
-- **blocked 未放行前**不当 done 提交、不 `finish`。
+```
+scripts/task.py finish <tid>
+```
+
+**7c 提交与合并**：
+
+- 在 worktree 内把本 task 执行期的全部改动（含 7a 文档、7b finish 产生的归档移动）**一次性 commit**；subject 含 `{tid}`。
+- 一 task 一 commit。task 拆得不够细导致改动跨多个独立主题时，回到 `task-create` 拆 task，不在执行期切分 commit。
+- `cd` 回主仓，`git merge --no-ff {tid}_{slug}` 合并回主干。
+- 主仓内 `git worktree remove ../{repo}_{tid}` 清理工作区。
+- **blocked 未放行前**不 `finish`、不合并。
 
 ## 整批停止条件
 
@@ -167,7 +173,6 @@ flowchart TD
 - 执行期一个 task 一个交付单元；创建期与维护期 commit 不与执行期混。
 - `blocked` 整批停，不自动跳下一个。
 - 每步循环纪律：读仓库状态 → 执行当前步骤 → 用命令/文件验证 → 更新 `task.md` → 再判断。禁止只靠「会话里做到哪」续跑。
-- 不进 plan mode（见开头）。
 
 ## 完成
 

@@ -10,7 +10,7 @@ CLAUDE.md 定义的开发工作流基于五条核心假设：
 
 1. **task 是独立可验证的最小单元**（"一个需求拆成 N 个 task，每个结果独立可验证，一个 task 一个 commit"）
 2. **spec/plan 分离让"想清楚"和"做"分离**
-3. **门禁（黑盒 5 轮 / 双审 2 轮）保证质量**
+3. **门禁（黑盒 5 轮 / 审阅 5 轮）保证质量**
 4. **索引（tasks_index.json / specs_index.md）保证可追溯**
 5. **追加式记录（handoff.md / bugs.md）保留历史**
 
@@ -49,15 +49,15 @@ CLAUDE.md 模板：
 
 实际结果：要么 task 太大违反"一个 commit"，要么拆得太碎失去主题凝聚力。需要量化的可执行标准。
 
-### 3. 双审对所有 task 一视同仁是形式主义
+### 3. 审阅对所有 task 一视同仁是形式主义
 
-CLAUDE.md 双审机制（max_review_round=2，code reviewer + test reviewer 各一）对所有 task 同样要求。但实际：
+CLAUDE.md 审阅机制（max_review_round=5，code reviewer + test reviewer 各一）对所有 task 同样要求。但实际：
 
 - **纯文档 task**（改外部依赖表述 / 同步 spec / 清理元引用）：code reviewer 审什么？test reviewer 审什么？
-- **风格统一 task**（缩进 / 命名 / ESLint）：双审重复 ESLint 已经能自动查的东西
-- **LOW 项批量 task**（8 个独立小修复打包）：双审变成"清单核对"而非"质量评估"
+- **风格统一 task**（缩进 / 命名 / ESLint）：审阅重复 ESLint 已经能自动查的东西
+- **LOW 项批量 task**（8 个独立小修复打包）：审阅变成"清单核对"而非"质量评估"
 
-双审对**关键路径代码**（计费、鉴权、并发、安全）有意义。对文档 / 风格 / 配置 task 是无效成本。工作流没有按 task 类型分级。
+审阅对**关键路径代码**（计费、鉴权、并发、安全）有意义。对文档 / 风格 / 配置 task 是无效成本。工作流没有按 task 类型分级。
 
 ### 4. 索引文件是高成本同步点
 
@@ -92,7 +92,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 工作流不是全错，以下设计应保留：
 
 1. **specs driven 防止实施时范围漂移**：spec 在前确实让"做什么"先于"怎么做"清晰
-2. **门禁上限防止无限循环**：5 轮黑盒 / 2 轮双审是合理的硬上限
+2. **门禁上限防止无限循环**：5 轮黑盒 / 2 轮审阅是合理的硬上限
 3. **blocked 机制明确"何时问用户"**：避免 agent 卡死或自作主张推进
 4. **spike / task 二分**：技术选型（spike）和需求实现（task）解耦，干净
 5. **AGENTS.md 文档规范**（禁止元引用 / 单一权威定义 / 禁止元 ticket 编号嵌入正文）：文档质量确实更高
@@ -136,11 +136,11 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 明确写入 CLAUDE.md，让"拆 task 还是拆 commit"有判断依据。
 
-#### C. 双审按 task 风险等级
+#### C. 审阅按 task 风险等级
 
 | Task 类型 | 流程 |
 |---|---|
-| CRITICAL / HIGH 资金 / 安全 / 并发 | 双审 + e2e |
+| CRITICAL / HIGH 资金 / 安全 / 并发 | 审阅 + e2e |
 | MEDIUM 代码 | 单审（code 或 test 二选一）+ 单测 |
 | LOW / 文档 / 风格 / 配置 | lint 通过 + 自验收（无 reviewer） |
 
@@ -192,7 +192,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 > 基于 omni_usage 会话实证（`workflow_session_analysis_2026-07.md`）对 §1 与改进建议 A 的发展，非否定。
 
-§1 已诊断"模板按 WHAT/HOW 切导致字段重叠"，改进建议 A 的方向是 plan 模板分级、承载真正的设计细节。omni_usage 会话分析暴露了另一条线索：**双审 reviewer 只读 spec 不读 plan**，但 reviewer 最需要的"决策上下文"（哪些分支有意不测）和"测试策略"（哪些 AC 不可单测）当前写在 plan 里——造成 reviewer 信息不对称，撤回率与遗留堆积（详见 session 分析报告 §1 根因 b/c）。
+§1 已诊断"模板按 WHAT/HOW 切导致字段重叠"，改进建议 A 的方向是 plan 模板分级、承载真正的设计细节。omni_usage 会话分析暴露了另一条线索：**审阅 reviewer 只读 spec 不读 plan**，但 reviewer 最需要的"决策上下文"（哪些分支有意不测）和"测试策略"（哪些 AC 不可单测）当前写在 plan 里——造成 reviewer 信息不对称，撤回率与遗留堆积（详见 session 分析报告 §1 根因 b/c）。
 
 这指向比 §1 更根本的划分原则：**按读者切，不按字段语义切**。
 
@@ -235,12 +235,12 @@ reviewer 提示词明确"判 AC 时只看契约区；判测试覆盖时核对上
 
 ## 一个根本性的观察
 
-当前工作流设计**偏向"防止 agent 犯错"**（门禁 / 双审 / blocked / 索引同步），但**对"agent 的实施效率"关注不够**（plan 退化为副本 / 双审无差别 / 依赖分散）。
+当前工作流设计**偏向"防止 agent 犯错"**（门禁 / 审阅 / blocked / 索引同步），但**对"agent 的实施效率"关注不够**（plan 退化为副本 / 审阅无差别 / 依赖分散）。
 
 对一个不信任 agent 的随机调用者，这套流程合理。对长期使用的私人 agent，可以更信任一些——把流程成本转移到真正需要把关的地方（CRITICAL 安全 / 资金 / 并发），其他地方放手。
 
 具体到 omni_media 的 15 个新 task：
-- t041 / t043 / t044 / t045 / t046 / t047 真正需要双审 + e2e（安全 / 资金 / 关键前端 / e2e 基础设施）
+- t041 / t043 / t044 / t045 / t046 / t047 真正需要审阅 + e2e（安全 / 资金 / 关键前端 / e2e 基础设施）
 - t048-t055 走简化流程（lint + spot check）就够
 
 ## 待决策项
@@ -249,9 +249,9 @@ reviewer 提示词明确"判 AC 时只看契约区；判测试覆盖时核对上
 
 1. **plan 模板分级**：是否接受三套模板？还是保留单模板但重写字段定义？
 2. **task 粒度**：从"一个 task 一个 commit"改为"一个 task 一个主题，N 个 commit"，是否接受？
-3. **双审分级**：是否接受按 risk_level 分级？risk_level 由谁定（agent 推断 / 用户指定）？
+3. **审阅分级**：是否接受按 risk_level 分级？risk_level 由谁定（agent 推断 / 用户指定）？
 4. **索引简化**：tasks_index.json 是保留 task.py 唯一权威，还是改为 archive-only？
 5. **依赖图**：是否引入 depends_on 字段？
 6. **spec/plan 边界**：接受"按读者重划"——spec 收编决策上下文 + 测试策略 + 未知契约清单，plan 只留 agent 私有实施细节（plan_code 收窄）？还是保持改进建议 A（plan 承载测试策略）？
 
-建议先在一两个新 task 上试点 A/B/C 三项（plan 分级 / task 粒度 / 双审分级），观察效果再决定是否全量推行。
+建议先在一两个新 task 上试点 A/B/C 三项（plan 分级 / task 粒度 / 审阅分级），观察效果再决定是否全量推行。

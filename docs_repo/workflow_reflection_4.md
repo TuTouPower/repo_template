@@ -9,8 +9,8 @@
 | 指标 | 数据 |
 |---|---|
 | task 总数 | 21（20 done + 1 dropped 后拆为 6 个子 task 全 done） |
-| 双审 task | 10 个走了完整双审（t041-t046）；其余 11 个直接收尾 |
-| 双审轮次 | t041: 3 轮, t042: 4 轮, t043: 4 轮, t044: 5 轮, t045: 4 轮, t046: 3 轮 |
+| 审阅 task | 10 个走了完整审阅（t041-t046）；其余 11 个直接收尾 |
+| 审阅轮次 | t041: 3 轮, t042: 4 轮, t043: 4 轮, t044: 5 轮, t045: 4 轮, t046: 3 轮 |
 | 总 commit | 31 |
 | 测试基线→最终 | 343 → 370 passed（+27 用例） |
 | 分支数 | 11 个独立分支 + 4 个在 main 上直接做 |
@@ -33,9 +33,9 @@
 - **方案 B**：task.py finish 时把状态写入 task.md front matter（每个文件独立，不冲突），tasks_index.json 由脚本扫描 task.md 生成（derived data）。
 - **方案 C**：不切分支，所有 task 直接在 main 上做（t048/t049/t051 验证了这种方式无冲突）。
 
-### 2. 双审对低风险 task 是纯浪费
+### 2. 审阅对低风险 task 是纯浪费
 
-**现象**：21 个 task 中 11 个直接收尾（跳过双审），包括：
+**现象**：21 个 task 中 11 个直接收尾（跳过审阅），包括：
 - 纯文档 task（t052-t054）
 - 纯配置 task（t055-t056）
 - 纯格式 task（t057-t061）
@@ -43,13 +43,13 @@
 这些 task 改动无业务逻辑，reviewer 能审出的 finding 极少（多为"文档元引用"等 minor），但流程仍要求派 2 个 sub agent。
 
 **改进方向**：按 task 类型分级：
-- **关键代码**（安全/资金/并发/鉴权）：完整双审 + e2e
+- **关键代码**（安全/资金/并发/鉴权）：完整审阅 + e2e
 - **普通代码**（API/前端/测试）：单审 + 单测
 - **文档/配置/格式**：build + test 通过即可，无 reviewer
 
 ### 3. max_review_round=2 对复杂 task 不够
 
-**现象**：t044（计费幂等）用了 5 轮双审才收敛。前几轮 reviewer 发现大量测试缺口（mock 边界过宽、AC 未覆盖），每轮补测试后又暴露新路径。用户中途把 max 从 2 改到 5。
+**现象**：t044（计费幂等）用了 5 轮审阅才收敛。前几轮 reviewer 发现大量测试缺口（mock 边界过宽、AC 未覆盖），每轮补测试后又暴露新路径。用户中途把 max 从 2 改到 5。
 
 **根因**：spec 写了 6 项 AC，但测试覆盖是渐进式的——第一轮发现缺口→补→第二轮发现新缺口→补。这种"剥洋葱"式收敛在复杂 task 上无法在 2 轮内完成。
 
@@ -105,7 +105,7 @@
 3. **blocked 机制**：t050 dropped → 拆分为 t056-t061 是正确的终止决策
 4. **task.py 自动化**：降低状态管理心智负担（虽然有 merge 冲突问题）
 5. **adoption_decision.md**：16 份 review 报告 → 63 采纳项 → 15 个 task 的完整追溯链非常有效
-6. **双审对关键 task 的价值**：t041/t044/t045 的 reviewer 发现了真实 critical bug（new Function RCE、余额泄漏、幂等缺口）
+6. **审阅对关键 task 的价值**：t041/t044/t045 的 reviewer 发现了真实 critical bug（new Function RCE、余额泄漏、幂等缺口）
 
 ## 改进建议（按优先级）
 
@@ -121,10 +121,10 @@
 
 如果保留分支：改用方案 B（task.py 把状态写入 task.md front matter，tasks_index.json 改为 derived data，merge 时不冲突）。
 
-### P1：双审分级
+### P1：审阅分级
 
 在 task spec front matter 加 `review_level: full|single|none`：
-- `full`：双审 + e2e（安全/资金/并发/鉴权）
+- `full`：审阅 + e2e（安全/资金/并发/鉴权）
 - `single`：单审 + 单测（普通 API/前端/测试）
 - `none`：build + test（文档/配置/格式）
 
@@ -144,4 +144,4 @@ agent 根据 review_level 决定是否派 reviewer。
 
 ## 一句话总结
 
-**工作流在"防止 agent 犯错"方面做得好（双审/门禁/blocked），但在"agent 的执行效率"方面有结构性瓶颈（merge 冲突/双审无差别/plan 退化）。最大的改进杠杆是：去掉 task 分支（直接在 main 做）+ 双审按风险分级。**
+**工作流在"防止 agent 犯错"方面做得好（审阅/门禁/blocked），但在"agent 的执行效率"方面有结构性瓶颈（merge 冲突/审阅无差别/plan 退化）。最大的改进杠杆是：去掉 task 分支（直接在 main 做）+ 审阅按风险分级。**

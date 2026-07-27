@@ -21,8 +21,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **盘点**（只读）：
-   - `scripts/task.py doctor`：一次查全库 task 目录、front matter、孤儿分支与孤儿 worktree。FAIL 项报告用户，不私自 rm。
-   - `scripts/task.py list`：活跃 vs 归档是否与目录一致（该命令顺带重建派生 index）。
+   - `scripts/task.py list`：活跃 vs 归档是否与目录一致（顺带重建派生 index）。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`
@@ -50,7 +49,7 @@ disable-model-invocation: true
    - 无价值草稿且用户确认 → 可删；未确认不删。
    - **不**把上述模板路径当过时文档归档或删除。
 
-5. **task 状态一致性**：用 `task.py doctor` 的结论；发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。禁止手编 front matter 或派生 index。对照目录时**跳过**步骤 1 列出的模板路径。
+5. **task 状态一致性**：发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
 
    派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）已 gitignore，不入 commit；内容不对时跑 `task.py list` 重建即可，不算不一致项。
 
@@ -58,8 +57,6 @@ disable-model-invocation: true
 
 ## 边界
 
-- **不手改** task `front matter` 与派生 index JSON（只经 `scripts/task.py`）。
-- **archive 只追加**：`docs/archive/pending.md`、`docs/archive/handoff.md` 禁止截断、改写已归档条目。
 - **docs 侧可删迁**：从 active 文件移除已修/过时内容属于本 skill 职责，不是「篡改历史」。
 - **不挪 active task 目录**（归档只由 `finish` / `drop` 完成）。
 - **保护模板**：`docs/tasks/task_template/`、`docs/spikes/report_template.md`、`docs/reviews/prompts/` 永不当残留、不 rm、不迁 archive。

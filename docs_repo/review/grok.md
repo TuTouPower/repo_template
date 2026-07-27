@@ -20,7 +20,7 @@
 **问题**
 
 - **建议与落地状态未标注**：读者难分「已改」「仍缺」「已否决」。
-- **重复度高**：双审分级、plan 无用、一 task 一 commit、JSON merge 冲突在多份文件各写一遍，无索引表。
+- **重复度高**：审阅分级、plan 无用、一 task 一 commit、JSON merge 冲突在多份文件各写一遍，无索引表。
 - **彼此冲突未裁决**：例如「直接 main 做」vs「必须 worktree 隔离」；「plan 承载设计细节」vs「plan 可省 / 测试策略进 spec」。
 - **`11111.md`、`workflow_record.md` 形态不一致**：一个是碎片备忘，一个是事故复盘草稿，缺元信息与入库标准。
 
@@ -32,9 +32,9 @@
 
 | 文件 | 角色 | 质量 | 与当前模板关系 |
 |------|------|------|----------------|
-| `workflow_retrospective_0.md` | t001–t007 初跑复盘（痛点 1–7 + 横向缺口根因） | 高：例子具体、ROI 表清晰 | 部分已吸收（AC 行为化、round 默认 4）；横向开 task / doctor / 双审分级未制度化 |
-| `workflow_retrospective.md` | t041–t061 实战（merge 灾难、跳过双审、plan 无用） | 高：P0=merge 冲突判断准确 | 分支策略仍默认 task branch；worktree 仅在 `tasks-parallel` 提示 |
-| `workflow_feedback.md` | 结构假设 + plan/spec/粒度/双审/索引 设计债 | 高；后半「按读者切」是升级版 | plan 模板仍旧；无 risk/review_level；无 depends_on |
+| `workflow_retrospective_0.md` | t001–t007 初跑复盘（痛点 1–7 + 横向缺口根因） | 高：例子具体、ROI 表清晰 | 部分已吸收（AC 行为化、round 默认 4）；横向开 task / doctor / 审阅分级未制度化 |
+| `workflow_retrospective.md` | t041–t061 实战（merge 灾难、跳过审阅、plan 无用） | 高：P0=merge 冲突判断准确 | 分支策略仍默认 task branch；worktree 仅在 `tasks-parallel` 提示 |
+| `workflow_feedback.md` | 结构假设 + plan/spec/粒度/审阅/索引 设计债 | 高；后半「按读者切」是升级版 | plan 模板仍旧；无 risk/review_level；无 depends_on |
 | `workflow_session_analysis_2026-07.md` | omni_usage 会话实证（信噪比、/goal、TDD 违规） | **最高价值**：P0 根因写到 prompt 层 | Pre-Report Gate 已有雏形；**AC 硬边界 / 决策上下文注入 / infra blocked / 旧测只删不改**仍弱或缺失 |
 | `workflow_record.md` | t071 未提交丢失事故（branch ≠ worktree） | 中高：事实清楚；格式偏对话草稿 | 未写成 skill 硬步骤；与 retrospective「直接 main」冲突未消解 |
 | `archive/workflow_skill_split_proposal.md` | AGENTS 与 skill 拆分方案 | 高且**基本已实现** | 现状 skill 表比提案更细（create/run/bug/debt/merge/parallel/preflight/hygiene/clean）；archive 合理 |
@@ -63,11 +63,11 @@
 
 | 议题 | 来源 | 现状缺口 | 建议优先级 |
 |------|------|----------|------------|
-| 双审 finding **AC 硬边界**（只报阻塞级） | session §1 | Gate 有，但无「无界覆盖建议 → non-blocking」硬规则；无撤回率监控 | **P0** |
+| 审阅 finding **AC 硬边界**（只报阻塞级） | session §1 | Gate 有，但无「无界覆盖建议 → non-blocking」硬规则；无撤回率监控 | **P0** |
 | review prompt **注入决策上下文 / 有意不测清单** | feedback 补充 + session §1b | `render_review_prompts`  predominantly 仍以 spec 为中心；plan 上下文未强制进 reviewer | **P0** |
 | **branch ≠ worktree** 隔离 | record + retrospective merge | `tasks-run` 未强制 worktree；并行只「提示」不创建 | **P0**（并发/多会话场景） |
 | `tasks_index.json` **跨分支 merge 冲突** | retrospective §1 + 11111 | 仍 JSON 权威 + 每分支改 index；无 main-only / derived / 服务端方案 | **P0**（若保留多分支） |
-| **双审分级**（full/single/none） | feedback + retrospective | 仍「固定双审」；文档/格式 task 成本未制度化 | **P1** |
+| **审阅分级**（full/single/none） | feedback + retrospective | 仍「固定审阅」；文档/格式 task 成本未制度化 | **P1** |
 | plan 按读者/复杂度 | feedback | 模板仍「步骤+风险+blueprint」；与实施脱节 | **P1** |
 | TDD：**旧绿测只删不改** | session §3 | test_prompt 有红灯归因，**无「禁止就地改预期」硬句** | **P1** |
 | blocked 原因 **infra**（503 等） | session §4 | blocked 表只有 blackbox / review | **P1** |
@@ -120,7 +120,7 @@
 
 ### 4.2 `workflow_retrospective.md`（t041–t061）
 
-**价值**：把 merge 冲突坐实为**最大结构性税**；用 11 分支 vs main 直做对照，说服力强。双审对文档/格式浪费与 max_round 不够，和 session 分析互相印证。
+**价值**：把 merge 冲突坐实为**最大结构性税**；用 11 分支 vs main 直做对照，说服力强。审阅对文档/格式浪费与 max_round 不够，和 session 分析互相印证。
 
 **挑剔**
 
@@ -144,7 +144,7 @@
 
 ### 4.4 `workflow_session_analysis_2026-07.md`（最应优先读）
 
-**价值**：唯一把双审灾难归因到 **prompt 无界 + 上下文不对称**，并明确排除「换模型」幻想。数据（PASS 29–30%、遗留 761）足够支撑 P0 改造。
+**价值**：唯一把审阅灾难归因到 **prompt 无界 + 上下文不对称**，并明确排除「换模型」幻想。数据（PASS 29–30%、遗留 761）足够支撑 P0 改造。
 
 **挑剔**
 
@@ -257,7 +257,7 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 - 放开 agent 手改 `tasks_index.json`  
 - 为 plan 维护三套永久模板  
 - 把 `/goal`、Electron ABI 等宿主细节写进通用 AGENTS  
-- 用「换 reviewer 模型」当双审信噪比主修复  
+- 用「换 reviewer 模型」当审阅信噪比主修复  
 
 ---
 
@@ -267,7 +267,7 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 |------|------|
 | 实证性 | 强；session 分析可作范本 |
 | 可执行性 | 中；动作表有，缺「已落地 / 负责人 / 验收」 |
-| 去重 | 弱；双审分级等主题 ≥3 处全文重述 |
+| 去重 | 弱；审阅分级等主题 ≥3 处全文重述 |
 | 冲突处理 | 弱；main vs worktree、plan 归属未收敛 |
 | 对模板可迁移性 | 中；业务细节与流程原则混写 |
 | 可读路径 | 弱；无推荐阅读顺序 |
@@ -285,7 +285,7 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 
 ## 8. 结论
 
-`docs_repo` 完成了它该做的事：**用真实 task 与会话，把流程税和事故钉死在纸上**。模板已经吃掉 skill 拆分、AC 行为化、round 默认 4、部分 review 纪律；**没吃掉的是更贵的三块——有界双审、工作区隔离、索引/状态的 git 友好存储**。
+`docs_repo` 完成了它该做的事：**用真实 task 与会话，把流程税和事故钉死在纸上**。模板已经吃掉 skill 拆分、AC 行为化、round 默认 4、部分 review 纪律；**没吃掉的是更贵的三块——有界审阅、工作区隔离、索引/状态的 git 友好存储**。
 
 再写复盘的边际收益已低。维护动作应转为：
 

@@ -1,6 +1,6 @@
 # 开发工作流反思(t001-t007 实跑复盘)
 
-> 落地状态见 `decision_log.md`。痛点 1/7 与横向缺口根因已吸收；痛点 5「round N 新 finding 不该强制 N+1」已通过 round 语义改为回归轮次实现（L8）。文中「双审对简单 task 过重」已由 `review_level` 分级解决（L5）。
+> 落地状态见 `decision_log.md`。痛点 1/7 与横向缺口根因已吸收；痛点 5「round N 新 finding 不该强制 N+1」已通过 round 语义改为回归轮次实现（L8）。文中「审阅对简单 task 过重」已由 `review_level` 分级解决（L5）。
 
 > 基于 omni_media 项目 t001-t007(7 个 task,Next.js 全栈 MVP)走完整标准工作流的真实记录。本文档记录实际碰到的痛点、具体例子、代价,以及改进建议。目的:让后续项目调流程,减少摩擦。
 
@@ -24,7 +24,7 @@
 
 **现象**:spec 在 task 创建时写,但写死了技术选型细节(版本号/底层库/目录结构)。实现时工具链自然演进(create-next-app 默认变了、用户改架构决策),spec 没同步。reviewer 按 spec 字面判 FAIL,处置变成"改 spec"(代码一行不动)。
 
-**具体例子(t001,一轮双审触发 4 条 + 整轮 round 2)**:
+**具体例子(t001,一轮审阅触发 4 条 + 整轮 round 2)**:
 
 | finding | spec 写的 | 实际实现 | 处置 |
 |---|---|---|---|
@@ -33,7 +33,7 @@
 | t001_code_f003 | "shadcn/ui(Radix 组件)" | shadcn 新版底层换 `@base-ui/react` | 改 spec |
 | t001_code_f004 | "`tailwind.config.ts`" | v4 用 `globals.css @theme`(无 config 文件) | 改 spec |
 
-**代价**:4 条 important FAIL → 写处置表 → 改 spec.md → 重跑 → round 2 双审复核。**整个 round 2(2 个 sub agent)只为确认"spec 改对了"。** 代码零改动。
+**代价**:4 条 important FAIL → 写处置表 → 改 spec.md → 重跑 → round 2 审阅复核。**整个 round 2(2 个 sub agent)只为确认"spec 改对了"。** 代码零改动。
 
 **根因**:spec 把"做什么"(行为 AC)和"用什么"(技术选型)混在一起写死。技术选型在实现时才确定(工具链演进、用户决策变化),但 spec 已固化。
 
@@ -63,9 +63,9 @@
 
 ---
 
-## 痛点 3:双审对基础设施/CRUD task 过重,minor-only FAIL 强制处置
+## 痛点 3:审阅对基础设施/CRUD task 过重,minor-only FAIL 强制处置
 
-**现象**:双审(2 sub agent 并行)对所有 task 一视同仁。但基础设施 task(schema 初始化、CRUD boilerplate)逻辑简单,真 bug 少,reviewer 为凑 finding 产出 nitpick。minor-only 的 FAIL 仍走完整处置(写表 + 改 + 重跑)。
+**现象**:审阅(2 sub agent 并行)对所有 task 一视同仁。但基础设施 task(schema 初始化、CRUD boilerplate)逻辑简单,真 bug 少,reviewer 为凑 finding 产出 nitpick。minor-only 的 FAIL 仍走完整处置(写表 + 改 + 重跑)。
 
 **具体例子(t002,3 条全 minor,0 真 bug)**:
 
@@ -75,12 +75,12 @@
 | t002_code_f002 | smoke 用 `new PrismaClient` 而非 `src/lib/db` 单例 | smoke 是一次性脚本,HMR 单例对它无意义 |
 | t002_test_f001 | 同 code_f002 | 同上 |
 
-3 条 minor,处置代价:写处置表 + 改 smoke import 单例 + 精简 .env.example + 重跑 smoke + round 2 双审。**round 2 两个 sub agent 复核两条 minor 改动。**
+3 条 minor,处置代价:写处置表 + 改 smoke import 单例 + 精简 .env.example + 重跑 smoke + round 2 审阅。**round 2 两个 sub agent 复核两条 minor 改动。**
 
-**代价**:简单 task 的双审 + round 2 开销远超 finding 价值。
+**代价**:简单 task 的审阅 + round 2 开销远超 finding 价值。
 
 **改进**:
-- 双审分级:复杂逻辑(auth/sync cursor/storage 隔离)强制双审;基础设施/CRUD boilerplate 用单 reviewer 或 self-review + smoke 兜底
+- 审阅分级:复杂逻辑(auth/sync cursor/storage 隔离)强制审阅;基础设施/CRUD boilerplate 用单 reviewer 或 self-review + smoke 兜底
 - minor-only FAIL 不强制 round 2(round 2 阈值 = 至少 1 条 important/critical)
 
 ---
@@ -193,7 +193,7 @@ spec AC 变(如 t001 改技术栈),task.md 的勾选版本要同步改,否则不
 
 - **specs/blueprint 累积**:每 task 收尾更新 specs_index + architecture/decisions/domain,项目知识沉淀清晰
 - **task.py 状态机**:backlog→active→done + archive,分支/commit 可追溯
-- **双审抓到真 bug**:t007 cursor 跨 type 丢记录(critical)、t005 userId 未校验绕隔离(important)、t006 createAsset 孤儿文件。这些是实打实的、smoke 没覆盖到的 bug
+- **审阅抓到真 bug**:t007 cursor 跨 type 丢记录(critical)、t005 userId 未校验绕隔离(important)、t006 createAsset 孤儿文件。这些是实打实的、smoke 没覆盖到的 bug
 - **smoke 黑盒验收**:跑真实 HTTP+DB+Auth,可信度高
 - **userId 首参 + where userId 隔离约定**:贯穿 t004-t007,安全基线一致
 
@@ -206,7 +206,7 @@ spec AC 变(如 t001 改技术栈),task.md 的勾选版本要同步改,否则不
 | **0** | **发现横向系统性缺口(测试/公共代码/环境/工具链)立即开 backlog task 根治,不在业务 task 打补丁** | **2/4/6 共因(根因)** | 低(流程规则) |
 | 1 | spec 只写行为 AC,技术选型落 ADR | #1 spec 过时 | 低(改 spec 模板说明) |
 | 2 | reviewer 发现横向缺口时建议开新 task,而非标遗留 | #2 重复模式 | 低(改 reviewer prompt) |
-| 3 | 双审分级:复杂逻辑双审,基础设施单审/self-review | #3 过重 | 中(改 review 编排) |
+| 3 | 审阅分级:复杂逻辑审阅,基础设施单审/self-review | #3 过重 | 中(改 review 编排) |
 | 4 | minor-only FAIL 不强制 round 2 | #3 过重 | 低(改门禁规则) |
 | 5 | 引入 vitest,纯函数单测脱离 smoke(由 #0 的 test_framework task 落地) | #4 无单测 | 中(test_framework task) |
 | 6 | round N 新 finding 允许 round N 内处置收尾,不强制 N+1 | #5 blocked 陷阱 | 低(改流程描述) |

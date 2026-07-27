@@ -37,13 +37,13 @@ disable-model-invocation: true
 
 2. **列候选**。`scripts/task.py list --status backlog`；用户点名 tid 时以点名为准。候选为空则回复「当前没有 backlog task 可分析」，结束。
 
-3. **推导每个候选的改动面**。读 `docs/tasks/{tid}_{slug}/spec.md` 契约区（范围、非范围）与上下文区（依赖与约束、blueprint 更新点），并读 `task.md` front matter 的 `depends_on`，推导：
+3. **推导每个候选的改动面**。读 `docs/tasks/{tid}_{slug}/spec.md` 契约区（范围、非范围）与上下文区（依赖与约束、blueprint 更新点），推导：
 
    | 维度 | 内容 |
    |------|------|
    | 代码路径 | 预计新增/修改的 `src/` `tests/` `scripts/` 文件或目录 |
    | 共享契约 | `schemas/` `config/` `docs/blueprint/` 中会动的条目 |
-   | 顺序依赖 | front matter `depends_on`，以及 spec 中写明「依赖 tNNN」「在 X 之后」的前置 |
+   | 顺序依赖 | spec 上下文区写明「依赖 tNNN」「在 X 之后」的前置 |
 
    spec 范围写得太粗、推不出改动面的，判为**待澄清**，不放进可并发组。
 

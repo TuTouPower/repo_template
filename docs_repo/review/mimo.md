@@ -11,11 +11,11 @@
 | 文件 | 来源 | 核心贡献 |
 |---|---|---|
 | `11111.md` | 随笔 | 并发 task 索引冲突的初步观察 |
-| `workflow_feedback.md` | omni_media 理论分析 | spec/plan 边界、双审分级、索引简化 |
+| `workflow_feedback.md` | omni_media 理论分析 | spec/plan 边界、审阅分级、索引简化 |
 | `workflow_record.md` | t071 事故复盘 | branch ≠ worktree 的血泪教训 |
 | `workflow_retrospective_0.md` | t001-t007 复盘 | 7 条痛点 + 横向缺口根因 |
 | `workflow_retrospective.md` | t041-t061 复盘 | merge 冲突灾难、plan 弃用、手写脚本破坏 |
-| `workflow_session_analysis_2026-07.md` | omni_usage 实证 | 双审信噪比、context 溢出、TDD 违规 |
+| `workflow_session_analysis_2026-07.md` | omni_usage 实证 | 审阅信噪比、context 溢出、TDD 违规 |
 | `archive/workflow_skill_split_proposal.md` | 方案设计 | AGENTS.md + skill 拆分的完整提案 |
 | `review/gemini.md` | Gemini 审阅 | 总结 + 补充建议 |
 
@@ -45,9 +45,9 @@
 
 #### 3. 改进建议重复度高
 
-"双审分级"至少出现在 4 个文件中，每次措辞略有不同：
+"审阅分级"至少出现在 4 个文件中，每次措辞略有不同：
 - `workflow_feedback.md`：C 项，按 risk_level 分级
-- `workflow_retrospective_0.md`：建议 #3，复杂逻辑双审/基础设施单审
+- `workflow_retrospective_0.md`：建议 #3，复杂逻辑审阅/基础设施单审
 - `workflow_retrospective.md`：P1 项，full/single/none
 - `workflow_session_analysis_2026-07.md`：§1 建议，reviewer 加 AC 硬阈值
 
@@ -62,7 +62,7 @@
 #### 1. 根因分析深度不均
 
 **高质量**：
-- `workflow_session_analysis_2026-07.md` §1 对"双审信噪比"的四层根因拆解（角色框架→信息不对称→finding 无界→同模型盲区）是整套文档中分析质量最高的段落。结论"换模型不解决问题，根因在 prompt + 上下文 + 阈值设计"有说服力。
+- `workflow_session_analysis_2026-07.md` §1 对"审阅信噪比"的四层根因拆解（角色框架→信息不对称→finding 无界→同模型盲区）是整套文档中分析质量最高的段落。结论"换模型不解决问题，根因在 prompt + 上下文 + 阈值设计"有说服力。
 - `workflow_retrospective_0.md` §根因 对"横向缺口不开 task 根治"的归因（scope 守过头 / goal 推进压力 / 未识别系统性）诚实且可操作。
 
 **中等**：
@@ -97,7 +97,7 @@
 | 横向系统性缺口立即开 task 根治，不在业务 task 打补丁 | retrospective_0 §根因 | 消除 ~60% 噪音 turn |
 | branch ≠ worktree，多分支并行需 worktree 隔离 | record 全文 | 防止代码丢失 |
 | tasks_index.json 是 merge 冲突灾难源 | retrospective §1 | 驱动 derived data 方案 |
-| 双审 finding 必须锚 AC，禁止无界审查 | session_analysis §1 | 首轮 PASS 率从 30% 提升 |
+| 审阅 finding 必须锚 AC，禁止无界审查 | session_analysis §1 | 首轮 PASS 率从 30% 提升 |
 | `/goal` hook 串行多 task 导致 context 溢出 | session_analysis §2 | 单会话 task 数硬上限 |
 | TDD 顺序违规：改测试适配实现 | session_analysis §3 | 测试纪律硬约束 |
 
@@ -149,7 +149,7 @@
 | **立即** | 创建 `docs_repo/README.md`，建立时间线索引 + 文档状态标记 | 解决当前最大的可读性障碍 |
 | **立即** | 删除或归档 `11111.md` | 临时草稿无保留价值 |
 | **短期** | 合并改进建议，产出一份统一的"工作流 v2 改进清单" | 结束四份文档各自列待决策项的混乱状态 |
-| **短期** | 将"双审分级"和"spec 不写技术选型"这两个最成熟的建议落盘到 AGENTS.md | 已被三个以上独立来源验证 |
+| **短期** | 将"审阅分级"和"spec 不写技术选型"这两个最成熟的建议落盘到 AGENTS.md | 已被三个以上独立来源验证 |
 | **中期** | 实施 `archive/workflow_skill_split_proposal.md` 的 skill 拆分 | 解决 AGENTS.md 职责过重问题 |
 | **中期** | 建立 review prompt 版本管理 | 防止 prompt 变更导致审查标准漂移 |
 

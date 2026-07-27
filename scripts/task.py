@@ -6,7 +6,7 @@
 
 **工作区语义**：本脚本一律操作**当前所在工作区**（主仓或 worktree），不跨区读写。
 `start` 之后 task 文档随 worktree 走，`finish` 的归档移动也在 worktree 内完成，
-随 task commit 进分支，合并回主干时带回。因此主仓的 `list` / `doctor` 只能看到
+随 task commit 进分支，合并回主干时带回。因此主仓的 `list` 只能看到
 已合并与未 start 的 task；进行中 task 的最新状态在各自 worktree 内查。
 
 docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**（已 gitignore）：
@@ -20,7 +20,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**（�
   docs/archive/tasks_audit.log             rewind/purge 审计（append-only）
 
 命令：
-  task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL] [--depends-on TIDS]
+  task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL]
   task.py edit TID [--title TITLE] [--note NOTE | --note-append NOTE] [--review-level LEVEL]
   task.py start TID [--no-worktree]   # 主仓执行：提交 front matter → 建 worktree
   task.py preflight TID               # 开干前门禁
@@ -32,11 +32,9 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**（�
   task.py purge TID --reason TEXT
   task.py list [--status STATUS] [--rebuild]
   task.py show TID
-  task.py doctor
 """
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -67,18 +65,16 @@ REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")
-PLACEHOLDER_RE = re.compile(r"\{[^{}\n]{1,80}\}")
-CONTRACT_HEADING = "## 契约区"
 TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
     "tid", "slug", "title", "status", "branch", "worktree",
-    "review_level", "depends_on", "diff_anchor", "contract_hash", "note",
+    "review_level", "diff_anchor", "note",
 )
 
 
 class TaskDataError(Exception):
-    """task 数据不一致。除 doctor 外的命令捕获后退出；doctor 收集后统一报告。"""
+    """task 数据不一致。"""
 
 
 def _rel(path: Path) -> str:
@@ -246,18 +242,8 @@ def write_front_matter(path: Path, fm: dict, body: str) -> None:
 # 扫描与派生索引
 # --------------------------------------------------------------------------
 
-def scan_tasks(collect_errors: list | None = None) -> list[dict]:
-    """扫描活跃与归档 task 目录，按 tid 升序返回状态记录。
-
-    collect_errors 非 None 时把问题追加进去并跳过该 task（doctor 用），
-    否则抛 TaskDataError。
-    """
-    def fail(msg: str) -> bool:
-        if collect_errors is None:
-            raise TaskDataError(msg)
-        collect_errors.append(msg)
-        return True
-
+def scan_tasks() -> list[dict]:
+    """扫描活跃与归档 task 目录，按 tid 升序返回状态记录。"""
     tasks = []
     for base in (TASKS_DIR, ARCHIVE_TASKS_DIR):
         if not base.is_dir():
@@ -267,39 +253,39 @@ def scan_tasks(collect_errors: list | None = None) -> list[dict]:
                 continue
             task_md = d / "task.md"
             if not task_md.is_file():
-                fail(f"{_rel(d)}: 缺 task.md")
+                raise TaskDataError(f"{_rel(d)}: 缺 task.md")
                 continue
             try:
                 fm, _ = parse_front_matter(task_md)
             except TaskDataError as e:
-                fail(str(e))
+                raise TaskDataError(str(e))
                 continue
             tid = fm.get("tid", "")
             if not TID_RE.match(tid):
-                fail(f"{_rel(task_md)}: front matter tid 非法（{tid!r}）")
+                raise TaskDataError(f"{_rel(task_md)}: front matter tid 非法（{tid!r}）")
                 continue
             expected = f"{tid}_{fm.get('slug', '')}"
             if d.name != expected:
-                fail(f"{_rel(d)}: 目录名与 front matter 不符（应为 {expected}）")
+                raise TaskDataError(f"{_rel(d)}: 目录名与 front matter 不符（应为 {expected}）")
                 continue
             status = fm.get("status", "")
             if status not in VALID_STATUSES:
-                fail(f"{_rel(task_md)}: status 非法（{status!r}）")
+                raise TaskDataError(f"{_rel(task_md)}: status 非法（{status!r}）")
                 continue
             archived_dir = base is ARCHIVE_TASKS_DIR
             if archived_dir != (status in ARCHIVED_STATUSES):
-                fail(
+                raise TaskDataError(
                     f"{_rel(task_md)}: status={status} 与所在目录不符"
                     f"（位于{'归档' if archived_dir else '活跃'}目录）"
                 )
                 continue
-            record = {k: fm.get(k, "") for k in FRONT_MATTER_KEYS if k != "contract_hash"}
+            record = {k: fm.get(k, "") for k in FRONT_MATTER_KEYS}
             record["dir"] = _rel(d)
             tasks.append(record)
 
     dup = [tid for tid, n in Counter(t["tid"] for t in tasks).items() if n > 1]
     if dup:
-        fail(f"重复 tid：{sorted(dup)}")
+        raise TaskDataError(f"重复 tid：{sorted(dup)}")
         tasks = [t for t in tasks if t["tid"] not in dup]
     tasks.sort(key=lambda t: int(TID_RE.match(t["tid"]).group(1)))
     return tasks
@@ -378,52 +364,6 @@ def append_audit(action: str, *, tid: str, fr: str, to: str, reason: str,
 # spec 契约区
 # --------------------------------------------------------------------------
 
-def _section_bounds(text: str, heading: str) -> tuple[int, int] | None:
-    """定位二级小节正文范围：标题须独占一行，代码围栏内的同名行不算。"""
-    lines = text.splitlines(keepends=True)
-    offset, start, in_code = 0, None, False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_code = not in_code
-        elif not in_code:
-            if start is None and stripped == heading:
-                start = offset + len(line)
-            elif start is not None and stripped.startswith("## "):
-                return start, offset
-        offset += len(line)
-    return (start, len(text)) if start is not None else None
-
-
-def extract_section(text: str, heading: str) -> str:
-    bounds = _section_bounds(text, heading)
-    return text[bounds[0]:bounds[1]].strip() if bounds else ""
-
-
-def contract_hash(spec_path: Path) -> str:
-    """spec.md 契约区正文的 sha256 前 12 位；无契约区返回空串。"""
-    if not spec_path.is_file():
-        return ""
-    section = extract_section(spec_path.read_text(encoding="utf-8"), CONTRACT_HEADING)
-    if not section:
-        return ""
-    normalized = "\n".join(line.rstrip() for line in section.splitlines())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
-
-
-def find_placeholders(path: Path) -> list[str]:
-    """返回文件中残留的 {占位符}（代码块内的一律忽略）。"""
-    if not path.is_file():
-        return []
-    hits, in_code = [], False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.lstrip().startswith("```"):
-            in_code = not in_code
-            continue
-        if not in_code:
-            hits.extend(PLACEHOLDER_RE.findall(line))
-    return sorted(set(hits))
-
 
 # --------------------------------------------------------------------------
 # worktree
@@ -492,44 +432,6 @@ def remove_worktree(rel: str) -> tuple[bool, str]:
 # 命令
 # --------------------------------------------------------------------------
 
-def _normalize_depends(raw: str | None, tasks: list[dict], self_tid: str = "") -> str:
-    if not raw:
-        return ""
-    known = {t["tid"] for t in tasks}
-    by_tid = {t["tid"]: t for t in tasks}
-    out = []
-    for item in re.split(r"[,\s]+", raw.strip()):
-        if not item:
-            continue
-        if not TID_RE.match(item):
-            sys.exit(f"--depends-on 需要 tNNN 形式（收到 {item!r}）")
-        if item == self_tid:
-            sys.exit(f"--depends-on 不能指向自身（{item}）")
-        if item not in known:
-            sys.exit(f"--depends-on 引用了不存在的 {item}")
-        out.append(item)
-    out = list(dict.fromkeys(out))
-
-    # 环检测：沿 depends_on 前向搜索，若能回到 self_tid 则成环
-    if self_tid:
-        seen, stack = set(), list(out)
-        while stack:
-            cur = stack.pop()
-            if cur == self_tid:
-                sys.exit(f"--depends-on 会形成循环依赖（{self_tid} → … → {self_tid}）")
-            if cur in seen:
-                continue
-            seen.add(cur)
-            dep = by_tid.get(cur)
-            if dep:
-                stack.extend(x for x in re.split(r"[,\s]+", dep.get("depends_on", "") or "") if x)
-    return ",".join(out)
-
-
-def _depends_list(fm: dict) -> list[str]:
-    return [x for x in re.split(r"[,\s]+", fm.get("depends_on", "") or "") if x]
-
-
 def cmd_add(args):
     if not SLUG_RE.match(args.slug):
         sys.exit(f"slug 须匹配 {SLUG_RE.pattern}（收到 {args.slug!r}）")
@@ -539,7 +441,6 @@ def cmd_add(args):
     for t in tasks:
         if t["slug"] == args.slug:
             sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
-    depends_on = _normalize_depends(args.depends_on, tasks)
     n = max((int(TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0) + 1
     tid = f"t{n:03d}"
     task_dir = TASKS_DIR / f"{tid}_{args.slug}"
@@ -559,9 +460,7 @@ def cmd_add(args):
         "branch": "",
         "worktree": "",
         "review_level": args.review_level,
-        "depends_on": depends_on,
         "diff_anchor": "",
-        "contract_hash": "",
         "note": args.note or "",
     })
     write_front_matter(task_md, fm, body)
@@ -571,9 +470,9 @@ def cmd_add(args):
 
 
 def cmd_edit(args):
-    fields = (args.title, args.note, args.note_append, args.review_level, args.depends_on)
+    fields = (args.title, args.note, args.note_append, args.review_level)
     if all(v is None for v in fields):
-        sys.exit("没有要改的字段；传 --title / --note / --note-append / --review-level / --depends-on")
+        sys.exit("没有要改的字段；传 --title / --note / --note-append / --review-level")
     if args.note is not None and args.note_append is not None:
         sys.exit("--note 与 --note-append 互斥")
     task, path, fm, body = load_task(args.tid)
@@ -597,9 +496,6 @@ def cmd_edit(args):
     if args.review_level is not None:
         fm["review_level"] = args.review_level
         changed.append(f"review_level={args.review_level}")
-    if args.depends_on is not None:
-        fm["depends_on"] = _normalize_depends(args.depends_on, scan_tasks(), self_tid=fm["tid"])
-        changed.append(f"depends_on={fm['depends_on']!r}")
     write_front_matter(path, fm, body)
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
@@ -609,22 +505,10 @@ def cmd_start(args):
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
 
-    blockers = [d for d in _depends_list(fm) if (find_task(d) or {}).get("status") != "done"]
-    if blockers:
-        sys.exit(f"{args.tid} 依赖未完成：{', '.join(blockers)}；先完成或用 edit 改 depends_on")
-
-    spec = REPO_ROOT / task["dir"] / "spec.md"
-    placeholders = find_placeholders(spec) + find_placeholders(path)
-    if placeholders:
-        sys.exit(
-            f"{args.tid} 的 spec.md / task.md 仍有模板占位符：{', '.join(sorted(set(placeholders))[:6])}；"
-            "填完再 start（否则契约区会锁定占位内容）"
-        )
 
     branch = f"{fm['tid']}_{fm['slug']}"
     fm["status"] = "active"
     fm["branch"] = branch
-    fm["contract_hash"] = contract_hash(spec)
     fm["diff_anchor"] = _get_head_short()
 
     if args.no_worktree:
@@ -677,10 +561,6 @@ def cmd_start(args):
     print(f"工作位置：{loc}")
     if linked:
         print(f"已软链本地配置：{', '.join(linked)}")
-    if fm["contract_hash"]:
-        print(f"契约区已锁定：contract_hash={fm['contract_hash']}")
-    else:
-        print("WARNING: spec.md 无「## 契约区」小节，契约冻结校验不可用", file=sys.stderr)
     if not args.no_worktree:
         print(f"下一步：cd {worktree_rel_path(fm['tid'])} 后在该工作区执行 preflight 与后续所有步骤")
 
@@ -688,76 +568,40 @@ def cmd_start(args):
 def cmd_preflight(args):
     task, path, fm, body = load_task(args.tid)
     task_dir = REPO_ROOT / task["dir"]
-    problems, warnings, checks = [], [], []
+    problems, warnings = [], []
 
-    checks.append(f"工作区={_rel(REPO_ROOT) or REPO_ROOT.name}")
-    checks.append(f"status={fm['status']}")
+    # 1. 状态
     if fm["status"] in ARCHIVED_STATUSES:
         problems.append(f"status={fm['status']}，已归档不可执行")
     elif fm["status"] == "blocked":
         problems.append("status=blocked，须用户放行（加轮 resume 或 drop）后再执行")
 
-    for name in ("spec.md", "task.md"):
-        hits = find_placeholders(task_dir / name)
-        if hits:
-            problems.append(f"{name} 残留模板占位符：{', '.join(hits[:6])}")
-    checks.append("占位符扫描完成")
-
+    # 2. spec 完整
     spec = task_dir / "spec.md"
     if not spec.is_file():
         problems.append("缺 spec.md")
     else:
         text = spec.read_text(encoding="utf-8")
-        if not _section_bounds(text, CONTRACT_HEADING):
-            problems.append("spec.md 缺「## 契约区」小节（须独占一行）")
+        if "## 契约区" not in text:
+            problems.append("spec.md 缺「## 契约区」小节")
         if not re.search(r"^\s*-\s*\[ \]\s*\S", text, re.MULTILINE):
             problems.append("spec.md 验收标准为空")
-        current = contract_hash(spec)
-        recorded = fm.get("contract_hash", "")
-        if fm["status"] == "active" and recorded and current != recorded:
-            problems.append(
-                f"契约区已被改动（记录 {recorded} → 当前 {current}）；"
-                "执行期禁止改契约区，请回退改动，或请用户确认后 rewind 重走 start"
-            )
-        checks.append(f"contract_hash={current or '（无）'}")
 
+    # 3. review 必要字段
     if fm["status"] == "active" and not fm.get("diff_anchor"):
         problems.append("diff_anchor 为空；review 无法渲染，请 rewind 后重走 start")
-
     if fm.get("review_level") not in REVIEW_LEVELS:
         problems.append(f"review_level={fm.get('review_level')!r} 非法，须为 {REVIEW_LEVELS}")
 
-    for dep in _depends_list(fm):
-        dep_task = find_task(dep)
-        if not dep_task:
-            warnings.append(f"依赖 {dep} 不在当前工作区（可能在其它 worktree 或尚未合并）")
-        elif dep_task["status"] != "done":
-            problems.append(f"依赖 {dep} 状态为 {dep_task['status']}，未完成")
-
-    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-    checks.append(f"当前分支={branch}")
-    if fm["status"] == "active" and fm["branch"] and branch != fm["branch"]:
-        problems.append(f"当前分支 {branch} 与 task 分支 {fm['branch']} 不符")
-
-    wt_rel = fm.get("worktree", "")
-    others = [t for t in scan_tasks()
-              if t["tid"] != fm["tid"] and t["status"] in ("active", "blocked")]
-    if wt_rel:
-        registered = {Path(p).resolve() for p in worktree_paths()}
-        if REPO_ROOT.resolve() not in registered:
-            problems.append("当前目录不是本仓登记的 worktree；请在 task 自己的 worktree 内执行")
-        elif REPO_ROOT.name != f"{Path(wt_rel).name}":
-            problems.append(
-                f"本次在 {_rel(REPO_ROOT) or REPO_ROOT.name} 运行，但本 task 的工作区是 {wt_rel}；请先 cd 过去"
-            )
-        else:
-            checks.append(f"worktree 隔离={wt_rel}")
-    elif fm["status"] == "active":
-        if others:
-            problems.append(
-                f"本 task 未用 worktree，且另有进行中 task（{', '.join(t['tid'] for t in others)}）"
-                "共享同一工作区；未提交改动会被切分支抹掉。请 rewind 后重新 start"
-            )
+    # 4. 工作区一致性
+    if fm["status"] == "active":
+        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+        if fm["branch"] and branch != fm["branch"]:
+            problems.append(f"当前分支 {branch} 与 task 分支 {fm['branch']} 不符")
+        wt_rel = fm.get("worktree", "")
+        if wt_rel:
+            if REPO_ROOT.name != Path(wt_rel).name:
+                problems.append(f"本 task 工作区是 {wt_rel}，请先 cd 过去")
         else:
             warnings.append("未用 worktree（--no-worktree）；禁止长期保留未提交改动")
 
@@ -768,29 +612,14 @@ def cmd_preflight(args):
                and not p.startswith(".scratch/")]
     if foreign:
         warnings.append(f"工作区有 {len(foreign)} 项与本 task 无关的改动：{', '.join(foreign[:5])}")
-    checks.append(f"工作区脏项={len(dirty)}")
-
-    scan_errors = []
-    scanned = scan_tasks(collect_errors=scan_errors)
-    problems.extend(scan_errors)
-    known_branches = {t["branch"] for t in scanned if t.get("branch")}
-    stale = [b for b in _list_task_branches() if b not in known_branches]
-    if stale:
-        warnings.append(
-            f"分支在当前工作区找不到对应 task：{', '.join(stale)}"
-            "（进行中 task 的文档在各自 worktree，未必是孤儿）"
-        )
-    checks.append("索引↔目录↔分支交叉校验完成")
 
     print(f"# preflight {args.tid}")
-    for line in checks:
-        print(f"  check: {line}")
     for line in warnings:
         print(f"  WARN : {line}")
     for line in problems:
         print(f"  FAIL : {line}")
     if problems:
-        print(f"\npreflight=FAIL（{len(problems)} 项）；修复后重跑，勿绕过")
+        print(f"\npreflight=FAIL（{len(problems)} 项）；修复后重跑")
         sys.exit(1)
     print(f"\npreflight=PASS{f'（{len(warnings)} 条警告）' if warnings else ''}")
 
@@ -907,7 +736,6 @@ def cmd_rewind(args):
             )
         fm["branch"] = ""
         fm["worktree"] = ""
-        fm["contract_hash"] = ""
         fm["diff_anchor"] = ""
 
     fm["status"] = target
@@ -970,53 +798,6 @@ def cmd_show(args):
         print(f"{k.ljust(width)}: {v}")
 
 
-def cmd_doctor(args):
-    """一致性检查。扫描异常不中断，全部收集后统一报告。"""
-    problems = []
-    tasks = scan_tasks(collect_errors=problems)
-    try:
-        rebuild_index(tasks)
-    except OSError as e:
-        problems.append(f"派生索引写入失败：{e}")
-
-    for t in tasks:
-        d = REPO_ROOT / t["dir"]
-        for name in ("spec.md", "task.md"):
-            if not (d / name).is_file():
-                problems.append(f"{t['tid']}: 缺 {name}")
-        if (d / "plan.md").is_file():
-            problems.append(f"{t['tid']}: 存在废弃的 plan.md（内容并入 spec.md 上下文区后删除）")
-        if t["status"] == "active":
-            if not t.get("branch"):
-                problems.append(f"{t['tid']}: active 但 branch 为空")
-            if not t.get("diff_anchor"):
-                problems.append(f"{t['tid']}: active 但 diff_anchor 为空，review 无法渲染")
-        if t.get("review_level") and t["review_level"] not in REVIEW_LEVELS:
-            problems.append(f"{t['tid']}: review_level={t['review_level']} 非法")
-
-    known = {t["branch"] for t in tasks if t.get("branch")}
-    notes = []
-    for b in _list_task_branches():
-        if b not in known:
-            notes.append(f"分支 {b} 在当前工作区无对应 task（可能其文档在别的 worktree 或未合并）")
-    for wt, branch in worktree_paths().items():
-        if Path(wt).resolve() == REPO_ROOT.resolve():
-            continue
-        if branch and branch not in known:
-            notes.append(f"worktree {wt}（分支 {branch}）在当前工作区无对应 task")
-
-    print(f"工作区：{_rel(REPO_ROOT) or REPO_ROOT.name}；扫描 {len(tasks)} 个 task；索引已重建")
-    for n in notes:
-        print(f"  note : {n}")
-    if not problems:
-        print("doctor=PASS")
-        return
-    for p in problems:
-        print(f"  FAIL : {p}")
-    print(f"\ndoctor=FAIL（{len(problems)} 项）；请提示用户处理，勿手工改索引")
-    sys.exit(1)
-
-
 def main():
     p = argparse.ArgumentParser(
         description="task 状态入口（状态权威 = task.md front matter；JSON 为派生缓存）",
@@ -1030,21 +811,19 @@ def main():
     a.add_argument("--slug", required=True)
     a.add_argument("--note", default="")
     a.add_argument("--review-level", choices=REVIEW_LEVELS, default=DEFAULT_REVIEW_LEVEL)
-    a.add_argument("--depends-on", help="前置 tid，逗号分隔")
     a.set_defaults(func=cmd_add)
 
-    e = sub.add_parser("edit", help="改活跃 task 的 title / note / review_level / depends_on")
+    e = sub.add_parser("edit", help="改活跃 task 的 title / note / review_level")
     e.add_argument("tid")
     e.add_argument("--title")
     e.add_argument("--note", help="覆盖 note（传空串则清空）")
     e.add_argument("--note-append", help="在现有 note 后追加")
     e.add_argument("--review-level", choices=REVIEW_LEVELS)
-    e.add_argument("--depends-on", help="前置 tid，逗号分隔；传空串清空")
     e.set_defaults(func=cmd_edit)
 
     s = sub.add_parser(
         "start",
-        help="backlog -> active：写并提交 front matter、建 worktree、软链 .env、锁契约区、记 diff_anchor",
+        help="backlog -> active：写并提交 front matter、建 worktree、软链 .env、记 diff_anchor",
     )
     s.add_argument("tid")
     s.add_argument("--no-worktree", action="store_true",
@@ -1053,7 +832,7 @@ def main():
                    help="配合 --no-worktree：主工作区有无关脏改动时仍继续")
     s.set_defaults(func=cmd_start)
 
-    pf = sub.add_parser("preflight", help="开干前门禁：占位符/契约区/依赖/分支/worktree/工作区/索引交叉校验")
+    pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/索引交叉校验")
     pf.add_argument("tid")
     pf.set_defaults(func=cmd_preflight)
 
@@ -1095,14 +874,12 @@ def main():
     sh.add_argument("tid")
     sh.set_defaults(func=cmd_show)
 
-    dr = sub.add_parser("doctor", help="一致性检查：目录、front matter、分支与 worktree")
-    dr.set_defaults(func=cmd_doctor)
 
     args = p.parse_args()
     try:
         args.func(args)
     except TaskDataError as e:
-        sys.exit(f"{e}\n数据不一致，请用 scripts/task.py doctor 查看全部问题并提示用户处理。")
+        sys.exit(f"{e}\n数据不一致；请提示用户处理。")
 
 
 if __name__ == "__main__":

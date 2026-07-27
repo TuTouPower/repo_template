@@ -39,9 +39,9 @@
 
 | 模板 | 路径 |
 |------|------|
-| task 文件 | `docs/tasks/task_template/`（`spec.md` / `task.md` / `review.md`） |
+| task 文件 | `docs/tasks/task_template/`（`spec.md` / `task.md`） |
 | spike 报告 | `docs/spikes/report_template.md` |
-| 双审 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`） |
+| 审阅 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`） |
 
 占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。`scripts/task.py` 扫描 task 目录时跳过 `task_template/`。
 
@@ -60,7 +60,7 @@
 
 | 区 | 内容 | 可变性 |
 |----|------|--------|
-| 契约区 | 范围 / 非范围 / 验收标准 / 可测试性声明 | `task.py start` 时锁 hash，执行期不改；`preflight` 检测漂移 |
+| 契约区 | 范围 / 非范围 / 验收标准 / 可测试性声明 | 执行期不改 |
 | 上下文区 | 有意不测 / 测试策略 / 未知契约清单 / 风险与回退 / 依赖与约束 / blueprint 更新点 | 执行期可补 |
 
 两区正文由 `scripts/render_review_prompts.py` 注入 reviewer prompt。reviewer 判 AC 只看契约区，判测试覆盖核对上下文区。
@@ -78,9 +78,7 @@ status: backlog        # backlog / active / blocked / done / dropped
 branch: ""             # start 时写入 {tid}_{slug}
 worktree: ""           # start 时写入 ../{repo}_{tid}
 review_level: full     # full / single
-depends_on: ""         # 前置 tid，逗号分隔
 diff_anchor: ""        # Step 1 实写当前 HEAD
-contract_hash: ""      # start 时锁定 spec 契约区 hash
 note: ""
 # spec_path: 可选，默认 <task_dir>/spec.md
 ---
@@ -96,9 +94,8 @@ note: ""
 
 - 提示词正文存于 `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
-- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 双审 / `single` 一路通用 reviewer）。
+- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 审阅 / `single` 一路通用 reviewer）。
 - 派 subagent 只传产物路径，不内联 prompt 正文。
-- `docs/tasks/task_template/review.md` 只写落点，不复制格式骨架——格式唯一定义在 prompt 模板。
 
 ## Review 处置字段（写在 `task.md`）
 

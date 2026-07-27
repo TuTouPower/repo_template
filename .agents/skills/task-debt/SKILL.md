@@ -32,16 +32,13 @@ disable-model-invocation: true
 
 5. **回写总账**。每个已建 task 的条目：`- 处理：未开 task` 改为 `- 处理：{tid}`，**整条**移入 `docs/archive/pending.md`「已处理遗留」节。条目留在总账里等于没转。
 
-6. **询问提交**。列出新建/修改的文档（task 目录、`docs/pending.md`、`docs/archive/pending.md`），询问用户是否提交；同意后才 commit（创建期可一批）。
+6. **询问提交**。列出新建/修改的文档（task 目录、`docs/pending.md`、`docs/archive/pending.md`），询问用户是否提交；同意后才 commit（一个 task 目录一个 commit）。
 
 ## 边界
 
 - 新建时不写生产代码；编码与补测方向写进 spec 上下文区，等 `tasks-run`。
-- task 状态只经 `scripts/task.py`（index JSON 是派生缓存，不手改也不入 commit）。
-- `docs/archive/pending.md` 只追加，禁止截断或改写已归档条目。
 - 不把「已 done 且仅文档考古」无差别全建成 task。
 - 未修 bug 交给 `task-bug`；已验证的技术发现属 `docs/findings.md`，不是待办，不转 task。
-- 未经用户同意不 commit 创建物。
 
 ## 完成
 

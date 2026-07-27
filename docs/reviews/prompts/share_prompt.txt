@@ -50,7 +50,7 @@
 
 ### 重审追加
 
-Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `AGENTS.md` `max_review_round`。
+Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `tasks-run` `max_review_round`。
 
 ### 撤回配合
 
@@ -71,7 +71,7 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 - **PASS**：以 `git diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor）。
 - **FAIL**：仍存在未解决的 critical / important。
 - **Round N（N≥2）**：追加新 `## Round N` 小节并给**本轮** verdict（脚本取最后一条 `verdict`）。前轮 blocker 须用 diff/代码核实是否已消除或已按撤回流程作废，**不**采信处置表自称「已修」。前轮 blocker 仍在或本轮有新 blocker → FAIL；否则 PASS。
-- **禁止**在同一 round 内因 implementer 临时修复而覆盖或追加「复核翻 PASS」；修完代码后须走完整下一轮双审（`.agents/skills/tasks-run/SKILL.md` Step 3→5）。
+- **禁止**在同一 round 内因 implementer 临时修复而覆盖或追加「复核翻 PASS」；修完代码后须走完整下一轮审阅（`.agents/skills/tasks-run/SKILL.md` Step 3→5）。
 
 权威流程见 `.agents/skills/tasks-run/SKILL.md`「Step 6：处置」与 `AGENTS.md`「blocked」。
 
