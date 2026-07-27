@@ -46,7 +46,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 
 未超阈值不因「感觉大」出 finding。项目可在 `docs/blueprint/conventions.md`「编码与测试」覆盖阈值；有覆盖时以项目约定为准。
 
-**降级规则**：文件过大命中项一律 `category: nitpick`，**不进 finding 表**，只在结论段列出路径与行数。仅当过大直接导致可观测缺陷（如单文件内重复逻辑已引发行为不一致）时，才按该缺陷本身出 finding。
+**降级规则**：文件过大命中项**不进 finding 表**，只在结论段列出路径与行数。仅当过大直接导致可观测缺陷（如单文件内重复逻辑已引发行为不一致）时，才按该缺陷本身出 finding。
 
 ### 圈复杂度标准
 
@@ -58,7 +58,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 | 圈复杂度 CC | 严重度 | 条件 |
 |-------------|--------|------|
 | **≥ 10** | 结论段提示 | 建议拆分或简化分支；不进 finding 表 |
-| **≥ 15** | minor | **且**本 task 仍增加该函数分支/嵌套（或新建时一上来 ≥ 15）；`category: nitpick` |
+| **≥ 15** | minor | **且**本 task 仍增加该函数分支/嵌套（或新建时一上来 ≥ 15） |
 
 复杂度本身不 blocking。只有当高复杂度已产出可观测缺陷（分支漏处理、状态不一致）时，按该缺陷出 finding 并锚定行为。
 
@@ -105,7 +105,6 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 ### {tid}_code_f001 - 标题
 
 - 严重度：critical / important / minor
-- category：bug / spec_drift / duplicate / nitpick / coverage_gap
 - 锚点：违反的 AC 编号，或「行为缺陷」+ 一句话失败场景
 - 位置：`path:line` 或符号名
 - 问题：可复现或可验证的问题

@@ -77,7 +77,7 @@ title: "task 标题"
 status: backlog        # backlog / active / blocked / done / dropped
 branch: ""             # start 时写入 {tid}_{slug}
 worktree: ""           # start 时写入 ../{repo}_{tid}
-review_level: full     # full / single / none
+review_level: full     # full / single
 depends_on: ""         # 前置 tid，逗号分隔
 diff_anchor: ""        # Step 1 实写当前 HEAD
 contract_hash: ""      # start 时锁定 spec 契约区 hash
@@ -96,22 +96,21 @@ note: ""
 
 - 提示词正文存于 `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
-- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 双审 / `single` 单审 / `none` 免审）。
+- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 双审 / `single` 一路通用 reviewer）。
 - 派 subagent 只传产物路径，不内联 prompt 正文。
 - `docs/tasks/task_template/review.md` 只写落点，不复制格式骨架——格式唯一定义在 prompt 模板。
 
 ## Review 处置字段（写在 `task.md`）
 
-| finding_id | severity | category | status | rationale | fix_ref |
-|------------|----------|----------|--------|-----------|---------|
-| t001_code_f001 | critical/important/minor | bug | 已修 | … | 文件:行 |
-| t001_test_f001 | … | coverage_gap | 遗留 | … | - |
-| t001_code_f002 | … | nitpick | 撤回 | … | review 追加位置 |
+| finding_id | severity | status | rationale | fix_ref |
+|------------|----------|--------|-----------|---------|
+| t001_code_f001 | critical/important/minor | 已修 | … | 文件:行 |
+| t001_test_f001 | … | 遗留 | … | - |
+| t001_code_f002 | … | 撤回 | … | review 追加位置 |
 
 - `status`：`已修` / `遗留` / `撤回`
-- `category`：`bug` / `spec_drift` / `duplicate` / `nitpick` / `coverage_gap`，抄自 reviewer 报告，供 `scripts/check_review_status.py` 统计撤回率。
 - critical / important 是 blocking；minor 非阻断，但仍须处置。minor 遗留写 rationale；已有 follow-up task 时 tid 写入 `fix_ref`。
-- `spec_drift` 的处置是改 spec 上下文区，不计 FAIL。
+- reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符），处置为改 spec 上下文区，不计 FAIL。
 - `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review|infra`
 
 ## specs_index 字段

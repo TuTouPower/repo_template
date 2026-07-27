@@ -32,24 +32,11 @@
 
 以下一律**不得** blocking：
 
-- 「建议再测更细」「覆盖可更广」「可以补一个 case」类扩展建议 → `minor`，`category: coverage_gap`
+- 「建议再测更细」「覆盖可更广」「可以补一个 case」类扩展建议 → `minor`
 - spec 上下文区已列入「有意不测」的分支 → **不出 finding**（该决策已获批准）
 - 「未知契约清单」中标 `UNVERIFIED` 的外部契约 → 只在结论段提示核实，不 blocking
-- 风格、命名、注释、文件组织偏好 → `minor`，`category: nitpick`
-
-### finding 分类（必填）
-
-每条 finding 标 `category`，供噪音率与撤回率统计：
-
-| category | 含义 |
-|----------|------|
-| `bug` | 实现或测试的真实缺陷 |
-| `spec_drift` | 实现合理但 spec 描述过时/不符；处置为改 spec，不计 FAIL |
-| `duplicate` | 与本轮或前轮其他 finding、已有 follow-up task 同源 |
-| `nitpick` | 风格、命名、组织类偏好 |
-| `coverage_gap` | 测试覆盖可扩展，但无已知失败场景 |
-
-`spec_drift` / `duplicate` / `nitpick` / `coverage_gap` 默认 `minor`，不阻断。
+- 风格、命名、注释、文件组织偏好 → `minor`
+- 实现合理但与 spec 描述不符（spec 过时）→ 在 finding 里说明，处置为改 spec，不计 FAIL
 
 ### Pre-Report Gate（每条 finding 报前自问）
 
@@ -107,4 +94,4 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 
 ### minor
 
-风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。`spec_drift` / `duplicate` / `nitpick` / `coverage_gap` 默认落在本级。
+风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。

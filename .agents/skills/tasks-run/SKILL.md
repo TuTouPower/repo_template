@@ -113,7 +113,7 @@ flowchart TD
 
 ### Step 6：处置
 
-- 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`；`category` 抄 reviewer 报告。
+- 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
 - `status=遗留` 的**内容**不写在 task.md：登记到 `docs/pending.md`「遗留待办」节拿 `fNNN`，`fix_ref` 填该 `fNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
 - `max_review_round` 取 `AGENTS.md` 默认或用户加轮后的新上限（实施笔记有记录）：
   ```bash
@@ -123,7 +123,7 @@ flowchart TD
   ```
   读 `overall` / `round` / `withdraw_rate` / `prompt_hint`。`round` 是**回归轮次**（上轮 FAIL 修完重审才计数），不是 reviewer 出场次数。
 - `prompt_hint` 非空 → 下一轮渲染后，在派发消息里附上轮撤回的 finding_id 与理由。
-- `category=spec_drift` 的处置是**改 spec 上下文区**，不计 FAIL，不因此回 Step 3。
+- reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符）：处置是**改 spec 上下文区**，不计 FAIL，不因此回 Step 3。
 - `overall=PASS` → Step 7。
 - `FAIL` 且 `round < max`：填处置表 → 改了代码/测试则 Step 3→4→5→6；未改则改必要文档后直接 Step 7（不改写 review verdict）。
 - `FAIL` 且 `round ≥ max`：处置表填完 → `block --reason review`，整批停止。

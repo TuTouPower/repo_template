@@ -34,7 +34,7 @@ note: ""
 
 本 task 目录会随 `finish` 归档，遗留正文留在这里等于丢失——`fix_ref` 为空的 `遗留` 行不算处置完成。
 
-`category` 取自 reviewer 报告，用于统计噪音与撤回率：`bug` / `spec_drift` / `duplicate` / `nitpick` / `coverage_gap`。`spec_drift` 的处置是改 spec 上下文区，不计 FAIL。
+reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符），处置为改 spec 上下文区，不计 FAIL。
 
 ### Round 1 场景
 
@@ -46,10 +46,10 @@ note: ""
 
 有 finding 时用本表；每条 finding 一行。
 
-| finding_id | severity | category | status | rationale | fix_ref |
-|------------|----------|----------|--------|-----------|---------|
-| t000_code_f001 | critical/important/minor | bug | 已修 | 一句话 | 文件:行 |
-| t000_test_f002 | minor | coverage_gap | 遗留 | 一句话 | f003 |
+| finding_id | severity | status | rationale | fix_ref |
+|------------|----------|--------|-----------|---------|
+| t000_code_f001 | critical/important/minor | 已修 | 一句话 | 文件:行 |
+| t000_test_f002 | minor | 遗留 | 一句话 | f003 |
 
 ## 收尾报告
 

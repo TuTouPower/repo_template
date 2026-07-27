@@ -24,7 +24,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 - **edge case**：空输入 / 边界值 / 失败路径 / 并发场景。上下文区「有意不测」已列的场景**不出 finding**。
 - **refactor 型 task**：删除的覆盖是否在更高层补回？（结构层变更只动调用部分时，覆盖不能丢）
 
-覆盖类 finding 要 blocking，必须指出**某条 AC 完全无测试**或**测试存在但验证的是假行为**。「还可以再加一个 case」属 `coverage_gap`，标 minor，不阻断。
+覆盖类 finding 要 blocking，必须指出**某条 AC 完全无测试**或**测试存在但验证的是假行为**。「还可以再加一个 case」标 minor，不阻断。
 
 ### 危险模式扫描（命中默认 important+；须调查，不得无说明放行）
 
@@ -84,7 +84,6 @@ diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试�
 ### {tid}_test_f001 - 标题
 
 - 严重度：critical / important / minor
-- category：bug / spec_drift / duplicate / nitpick / coverage_gap
 - 锚点：违反的 AC 编号，或「行为缺陷」+ 一句话失败场景
 - 位置：`path:line` 或测试名
 - 问题：可复现或可验证的问题

@@ -4,24 +4,13 @@
 
 **操作步骤**见 skill（正文在 `.agents/skills/`；`.claude/skills/*` 为软链）。本文件不展开逐步清单。
 
-### skill 触发（强制）
-
-`.agents/skills/` 下**全部** skill，含日后新增的（路由表见「Task 工作流入口」）：
-
-- **允许**：用户主动斜杠（`/tasks-run` 等）；或**另一个已获合法调用的 skill** 在正文中明确要求接着执行某 skill（链式调用）。
-- **禁止**：模型仅凭对话语义、goal 模糊匹配、「推进项目/有 backlog」等自行加载或执行任何 skill。
-- frontmatter 固定两行：`description: none` 与 `disable-model-invocation: true`。`description` 留 none 是为了不给模型语义匹配的抓手；`disable-model-invocation` 在宿主支持时生效。新增 skill 照此办理。
-- 用户未触发时：不创建/执行/整理 task 流程；需要时可提示对应斜杠，不得擅自开跑。
-
-非 Claude 宿主：直接读 `.agents/skills/<name>/SKILL.md`。规则冲突时以本文件为准。
-
 ## 命名
 
 - `{tid}`：task 编号，形如 `t001`、`t042`（小写 `t` + 数字）。
 - `{sid}`：spike 编号，形如 `s001`、`s003`（小写 `s` + 数字）。
 - `{slug}`：小写 `snake_case`。
 - task 目录：`docs/tasks/{tid}_{slug}/`；分支：`{tid}_{slug}`；worktree：`../{repo}_{tid}`。
-- finding：`{tid}_code_fNNN` / `{tid}_test_fNNN`（本 task 内跨轮累计递增）；每条标 `category`：`bug` / `spec_drift` / `duplicate` / `nitpick` / `coverage_gap`。
+- finding：`{tid}_code_fNNN` / `{tid}_test_fNNN`（本 task 内跨轮累计递增）。
 
 ## 目录与读写规则
 
@@ -59,9 +48,9 @@
 
 - specs driven：先拆 task 并填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
-- 双审：代码轴与测试轴由两个独立 reviewer 并行完成；critical / important 阻断，minor 须处置但不阻断。派几路、blocking 阈值、finding 分类由 review prompt 与 `review_level` 定义。
+- 双审：代码轴与测试轴由两个独立 reviewer 并行完成；critical / important 阻断，minor 须处置但不阻断。派几路、blocking 阈值由 review prompt 与 `review_level` 定义。
 - 工作区隔离：`task.py start` 默认为每个 task 建 git worktree（`../{repo}_{tid}`）。分支只隔离历史不隔离文件，未提交改动跟工作目录走。只有用户明确指令才用 `--no-worktree`。
-- **未经用户明确允许，绝不准手动直接更改未被 gitignore 的代码文件**（含 `src/`、`tests/`、入库脚本等）。明确允许包括：用户点名授权改路径，或用户触发的实施类 skill 在其流程内按 spec 修改。已 gitignore 路径（如 `.scratch/`）不受本条限制。
+- **未经用户明确允许，绝不准手动直接更改未被 gitignore 的代码文件**（含 `src/`、`tests/`、入库脚本等）。
 
 ## Task 工作流入口
 

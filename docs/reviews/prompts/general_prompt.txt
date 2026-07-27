@@ -19,7 +19,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 - 测试可信：断言是否触达可观察行为；是否在测 mock 而非真实路径；危险模式（恒真断言、删 expect、`.skip`、mock 误用）必须出 finding 且最低 important
 - 文档/配置：与代码改动是否一致；过期描述；破坏性变更是否标注
 
-技术约束类问题（版本号、目录结构、底层库选择）不判 blocking——这些不进 AC，发现不一致时按 `spec_drift` 报告，处置为改 spec。
+技术约束类问题（版本号、目录结构、底层库选择）不判 blocking——这些不进 AC，发现不一致时在 finding 里说明，处置为改 spec。
 
 ## Review Process
 
@@ -48,7 +48,6 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 ### {tid}_gen_f001 - 标题
 
 - 严重度：critical / important / minor
-- category：bug / spec_drift / duplicate / nitpick / coverage_gap
 - 锚点：违反的 AC 编号，或「行为缺陷」+ 一句话失败场景
 - 位置：`path:line` 或符号名
 - 问题：可复现或可验证的问题
