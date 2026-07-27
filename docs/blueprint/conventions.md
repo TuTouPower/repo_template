@@ -1,12 +1,12 @@
 # 约定（内容细节）
 
-行为规则和工作顺序见 `AGENTS.md`。本文只定义各类文档字段、命名和记录格式；流程不再重复，需要时引用 `AGENTS.md` 对应小节或 `.agents/skills/tasks-run/SKILL.md` 对应 Step。
+行为规则和工作顺序见 `AGENTS.md`，操作步骤见 `.agents/skills/`。本文只定义各类文档字段、命名和记录格式。
 
 ## 命名与格式
 
 - 普通变量、函数、文件、目录和 slug 使用小写 `snake_case`。
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
-- task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`。
+- task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding / worktree：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`、`../{repo}_{tid}`。
 - spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
 - 总账编号：`docs/pending.md` 用 `bNNN`（未修 bug）与 `fNNN`（遗留待办）两套独立递增；`docs/findings.md` 用 `dNNN`。三套均不复用已用过的号。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
@@ -41,7 +41,7 @@
 |------|------|
 | task 文件 | `docs/tasks/task_template/`（`spec.md` / `task.md`） |
 | spike 报告 | `docs/spikes/report_template.md` |
-| 审阅 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`） |
+| 审阅 prompt | `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `general_prompt.txt` / `share_prompt.txt`） |
 
 占位示例不得占用真实 `tid` / `sid`，也不得当作 active 工作项执行。`scripts/task.py` 扫描 task 目录时跳过 `task_template/`。
 
@@ -94,7 +94,7 @@ note: ""
 
 - 提示词正文存于 `docs/reviews/prompts/`（`code_prompt.txt` / `test_prompt.txt` / `share_prompt.txt`），由 `scripts/render_review_prompts.py` 读取并填占位符。
 - 用法：`scripts/render_review_prompts.py --task-dir docs/tasks/{tid}_{slug} --out-dir .scratch/review_prompts`
-- 产物：`.scratch/review_prompts/code_review_prompt.md`、`test_review_prompt.md`。派几路由 `review_level` 决定（`full` 审阅 / `single` 一路通用 reviewer）。
+- 产物：`.scratch/review_prompts/` 下 `code_review_prompt.md` + `test_review_prompt.md`（full）或 `general_review_prompt.md`（single）。派几路由 `review_level` 决定。
 - 派 subagent 只传产物路径，不内联 prompt 正文。
 
 ## Review 处置字段（写在 `task.md`）
@@ -108,7 +108,7 @@ note: ""
 - `status`：`已修` / `遗留` / `撤回`
 - critical / important 是 blocking；minor 非阻断，但仍须处置。minor 遗留写 rationale；已有 follow-up task 时 tid 写入 `fix_ref`。
 - reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符），处置为改 spec 上下文区，不计 FAIL。
-- `blocked`：见 `AGENTS.md`「blocked」；跑 `scripts/task.py block <tid> --reason blackbox|review|infra`
+- `blocked`：处置见 `tasks-run` Step 6；跑 `scripts/task.py block <tid> --reason blackbox|review|infra`
 
 ## specs_index 字段
 
@@ -128,7 +128,7 @@ note: ""
 
 实验代码存在时创建 `code/`。实验代码入库保留，仅作为验证材料。
 
-收尾时抽一条可复用结论进 `docs/findings.md` 拿 `dNNN`，报告全文移入 `docs/archive/spikes/`：报告是过程，findings 是结论。
+收尾时把可复用结论写入 `docs/findings.md`（拿 `dNNN`），报告留在 spike 目录。
 
 ## 总账与 findings
 

@@ -1,14 +1,8 @@
 {一句话介绍：这个项目是什么、给谁用。} 这是代码仓库的仓库模板，用户创建代码库时复制这个作为起点。
 
-本文件是 agent 行为入口：目录权责、状态机、门禁与 skill 路由。只加载当前任务所需文档。
+本文件是 agent 行为入口：目录权责、状态机与 skill 路由。只加载当前任务所需文档。
 
-## 命名
-
-- `{tid}`：task 编号，形如 `t001`、`t042`（小写 `t` + 数字）。
-- `{sid}`：spike 编号，形如 `s001`、`s003`（小写 `s` + 数字）。
-- `{slug}`：小写 `snake_case`。
-- task 目录：`docs/tasks/{tid}_{slug}/`；分支：`{tid}_{slug}`；worktree：`../{repo}_{tid}`。
-- finding：`{tid}_code_fNNN` / `{tid}_test_fNNN`（本 task 内跨轮累计递增）。
+命名与格式约定见 `docs/blueprint/conventions.md`「命名与格式」。
 
 ## 目录与读写规则
 
@@ -46,10 +40,10 @@
 
 ### 开发原则
 
-- specs driven：先拆 task 并填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
+- specs driven：需求拆分为可独立验证的 task，填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
-- 需求拆分为一个或多个 task，强制一个 task 对应一个 commit，每个 commit 必须独立可验证，并且有工程意义。
+- 一个 task 一个 commit；commit 必须独立可验证，有工程意义。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### skill 调用
@@ -64,7 +58,7 @@
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；一个 task 目录一个 commit |
 | 把遗留待办转成 task | `pending-to-task` | 从 `docs/pending.md`「遗留待办」去重建 task 并回写归档 |
 | 多个 backlog task 合并成一个 | `tasks-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 串行跑完待做 task | `tasks-run` | **串行**执行；每 task 一个交付单元 |
+| 串行跑完待做 task | `tasks-run` | **串行**执行 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-clean` | 默认 dry-run |
 

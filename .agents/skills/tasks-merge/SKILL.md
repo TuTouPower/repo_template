@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # tasks-merge
 
-把范围重叠或拆得过细的 **backlog** task 合并成一个。规则见 `AGENTS.md`。
+把范围重叠或拆得过细的 **backlog** task 合并成一个。
 
 ## 前置
 
@@ -31,7 +31,7 @@ disable-model-invocation: true
    - **上下文区**：有意不测、测试策略、未知契约清单、风险与回退、依赖与约束、blueprint 更新点各取并集去重。
    - `task.md`：正文「实施笔记」追加一行「合并自 {源 tid 列表}」。front matter 由 `scripts/task.py` 维护，不手改。
    - 新建目标时由 `scripts/task.py add` 自动复制模板，不手工拷贝。
-   - 合并后 `review_level` 取源 task 中最严的一档（`full` > `single`），用 `scripts/task.py edit {目标tid} --review-level ...` 设置。
+   - 合并后 `review_level` 优先取 `full`（任一源为 `full` 即 `full`），用 `scripts/task.py edit {目标tid} --review-level ...` 设置。
 
 5. **更新目标条目**：
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # tasks-run
 
-串行执行待做 task，直到队列空或必须停。门禁数字、状态机、blocked、目录权责等权威规则见 `AGENTS.md`；本 skill 只定义执行操作顺序。
+串行执行待做 task，直到队列空或必须停。状态机、blocked、目录权责等权威规则见 `AGENTS.md`；门禁数字见本 skill；本 skill 只定义执行操作顺序。
 
 ## 队列内 task 已获批准
 
@@ -170,7 +170,7 @@ scripts/task.py finish <tid>
 
 ## 边界
 
-- 执行期一个 task 一个交付单元；创建期与维护期 commit 不与执行期混。
+- 执行期一个 task 一个 commit；创建期与维护期 commit 不与执行期混。
 - `blocked` 整批停，不自动跳下一个。
 - 每步循环纪律：读仓库状态 → 执行当前步骤 → 用命令/文件验证 → 更新 `task.md` → 再判断。禁止只靠「会话里做到哪」续跑。
 

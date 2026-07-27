@@ -67,13 +67,13 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 
 `critical` / `important` 为 blocking finding；`minor` 非阻断，但仍须由 implementer 写入 `task.md` 处置表。
 
-- **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `task.md` 处置表填写；task 是否 `blocked` 由 `AGENTS.md`「blocked」与 `.agents/skills/tasks-run/SKILL.md`「Step 6：处置」决定，不是你的 verdict 字段。
+- **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `task.md` 处置表填写；task 是否 `blocked` 由 `.agents/skills/tasks-run/SKILL.md`「Step 6：处置」决定，不是你的 verdict 字段。
 - **PASS**：以 `git diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor）。
 - **FAIL**：仍存在未解决的 critical / important。
 - **Round N（N≥2）**：追加新 `## Round N` 小节并给**本轮** verdict（脚本取最后一条 `verdict`）。前轮 blocker 须用 diff/代码核实是否已消除或已按撤回流程作废，**不**采信处置表自称「已修」。前轮 blocker 仍在或本轮有新 blocker → FAIL；否则 PASS。
 - **禁止**在同一 round 内因 implementer 临时修复而覆盖或追加「复核翻 PASS」；修完代码后须走完整下一轮审阅（`.agents/skills/tasks-run/SKILL.md` Step 3→5）。
 
-权威流程见 `.agents/skills/tasks-run/SKILL.md`「Step 6：处置」与 `AGENTS.md`「blocked」。
+权威流程见 `.agents/skills/tasks-run/SKILL.md`「Step 6：处置」。
 
 ## 严重度三级（完整定义）
 

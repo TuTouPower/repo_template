@@ -24,7 +24,7 @@ disable-model-invocation: true
 2. **拆分**。拆成结果可独立验证、对应一个 commit 有工程意义的 task；过大继续拆；记下建议顺序与依赖。
 
 3. **每个 task 落盘**：
-   1. `scripts/task.py add --title "..." --slug "..." [--review-level full|single] [--depends-on tNNN,tNNN]`
+   1. `scripts/task.py add --title "..." --slug "..." [--review-level full|single]`
       脚本自动分配 tid、建 `docs/tasks/{tid}_{slug}/`、复制模板、写 front matter。
    2. `review_level` 按风险判：
       | level | 适用 |

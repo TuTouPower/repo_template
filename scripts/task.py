@@ -26,8 +26,8 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**（�
   task.py preflight TID               # 开干前门禁
   task.py block TID --reason blackbox|review|infra
   task.py resume TID
-  task.py finish TID              # done + 目录归档 + worktree 清理
-  task.py drop TID --reason TEXT  # dropped + 目录归档 + worktree 清理
+  task.py finish TID              # done + 目录归档（worktree 内执行时保留，合并后清理）
+  task.py drop TID --reason TEXT  # dropped + 目录归档（同上）
   task.py rewind TID [--to backlog|active] --reason TEXT
   task.py purge TID --reason TEXT
   task.py list [--status STATUS] [--rebuild]

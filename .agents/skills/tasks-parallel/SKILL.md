@@ -27,7 +27,7 @@ disable-model-invocation: true
    git branch --list 't[0-9]*_*'
    ```
 
-   对每个已存在的 task 分支取实际已改文件（分支不存在则跳过该条）。主干名取仓库默认分支（`main` / `master`，与 `scripts/task.py` 的 `DEFAULT_BRANCH` 一致；非 main 时替换）：
+   对每个已存在的 task 分支取实际已改文件（分支不存在则跳过该条）。主干名取仓库默认分支（`main` / `master`，由 `scripts/task.py default_branch()` 探测；非 main 时替换）：
 
    ```bash
    git diff --name-only main...{branch}
