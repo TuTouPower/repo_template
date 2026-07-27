@@ -107,7 +107,7 @@ disable-model-invocation: true
 ## 边界
 
 - 不替代 `repo-hygiene`；不改业务逻辑；不手改 task front matter / audit log。
-- 派生 index JSON 由 `task.py` 自动重建，**不列入清理类别**（误删只需重跑 `task.py list`，无须本 skill 介入）。
+- 派生 index JSON **不列入清理类别**（误删只需重跑 `task.py list --rebuild`）。
 - 不把「好久没动的源码/文档」当垃圾。
 - **commit**：默认不 commit。纯 gitignore 产物清理无跟踪 diff → 不 commit。仅当产生可跟踪 diff（如误提交的 `__pycache__`）且用户同意 → 单独维护期 commit；**不**擅自 commit。
 - 与 `repo-hygiene` 分工：本 skill = 文件系统垃圾；hygiene = handoff/pending/过时文档迁 archive。

@@ -16,12 +16,14 @@ disable-model-invocation: true
 | `docs/findings.md` | 全部已验证发现 | **不迁**：发现是长期资产，失效时就地改写「现状」并注明日期 |
 | `docs/handoff.md` | 最新一版交接 | 过时段落 → `docs/archive/handoff.md`（整段追加） |
 | `docs/tasks/{tid}_{slug}/task.md` | 活跃 task 状态（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
+| `docs/spikes/{sid}_{slug}/` | 进行中的 spike | 报告已写且结论已入 `docs/findings.md` 的完结 spike → 整目录迁 `docs/archive/spikes/` |
+| `docs/reviews/review_*/` | 报告 `review_*.md` 入库保留 | 用户确认过时 → 整目录迁 `docs/archive/reviews/`（`_meta/` 不入库，无需处理） |
 | 其它过时文档 | 仍生效的说明 | 明确过时且有历史价值 → `docs/archive/` 镜像路径 |
 
 ## 步骤
 
 1. **盘点**（只读）：
-   - `scripts/task.py list`：活跃 vs 归档是否与目录一致（顺带重建派生 index）。
+   - `scripts/task.py list --rebuild`：活跃 vs 归档是否与目录一致（顺带重建派生 index）。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`
@@ -47,11 +49,12 @@ disable-model-invocation: true
    - 仍生效 → 留原位，必要时改一句过时表述（最小块）。
    - 明确过时且有历史价值 → 迁 `docs/archive/` 镜像路径。
    - 无价值草稿且用户确认 → 可删；未确认不删。
+   - **spike 迁移**：`docs/spikes/{sid}_{slug}/` 报告已写且结论已入 `docs/findings.md` → 整目录迁 `docs/archive/spikes/`；拿不准是否完结则报告用户，不擅自迁。
    - **不**把上述模板路径当过时文档归档或删除。
 
 5. **task 状态一致性**：发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
 
-   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）由 `task.py` 自动重建，入库但可随时重建；内容不对时跑 `task.py list` 重建即可，不算不一致项。
+   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）内容不对时跑 `task.py list --rebuild` 重建即可，不算不一致项；权责见 `AGENTS.md` 目录权责表。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 

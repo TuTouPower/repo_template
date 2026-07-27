@@ -1,4 +1,5 @@
 """render_review_prompts.py 测试。"""
+import subprocess
 import sys
 from pathlib import Path
 
@@ -176,3 +177,71 @@ def test_render_includes_share_section(tmp_path, monkeypatch):
     # share 内容附加在每路 prompt 末尾
     assert "SHARED" in out["code_review_prompt.md"]
     assert "SHARED" in out["test_review_prompt.md"]
+
+
+# --- contract drift notice（真实 git 仓库） ---
+
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    )
+
+
+def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
+    """真实 git 仓库：prompts 模板 + t001_foo task（spec 已提交），返回 task_dir。"""
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    task_dir = _make_task_dir(tmp_path, contract=contract)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "test")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "init")
+    anchor = _git(tmp_path, "rev-parse", "--short", "HEAD").stdout.strip()
+    (task_dir / "task.md").write_text(
+        f'---\ntid: t001\nslug: foo\ndiff_anchor: "{anchor}"\nreview_level: "full"\n---\nbody\n',
+        encoding="utf-8",
+    )
+    return task_dir
+
+
+def test_drift_notice_appended_when_contract_changed(tmp_path, monkeypatch):
+    task_dir = _init_repo_with_task(tmp_path, monkeypatch)
+    (task_dir / "spec.md").write_text(
+        "# Spec\n## 契约区\n\nAC1 改宽\n\n## 上下文区\n\n策略\n",
+        encoding="utf-8",
+    )
+    out = render_review_prompts(task_dir)
+    for content in out.values():
+        assert "契约区 drift 警告" in content
+        assert "AC1 改宽" in content
+        assert "\n-AC1\n" in content  # unified diff 的删除行
+
+
+def test_no_drift_notice_when_only_context_changed(tmp_path, monkeypatch):
+    task_dir = _init_repo_with_task(tmp_path, monkeypatch)
+    (task_dir / "spec.md").write_text(
+        "# Spec\n## 契约区\n\nAC1\n\n## 上下文区\n\n策略 v2\n",
+        encoding="utf-8",
+    )
+    out = render_review_prompts(task_dir)
+    for content in out.values():
+        assert "drift" not in content
+
+
+def test_drift_check_skipped_outside_git_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    task_dir = _make_task_dir(tmp_path)
+    out = render_review_prompts(task_dir)
+    assert "drift" not in out["code_review_prompt.md"]
+    assert "drift 检查跳过" in capsys.readouterr().err
+
+
+def test_parse_front_matter_strips_inline_comment(tmp_path):
+    p = tmp_path / "task.md"
+    p.write_text(
+        '---\ndiff_anchor: abc1234  # start 写入\n---\nx\n',
+        encoding="utf-8",
+    )
+    assert parse_front_matter(p)["diff_anchor"] == "abc1234"

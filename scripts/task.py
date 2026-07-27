@@ -10,7 +10,8 @@
 已合并与未 start 的 task；进行中 task 的最新状态在各自 worktree 内查。
 
 docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
-由 `task.py list` 或任何写命令自动重建，入库但可随时删除重建，不参与 merge。
+由任何写命令自动重建（`list` 只读，用 `list --rebuild` 手动重建），
+入库但可随时删除重建，不参与 merge。
 
 数据：
   docs/tasks/{tid}_{slug}/task.md          活跃 task 状态权威
@@ -116,6 +117,12 @@ def _get_head_short() -> str:
     return (r.stdout.strip() or "unknown") if r.returncode == 0 else "unknown"
 
 
+def _get_head() -> str:
+    """全量 hash：存 diff_anchor 用（短 hash 长历史下有歧义风险）；展示场景用 _get_head_short。"""
+    r = _git(["rev-parse", "HEAD"])
+    return (r.stdout.strip() or "unknown") if r.returncode == 0 else "unknown"
+
+
 def has_unmerged_commits(branch: str) -> bool:
     """branch 上是否有未合并进主干的 commit；不可判定时保守返回 True。"""
     if not branch:
@@ -207,7 +214,11 @@ def _unquote(value: str) -> str:
 
 
 def parse_front_matter(path: Path) -> tuple[dict, str]:
-    """返回 (front matter dict, 正文)。缺失或不合法抛 TaskDataError。"""
+    """返回 (front matter dict, 正文)。缺失或不合法抛 TaskDataError。
+
+    注意：render_review_prompts.py / check_review_status.py 各有简化副本，
+    改解析规则需三处同步。
+    """
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         raise TaskDataError(f"{_rel(path)}: task.md 必须以 YAML front matter (---) 开头")
@@ -221,6 +232,10 @@ def parse_front_matter(path: Path) -> tuple[dict, str]:
         if not line or line.startswith("#") or ":" not in line:
             continue
         key, _, val = line.partition(":")
+        val = val.strip()
+        # 未加引号的值剥掉行内注释（# 前须有空格），防照搬文档示例后值被污染
+        if val and val[0] not in ("\"", "'"):
+            val = val.split(" #", 1)[0].rstrip()
         fm[key.strip()] = _unquote(val)
     return fm, body
 
@@ -351,16 +366,17 @@ def append_audit(action: str, *, tid: str, fr: str, to: str, reason: str,
 
 
 # --------------------------------------------------------------------------
-# spec 契约区
-# --------------------------------------------------------------------------
-
-
-# --------------------------------------------------------------------------
 # worktree
 # --------------------------------------------------------------------------
 
 def worktree_rel_path(tid: str) -> str:
     return f"../{REPO_ROOT.name}_{tid}"
+
+
+def effective_worktree(fm: dict) -> str:
+    """worktree 相对路径：front matter 优先；主仓副本不含该字段（start 后不再回写主仓），
+    此时按命名约定推导。路径不存在或未登记时由 remove_worktree 安全放过。"""
+    return fm.get("worktree") or worktree_rel_path(fm["tid"])
 
 
 def link_local_env(worktree: Path) -> list[str]:
@@ -499,7 +515,7 @@ def cmd_start(args):
     branch = f"{fm['tid']}_{fm['slug']}"
     fm["status"] = "active"
     fm["branch"] = branch
-    fm["diff_anchor"] = _get_head_short()
+    fm["diff_anchor"] = _get_head()
 
     if args.no_worktree:
         dirty = [p for p in porcelain_entries() if not p.startswith(task["dir"])]
@@ -520,23 +536,36 @@ def cmd_start(args):
             sys.exit(f"git {' '.join(checkout)} 失败：{r.stderr.strip()}")
         loc, linked = f"当前工作区（--no-worktree，分支 {branch}）", []
     else:
-        # 先提交 front matter，worktree 才能签出到新状态（worktree 只签出已提交内容）
+        current = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+        base = default_branch()
+        if current != base:
+            print(
+                f"WARNING: 当前分支 {current!r} 非主干 {base!r}；"
+                f"start 的 chore commit 会落在 {current} 上",
+                file=sys.stderr,
+            )
+        # 先提交 front matter，worktree 才能签出到新状态（worktree 只签出已提交内容）。
+        # 派生缓存一并提交，且提交后不再改写主仓：worktree/diff_anchor 的最终值
+        # 只补进 worktree 副本（执行期权威），主仓保持干净——否则收尾回主仓
+        # `git merge --no-ff` 时这些脏路径会让合并 abort。
         write_front_matter(path, fm, body)
         rebuild_index()
-        rel_task_md = f"{task['dir']}/task.md"
-        if _git(["add", "--", rel_task_md]).returncode != 0:
-            sys.exit(f"git add {rel_task_md} 失败")
-        r = _git(["commit", "-m", f"chore({fm['tid']}): start", "--", rel_task_md])
+        commit_paths = [
+            f"{task['dir']}/task.md",
+            _rel(ACTIVE_PATH),
+            _rel(ARCHIVE_PATH),
+        ]
+        if _git(["add", "--", *commit_paths]).returncode != 0:
+            sys.exit(f"git add {' '.join(commit_paths)} 失败")
+        r = _git(["commit", "-m", f"chore({fm['tid']}): start", "--", *commit_paths])
         if r.returncode != 0:
             sys.exit(
-                f"提交 {rel_task_md} 失败：{r.stderr.strip() or r.stdout.strip()}\n"
+                f"提交 {commit_paths[0]} 失败：{r.stderr.strip() or r.stdout.strip()}\n"
                 "worktree 只签出已提交内容，start 必须先提交 front matter"
             )
-        fm["diff_anchor"] = _get_head_short()
-        write_front_matter(path, fm, body)
+        fm["diff_anchor"] = _get_head()
         rel, linked = create_worktree(fm["tid"], branch)
         fm["worktree"] = rel
-        write_front_matter(path, fm, body)
         # worktree 内的 task.md 是签出版本，补齐 worktree/diff_anchor 两个字段
         wt_task_md = (REPO_ROOT / rel).resolve() / task["dir"] / "task.md"
         if wt_task_md.is_file():
@@ -544,7 +573,6 @@ def cmd_start(args):
             wt_fm["worktree"] = rel
             wt_fm["diff_anchor"] = fm["diff_anchor"]
             write_front_matter(wt_task_md, wt_fm, wt_body)
-        rebuild_index()
         loc = f"worktree {rel}"
 
     print(f"{args.tid} status=active branch={branch} diff_anchor={fm['diff_anchor']}")
@@ -643,6 +671,7 @@ def _close_task(args, status: str, note: str | None) -> None:
 
     单次写盘是为了避免「front matter 已写 done、目录未归档」的中间态——
     那种状态下 finish/drop/rewind 三条出口全被状态校验挡死，只能手改 front matter。
+    归档移动失败时回滚 front matter，同理避免上述死锁。
     """
     task, path, fm, body = load_task(args.tid)
     if status == "done":
@@ -662,19 +691,27 @@ def _close_task(args, status: str, note: str | None) -> None:
             "合并回主干后在主仓执行 git worktree remove 清理"
         )
     else:
-        removed, wt_msg = remove_worktree(fm.get("worktree", ""))
+        removed, wt_msg = remove_worktree(effective_worktree(fm))
 
+    orig_fm = dict(fm)
     fm["status"] = status
     if note:
         append_note(fm, note)
     if removed:
         fm["worktree"] = ""
     else:
-        append_note(fm, f"worktree 未移除：{fm.get('worktree', '')}")
+        append_note(fm, f"worktree 未移除：{effective_worktree(fm)}")
     write_front_matter(path, fm, body)
 
     ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src), str(dst))
+    try:
+        shutil.move(str(src), str(dst))
+    except (OSError, shutil.Error) as e:
+        write_front_matter(path, orig_fm, body)
+        sys.exit(
+            f"归档移动失败（{e}）；front matter 已回滚为 status={orig_fm['status']}，"
+            f"目录仍在 {_rel(src)}。排除原因后重试"
+        )
     rebuild_index()
     print(f"{args.tid} status={status}; 目录已归档 -> {_rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:
@@ -707,7 +744,7 @@ def cmd_rewind(args):
 
     wt_msg = ""
     if target == "backlog":
-        if fm.get("branch") and has_unmerged_commits(fm["branch"]):
+        if fm.get("branch") and has_unmerged_commits(fm["branch"]) and not args.yes:
             print(
                 f"WARNING: 分支 {fm['branch']!r} 有未合并进 {default_branch()} 的 commit；"
                 "rewind 会使其游离。继续？(y/N)",
@@ -719,7 +756,7 @@ def cmd_rewind(args):
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
                 sys.exit("rewind aborted by user")
-        removed, wt_msg = remove_worktree(fm.get("worktree", ""))
+        removed, wt_msg = remove_worktree(effective_worktree(fm))
         if not removed:
             sys.exit(
                 f"{wt_msg}\nrewind 中止：worktree 未清理时回到 backlog 会留下无主工作区"
@@ -762,10 +799,12 @@ def cmd_purge(args):
 def cmd_list(args):
     if args.status and args.status not in VALID_STATUSES:
         sys.exit(f"status {args.status!r} 非法；可选 {VALID_STATUSES}")
-    tasks = rebuild_index()
-    rows = [t for t in tasks if not args.status or t["status"] == args.status]
     if args.rebuild:
+        tasks = rebuild_index()
         print(f"index rebuilt: {_rel(ACTIVE_PATH)}, {_rel(ARCHIVE_PATH)}")
+    else:
+        tasks = scan_tasks()  # 默认只读：罗列不该有写副作用
+    rows = [t for t in tasks if not args.status or t["status"] == args.status]
     if not rows:
         print("(no tasks)")
         return
@@ -847,6 +886,8 @@ def main():
     rw = sub.add_parser("rewind", help="状态撤回（active->backlog / blocked->active；默认撤一步）")
     rw.add_argument("tid")
     rw.add_argument("--to", choices=("backlog", "active"))
+    rw.add_argument("--yes", action="store_true",
+                    help="跳过「分支有未合并 commit」的交互确认（agent/脚本场景用）")
     rw.add_argument("--reason", required=True)
     rw.set_defaults(func=cmd_rewind)
 
@@ -855,9 +896,9 @@ def main():
     pg.add_argument("--reason", required=True)
     pg.set_defaults(func=cmd_purge)
 
-    ls = sub.add_parser("list", help="列出当前工作区的 task（扫描 task.md 并重建派生索引）")
+    ls = sub.add_parser("list", help="列出当前工作区的 task（只读；--rebuild 时重建派生索引）")
     ls.add_argument("--status", choices=VALID_STATUSES)
-    ls.add_argument("--rebuild", action="store_true", help="额外打印索引重建路径")
+    ls.add_argument("--rebuild", action="store_true", help="重建派生索引 JSON（默认只读不写）")
     ls.set_defaults(func=cmd_list)
 
     sh = sub.add_parser("show", help="显示单条 task 的 front matter")

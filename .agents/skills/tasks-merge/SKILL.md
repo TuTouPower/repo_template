@@ -47,7 +47,7 @@ disable-model-invocation: true
    scripts/task.py drop {源tid} --reason "merged into {目标tid}"
    ```
 
-   目录进 `docs/archive/tasks/`，状态留在其 `task.md` front matter，可追溯；tid 不复用。
+   目录进 `docs/archive/tasks/`，状态留在其 `task.md` front matter，可追溯；tid 不复用（例外：`purge` 释放的误建 tid 可回收——从未开干、无历史，与 merge/drop 的「曾真实存在」不同）。
 
 7. **自检**。目标 `spec.md` 契约区的 AC 覆盖全部源 AC 且无重复；上下文区无矛盾条目；无残留 `{...}` 占位符；`scripts/task.py list --status backlog` 只剩目标条目。
 

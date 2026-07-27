@@ -12,10 +12,10 @@
 |------|------|----------|
 | `docs/specs_index.md` | 当前生效 spec 清单（在表即生效） | task 收尾时更新；废弃删除行 |
 | `docs/specs/<slug>.md` | 需求级 spec（按已完成 task 累积） | task 收尾时累积更新；废弃移入 `docs/archive/specs/` |
-| `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/task.py`；reviewer 写 `review_code.md` / `review_test.md`；`finish`/`drop` 由脚本移入 archive |
+| `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 由 `scripts/task.py` 自动重建；入库但可随时重建，不手改 |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 由 `scripts/task.py` 写命令自动重建（`list` 只读，`list --rebuild` 手动重建）；入库但可随时重建，不手改 |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending.md` | 待办总账：未修 bug（`bNNN`）+ 遗留待办（`fNNN`） | `tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞条目建 task |
@@ -23,8 +23,9 @@
 | `docs/archive/{handoff,pending}.md` | 对应文件的已闭环/过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
 | `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策、测试 | finalization 时更新；写代码或文档前读 `conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md` |
 | `docs/reviews/prompts/` | review prompt 模板 | 改审查标准时更新 |
+| `docs/reviews/review_*/` | 多路 review 会话产物（my-review 等外部评审生成） | 报告 `review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/` |
 | `docs/spikes/report_template.md` | spike 报告模板 | 只改模板本身 |
-| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `tasks-run` Step 1.6；结论入 `docs/findings.md` |
+| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `tasks-run`（Step 1 spike 项）；结论入 `docs/findings.md`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
 | `.agents/skills/` | 项目 skill 正文 | 改 skill 走文档纪律；不放业务代码 |
 | `.claude/skills/` | 指向 `.agents/skills/` 的软链 | 只维护软链 |
 | `docs/guides/` | 给人看的使用指南 | 给人读，不写 agent 行为规则 |
@@ -65,7 +66,7 @@
 ### `scripts/task.py` 使用示例
 
 ```bash
-python3 scripts/task.py --help                  # 显示完整子命令与参数 
+python3 scripts/task.py --help                  # 显示完整子命令与参数
 python3 scripts/task.py list                    # 当前工作区所有 task
 python3 scripts/task.py list --status backlog   # 按状态过滤
 python3 scripts/task.py show t001               # 某 task 的 front matter 详情
@@ -76,4 +77,9 @@ python3 scripts/task.py purge t001 --reason "误建"                       # bac
 
 ## 文档规范
 
-见 `docs/blueprint/conventions.md`「文档规范」。
+- 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
+- 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
+- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket/task 编号（`(D24-N3)` `(S15)` `(t012)`）；不嵌入来源或实现位置标注（`(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`）；不嵌入「本节根据 X 决定 Y」式叙述。结构化字段（表格列、`fix_ref`、commit subject、测试文件名）按各文件格式约定使用，不受此限。
+- 存在多种合理理解时，先澄清再做跨文档修改。
+- 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
+- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。

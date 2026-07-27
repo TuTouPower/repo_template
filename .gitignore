@@ -13,3 +13,6 @@ __pycache__/
 
 # 例外：审计日志必须入库
 !docs/archive/tasks_audit.log
+
+# 多路 review 会话的过程文件（报告 review_*.md 本身入库）
+docs/reviews/review_*/_meta/

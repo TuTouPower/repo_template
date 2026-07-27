@@ -105,3 +105,15 @@ def test_write_uses_lf_newlines(tmp_path):
     p = tmp_path / "task.md"
     write_front_matter(p, {"tid": "t001"}, "body\n")
     assert b"\r\n" not in p.read_bytes()
+
+
+def test_parse_strips_inline_comment_unquoted(tmp_path):
+    """照搬文档示例（值尾部行内注释）不污染值；引号内的 # 保留。"""
+    p = tmp_path / "task.md"
+    p.write_text(
+        '---\nstatus: backlog        # backlog / active / done\ntitle: "含 # 号"\n---\nx\n',
+        encoding="utf-8",
+    )
+    fm, _ = parse_front_matter(p)
+    assert fm["status"] == "backlog"
+    assert fm["title"] == "含 # 号"

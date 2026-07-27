@@ -1,6 +1,6 @@
 # Task spec
 
-契约区在 `task.py start` 时锁定 hash，执行期不再改动；上下文区执行期可补。
+契约区执行期原则上不再改动；确需调整须经用户确认（渲染 review prompt 时脚本会附契约区相对 diff_anchor 的 drift diff 供 reviewer 核对）。上下文区执行期可补。
 
 ## 背景
 

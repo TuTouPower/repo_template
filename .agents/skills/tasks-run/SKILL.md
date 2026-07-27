@@ -70,14 +70,13 @@ flowchart TD
 ### Step 1：开干与前置
 
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停本 task 及整批，先解决环境或走 spike，不盲目 start。
-2. `scripts/task.py start <tid>`。默认建 worktree `../{repo}_{tid}` 并软链 `.env`，同时锁定 spec 契约区 hash。
+2. `scripts/task.py start <tid>`。默认建分支 `{tid}_{slug}` 并签出到 worktree `../{repo}_{tid}`（7c 合并的就是这个分支），软链 `.env`；提交后主仓保持干净，task 文档随 worktree 走。
    - 只有**用户明确指令**不隔离时才加 `--no-worktree`。
    - **`cd` 进该 worktree 再改代码**；后续所有 Step 都在 worktree 内进行。
 3. `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性。
    - **FAIL 必须先修**，不得绕过继续。
-4. `task.md` front matter 实写 `diff_anchor`（当前 HEAD）。
-5. spec 契约区行为 AC 非空再进 Step 2（preflight 已查）。
-6. spec 上下文区要求 spike：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
+4. spec 契约区行为 AC 非空再进 Step 2（preflight 已查）。
+5. spec 上下文区要求 spike：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
 
 ### Step 2：红
 

@@ -138,3 +138,41 @@ def test_rebuild_index_uses_utf8_and_lf(fake_repo):
     # ensure_ascii=False：中文不转义
     text = raw.decode("utf-8")
     assert '"tasks"' in text
+
+
+def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
+    """归档移动失败时 front matter 回滚，避免「已写 done、目录未归档」死锁。"""
+    import argparse
+
+    d = _make_task(task_mod.TASKS_DIR, "t001", "alpha", "active")
+
+    def boom(src, dst):
+        raise OSError("模拟移动失败")
+
+    monkeypatch.setattr(task_mod.shutil, "move", boom)
+    with pytest.raises(SystemExit, match="归档移动失败"):
+        task_mod._close_task(argparse.Namespace(tid="t001"), "done", None)
+    fm, _ = task_mod.parse_front_matter(d / "task.md")
+    assert fm["status"] == "active"  # 已回滚
+    assert d.is_dir()  # 目录仍在活跃区
+
+
+def test_list_is_readonly_by_default(fake_repo, capsys):
+    """list 只罗列，不写派生 index。"""
+    import argparse
+
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
+    assert not task_mod.ACTIVE_PATH.exists()
+    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=False))
+    capsys.readouterr()
+    assert not task_mod.ACTIVE_PATH.exists()
+
+
+def test_list_rebuild_writes_index(fake_repo, capsys):
+    import argparse
+
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
+    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=True))
+    out = capsys.readouterr().out
+    assert task_mod.ACTIVE_PATH.exists()
+    assert "index rebuilt" in out

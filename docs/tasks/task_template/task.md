@@ -34,7 +34,7 @@ note: ""
 
 reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符），处置为改 spec 上下文区，不计 FAIL。
 
-### Round 1 场景
+### Round 1 场景说明
 
 - **无 finding**：写「Round 1 零 finding，未进处置表。」
 - **仅有 minor（无 critical / important）**：仍建表，逐条处置 minor。

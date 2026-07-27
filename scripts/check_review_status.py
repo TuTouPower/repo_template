@@ -16,7 +16,7 @@
   general_verdict=PASS|FAIL|MISSING    # single 才有
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
-  max_review_round=N      # 默认 4；调用方应传 tasks-run 的当前上限（默认 5）
+  max_review_round=N      # 默认 5，与 tasks-run 的 max_review_round 默认一致
   withdraw_rate=0.NN
   prompt_hint=...       # 撤回率超阈值时的下一轮 prompt 附加要求
 """
@@ -42,6 +42,7 @@ def extract_verdicts(path: Path) -> list[str]:
 
 
 def parse_front_matter(path: Path) -> dict:
+    """简化版 front matter 解析（task.py / render_review_prompts.py 各有副本，改规则需三处同步）。"""
     fm = {}
     if not path.is_file():
         return fm
@@ -56,7 +57,10 @@ def parse_front_matter(path: Path) -> dict:
         if not line or line.startswith("#") or ":" not in line:
             continue
         k, _, v = line.partition(":")
-        fm[k.strip()] = v.strip().strip('"').strip("'")
+        v = v.strip()
+        if v and v[0] not in ("\"", "'"):
+            v = v.split(" #", 1)[0].rstrip()
+        fm[k.strip()] = v.strip('"').strip("'")
     return fm
 
 
@@ -99,7 +103,7 @@ def main():
         epilog=__doc__,
     )
     p.add_argument("--task-dir", required=True)
-    p.add_argument("--max-review-round", type=int, default=4)
+    p.add_argument("--max-review-round", type=int, default=5)
     args = p.parse_args()
 
     task_dir = Path(args.task_dir)

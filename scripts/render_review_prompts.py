@@ -4,6 +4,7 @@
 提示词正文存于 docs/reviews/prompts/ 下三个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt）。
 
 reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 prompt，消除信息不对称。
+契约区自 diff_anchor 后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
 
 用法：
   python3 scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
@@ -16,7 +17,9 @@ reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 pr
 """
 
 import argparse
+import difflib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,6 +33,7 @@ CONTEXT_HEADING = "## 上下文区"
 
 
 def parse_front_matter(task_path: Path) -> dict:
+    """简化版 front matter 解析（task.py / check_review_status.py 各有副本，改规则需三处同步）。"""
     text = task_path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         sys.exit(f"{task_path}: must start with YAML front matter (---)")
@@ -42,7 +46,10 @@ def parse_front_matter(task_path: Path) -> dict:
         if not line or line.startswith("#") or ":" not in line:
             continue
         key, _, val = line.partition(":")
-        fm[key.strip()] = val.strip().strip('"').strip("'")
+        val = val.strip()
+        if val and val[0] not in ("\"", "'"):
+            val = val.split(" #", 1)[0].rstrip()
+        fm[key.strip()] = val.strip('"').strip("'")
     return fm
 
 
@@ -59,6 +66,47 @@ def extract_section(spec_text: str, heading: str) -> str:
 
 def apply_placeholders(template: str, values: dict) -> str:
     return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
+
+
+def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str) -> str:
+    """契约区相对 diff_anchor 有变更时返回追加给 reviewer 的警告块。
+
+    无变更返回 ""。无法判定（非 git 仓库、anchor 失效等）时打 stderr 警告并返回 ""——
+    drift 检测是 advisory，不阻断渲染。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"{diff_anchor}:{spec_rel}"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"WARNING: 契约区 drift 检查跳过（{e}）", file=sys.stderr)
+        return ""
+    if r.returncode != 0:
+        print(
+            f"WARNING: 契约区 drift 检查跳过"
+            f"（git show {diff_anchor}:{spec_rel} 失败：{r.stderr.strip()}）",
+            file=sys.stderr,
+        )
+        return ""
+    anchored = extract_section(r.stdout, CONTRACT_HEADING)
+    if anchored == current_contract:
+        return ""
+    diff = "\n".join(
+        difflib.unified_diff(
+            anchored.splitlines(),
+            current_contract.splitlines(),
+            fromfile=f"{diff_anchor} 契约区",
+            tofile="当前契约区",
+            lineterm="",
+        )
+    )
+    return (
+        "## 契约区 drift 警告\n\n"
+        f"契约区自 diff_anchor（{diff_anchor}）以来有变更。"
+        "请核对是否为经用户确认的需求变更；未经确认的 AC 变更按 blocking finding 处理。\n\n"
+        f"```diff\n{diff}\n```"
+    )
 
 
 def render_review_prompts(
@@ -122,23 +170,30 @@ def render_review_prompts(
     level = fm.get("review_level") or "full"
 
     if level == "single":
-        return {
+        prompts = {
             "general_review_prompt.md": apply_placeholders(
                 template_paths["general"].read_text(encoding="utf-8") + "\n" + shared,
                 values,
             ),
         }
+    else:
+        prompts = {
+            "code_review_prompt.md": apply_placeholders(
+                template_paths["code"].read_text(encoding="utf-8") + "\n" + shared,
+                values,
+            ),
+            "test_review_prompt.md": apply_placeholders(
+                template_paths["test"].read_text(encoding="utf-8") + "\n" + shared,
+                values,
+            ),
+        }
 
-    return {
-        "code_review_prompt.md": apply_placeholders(
-            template_paths["code"].read_text(encoding="utf-8") + "\n" + shared,
-            values,
-        ),
-        "test_review_prompt.md": apply_placeholders(
-            template_paths["test"].read_text(encoding="utf-8") + "\n" + shared,
-            values,
-        ),
-    }
+    drift = contract_drift_notice(spec_rel, fm["diff_anchor"], contract)
+    if drift:
+        prompts = {
+            name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()
+        }
+    return prompts
 
 
 def main():

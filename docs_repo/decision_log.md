@@ -29,7 +29,7 @@
 | L17 | 行数与圈复杂度阈值制造 nitpick | 本轮审阅（review/opus + 模板实读） | 两类命中默认不进 finding 表，只在结论段提示；仅当已产出可观测缺陷才按缺陷出 finding | `code_prompt.txt` | 已落地 |
 | L18 | `review.md` 模板与 prompt 两处定义报告格式 | 本轮审阅 | 格式唯一定义在 prompt；`review.md` 只留指针 | `task_template/review.md` | 已落地 |
 | L19 | 模板占位符被原样留在 spec/task | retro_t001_t007（plan 复制 spec 的变体） | `preflight` 拒绝残留 `{...}` 占位符 | `task.py preflight` | 已落地 |
-| L20 | 契约在执行期被悄悄改动 | 本轮审阅（配合 L3 注入） | `start` 时锁契约区 hash，`preflight` 检测漂移 | `task.py start` / `preflight` | 已落地 |
+| L20 | 契约在执行期被悄悄改动 | 本轮审阅（配合 L3 注入） | ~~`start` 时锁契约区 hash~~（原方案从未实现）；改为 `render_review_prompts.py` 渲染时 diff 契约区相对 diff_anchor 的变更并附警告块给 reviewer，合法变更可见、静默变更藏不住 | `render_review_prompts.py` | 已改向并落地 |
 | L21 | 依赖关系散落 spec 文字，无法机器校验 | feedback D、retro_t041_t061 | `depends_on` 进 front matter；`start` 拒绝依赖未完成的 task | `task.py add/edit/start` | 已落地 |
 | L22 | subagent prompt 内联正文撑爆 context | analysis §2 | 派发只传文件路径，正文写 `.scratch/review_prompts/` | `tasks-run` Step 5 | 已落地 |
 | L23 | 遗留待办与 bugs 无统一登记 | 11111#1、analysis §13 | `bugs.md` 扩为 `docs/pending.md`，「未修 bug」(`bNNN`) 与「遗留待办」(`fNNN`) 两节共一个入口；遗留 finding 的唯一落点是该节，`task.md` 只留 `fix_ref` 引用 | `docs/pending.md`、`tasks-run` Step 6/7、`task.md` 模板 | 已落地 |
