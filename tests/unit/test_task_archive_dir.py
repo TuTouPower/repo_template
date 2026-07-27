@@ -1,0 +1,140 @@
+"""task.py 目录扫描与归档一致性。
+
+通过 monkeypatch 把 task.py 全局路径指向 tmp_path 下临时目录，
+不依赖真实仓库结构、不触发 git。
+"""
+import json
+import sys
+from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+import pytest
+import task as task_mod
+from task import TaskDataError, rebuild_index, scan_tasks, write_front_matter
+
+
+@pytest.fixture
+def fake_repo(tmp_path, monkeypatch):
+    """把 task.py 全局路径指向 tmp_path 下临时目录，并建空模板目录。"""
+    tasks = tmp_path / "docs" / "tasks"
+    archive = tmp_path / "docs" / "archive" / "tasks"
+    template = tasks / "task_template"
+    active_json = tmp_path / "docs" / "tasks_index.json"
+    archive_json = tmp_path / "docs" / "archive" / "tasks_index.json"
+    tasks.mkdir(parents=True)
+    archive.mkdir(parents=True)
+    template.mkdir()
+    # 模板目录必须含 task.md，scan_tasks 跳过 task_template/
+    write_front_matter(
+        template / "task.md",
+        {"tid": "t000", "slug": "example", "status": "backlog"},
+        "模板正文\n",
+    )
+    monkeypatch.setattr(task_mod, "TASKS_DIR", tasks)
+    monkeypatch.setattr(task_mod, "ARCHIVE_TASKS_DIR", archive)
+    monkeypatch.setattr(task_mod, "TEMPLATE_DIR", template)
+    monkeypatch.setattr(task_mod, "ACTIVE_PATH", active_json)
+    monkeypatch.setattr(task_mod, "ARCHIVE_PATH", archive_json)
+    monkeypatch.setattr(task_mod, "REPO_ROOT", tmp_path)
+    return tmp_path
+
+
+def _make_task(tasks_dir, tid, slug, status):
+    d = tasks_dir / f"{tid}_{slug}"
+    d.mkdir()
+    write_front_matter(
+        d / "task.md",
+        {"tid": tid, "slug": slug, "status": status},
+        "body\n",
+    )
+    return d
+
+
+def test_scan_empty(fake_repo):
+    assert scan_tasks() == []
+
+
+def test_scan_finds_active_task(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "active")
+    rows = scan_tasks()
+    assert len(rows) == 1
+    assert rows[0]["tid"] == "t001"
+    assert rows[0]["status"] == "active"
+
+
+def test_scan_finds_archived_task(fake_repo):
+    _make_task(task_mod.ARCHIVE_TASKS_DIR, "t002", "beta", "done")
+    rows = scan_tasks()
+    assert len(rows) == 1
+    assert rows[0]["tid"] == "t002"
+    assert rows[0]["status"] == "done"
+
+
+def test_scan_rejects_invalid_tid(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "x99", "bad", "backlog")
+    with pytest.raises(TaskDataError, match="tid 非法"):
+        scan_tasks()
+
+
+def test_scan_rejects_dirname_mismatch(fake_repo):
+    d = task_mod.TASKS_DIR / "t003_wrong"
+    d.mkdir()
+    write_front_matter(
+        d / "task.md",
+        {"tid": "t003", "slug": "right", "status": "backlog"},
+        "x\n",
+    )
+    with pytest.raises(TaskDataError, match="目录名与 front matter 不符"):
+        scan_tasks()
+
+
+def test_scan_rejects_invalid_status(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t004", "gamma", "weird")
+    with pytest.raises(TaskDataError, match="status 非法"):
+        scan_tasks()
+
+
+def test_scan_rejects_status_location_mismatch(fake_repo):
+    # active 状态出现在归档目录
+    _make_task(task_mod.ARCHIVE_TASKS_DIR, "t005", "delta", "active")
+    with pytest.raises(TaskDataError, match="与所在目录不符"):
+        scan_tasks()
+
+
+def test_scan_detects_dup_tid(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t006", "eps", "backlog")
+    _make_task(task_mod.ARCHIVE_TASKS_DIR, "t006", "eps", "done")
+    with pytest.raises(TaskDataError, match="重复 tid"):
+        scan_tasks()
+
+
+def test_scan_orders_by_tid_numerically(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t010", "ten", "backlog")
+    _make_task(task_mod.TASKS_DIR, "t002", "two", "backlog")
+    _make_task(task_mod.TASKS_DIR, "t100", "hundred", "backlog")
+    rows = scan_tasks()
+    tids = [r["tid"] for r in rows]
+    assert tids == ["t002", "t010", "t100"]
+
+
+def test_rebuild_index_splits_active_archive(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
+    _make_task(task_mod.TASKS_DIR, "t002", "beta", "active")
+    _make_task(task_mod.ARCHIVE_TASKS_DIR, "t003", "gamma", "done")
+    rebuild_index()
+    active = json.loads(task_mod.ACTIVE_PATH.read_text(encoding="utf-8"))
+    archive = json.loads(task_mod.ARCHIVE_PATH.read_text(encoding="utf-8"))
+    assert [t["tid"] for t in active["tasks"]] == ["t001", "t002"]
+    assert [t["tid"] for t in archive["tasks"]] == ["t003"]
+
+
+def test_rebuild_index_uses_utf8_and_lf(fake_repo):
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
+    rebuild_index()
+    raw = task_mod.ACTIVE_PATH.read_bytes()
+    assert b"\r\n" not in raw
+    # ensure_ascii=False：中文不转义
+    text = raw.decode("utf-8")
+    assert '"tasks"' in text
