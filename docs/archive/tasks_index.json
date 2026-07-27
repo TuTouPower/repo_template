@@ -1,3 +1,6 @@
 {
-  "tasks": []
+    "generated_by": "scripts/task.py",
+    "authority": "docs/tasks/{tid}_{slug}/task.md front matter",
+    "workspace": ".",
+    "tasks": []
 }

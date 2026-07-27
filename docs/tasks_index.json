@@ -1,12 +1,6 @@
 {
-  "tasks": [
-    {
-      "tid": "t000",
-      "title": "示例：某功能实现",
-      "slug": "example_feature",
-      "status": "backlog",
-      "branch": "",
-      "note": "示例条目；实际项目使用时删除。"
-    }
-  ]
+    "generated_by": "scripts/task.py",
+    "authority": "docs/tasks/{tid}_{slug}/task.md front matter",
+    "workspace": ".",
+    "tasks": []
 }

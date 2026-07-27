@@ -12,7 +12,7 @@ note: ""
 
 # Task 过程总账
 
-**front matter 是状态权威**，只经 `scripts/task.py` 修改；`docs/tasks_index.json` 由它派生。reviewer 只写 `review_code.md` / `review_test.md`，不改本文件。
+**front matter 是状态权威**，只经 `scripts/task.py` 修改；`docs/tasks_index.json` 由它派生。reviewer 只写 `review_code.md` / `review_test.md` / `review_general.md`，不改本文件。
 
 ## 实施笔记
 
@@ -22,7 +22,7 @@ note: ""
 
 ## Review 处置
 
-本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不写进 `review_code.md` / `review_test.md`，也不另建文件。
+本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不写进 `review_code.md` / `review_test.md` / `review_general.md`，也不另建文件。
 
 逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
@@ -61,7 +61,7 @@ reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符
 
 ### Reviewer verdict
 
-取自 `review_code.md` / `review_test.md` 各文件**最后一条** `verdict:`（多轮追加时以末轮为准）。按**实际发生**的轮次列出（上限见 `tasks-run` `max_review_round`）；未开的轮次不写或写 N/A。
+取自对应 review 报告**最后一条** `verdict:`（`full`：`review_code.md` + `review_test.md`；`single`：`review_general.md`；多轮追加时以末轮为准）。按**实际发生**的轮次列出（上限见 `tasks-run` `max_review_round`）；未开的轮次不写或写 N/A。
 
 - Round 1 code：PASS / FAIL
 - Round 1 test：PASS / FAIL

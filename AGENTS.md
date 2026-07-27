@@ -15,7 +15,7 @@
 | `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/task.py`；reviewer 写 `review_code.md` / `review_test.md`；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引（已 gitignore） | 由 `scripts/task.py` 自动重建；不入库、不手改 |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 由 `scripts/task.py` 自动重建；入库但可随时重建，不手改 |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending.md` | 待办总账：未修 bug（`bNNN`）+ 遗留待办（`fNNN`） | `tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞条目建 task |
@@ -76,9 +76,4 @@ python3 scripts/task.py purge t001 --reason "误建"                       # bac
 
 ## 文档规范
 
-- 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
-- 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
-- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket 编号（`(D24-N3)` `(S15)`）、来源或实现位置标注（括注如 `(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`，叙述如"本节根据 X 决定 Y"）。
-- 存在多种合理理解时，先澄清再做跨文档修改。
-- 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
-- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。
+见 `docs/blueprint/conventions.md`「文档规范」。

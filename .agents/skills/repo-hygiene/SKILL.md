@@ -51,7 +51,7 @@ disable-model-invocation: true
 
 5. **task 状态一致性**：发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
 
-   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）已 gitignore，不入 commit；内容不对时跑 `task.py list` 重建即可，不算不一致项。
+   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）由 `task.py` 自动重建，入库但可随时重建；内容不对时跑 `task.py list` 重建即可，不算不一致项。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 

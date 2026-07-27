@@ -10,8 +10,8 @@
 
 ## YYYY-MM-DD HH:MM UTC+8 from_owner → to_owner
 
-- 当前焦点：t001 与议题
-- branch：`t001_example_slug`
+- 当前焦点：t000 与议题
+- branch：`t000_example_slug`
 - head_commit：`abc1234`
 - 已完成：列点
 - 未完成：列点

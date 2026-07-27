@@ -9,8 +9,8 @@
 随 task commit 进分支，合并回主干时带回。因此主仓的 `list` 只能看到
 已合并与未 start 的 task；进行中 task 的最新状态在各自 worktree 内查。
 
-docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**（已 gitignore）：
-由 `task.py list` 或任何写命令自动重建，不入库、不参与 merge、可随时删除重建。
+docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
+由 `task.py list` 或任何写命令自动重建，入库但可随时删除重建，不参与 merge。
 
 数据：
   docs/tasks/{tid}_{slug}/task.md          活跃 task 状态权威
@@ -254,31 +254,22 @@ def scan_tasks() -> list[dict]:
             task_md = d / "task.md"
             if not task_md.is_file():
                 raise TaskDataError(f"{_rel(d)}: 缺 task.md")
-                continue
-            try:
-                fm, _ = parse_front_matter(task_md)
-            except TaskDataError as e:
-                raise TaskDataError(str(e))
-                continue
+            fm, _ = parse_front_matter(task_md)
             tid = fm.get("tid", "")
             if not TID_RE.match(tid):
                 raise TaskDataError(f"{_rel(task_md)}: front matter tid 非法（{tid!r}）")
-                continue
             expected = f"{tid}_{fm.get('slug', '')}"
             if d.name != expected:
                 raise TaskDataError(f"{_rel(d)}: 目录名与 front matter 不符（应为 {expected}）")
-                continue
             status = fm.get("status", "")
             if status not in VALID_STATUSES:
                 raise TaskDataError(f"{_rel(task_md)}: status 非法（{status!r}）")
-                continue
             archived_dir = base is ARCHIVE_TASKS_DIR
             if archived_dir != (status in ARCHIVED_STATUSES):
                 raise TaskDataError(
                     f"{_rel(task_md)}: status={status} 与所在目录不符"
                     f"（位于{'归档' if archived_dir else '活跃'}目录）"
                 )
-                continue
             record = {k: fm.get(k, "") for k in FRONT_MATTER_KEYS}
             record["dir"] = _rel(d)
             tasks.append(record)
@@ -286,7 +277,6 @@ def scan_tasks() -> list[dict]:
     dup = [tid for tid, n in Counter(t["tid"] for t in tasks).items() if n > 1]
     if dup:
         raise TaskDataError(f"重复 tid：{sorted(dup)}")
-        tasks = [t for t in tasks if t["tid"] not in dup]
     tasks.sort(key=lambda t: int(TID_RE.match(t["tid"]).group(1)))
     return tasks
 
@@ -466,7 +456,7 @@ def cmd_add(args):
     write_front_matter(task_md, fm, body)
     rebuild_index()
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
-    print(f"工作区：{_rel(task_dir)}（已从模板复制 spec.md / task.md / review.md）")
+    print(f"工作区：{_rel(task_dir)}（已从模板复制 spec.md / task.md）")
 
 
 def cmd_edit(args):

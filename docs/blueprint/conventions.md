@@ -1,6 +1,6 @@
 # 约定（内容细节）
 
-行为规则和工作顺序见 `AGENTS.md`，操作步骤见 `.agents/skills/`。本文只定义各类文档字段、命名和记录格式。
+行为规则和工作顺序见 `AGENTS.md`，操作步骤见 `.agents/skills/`。本文定义文档字段、命名、记录格式与文档规范。
 
 ## 命名与格式
 
@@ -13,6 +13,15 @@
 - 时间戳统一使用中国时间，格式 `YYYY-MM-DD HH:MM UTC+8`。
 - 例外：`docs/archive/tasks_audit.log` 使用 ISO8601 带时区（`2026-07-22T15:30:00+08:00`），机器 grep 友好；由 `scripts/task.py rewind`/`purge` 自动写入。
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
+
+## 文档规范
+
+- 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
+- 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
+- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket 编号（`(D24-N3)` `(S15)`）、来源或实现位置标注（括注如 `(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`，叙述如"本节根据 X 决定 Y"）。
+- 存在多种合理理解时，先澄清再做跨文档修改。
+- 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
+- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。
 
 ## schema 类型落点
 
@@ -84,7 +93,7 @@ note: ""
 ---
 ```
 
-- **front matter 是 task 状态的权威**，只经 `scripts/task.py` 修改；agent 不手改。`docs/tasks_index.json` 与 archive 版由脚本扫描各 `task.md` 派生，已 gitignore，不入库。
+- **front matter 是 task 状态的权威**，只经 `scripts/task.py` 修改；agent 不手改。`docs/tasks_index.json` 与 archive 版由 `scripts/task.py` 自动重建，入库但可随时重建。
 - `scripts/render_review_prompts.py --task-dir ...` 读 `tid` / `slug` / `diff_anchor` / `review_level`（及可选 `spec_path`），连同 spec 两区正文生成 review prompt。
 - 正文结构见 `docs/tasks/task_template/task.md`。
 
@@ -130,14 +139,9 @@ note: ""
 
 收尾时把可复用结论写入 `docs/findings.md`（拿 `dNNN`），报告留在 spike 目录。
 
-## 总账与 findings
-
-`docs/pending.md` / `docs/findings.md` / `docs/blueprint/decisions.md` 的分工与界线见 `AGENTS.md`「总账分工」。本文件不重复。
-
 ## 编码与测试
 
 - 命名、格式、lint 规则以项目实际工具为准，并在本文件记录项目级例外和原因。
 - 日志优先，禁止把 `print` / `console.log` 调试输出留在生产代码。
 - 修 bug 时在对应测试层补回归用例，文件名带 `tid`，如 `tests/unit/parser/t042_empty_token.test.ts`。
-- 实现变更让旧测试语义失效时：新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由。禁止就地把旧测试的预期改成当前实现的输出。
 - 文件过大、圈复杂度默认阈值见 `docs/reviews/prompts/code_prompt.txt`；两者默认不阻断 review。项目覆盖写在本小节。
