@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 **task 流程很重**——每个 task 有 spec、实施、黑盒、审阅、收尾、commit 整套门禁。pending 条目只是记录，不等于值得立 task。建 task 前先核实再决定。
 
-未修 bug（`bNNN`）走 `task-bug`，不用本 skill。
+未修 bug（`bNNN`）由 `task-bug` 完成复现、根因与修复 task 立项，不从本 skill 重复创建。
 
 ## 步骤
 
@@ -40,7 +40,7 @@ disable-model-invocation: true
 
 6. **回写总账**。每个已建 task 的条目：`- 处理：未开 task` 改为 `- 处理：{tid}`，**整条**移入 `docs/archive/pending.md`「已处理遗留」节。条目留在总账里等于没转。
 
-7. **询问提交**。列出新建/修改的文档（task 目录、`docs/pending.md`、`docs/archive/pending.md`），询问用户是否提交；同意后才 commit（一个 task 目录一个 commit）。
+7. **询问提交总账回写**。`task-create` 已逐 task 提交 task 目录与派生 index；这里只列出 `docs/pending.md`、`docs/archive/pending.md`，询问用户是否提交。
 
 ## 边界
 

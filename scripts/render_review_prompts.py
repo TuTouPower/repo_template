@@ -30,6 +30,9 @@ PLACEHOLDER_RE = re.compile(
 )
 CONTRACT_HEADING = "## 契约区"
 CONTEXT_HEADING = "## 上下文区"
+VALID_REVIEW_LEVELS = {"full", "single"}
+H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
+FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
 def parse_front_matter(task_path: Path) -> dict:
@@ -54,14 +57,71 @@ def parse_front_matter(task_path: Path) -> dict:
 
 
 def extract_section(spec_text: str, heading: str) -> str:
-    """抽取 spec 中某个二级小节正文（不含标题行），到下一个二级标题为止。"""
-    start = spec_text.find(heading)
-    if start == -1:
-        return ""
-    rest = spec_text[start + len(heading):]
-    end = rest.find("\n## ")
-    section = rest if end == -1 else rest[:end]
-    return section.strip()
+    """抽取精确二级小节正文，忽略 fenced code 内的伪标题。"""
+    wanted = heading.removeprefix("## ").strip()
+    section = []
+    collecting = False
+    fence_marker = None
+
+    for line in spec_text.splitlines():
+        fence = FENCE_RE.match(line)
+        if fence:
+            marker = fence.group(1)[0]
+            width = len(fence.group(1))
+            if fence_marker is None:
+                fence_marker = (marker, width)
+            elif marker == fence_marker[0] and width >= fence_marker[1]:
+                fence_marker = None
+            if collecting:
+                section.append(line)
+            continue
+
+        if fence_marker is None:
+            match = H2_RE.fullmatch(line)
+            if match:
+                if collecting:
+                    break
+                collecting = match.group(1).strip() == wanted
+                continue
+
+        if collecting:
+            section.append(line)
+
+    return "\n".join(section).strip()
+
+
+def resolve_repo_path(path: Path, *, label: str, require_file: bool = False) -> tuple[Path, str]:
+    """解析仓库内路径，返回绝对路径与 POSIX 仓库相对路径。"""
+    root = REPO_ROOT.resolve()
+    candidate = path if path.is_absolute() else root / path
+    candidate = candidate.resolve()
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        sys.exit(f"{label} must stay inside repository: {path}")
+    if require_file and not candidate.is_file():
+        sys.exit(f"missing {label}: {relative.as_posix()}")
+    return candidate, relative.as_posix()
+
+
+def validate_diff_anchor(diff_anchor: str) -> str:
+    """校验 revision 并返回完整 commit SHA。"""
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(REPO_ROOT), "rev-parse", "--verify",
+                "--end-of-options", f"{diff_anchor}^{{commit}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        sys.exit(f"diff_anchor validation failed: {e}")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "unknown revision"
+        sys.exit(f"invalid diff_anchor {diff_anchor!r}: {detail}")
+    return result.stdout.strip()
 
 
 def apply_placeholders(template: str, values: dict) -> str:
@@ -71,8 +131,8 @@ def apply_placeholders(template: str, values: dict) -> str:
 def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str) -> str:
     """契约区相对 diff_anchor 有变更时返回追加给 reviewer 的警告块。
 
-    无变更返回 ""。无法判定（非 git 仓库、anchor 失效等）时打 stderr 警告并返回 ""——
-    drift 检测是 advisory，不阻断渲染。
+    无变更返回 ""。anchor 已由调用方校验；历史版本没有该 spec 或 git show
+    暂时失败时打 stderr 警告并返回 ""，不阻断渲染。
     """
     try:
         r = subprocess.run(
@@ -113,14 +173,9 @@ def render_review_prompts(
     task_dir: Path,
     task_path: Path | None = None,
 ) -> dict[str, str]:
-    if not task_dir.is_absolute():
-        task_dir = REPO_ROOT / task_dir
+    task_dir, rel_task_dir = resolve_repo_path(task_dir, label="task directory")
     task_path = task_path or task_dir / "task.md"
-    if not task_path.is_absolute():
-        task_path = REPO_ROOT / task_path
-
-    if not task_path.is_file():
-        sys.exit(f"missing task file: {task_path}")
+    task_path, _ = resolve_repo_path(task_path, label="task file", require_file=True)
 
     template_paths = {
         "code": TEMPLATES_DIR / "code_prompt.txt",
@@ -140,15 +195,23 @@ def render_review_prompts(
     if not re.match(r"^t[0-9]+$", fm["tid"]):
         sys.exit(f"tid must be lowercase task id like t001 (got {fm['tid']!r})")
 
-    try:
-        rel_task_dir = str(task_dir.relative_to(REPO_ROOT))
-    except ValueError:
-        rel_task_dir = str(task_dir)
+    level = fm.get("review_level") or "full"
+    if level not in VALID_REVIEW_LEVELS:
+        sys.exit(
+            f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)} "
+            f"(got {level!r})"
+        )
+    diff_anchor = validate_diff_anchor(fm["diff_anchor"])
 
-    spec_rel = fm.get("spec_path") or f"{rel_task_dir}/spec.md"
-    spec_abs = REPO_ROOT / spec_rel
-    if not spec_abs.is_file():
-        sys.exit(f"missing spec: {spec_rel}")
+    spec_value = fm.get("spec_path") or f"{rel_task_dir}/spec.md"
+    if "\\" in spec_value:
+        sys.exit(f"spec_path must use POSIX separators: {spec_value!r}")
+    spec_input = Path(spec_value)
+    if spec_input.is_absolute():
+        sys.exit(f"spec_path must be repository-relative: {spec_value!r}")
+    spec_abs, spec_rel = resolve_repo_path(
+        spec_input, label="spec", require_file=True
+    )
     spec_text = spec_abs.read_text(encoding="utf-8")
 
     contract = extract_section(spec_text, CONTRACT_HEADING)
@@ -161,13 +224,12 @@ def render_review_prompts(
         "slug": fm["slug"],
         "spec_path": spec_rel,
         "task_dir": rel_task_dir,
-        "diff_anchor": fm["diff_anchor"],
-        "review_level": fm.get("review_level") or "full",
+        "diff_anchor": diff_anchor,
+        "review_level": level,
         "contract_section": contract,
         "context_section": context,
     }
     shared = template_paths["share"].read_text(encoding="utf-8")
-    level = fm.get("review_level") or "full"
 
     if level == "single":
         prompts = {
@@ -188,7 +250,7 @@ def render_review_prompts(
             ),
         }
 
-    drift = contract_drift_notice(spec_rel, fm["diff_anchor"], contract)
+    drift = contract_drift_notice(spec_rel, diff_anchor, contract)
     if drift:
         prompts = {
             name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()

@@ -300,14 +300,22 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
     """把扫描结果写入两个派生缓存 JSON。"""
     tasks = scan_tasks() if tasks is None else tasks
     groups = (
-        (ACTIVE_PATH, [t for t in tasks if t["status"] not in ARCHIVED_STATUSES]),
-        (ARCHIVE_PATH, [t for t in tasks if t["status"] in ARCHIVED_STATUSES]),
+        (
+            ACTIVE_PATH,
+            [t for t in tasks if t["status"] not in ARCHIVED_STATUSES],
+            "docs/tasks/{tid}_{slug}/task.md front matter",
+        ),
+        (
+            ARCHIVE_PATH,
+            [t for t in tasks if t["status"] in ARCHIVED_STATUSES],
+            "docs/archive/tasks/{tid}_{slug}/task.md front matter",
+        ),
     )
-    for path, rows in groups:
+    for path, rows, authority in groups:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "generated_by": "scripts/task.py",
-            "authority": "docs/tasks/{tid}_{slug}/task.md front matter",
+            "authority": authority,
             "workspace": _rel(REPO_ROOT) or str(REPO_ROOT),
             "tasks": rows,
         }
@@ -395,6 +403,34 @@ def link_local_env(worktree: Path) -> list[str]:
     return linked
 
 
+def is_managed_env_link(worktree: Path, link: Path) -> bool:
+    """仅识别 link_local_env() 为主仓对应 .env 创建的软链。"""
+    if not link.is_symlink():
+        return False
+    try:
+        rel = link.relative_to(worktree)
+    except ValueError:
+        return False
+    if rel.name != ".env" or len(rel.parts) not in (1, 2):
+        return False
+    source = REPO_ROOT / rel
+    expected = os.path.relpath(source, link.parent)
+    try:
+        target = os.readlink(link)
+    except OSError:
+        return False
+    return (
+        target == expected
+        and link.resolve(strict=False) == source.resolve(strict=False)
+    )
+
+
+def unlink_managed_env_links(worktree: Path) -> None:
+    for link in (worktree / ".env", *worktree.glob("*/.env")):
+        if is_managed_env_link(worktree, link):
+            link.unlink()
+
+
 def create_worktree(tid: str, branch: str) -> tuple[str, list[str]]:
     rel = worktree_rel_path(tid)
     path = (REPO_ROOT / rel).resolve()
@@ -424,9 +460,7 @@ def remove_worktree(rel: str) -> tuple[bool, str]:
         return True, f"worktree 不在登记表，已 prune：{rel}"
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 出去后执行 git worktree remove {rel}"
-    for link in (path / ".env", *path.glob("*/.env")):
-        if link.is_symlink():
-            link.unlink()
+    unlink_managed_env_links(path)
     r = _git(["worktree", "remove", str(path)])
     if r.returncode != 0:
         return False, f"git worktree remove 失败（{r.stderr.strip()}）；请手动处理 {rel}"

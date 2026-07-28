@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-bug
 
-Bug 分析入口。复现、定位根因、做补测分析，结果记录到 `docs/pending.md`。不在本 skill 内修生产代码，不建 task。
+Bug 分析与修复立项入口。复现、定位根因、做补测分析，登记 `bNNN`，再按 `task-create` 建 backlog 修复 task。不在本 skill 内改生产代码。
 
 ## 步骤
 
@@ -31,14 +31,20 @@ Bug 分析入口。复现、定位根因、做补测分析，结果记录到 `do
 
    已有条目时更新内容、保留原 `bNNN`；没有条目追加新条目。
 
-6. **询问提交**。列出本次修改的文档（`docs/pending.md` + `.scratch/` 笔记如要入库），询问用户是否提交；同意后才 commit（一个 commit，subject 含 `bNNN` 与 bug 简述）。
+6. **建修复 task**。产品缺陷或测试假绿已确认后，链式调用 `task-create`：
+   - spec 上下文区用结构化 `来源` 字段写 `bNNN`；
+   - 写清根因、补测方向、风险与回退；
+   - task 保持 `backlog`，生产修复交给 `tasks-run`；
+   - 环境或配置问题无需改仓库时，不建修复 task，保留 `bNNN` 并汇报所需外部动作。
+
+7. **询问提交 bug 总账**。`task-create` 已单独处理 task 目录与派生 index 的创建 commit；这里只列出 `docs/pending.md`。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
 
 ## 边界
 
 - 复现/探索代码**只许** `.scratch/`；禁止写未 ignore 路径（`src/` `tests/` `scripts/` 等）。
-- 不 `start`、不建 task、不做生产修复。
-- 后续立 task 走 `pending-to-task`（核实后觉得值得走 task 流程时）；修代码走 `tasks-run`。
+- 不 `start`，不做生产修复；修复 task 只按 `task-create` 落盘。
+- 后续编码走 `tasks-run`；环境或配置问题按第 6 步汇报外部动作。
 
 ## 完成
 
-汇报：`bNNN`、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，未建 task 目录。
+汇报：`bNNN`、修复 task tid（若需仓库改动）、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，task 未 start。

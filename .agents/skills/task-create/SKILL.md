@@ -39,16 +39,16 @@ disable-model-invocation: true
    4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 留空（`tasks-run` Step 1 实写）。
       **不预测实施步骤**——创建期未读代码，写出来的步骤执行时必然失准；步骤由 `tasks-run` 边做边记进「实施笔记」。
 
-4. **自检**：AC 可验收；`spec.md` / `task.md` 无残留 `{...}` 占位符。
+4. **逐 task 自检**：AC 可验收；`spec.md` / `task.md` 无残留 `{...}` 占位符。
 
 5. **spike 需求**：task 需要先做实验确认的事项（新 major、非标准 provider、协议兼容、平台差异、性能或工具行为），写进 spec 上下文区的「风险与回退」或「未知契约清单」，标 `UNVERIFIED`。不在创建期写生产代码，留给 `tasks-run` 执行期做。
 
-6. **询问提交**。列出新建/修改的文档（task 目录 + index），询问用户是否提交；同意后才 commit（一个 task 目录一个 commit，不含生产实现）。用户不提交则保持工作区。
+6. **逐 task 询问提交**。列出当前 task 目录与本次重建的两个 index；同意后立即提交，再创建下一个 task。一个 task 一个创建 commit，不含生产实现；避免共享 index 提前引用尚未提交的 task 目录。链式调用时，调用方改动的总账不纳入本 commit，由调用方在 task 创建完成后单独回写、确认与提交。用户不提交则保持工作区并停止继续批量创建。
 
 ## 边界
 
 - 不 `start` / `finish` / 实施修复。
-- 新建时只读仓库。
+- 创建期只读生产树；只允许写当前 task 目录与 `task.py` 自动重建的两个 index。
 
 ## 完成
 

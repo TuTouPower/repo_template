@@ -50,7 +50,7 @@ flowchart TD
     D -->|FAIL 未满轮| W["写处置表"]
     W --> C{"改了代码/测试?"}
     C -->|是| S3
-    C -->|否| DOC["改必要文档"] --> S7
+    C -->|否| DOC["改必要文档"] --> S5
     D -->|FAIL 满轮| W2["写处置表"] --> BLK
 ```
 
@@ -94,7 +94,7 @@ flowchart TD
 
 ### Step 5：审阅
 
-- `git add -N` 纳入本 task 产出；剔除无关/临时/`.scratch/`（`git reset <path>`）。
+- 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
 - 渲染 prompt（spec 契约区与上下文区由脚本注入，reviewer 不再自行读 spec）：
   ```bash
   scripts/render_review_prompts.py \
@@ -123,11 +123,13 @@ flowchart TD
 - `prompt_hint` 非空 → 下一轮渲染后，在派发消息里附上轮撤回的 finding_id 与理由。
 - reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符）：处置是**改 spec 上下文区**，不计 FAIL，不因此回 Step 3。
 - `overall=PASS` → Step 7。
-- `FAIL` 且 `round < max`：填处置表 → 改了代码/测试则 Step 3→4→5→6；未改则改必要文档后直接 Step 7（不改写 review verdict）。
+- `FAIL` 且 `round < max`：填处置表 → 改了代码/测试则 Step 3→4→5→6；只改必要文档也须回 Step 5 完整重审。最新 `overall` 未 PASS 时不得进入 Step 7。
 - `FAIL` 且 `round ≥ max`：处置表填完 → `block --reason review`，整批停止。
 - **禁止**同一 round 内「复核翻 PASS」；修代码必须完整下一轮审阅。
 
 ### Step 7：收尾与提交
+
+进入本步前重新运行 `check_review_status.py`，确认最新 `overall=PASS`；`FAIL` / `INCOMPLETE` 一律返回 Step 5/6 或进入 blocked。
 
 **7a 收尾文档**（在 worktree 内）：
 

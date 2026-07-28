@@ -128,6 +128,10 @@ def test_rebuild_index_splits_active_archive(fake_repo):
     archive = json.loads(task_mod.ARCHIVE_PATH.read_text(encoding="utf-8"))
     assert [t["tid"] for t in active["tasks"]] == ["t001", "t002"]
     assert [t["tid"] for t in archive["tasks"]] == ["t003"]
+    assert active["authority"] == "docs/tasks/{tid}_{slug}/task.md front matter"
+    assert archive["authority"] == (
+        "docs/archive/tasks/{tid}_{slug}/task.md front matter"
+    )
 
 
 def test_rebuild_index_uses_utf8_and_lf(fake_repo):
@@ -138,6 +142,43 @@ def test_rebuild_index_uses_utf8_and_lf(fake_repo):
     # ensure_ascii=False：中文不转义
     text = raw.decode("utf-8")
     assert '"tasks"' in text
+
+
+def test_unlink_managed_env_links_only_removes_script_links(fake_repo):
+    source = fake_repo / ".env"
+    source.write_text("secret", encoding="utf-8")
+    worktree = fake_repo / "worktree"
+    worktree.mkdir()
+
+    assert task_mod.link_local_env(worktree) == [".env"]
+    managed = worktree / ".env"
+    assert task_mod.is_managed_env_link(worktree, managed)
+
+    nested = worktree / "config"
+    nested.mkdir()
+    other = fake_repo / "other.env"
+    other.write_text("other", encoding="utf-8")
+    unmanaged = nested / ".env"
+    unmanaged.symlink_to(other)
+    assert not task_mod.is_managed_env_link(worktree, unmanaged)
+
+    task_mod.unlink_managed_env_links(worktree)
+    assert not managed.is_symlink()
+    assert unmanaged.is_symlink()
+
+
+def test_managed_env_link_stays_identifiable_after_source_removed(fake_repo):
+    source = fake_repo / ".env"
+    source.write_text("secret", encoding="utf-8")
+    worktree = fake_repo / "worktree"
+    worktree.mkdir()
+    task_mod.link_local_env(worktree)
+    source.unlink()
+
+    link = worktree / ".env"
+    assert task_mod.is_managed_env_link(worktree, link)
+    task_mod.unlink_managed_env_links(worktree)
+    assert not link.is_symlink()
 
 
 def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):

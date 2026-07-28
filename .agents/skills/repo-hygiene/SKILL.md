@@ -23,7 +23,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **盘点**（只读）：
-   - `scripts/task.py list --rebuild`：活跃 vs 归档是否与目录一致（顺带重建派生 index）。
+   - `scripts/task.py list`：只读核对活跃 vs 归档与目录是否一致。发现两个派生 index 内容错误时，留到步骤 5 用 `list --rebuild` 修复并纳入本次维护 diff。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`

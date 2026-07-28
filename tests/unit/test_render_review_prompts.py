@@ -15,6 +15,14 @@ from render_review_prompts import (
     render_review_prompts,
 )
 
+REAL_VALIDATE_DIFF_ANCHOR = rrp.validate_diff_anchor
+
+
+@pytest.fixture(autouse=True)
+def stub_diff_anchor_validation(monkeypatch):
+    """普通渲染单测不依赖真实 Git；drift 测试仍用真实 git show。"""
+    monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
+
 
 # --- parse_front_matter ---
 
@@ -59,6 +67,33 @@ def test_extract_section_last_to_end():
     out = extract_section(text, "## 契约区")
     assert "仅此一节" in out
     assert "内容" in out
+
+
+def test_extract_section_requires_exact_h2():
+    text = (
+        "正文引用 `## 契约区`\n"
+        "## 契约区补充\n错误\n"
+        "### 契约区\n仍错误\n"
+        "## 契约区\n正确\n"
+    )
+    assert extract_section(text, "## 契约区") == "正确"
+
+
+def test_extract_section_ignores_fenced_heading():
+    text = (
+        "```markdown\n## 契约区\n伪内容\n```\n"
+        "## 契约区\n真实内容\n## 上下文区\n其它\n"
+    )
+    assert extract_section(text, "## 契约区") == "真实内容"
+
+
+def test_extract_section_ignores_shorter_fence_inside_block():
+    text = (
+        "````markdown\n## 契约区\n伪内容\n```\n"
+        "仍是伪内容\n````\n"
+        "## 契约区\n真实内容\n"
+    )
+    assert extract_section(text, "## 契约区") == "真实内容"
 
 
 # --- apply_placeholders ---
@@ -135,6 +170,62 @@ def test_render_single_returns_one_prompt(tmp_path, monkeypatch):
     assert "t001" in out["general_review_prompt.md"]
 
 
+def test_render_rejects_invalid_review_level(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    task_dir = _make_task_dir(tmp_path, level="singel")
+    with pytest.raises(SystemExit, match="review_level"):
+        render_review_prompts(task_dir)
+
+
+def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "private.md"
+    outside.write_text("## 契约区\nsecret\n", encoding="utf-8")
+    monkeypatch.setattr(rrp, "REPO_ROOT", repo)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
+    task_dir = _make_task_dir(repo)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "spec_path: ../private.md\n---\nbody\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="inside repository"):
+        render_review_prompts(task_dir)
+
+
+def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "private.md"
+    outside.write_text("## 契约区\nsecret\n", encoding="utf-8")
+    monkeypatch.setattr(rrp, "REPO_ROOT", repo)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
+    task_dir = _make_task_dir(repo)
+    (repo / "linked_spec.md").symlink_to(outside)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "spec_path: linked_spec.md\n---\nbody\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="inside repository"):
+        render_review_prompts(task_dir)
+
+
+def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    task_dir = _make_task_dir(tmp_path)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "spec_path: docs\\spec.md\n---\nbody\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="POSIX"):
+        render_review_prompts(task_dir)
+
+
 def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -203,6 +294,26 @@ def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
         encoding="utf-8",
     )
     return task_dir
+
+
+def test_validate_diff_anchor_returns_full_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "test")
+    (tmp_path / "x").write_text("x", encoding="utf-8")
+    _git(tmp_path, "add", "x")
+    _git(tmp_path, "commit", "-m", "init")
+    short = _git(tmp_path, "rev-parse", "--short", "HEAD").stdout.strip()
+    full = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    assert REAL_VALIDATE_DIFF_ANCHOR(short) == full
+
+
+def test_validate_diff_anchor_rejects_unknown_revision(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    _git(tmp_path, "init", "-b", "main")
+    with pytest.raises(SystemExit, match="invalid diff_anchor"):
+        REAL_VALIDATE_DIFF_ANCHOR("definitely-not-a-ref")
 
 
 def test_drift_notice_appended_when_contract_changed(tmp_path, monkeypatch):

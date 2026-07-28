@@ -24,7 +24,7 @@ note: ""
 
 本小节 = 处置表唯一落点。review 结束后在此追加轮次小节与表格；不写进 `review_code.md` / `review_test.md` / `review_general.md`，也不另建文件。
 
-逐条对应两份 review 的 finding。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
+逐条对应当前 `review_level` 的 review finding（`full`：code/test；`single`：general）。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
 - `已修`：本 task 内已按 finding 改完
 - `遗留`：本 task 不处理。**内容登记到 `docs/pending.md`「遗留待办」节**，`fix_ref` 填拿到的 `fNNN`（已有 follow-up task 则填 tid）；本表只留引用与一句话 rationale。critical / important 遗留仍阻断，minor 遗留不阻断。
@@ -61,10 +61,16 @@ reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符
 
 ### Reviewer verdict
 
-取自对应 review 报告**最后一条** `verdict:`（`full`：`review_code.md` + `review_test.md`；`single`：`review_general.md`；多轮追加时以末轮为准）。按**实际发生**的轮次列出（上限见 `tasks-run` `max_review_round`）；未开的轮次不写或写 N/A。
+取自对应 review 报告**最后一条** `verdict:`（`full`：`review_code.md` + `review_test.md`；`single`：`review_general.md`；多轮追加时以末轮为准）。按**实际发生**的轮次列出（上限见 `tasks-run` `max_review_round`）；未开的轮次不写或写 N/A。收尾前最新一轮必须全部 PASS，历史 FAIL 保留。
+
+`full`：
 
 - Round 1 code：PASS / FAIL
 - Round 1 test：PASS / FAIL
+
+`single`：
+
+- Round 1 general：PASS / FAIL
 
 遗留不在此列出——见 `docs/pending.md`「遗留待办」，本文件处置表的 `fix_ref` 指向对应 `fNNN`。
 

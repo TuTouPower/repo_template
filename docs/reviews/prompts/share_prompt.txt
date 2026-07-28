@@ -88,7 +88,7 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 
 本 task 在修复前不可信，例如：
 
-- 实现：verbatim 重复、swallowed errors、spec AC 缺失实现、违反 spec 不变量
+- 实现：swallowed errors、spec AC 缺失实现、违反 spec 不变量；重复逻辑已造成行为分叉、修复遗漏或状态不一致
 - 测试：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
 - 危险模式扫描命中项**最低 important**，不得标 minor：恒真断言（`expect(true).toBe(true)` / `assert True`）、删/反转 expect、注释掉断言、弱化断言（`toBe` → `toContain` / 正则 / `>=` / `toBeTruthy`）、`.skip` / `.only` / `@Ignore`、test 文件加 `eslint-disable` / `@ts-ignore` / `# type: ignore`、mock 关键副作用或被测逻辑本身、阈值（timeout/重试/容差）增大掩盖问题、条件跳过弱化断言（`if (cond) { expect(...) }`）、用 `.value =` 替代 AC 要求的拖拽/点击/键盘交互
 

@@ -29,7 +29,7 @@ disable-model-invocation: true
 4. **合并文档**（写入目标 task 目录 `spec.md`）：
    - **契约区**：范围、非范围逐节合并去重；**验收标准取并集**，逐条保持可独立验证；可测试性声明合并。矛盾的 AC 停下问用户，不自行取舍。
    - **上下文区**：有意不测、测试策略、未知契约清单、风险与回退、依赖与约束、blueprint 更新点各取并集去重。
-   - `task.md`：正文「实施笔记」追加一行「合并自 {源 tid 列表}」。front matter 由 `scripts/task.py` 维护，不手改。
+   - `task.md` 正文不写源 tid；合并来源只通过第 5 步 front matter `note` 记录。
    - 新建目标时由 `scripts/task.py add` 自动复制模板，不手工拷贝。
    - 合并后 `review_level` 优先取 `full`（任一源为 `full` 即 `full`），用 `scripts/task.py edit {目标tid} --review-level ...` 设置。
 
@@ -51,7 +51,7 @@ disable-model-invocation: true
 
 7. **自检**。目标 `spec.md` 契约区的 AC 覆盖全部源 AC 且无重复；上下文区无矛盾条目；无残留 `{...}` 占位符；`scripts/task.py list --status backlog` 只剩目标条目。
 
-8. **询问提交**。列出目标目录改动与归档移动，询问用户是否提交；同意后才 commit（维护期自成一个 commit，subject 含目标 tid 与源 tid）。index JSON 是派生缓存，不进 commit。用户不提交则保持工作区。
+8. **询问提交**。列出目标目录改动、归档移动与两个派生 index，询问用户是否提交；同意后才 commit（维护期自成一个 commit，subject 含目标 tid 与源 tid）。index 已入库且由本流程重建，须随维护 commit 一起提交。用户不提交则保持工作区。
 
 ## 边界
 

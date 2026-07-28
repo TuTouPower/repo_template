@@ -27,13 +27,18 @@ disable-model-invocation: true
    git branch --list 't[0-9]*_*'
    ```
 
-   对每个已存在的 task 分支取实际已改文件（分支不存在则跳过该条）。主干名取仓库默认分支（`main` / `master`，由 `scripts/task.py default_branch()` 探测；非 main 时替换）：
+   对每个已存在的 task 分支与登记 worktree 取实际占用文件。主干名取仓库默认分支（`main` / `master`，由 `scripts/task.py default_branch()` 探测；非 main 时替换）：
 
    ```bash
-   git diff --name-only main...{branch}
+   git diff --name-status -M -C main...{branch}
+   git -C {worktree} diff --name-status -M -C
+   git -C {worktree} diff --cached --name-status -M -C
+   git -C {worktree} ls-files --others --exclude-standard
    ```
 
-   基线占用集 = 各进行中 task 的已改文件 ∪ 其 spec 推导的待改路径。分支存在但索引中查无对应 task，记为「孤儿分支」，一并列出并当作占用。
+   rename/copy 同时计源路径与目标路径。基线占用集 = 各进行中 task 的已提交 diff ∪ worktree staged/unstaged/untracked 路径 ∪ spec 推导的待改路径。找不到归属的脏 worktree 单列并按冲突处理。
+
+   分支不在活跃索引时，先查归档 task 与合并状态：对应 task 已归档且分支已合并默认分支，则标「已完成待清理分支」，不算孤儿、不占用；否则记为「孤儿分支」，列出并当作占用。
 
 2. **列候选**。`scripts/task.py list --status backlog`；用户点名 tid 时以点名为准。候选为空则回复「当前没有 backlog task 可分析」，结束。
 
@@ -68,7 +73,8 @@ disable-model-invocation: true
    |-----|------|------|----------|
    | t002 | active | t002_xxx | src/a/**, schemas/user.json |
 
-   孤儿分支：无 / t009_yyy（索引中无对应 task）
+   孤儿分支：无 / t009_yyy（索引与归档中无对应 task）
+   已完成待清理分支：无 / t003_done（已归档且已合并，不占用）
 
    ### 可并发组
 

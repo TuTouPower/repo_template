@@ -18,7 +18,7 @@
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 由 `scripts/task.py` 写命令自动重建（`list` 只读，`list --rebuild` 手动重建）；入库但可随时重建，不手改 |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
-| `docs/pending.md` | 待办总账：未修 bug（`bNNN`）+ 遗留待办（`fNNN`） | `tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞条目建 task |
+| `docs/pending.md` | 待办总账：未修 bug（`bNNN`）+ 遗留待办（`fNNN`） | `task-bug` 登记未修 bug；`tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞遗留待办和 bug 建 task；`repo-hygiene` 补迁漏项 |
 | `docs/findings.md` | 已验证的技术发现（跨 task 复用，`dNNN`） | 只追加与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
 | `docs/archive/{handoff,pending}.md` | 对应文件的已闭环/过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
 | `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策、测试 | finalization 时更新；写代码或文档前读 `conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md` |
@@ -34,8 +34,8 @@
 | `schemas/` | 跨服务接口契约 | 改契约走 task 流程 |
 | `config/` | 配置（默认 + 环境覆盖 + `.env.example`） | 仅 `.env.example` 入库；真值写本地 `.env` |
 | `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
-| `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现/实验代码**只许** `.scratch/`（已 gitignore） |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | 由 `scripts/task.py start` 建、`finish`/`drop`/`rewind` 移除；本地 `.env` 软链回主仓；不手工创建或删除 |
+| `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 创建；`rewind` 或从 worktree 外 `finish`/`drop` 时脚本尝试移除；task worktree 内收尾时保留，合并后从主仓清理；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -44,7 +44,7 @@
 - specs driven：需求拆分为可独立验证的 task，填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
-- 一个 task 一个 commit；commit 必须独立可验证，有工程意义。
+- task 执行期一个实现 commit；创建期、状态维护与 merge commit 分开。每个 commit 必须独立可验证，有工程意义。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### skill 调用
@@ -79,7 +79,7 @@ python3 scripts/task.py purge t001 --reason "误建"                       # bac
 
 - 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
 - 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
-- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket/task 编号（`(D24-N3)` `(S15)` `(t012)`）；不嵌入来源或实现位置标注（`(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`）；不嵌入「本节根据 X 决定 Y」式叙述。结构化字段（表格列、`fix_ref`、commit subject、测试文件名）按各文件格式约定使用，不受此限。
+- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket/task 编号（`(D24-N3)` `(S15)` `(t012)`）；不嵌入来源或实现位置标注（`(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`）；不嵌入「本节根据 X 决定 Y」式叙述。结构化字段（表格列、`fix_ref`、spec 上下文区的 `来源`、commit subject、测试文件名）按各文件格式约定使用，不受此限。
 - 存在多种合理理解时，先澄清再做跨文档修改。
 - 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
 - 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。

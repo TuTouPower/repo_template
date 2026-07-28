@@ -20,7 +20,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 
 ### 代码质量
 
-- **DRY**：verbatim 重复逻辑块 = important
+- **DRY**：单纯 verbatim 重复默认 minor；重复已造成行为分叉、修复遗漏或状态不一致时，按具体可观测缺陷评为 important / critical
 - **控制流**：early return / 嵌套层级 / 控制流清晰（量化见下「圈复杂度标准」）
 - **错误处理**：swallowed errors / 空 catch / 忽略异常 / 失败状态不一致 = important
 - **边界条件**：空值 / null / off-by-one / 整数溢出 / 越界
