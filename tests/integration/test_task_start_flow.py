@@ -1,18 +1,15 @@
-"""task.py start 的主仓干净性与后续 merge/rewind（真实 git 仓库）。
-
-回归自审阅发现：start 曾在主仓留下未提交的 task.md/index 改动，
-导致收尾回主仓 `git merge --no-ff` 必然 abort；修复后主仓保持干净，
-worktree 字段从主仓 front matter 消失，rewind/close 按命名约定推导。
-"""
+"""task.py start 的主仓协调、worktree 门禁与失败补偿（真实 git 仓库）。"""
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import pytest
 import task as task_mod
 from task import parse_front_matter, write_front_matter
 
@@ -25,14 +22,16 @@ def _git(repo, *args, check=True):
 
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
-    """真实 git 仓库 + monkeypatch 后的 task.py 全局路径；含 backlog task t001。"""
+    """真实 git 主仓 + backlog task t001。"""
     repo = tmp_path / "repo"
     tasks = repo / "docs" / "tasks"
     archive = repo / "docs" / "archive" / "tasks"
     template = tasks / "task_template"
+    scripts = repo / "scripts"
     template.mkdir(parents=True)
     archive.mkdir(parents=True)
-    # 模板目录必须含 task.md，scan_tasks 跳过 task_template/
+    scripts.mkdir()
+    shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
     write_front_matter(
         template / "task.md",
         {"tid": "t000", "slug": "example", "status": "backlog"},
@@ -53,8 +52,7 @@ def git_repo(tmp_path, monkeypatch):
         task_mod, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json"
     )
     monkeypatch.setattr(
-        task_mod, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log"
-    )
+        task_mod, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
     monkeypatch.setattr(task_mod, "REPO_ROOT", repo)
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
@@ -65,90 +63,179 @@ def git_repo(tmp_path, monkeypatch):
 
 
 def _start(repo):
-    task_mod.cmd_start(argparse.Namespace(tid="t001", no_worktree=False, force=False))
+    task_mod.cmd_start(argparse.Namespace(tid="t001"))
+
+
+def _task_cli(repo, *args):
+    return subprocess.run(
+        [sys.executable, str(repo / "scripts" / "task.py"), *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _worktree_path(repo):
     return repo.parent / f"{repo.name}_t001"
 
 
-def test_start_leaves_main_repo_clean(git_repo):
+def test_start_creates_clean_worktree_from_primary_main(git_repo):
+    initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
     _start(git_repo)
+
+    assert _git(git_repo, "branch", "--show-current").stdout.strip() == "main"
     assert _git(git_repo, "status", "--porcelain").stdout.strip() == ""
-    # start commit 同时含 task.md 与两个派生缓存
+    worktree = _worktree_path(git_repo)
+    assert worktree.is_dir()
+    assert _git(worktree, "branch", "--show-current").stdout.strip() == "t001_alpha"
+    assert _git(worktree, "status", "--porcelain").stdout.strip() == ""
+
+    main_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/task.md")
+    assert main_fm == worktree_fm
+    assert main_fm["status"] == "active"
+    assert main_fm["branch"] == "t001_alpha"
+    assert main_fm["worktree"] == f"../{git_repo.name}_t001"
+    assert main_fm["diff_anchor"] == initial_head
+
     files = _git(git_repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
-    assert "docs/tasks/t001_alpha/task.md" in files
-    assert "docs/tasks_index.json" in files
-    assert "docs/archive/tasks_index.json" in files
+    assert files == [
+        "docs/archive/tasks_index.json",
+        "docs/tasks/t001_alpha/task.md",
+        "docs/tasks_index.json",
+    ]
 
 
-def test_start_fixes_worktree_copy(git_repo):
-    _start(git_repo)
-    fm, _ = parse_front_matter(
-        _worktree_path(git_repo) / "docs/tasks/t001_alpha/task.md"
-    )
-    head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()  # 全量 hash
-    assert fm["status"] == "active"
-    assert fm["worktree"] == f"../{git_repo.name}_t001"
-    assert fm["diff_anchor"] == head
-
-
-def test_merge_back_after_branch_archive_succeeds(git_repo):
-    """H1 回归：分支上归档移动 + commit 后，回主仓 merge 不再被脏文件挡住。"""
-    _start(git_repo)
-    wt = _worktree_path(git_repo)
-    (wt / "docs/archive/tasks").mkdir(parents=True, exist_ok=True)
-    _git(wt, "mv", "docs/tasks/t001_alpha", "docs/archive/tasks/t001_alpha")
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "-m", "task(t001): done")
-    r = _git(git_repo, "merge", "--no-ff", "t001_alpha", check=False)
-    assert r.returncode == 0, r.stderr
-
-
-def test_rewind_from_main_removes_derived_worktree(git_repo):
-    """主仓 task.md 不带 worktree 字段；rewind 须按命名约定推导并移除 worktree。"""
-    _start(git_repo)
-    wt = _worktree_path(git_repo)
-    assert wt.is_dir()
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
-    assert not fm.get("worktree")  # 主仓副本保持 start commit 内容
-    # worktree 副本的字段补齐是 start 留下的未提交改动；丢弃以模拟未动过的工作区
-    # （worktree 有改动时 remove 不加 --force 会拒绝，属既有安全行为）
-    _git(wt, "checkout", "--", ".")
-    task_mod.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="撤回", yes=False))
-    assert not wt.is_dir()
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
-    assert fm["status"] == "backlog"
-
-
-def test_start_warns_on_non_main_branch(git_repo, capsys):
-    """start 的 chore commit 落非主干分支时给警告。"""
+def test_start_rejects_non_primary_branch(git_repo):
     _git(git_repo, "switch", "-c", "feature")
-    _start(git_repo)
-    assert "非主干" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit, match="主干"):
+        _start(git_repo)
+
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+    assert not _worktree_path(git_repo).exists()
 
 
-def _make_unmerged_commit(git_repo):
-    """在 worktree 里提交一笔，让分支领先主干（触发 rewind 确认路径）。"""
-    wt = _worktree_path(git_repo)
-    (wt / "docs/tasks/t001_alpha/note.txt").write_text("work\n", encoding="utf-8")
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "-m", "task(t001): wip")
-    return wt
+def test_start_rejects_dirty_primary_worktree(git_repo):
+    (git_repo / "unrelated.txt").write_text("dirty", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="未提交改动"):
+        _start(git_repo)
+
+    assert not _worktree_path(git_repo).exists()
 
 
-def test_rewind_yes_skips_unmerged_prompt(git_repo):
-    _start(git_repo)
-    wt = _make_unmerged_commit(git_repo)
-    task_mod.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="x", yes=True))
-    assert not wt.is_dir()
+def test_start_rejects_existing_task_branch(git_repo):
+    _git(git_repo, "branch", "t001_alpha")
+
+    with pytest.raises(SystemExit, match="分支.*已存在"):
+        _start(git_repo)
+
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+    assert not _worktree_path(git_repo).exists()
+
+
+def test_start_rejects_existing_worktree_path(git_repo):
+    _worktree_path(git_repo).mkdir()
+
+    with pytest.raises(SystemExit, match="已存在"):
+        _start(git_repo)
+
     fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
     assert fm["status"] == "backlog"
 
 
-def test_rewind_without_yes_aborts_when_declined(git_repo, monkeypatch):
+def test_start_rejects_task_worktree(git_repo):
     _start(git_repo)
-    _make_unmerged_commit(git_repo)
-    monkeypatch.setattr("builtins.input", lambda: "n")
-    with pytest.raises(SystemExit, match="aborted"):
-        task_mod.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="x", yes=False))
+    result = _task_cli(_worktree_path(git_repo), "start", "t001")
+
+    assert result.returncode != 0
+    assert "主工作区" in result.stderr
+
+
+def test_list_rebuild_requires_primary_worktree(git_repo):
+    _start(git_repo)
+    result = _task_cli(_worktree_path(git_repo), "list", "--rebuild")
+
+    assert result.returncode != 0
+    assert "主工作区" in result.stderr
+
+
+def test_finish_rejects_primary_and_runs_in_registered_worktree(git_repo):
+    _start(git_repo)
+
+    primary = _task_cli(git_repo, "finish", "t001")
+    assert primary.returncode != 0
+    assert "自身 worktree" in primary.stderr
+
+    worktree = _worktree_path(git_repo)
+    finished = _task_cli(worktree, "finish", "t001")
+    assert finished.returncode == 0, finished.stderr
+
+    fm, _ = parse_front_matter(
+        worktree / "docs" / "archive" / "tasks" / "t001_alpha" / "task.md"
+    )
+    assert fm["status"] == "done"
+    changed = _git(worktree, "diff", "--name-only").stdout.split()
+    assert "docs/tasks_index.json" not in changed
+    assert "docs/archive/tasks_index.json" not in changed
+
+
+def test_start_compensates_when_worktree_creation_fails(git_repo, monkeypatch):
+    initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    def fail_create(*args, **kwargs):
+        raise task_mod.TaskDataError("模拟 worktree 创建失败")
+
+    monkeypatch.setattr(task_mod, "create_worktree", fail_create)
+
+    with pytest.raises(SystemExit, match="已恢复"):
+        _start(git_repo)
+
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
+    assert _git(git_repo, "status", "--porcelain").stdout.strip() == ""
+    assert not _worktree_path(git_repo).exists()
+    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+
+
+def test_start_compensates_when_local_config_link_fails(git_repo, monkeypatch):
+    initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    def fail_link(*args, **kwargs):
+        raise OSError("模拟本地配置软链失败")
+
+    monkeypatch.setattr(task_mod, "link_local_env", fail_link)
+
+    with pytest.raises(SystemExit, match="已恢复"):
+        _start(git_repo)
+
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
+    assert _git(git_repo, "status", "--porcelain").stdout.strip() == ""
+    assert not _worktree_path(git_repo).exists()
+    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
+
+
+def test_rewind_from_primary_removes_registered_worktree(git_repo):
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+
+    task_mod.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="撤回", yes=True))
+
+    assert not worktree.is_dir()
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+    assert fm["worktree"] == ""
+
+
+def test_preflight_rejects_primary_for_active_task(git_repo, capsys):
+    _start(git_repo)
+
+    with pytest.raises(SystemExit):
+        task_mod.cmd_preflight(argparse.Namespace(tid="t001"))
+
+    assert "当前不在 task worktree" in capsys.readouterr().out

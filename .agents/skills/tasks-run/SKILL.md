@@ -70,10 +70,9 @@ flowchart TD
 ### Step 1：开干与前置
 
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停本 task 及整批，先解决环境或走 spike，不盲目 start。
-2. `scripts/task.py start <tid>`。默认建分支 `{tid}_{slug}` 并签出到 worktree `../{repo}_{tid}`（7c 合并的就是这个分支），软链 `.env`；提交后主仓保持干净，task 文档随 worktree 走。
-   - 只有**用户明确指令**不隔离时才加 `--no-worktree`。
-   - **`cd` 进该 worktree 再改代码**；后续所有 Step 都在 worktree 内进行。
-3. `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性。
+2. 在干净主仓默认分支执行 `scripts/task.py start <tid>`。脚本创建分支 `{tid}_{slug}`、worktree `../{repo}_{tid}`，并软链 `.env`；成功后主仓保持干净。
+   - **必须 `cd` 进该 worktree**；后续所有 Step 都在其中进行。`start` 没有不建 worktree 的绕过参数。
+3. 在 task worktree 执行 `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性。
    - **FAIL 必须先修**，不得绕过继续。
 4. spec 契约区行为 AC 非空再进 Step 2（preflight 已查）。
 5. spec 上下文区要求 spike：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
@@ -85,6 +84,8 @@ flowchart TD
 ### Step 3：绿
 
 实现至测试通过；`{test_cmd}` 确认。量大可派 subagent。
+
+变更命中 `docs/blueprint/testing.md`「Schema / codegen 验证」声明的触发路径时，运行其中生成命令与验证命令；未声明或写「无」则跳过。涉及 migration 独占窗口时，不与其他 migration 并行。生产 migration、部署和数据操作不由本步骤或普通 merge 自动执行。
 
 **改既有测试的纪律**：见 `AGENTS.md`「开发原则」TDD 条款——禁止就地把旧测试的预期改成当前实现的输出。
 
@@ -154,7 +155,9 @@ scripts/task.py finish <tid>
 
 - 在 worktree 内把本 task 执行期的全部改动（含 7a 文档、7b finish 产生的归档移动）**一次性 commit**；subject 含 `{tid}`。
 - 一 task 一 commit。task 拆得不够细导致改动跨多个独立主题时，回到 `task-create` 拆 task，不在执行期切分 commit。
-- `cd` 回主仓，`git merge --no-ff {tid}_{slug}` 合并回主干。
+- `cd` 回主仓，确认主仓干净后执行 `git merge --no-ff {tid}_{slug}` 合并回主干。
+- 在主仓执行 `scripts/task.py list --rebuild`，以独立维护 commit 提交 `docs/tasks_index.json` 与 `docs/archive/tasks_index.json`；不得把 index 放入 task 执行 commit。
+- 按 `docs/blueprint/testing.md`「Schema / codegen 验证」执行已声明的合并后动作及验证。
 - 主仓内 `git worktree remove ../{repo}_{tid}` 清理工作区。
 - **blocked 未放行前**不 `finish`、不合并。
 

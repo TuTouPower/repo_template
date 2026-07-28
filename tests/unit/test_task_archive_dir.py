@@ -191,6 +191,7 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
         raise OSError("模拟移动失败")
 
     monkeypatch.setattr(task_mod.shutil, "move", boom)
+    monkeypatch.setattr(task_mod, "require_own_task_worktree", lambda fm: None)
     with pytest.raises(SystemExit, match="归档移动失败"):
         task_mod._close_task(argparse.Namespace(tid="t001"), "done", None)
     fm, _ = task_mod.parse_front_matter(d / "task.md")
@@ -209,11 +210,24 @@ def test_list_is_readonly_by_default(fake_repo, capsys):
     assert not task_mod.ACTIVE_PATH.exists()
 
 
-def test_list_rebuild_writes_index(fake_repo, capsys):
+def test_list_rebuild_writes_index(fake_repo, capsys, monkeypatch):
     import argparse
 
     _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
+    monkeypatch.setattr(task_mod, "require_primary_worktree", lambda: None)
     task_mod.cmd_list(argparse.Namespace(status=None, rebuild=True))
     out = capsys.readouterr().out
     assert task_mod.ACTIVE_PATH.exists()
     assert "index rebuilt" in out
+
+
+def test_task_worktree_state_updates_do_not_rebuild_index(fake_repo, monkeypatch):
+    import argparse
+
+    _make_task(task_mod.TASKS_DIR, "t001", "alpha", "active")
+    monkeypatch.setattr(task_mod, "require_own_task_worktree", lambda fm: None)
+    task_mod.cmd_block(argparse.Namespace(tid="t001", reason="review"))
+
+    assert not task_mod.ACTIVE_PATH.exists()
+    fm, _ = task_mod.parse_front_matter(task_mod.TASKS_DIR / "t001_alpha/task.md")
+    assert fm["status"] == "blocked"

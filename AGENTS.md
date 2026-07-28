@@ -15,7 +15,7 @@
 | `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 由 `scripts/task.py` 写命令自动重建（`list` 只读，`list --rebuild` 手动重建）；入库但可随时重建，不手改 |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending.md` | 待办总账：未修 bug（`bNNN`）+ 遗留待办（`fNNN`） | `task-bug` 登记未修 bug；`tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞遗留待办和 bug 建 task；`repo-hygiene` 补迁漏项 |
@@ -35,7 +35,7 @@
 | `config/` | 配置（默认 + 环境覆盖 + `.env.example`） | 仅 `.env.example` 入库；真值写本地 `.env` |
 | `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 创建；`rewind` 或从 worktree 外 `finish`/`drop` 时脚本尝试移除；task worktree 内收尾时保留，合并后从主仓清理；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅在干净主仓默认分支创建；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；合并后从主仓清理；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -44,7 +44,9 @@
 - specs driven：需求拆分为可独立验证的 task，填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
-- task 执行期一个实现 commit；创建期、状态维护与 merge commit 分开。每个 commit 必须独立可验证，有工程意义。
+- 主仓只做 task 创建、start、合并、合并后的派生 index 重建和 worktree 清理；除非用户明确允许否则不在主仓直接 `task-run`。
+- `start` 无绕过参数；只能从干净主仓默认分支创建 task branch/worktree。active/blocked task 的 finish/drop 必须在登记的自身 worktree 执行。
+- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；index 仅在主仓协调点重建并提交。每个 commit 必须独立可验证，有工程意义。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### skill 调用
@@ -59,7 +61,7 @@
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；一个 task 目录一个 commit |
 | 把遗留待办转成 task | `pending-to-task` | 从 `docs/pending.md`「遗留待办」去重建 task 并回写归档 |
 | 多个 backlog task 合并成一个 | `tasks-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 串行跑完待做 task | `tasks-run` | **串行**执行 |
+| 串行跑完待做 task | `tasks-run` | **串行**执行；每个 task 在自身 worktree 实施 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-clean` | 默认 dry-run |
 

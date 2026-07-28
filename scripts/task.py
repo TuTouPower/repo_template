@@ -4,14 +4,14 @@
 状态权威 = 每个 task 目录下 `task.md` 的 YAML front matter。每个 task 只写自己那份文件，
 跨分支 merge 不产生同步点。
 
-**工作区语义**：本脚本一律操作**当前所在工作区**（主仓或 worktree），不跨区读写。
-`start` 之后 task 文档随 worktree 走，`finish` 的归档移动也在 worktree 内完成，
-随 task commit 进分支，合并回主干时带回。因此主仓的 `list` 只能看到
-已合并与未 start 的 task；进行中 task 的最新状态在各自 worktree 内查。
+**工作区语义**：主仓只做 task 创建、start、合并、派生 index 重建和 worktree 清理。
+`start` 固定在主仓默认分支创建 task worktree；task 实施、review、block、resume、
+finish 与 active/blocked 的 drop 必须在该 task worktree 内进行。task 文档随 task commit
+合并回主干，因此主仓的 `list` 只能看到已合并与未 start 的 task。
 
 docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
-由任何写命令自动重建（`list` 只读，用 `list --rebuild` 手动重建），
-入库但可随时删除重建，不参与 merge。
+只在主仓协调点重建并入库；task worktree 的执行 commit 不更新它们。
+`list` 只读，用 `list --rebuild` 在主仓手动重建。
 
 数据：
   docs/tasks/{tid}_{slug}/task.md          活跃 task 状态权威
@@ -23,7 +23,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
 命令：
   task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL]
   task.py edit TID [--title TITLE] [--note NOTE | --note-append NOTE] [--review-level LEVEL]
-  task.py start TID [--no-worktree]   # 主仓执行：提交 front matter → 建 worktree
+  task.py start TID                 # 主仓默认分支执行：提交 front matter → 建 worktree
   task.py preflight TID               # 开干前门禁
   task.py block TID --reason blackbox|review|infra
   task.py resume TID
@@ -182,6 +182,60 @@ def worktree_paths() -> dict[str, str]:
         elif line.startswith("branch ") and current:
             result[current] = line[len("branch "):].strip().removeprefix("refs/heads/")
     return result
+
+
+def primary_worktree_path() -> Path:
+    """返回 Git 登记的主工作区；worktree list 第一项始终是主工作区。"""
+    paths = worktree_paths()
+    if not paths:
+        sys.exit("无法读取 git worktree 列表")
+    return Path(next(iter(paths))).resolve()
+
+
+def in_primary_worktree() -> bool:
+    return REPO_ROOT.resolve() == primary_worktree_path()
+
+
+def current_branch() -> str:
+    r = _git(["rev-parse", "--abbrev-ref", "HEAD"])
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def require_primary_worktree(*, clean: bool = False) -> None:
+    if not in_primary_worktree():
+        sys.exit("此命令只能在主工作区执行；请 cd 回主仓")
+    base = default_branch()
+    branch = current_branch()
+    if branch != base:
+        sys.exit(f"此命令只能在主干 {base!r} 执行（当前 {branch!r}）")
+    if clean:
+        dirty = porcelain_entries()
+        if dirty:
+            sys.exit(
+                f"主工作区有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；"
+                "先提交、stash 或处理后再 start"
+            )
+
+
+def task_worktree_path(fm: dict) -> Path:
+    return (REPO_ROOT / effective_worktree(fm)).resolve()
+
+
+def in_own_task_worktree(fm: dict) -> bool:
+    expected = task_worktree_path(fm)
+    return (
+        REPO_ROOT.resolve() == expected
+        and str(expected) in worktree_paths()
+        and current_branch() == fm.get("branch", "")
+    )
+
+
+def require_own_task_worktree(fm: dict) -> None:
+    if not in_own_task_worktree(fm):
+        sys.exit(
+            f"{fm['tid']} 必须在自身 worktree {effective_worktree(fm)} 的分支 "
+            f"{fm.get('branch')!r} 执行"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -431,23 +485,51 @@ def unlink_managed_env_links(worktree: Path) -> None:
             link.unlink()
 
 
-def create_worktree(tid: str, branch: str) -> tuple[str, list[str]]:
+def create_worktree(tid: str, branch: str) -> str:
+    """创建全新的 task branch/worktree；调用方负责补偿失败。"""
     rel = worktree_rel_path(tid)
     path = (REPO_ROOT / rel).resolve()
-    if path.exists():
-        if str(path) in worktree_paths():
-            print(f"worktree 已存在，复用：{rel}", file=sys.stderr)
-            return rel, link_local_env(path)
-        sys.exit(f"{rel} 已存在且不是本仓 worktree；请先清理或用 --no-worktree")
-    args = ["worktree", "add", str(path)]
+    if path.exists() or str(path) in worktree_paths():
+        raise TaskDataError(f"{rel} 已存在；请先清理后再 start")
     if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
-        args.append(branch)
-    else:
-        args += ["-b", branch]
-    r = _git(args)
+        raise TaskDataError(f"分支 {branch!r} 已存在；请先处理后再 start")
+    r = _git(["worktree", "add", "-b", branch, str(path)])
     if r.returncode != 0:
-        sys.exit(f"git worktree add 失败：{r.stderr.strip()}")
-    return rel, link_local_env(path)
+        raise TaskDataError(f"git worktree add 失败：{r.stderr.strip()}")
+    return rel
+
+
+def rollback_start(
+    *,
+    initial_head: str,
+    start_commit: str,
+    branch: str,
+    worktree_rel: str,
+) -> str | None:
+    """补偿本次 start；只有主仓仍干净且停在 start commit 时才回退提交。"""
+    failures = []
+    worktree = (REPO_ROOT / worktree_rel).resolve()
+    if str(worktree) in worktree_paths():
+        removed, message = remove_worktree(worktree_rel)
+        if not removed:
+            failures.append(message)
+
+    branch_ref = f"refs/heads/{branch}"
+    if _git(["rev-parse", "--verify", "--quiet", branch_ref]).returncode == 0:
+        r = _git(["branch", "-D", branch])
+        if r.returncode != 0:
+            failures.append(f"删除分支 {branch!r} 失败：{r.stderr.strip()}")
+
+    if current_branch() != default_branch() or _get_head() != start_commit or porcelain_entries():
+        failures.append(
+            "主仓已不在本次 start commit 或出现未提交改动，未自动回退 start commit"
+        )
+    else:
+        r = _git(["reset", "--hard", initial_head])
+        if r.returncode != 0:
+            failures.append(f"回退 start commit 失败：{r.stderr.strip()}")
+
+    return "; ".join(failures) or None
 
 
 def remove_worktree(rel: str) -> tuple[bool, str]:
@@ -473,6 +555,7 @@ def remove_worktree(rel: str) -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 
 def cmd_add(args):
+    require_primary_worktree()
     if not SLUG_RE.match(args.slug):
         sys.exit(f"slug 须匹配 {SLUG_RE.pattern}（收到 {args.slug!r}）")
     if not args.title.strip():
@@ -510,6 +593,7 @@ def cmd_add(args):
 
 
 def cmd_edit(args):
+    require_primary_worktree()
     fields = (args.title, args.note, args.note_append, args.review_level)
     if all(v is None for v in fields):
         sys.exit("没有要改的字段；传 --title / --note / --note-append / --review-level")
@@ -542,79 +626,64 @@ def cmd_edit(args):
 
 
 def cmd_start(args):
+    require_primary_worktree(clean=True)
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
 
-
     branch = f"{fm['tid']}_{fm['slug']}"
+    worktree_rel = worktree_rel_path(fm["tid"])
+    worktree = (REPO_ROOT / worktree_rel).resolve()
+    if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
+        sys.exit(f"分支 {branch!r} 已存在；请先处理后再 start")
+    if worktree.exists() or str(worktree) in worktree_paths():
+        sys.exit(f"{worktree_rel} 已存在；请先处理后再 start")
+
+    initial_head = _get_head()
     fm["status"] = "active"
     fm["branch"] = branch
-    fm["diff_anchor"] = _get_head()
+    fm["worktree"] = worktree_rel
+    fm["diff_anchor"] = initial_head
+    write_front_matter(path, fm, body)
+    rebuild_index()
+    commit_paths = [
+        f"{task['dir']}/task.md",
+        _rel(ACTIVE_PATH),
+        _rel(ARCHIVE_PATH),
+    ]
+    if _git(["add", "--", *commit_paths]).returncode != 0:
+        _git(["restore", "--staged", "--worktree", "--", *commit_paths])
+        sys.exit(f"git add {' '.join(commit_paths)} 失败；已恢复 start 前状态")
+    r = _git(["commit", "-m", f"chore({fm['tid']}): start", "--", *commit_paths])
+    if r.returncode != 0:
+        _git(["restore", "--staged", "--worktree", "--", *commit_paths])
+        sys.exit(
+            f"提交 {commit_paths[0]} 失败：{r.stderr.strip() or r.stdout.strip()}；"
+            "已恢复 start 前状态"
+        )
 
-    if args.no_worktree:
-        dirty = [p for p in porcelain_entries() if not p.startswith(task["dir"])]
-        if dirty and not args.force:
+    start_commit = _get_head()
+    try:
+        rel = create_worktree(fm["tid"], branch)
+        linked = link_local_env((REPO_ROOT / rel).resolve())
+    except (OSError, TaskDataError) as e:
+        rollback_error = rollback_start(
+            initial_head=initial_head,
+            start_commit=start_commit,
+            branch=branch,
+            worktree_rel=worktree_rel,
+        )
+        if rollback_error:
             sys.exit(
-                f"主工作区有 {len(dirty)} 项与本 task 无关的未提交改动："
-                f"{', '.join(dirty[:5])}\n"
-                "切分支会把它们带走（未提交改动不跟 branch）。先提交或 stash；"
-                "确认无碍时加 --force"
+                f"start 失败（{e}）；自动补偿不完整：{rollback_error}。"
+                f"请检查 {worktree_rel}、分支 {branch!r} 与主仓 HEAD 后手动恢复"
             )
-        fm["worktree"] = ""
-        write_front_matter(path, fm, body)
-        rebuild_index()
-        exists = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
-        checkout = ["switch", branch] if exists else ["switch", "-c", branch]
-        r = _git(checkout)
-        if r.returncode != 0:
-            sys.exit(f"git {' '.join(checkout)} 失败：{r.stderr.strip()}")
-        loc, linked = f"当前工作区（--no-worktree，分支 {branch}）", []
-    else:
-        current = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-        base = default_branch()
-        if current != base:
-            print(
-                f"WARNING: 当前分支 {current!r} 非主干 {base!r}；"
-                f"start 的 chore commit 会落在 {current} 上",
-                file=sys.stderr,
-            )
-        # 先提交 front matter，worktree 才能签出到新状态（worktree 只签出已提交内容）。
-        # 派生缓存一并提交，且提交后不再改写主仓：worktree/diff_anchor 的最终值
-        # 只补进 worktree 副本（执行期权威），主仓保持干净——否则收尾回主仓
-        # `git merge --no-ff` 时这些脏路径会让合并 abort。
-        write_front_matter(path, fm, body)
-        rebuild_index()
-        commit_paths = [
-            f"{task['dir']}/task.md",
-            _rel(ACTIVE_PATH),
-            _rel(ARCHIVE_PATH),
-        ]
-        if _git(["add", "--", *commit_paths]).returncode != 0:
-            sys.exit(f"git add {' '.join(commit_paths)} 失败")
-        r = _git(["commit", "-m", f"chore({fm['tid']}): start", "--", *commit_paths])
-        if r.returncode != 0:
-            sys.exit(
-                f"提交 {commit_paths[0]} 失败：{r.stderr.strip() or r.stdout.strip()}\n"
-                "worktree 只签出已提交内容，start 必须先提交 front matter"
-            )
-        fm["diff_anchor"] = _get_head()
-        rel, linked = create_worktree(fm["tid"], branch)
-        fm["worktree"] = rel
-        # worktree 内的 task.md 是签出版本，补齐 worktree/diff_anchor 两个字段
-        wt_task_md = (REPO_ROOT / rel).resolve() / task["dir"] / "task.md"
-        if wt_task_md.is_file():
-            wt_fm, wt_body = parse_front_matter(wt_task_md)
-            wt_fm["worktree"] = rel
-            wt_fm["diff_anchor"] = fm["diff_anchor"]
-            write_front_matter(wt_task_md, wt_fm, wt_body)
-        loc = f"worktree {rel}"
+        sys.exit(f"start 失败（{e}）；已恢复到 start 前状态")
 
     print(f"{args.tid} status=active branch={branch} diff_anchor={fm['diff_anchor']}")
-    print(f"工作位置：{loc}")
+    print(f"工作位置：worktree {rel}")
     if linked:
         print(f"已软链本地配置：{', '.join(linked)}")
-    if not args.no_worktree:
-        print(f"下一步：cd {worktree_rel_path(fm['tid'])} 后在该工作区执行 preflight 与后续所有步骤")
+    print(f"下一步：cd {worktree_rel} 后在该工作区执行 preflight 与后续所有步骤")
 
 
 def cmd_preflight(args):
@@ -647,15 +716,10 @@ def cmd_preflight(args):
 
     # 4. 工作区一致性
     if fm["status"] == "active":
-        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-        if fm["branch"] and branch != fm["branch"]:
-            problems.append(f"当前分支 {branch} 与 task 分支 {fm['branch']} 不符")
-        wt_rel = fm.get("worktree", "")
-        if wt_rel:
-            if REPO_ROOT.name != Path(wt_rel).name:
-                problems.append(f"本 task 工作区是 {wt_rel}，请先 cd 过去")
-        else:
-            warnings.append("未用 worktree（--no-worktree）；禁止长期保留未提交改动")
+        if not in_own_task_worktree(fm):
+            problems.append(
+                f"当前不在 task worktree {effective_worktree(fm)} 的分支 {fm['branch']!r}"
+            )
 
     dirty = porcelain_entries()
     foreign = [p for p in dirty
@@ -684,19 +748,19 @@ def _list_task_branches() -> list[str]:
 def cmd_block(args):
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "active")
+    require_own_task_worktree(fm)
     fm["status"] = "blocked"
     append_note(fm, f"blocked: {args.reason}")
     write_front_matter(path, fm, body)
-    rebuild_index()
     print(f"{args.tid} status=blocked reason={args.reason}")
 
 
 def cmd_resume(args):
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "blocked")
+    require_own_task_worktree(fm)
     fm["status"] = "active"
     write_front_matter(path, fm, body)
-    rebuild_index()
     print(f"{args.tid} status=active (resumed)")
 
 
@@ -710,15 +774,20 @@ def _close_task(args, status: str, note: str | None) -> None:
     task, path, fm, body = load_task(args.tid)
     if status == "done":
         require_status(fm, "active")
+        require_own_task_worktree(fm)
     elif fm["status"] in ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
+    elif fm["status"] in ("active", "blocked"):
+        require_own_task_worktree(fm)
+    else:
+        require_primary_worktree()
 
     src = REPO_ROOT / task["dir"]
     dst = ARCHIVE_TASKS_DIR / f"{fm['tid']}_{fm['slug']}"
     if dst.exists():
         sys.exit(f"归档目录已存在：{_rel(dst)}（数据冲突，请提示用户）")
 
-    in_own_worktree = bool(fm.get("worktree")) and REPO_ROOT.name == Path(fm["worktree"]).name
+    in_own_worktree = in_own_task_worktree(fm)
     if in_own_worktree:
         removed, wt_msg = False, (
             f"worktree {fm['worktree']} 保留（当前正在其中运行）；"
@@ -746,7 +815,6 @@ def _close_task(args, status: str, note: str | None) -> None:
             f"归档移动失败（{e}）；front matter 已回滚为 status={orig_fm['status']}，"
             f"目录仍在 {_rel(src)}。排除原因后重试"
         )
-    rebuild_index()
     print(f"{args.tid} status={status}; 目录已归档 -> {_rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
@@ -778,6 +846,7 @@ def cmd_rewind(args):
 
     wt_msg = ""
     if target == "backlog":
+        require_primary_worktree()
         if fm.get("branch") and has_unmerged_commits(fm["branch"]) and not args.yes:
             print(
                 f"WARNING: 分支 {fm['branch']!r} 有未合并进 {default_branch()} 的 commit；"
@@ -798,16 +867,20 @@ def cmd_rewind(args):
         fm["branch"] = ""
         fm["worktree"] = ""
         fm["diff_anchor"] = ""
+    else:
+        require_own_task_worktree(fm)
 
     fm["status"] = target
     append_note(fm, f"rewound: {current} -> {target}; {args.reason}")
     write_front_matter(path, fm, body)
-    rebuild_index()
+    if target == "backlog":
+        rebuild_index()
     append_audit("rewind", tid=args.tid, fr=current, to=target, reason=args.reason)
     print(f"{args.tid} status={target} (rewound from {current}){'; ' + wt_msg if wt_msg else ''}")
 
 
 def cmd_purge(args):
+    require_primary_worktree()
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
     task_dir = REPO_ROOT / task["dir"]
@@ -834,6 +907,7 @@ def cmd_list(args):
     if args.status and args.status not in VALID_STATUSES:
         sys.exit(f"status {args.status!r} 非法；可选 {VALID_STATUSES}")
     if args.rebuild:
+        require_primary_worktree()
         tasks = rebuild_index()
         print(f"index rebuilt: {_rel(ACTIVE_PATH)}, {_rel(ARCHIVE_PATH)}")
     else:
@@ -886,13 +960,9 @@ def main():
 
     s = sub.add_parser(
         "start",
-        help="backlog -> active：写并提交 front matter、建 worktree、软链 .env、记 diff_anchor",
+        help="backlog -> active：主仓提交 front matter、建 task worktree、软链 .env、记 diff_anchor",
     )
     s.add_argument("tid")
-    s.add_argument("--no-worktree", action="store_true",
-                   help="仅在用户明确指令时使用：不建 worktree，直接在当前工作区切分支")
-    s.add_argument("--force", action="store_true",
-                   help="配合 --no-worktree：主工作区有无关脏改动时仍继续")
     s.set_defaults(func=cmd_start)
 
     pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/索引交叉校验")

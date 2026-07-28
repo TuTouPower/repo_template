@@ -47,17 +47,17 @@ disable-model-invocation: true
    | 维度 | 内容 |
    |------|------|
    | 代码路径 | 预计新增/修改的 `src/` `tests/` `scripts/` 文件或目录 |
-   | 共享契约 | `schemas/` `config/` `docs/blueprint/` 中会动的条目 |
+   | 共享契约 | `schemas/`、schema/codegen 输入、`config/`、`docs/blueprint/` 与其他共享文档中会动的条目 |
    | 顺序依赖 | spec 上下文区写明「依赖 tNNN」「在 X 之后」的前置 |
 
    spec 范围写得太粗、推不出改动面的，判为**待澄清**，不放进可并发组。
 
-   `docs/tasks_index.json` 是派生缓存，不再是并发写冲突点；task 状态各写各的 `task.md`，不计入共享契约。
+   `docs/tasks_index.json` 与 `docs/archive/tasks_index.json` 是主仓协调点更新的 tracked 派生缓存；task worktree 的执行 commit 不修改它们。task 状态各写各的 `task.md`，不计入共享契约。
 
 4. **判冲突**。任一成立即冲突：
 
    - 代码路径相交（同文件必冲突；同目录且都改结构性文件视为冲突，仅新增互不相干的文件不算）
-   - 共享契约相交（同一 schema、同一 config key、同一 blueprint 条目）
+   - 共享契约相交（同一 schema/codegen 输入、同一 migration 窗口、同一 config key、同一 blueprint 或共享文档条目）
    - 存在顺序依赖（被依赖方未 `done`）
    - 一方是**待澄清**
 
@@ -92,7 +92,7 @@ disable-model-invocation: true
    跳过：
    - t001：status=done，已归档
 
-   结论：可并发组 A（t005, t007）；执行仍为每个 tid 各自 /tasks-run。`task.py start` 默认为每个 task 建独立 worktree（`../{repo}_{tid}`），并发场景**必须**用 worktree，不得对并发 task 用 `--no-worktree`。本 skill 不代为创建。
+   结论：可并发组 A（t005, t007）；执行仍为每个 tid 各自 /tasks-run。`task.py start` 为每个 task 创建独立 worktree（`../{repo}_{tid}`）；并发 task 必须在各自 worktree 内实施。本 skill 不代为创建。
    ```
 
 ## 边界
