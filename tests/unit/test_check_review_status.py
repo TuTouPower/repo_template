@@ -116,7 +116,7 @@ def test_disposition_stats_counts(tmp_path):
         "| finding_id | severity | status | rationale | fix_ref |\n"
         "|------------|----------|--------|-----------|---------|\n"
         "| t001_code_f001 | critical | 已修 | x | f:1 |\n"
-        "| t001_code_f002 | minor | 遗留 | y | f001 |\n"
+        "| t001_code_f002 | minor | 遗留 | y | p001 |\n"
         "| t001_test_f003 | important | 撤回 | z | - |\n",
         encoding="utf-8",
     )
@@ -134,7 +134,7 @@ def test_disposition_stats_skips_template_t000(tmp_path):
         "| finding_id | severity | status | rationale | fix_ref |\n"
         "|------------|----------|--------|-----------|---------|\n"
         "| t000_code_f001 | critical | 已修 | x | f:1 |\n"
-        "| t001_test_f001 | minor | 遗留 | y | f001 |\n",
+        "| t001_test_f001 | minor | 遗留 | y | p001 |\n",
         encoding="utf-8",
     )
     stats = disposition_stats(p)

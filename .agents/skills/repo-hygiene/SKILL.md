@@ -17,7 +17,7 @@ disable-model-invocation: true
 | `docs/handoff.md` | 最新一版交接 | 过时段落 → `docs/archive/handoff.md`（整段追加） |
 | `docs/tasks/{tid}_{slug}/task.md` | 活跃 task 状态（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
 | `docs/spikes/{sid}_{slug}/` | 进行中的 spike | 报告已写且结论已入 `docs/findings.md` 的完结 spike → 整目录迁 `docs/archive/spikes/` |
-| `docs/reviews/review_*/` | 报告 `review_*.md` 入库保留 | 用户确认过时 → 整目录迁 `docs/archive/reviews/`（`_meta/` 不入库，无需处理） |
+| `docs/reviews/review_*/` | 报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库 | 用户确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`；archive 下 `_meta/` 继续 gitignore |
 | 其它过时文档 | 仍生效的说明 | 明确过时且有历史价值 → `docs/archive/` 镜像路径 |
 
 ## 步骤
@@ -29,7 +29,7 @@ disable-model-invocation: true
      - `docs/spikes/report_template.md`
      - `docs/reviews/prompts/`
      - 各领域下的 `.gitkeep`（若有）
-   - `docs/handoff.md`、`docs/pending.md`、`docs/findings.md`、`docs/guides/`、根目录杂散 md、明显草案。
+   - `docs/handoff.md`、`docs/pending.md`、`docs/findings.md`、`docs/guides/`、`docs/reviews/review_*/`、根目录杂散 md、明显草案。
    - `docs/archive/pending.md`、`docs/archive/handoff.md` 是否已存在（只追加，不截断）。
 
 2. **pending**（补迁：`tasks-run` 收尾本应已迁；此处扫漏）：
@@ -37,7 +37,7 @@ disable-model-invocation: true
    - 已闭环（有 `修复：tXXX` / `处理：tXXX` 等明确标记）→ **整条**从 `docs/pending.md` 删掉，**追加**到 `docs/archive/pending.md` 的同名节。
    - 不改写条目历史字段；迁移时保持原标题与 bullet 原文。
    - 不把「看起来过时」但未标闭环的条目静默删掉；不确定则报告用户。
-   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`tasks-run` 收尾应已登记，此处扫漏）→ 补登到 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id 与原 tid。
+   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`tasks-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/pending.py next` 取编号，再补登到 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id 与原 tid。
    - **扫 findings 漏抽**：`docs/archive/spikes/` 中已归档但结论未进 `docs/findings.md` 的 spike → 报告用户，由用户确认后补抽（不自行判断哪条结论值得留）。
 
 3. **handoff**：
@@ -50,6 +50,7 @@ disable-model-invocation: true
    - 明确过时且有历史价值 → 迁 `docs/archive/` 镜像路径。
    - 无价值草稿且用户确认 → 可删；未确认不删。
    - **spike 迁移**：`docs/spikes/{sid}_{slug}/` 报告已写且结论已入 `docs/findings.md` → 整目录迁 `docs/archive/spikes/`；拿不准是否完结则报告用户，不擅自迁。
+   - **review 迁移**：逐个检查 `docs/reviews/review_*/`；用户已确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`，保留目录名与全部内容。`review_*.md` 继续入库，`_meta/` 在 archive 路径继续 gitignore。目标目录同名项已存在时停止并报告，不覆盖或合并。
    - **不**把上述模板路径当过时文档归档或删除。
 
 5. **task 状态一致性**：发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
@@ -69,4 +70,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：迁入 archive 的 pending/handoff 条目、docs 中保留的未闭环/最新内容、跳过项、仍需用户决定的不一致项。
+汇报：迁入 archive 的 pending/handoff 条目、spike/review/其它文档目录，docs 中保留的未闭环/最新内容、跳过项、仍需用户决定的不一致项。

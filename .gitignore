@@ -16,3 +16,4 @@ __pycache__/
 
 # 多路 review 会话的过程文件（报告 review_*.md 本身入库）
 docs/reviews/review_*/_meta/
+docs/archive/reviews/review_*/_meta/

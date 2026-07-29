@@ -113,7 +113,7 @@ flowchart TD
 ### Step 6：处置
 
 - 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
-- `status=遗留` 的**内容**不写在 task.md：登记到 `docs/pending.md`「遗留待办」节拿 `fNNN`，`fix_ref` 填该 `fNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
+- `status=遗留` 的**内容**不写在 task.md：新条目先运行 `scripts/pending.py next` 取编号，再登记到 `docs/pending.md`「遗留待办」节，`fix_ref` 填该 `pNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
 - `max_review_round` 取本 skill 默认（5）或用户加轮后的新上限（实施笔记有记录）：
   ```bash
   scripts/check_review_status.py \
@@ -137,11 +137,11 @@ flowchart TD
 - 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`。
 - 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
 - 写全 `task.md` 收尾报告（引用 AC 与证据，不复制 AC 正文；各轮 verdict）。收尾报告**不设遗留节**——遗留在 `docs/pending.md`。
-- **pending 闭环**（本 task 消化了 `docs/pending.md` 中条目，或 spec 引用 `bNNN` / `fNNN`）：
+- **pending 闭环**（本 task 消化了 `docs/pending.md` 中条目，或 spec 引用 `pNNN`）：
   1. bug 条目 `- 修复：未修` 改为 `- 修复：{tid}`；遗留条目 `- 处理：未开 task` 改为 `- 处理：{tid}`（已是本 tid 则不动）。
   2. **整条**从 `docs/pending.md` 移除，**追加**到 `docs/archive/pending.md` 的对应节（不截断 archive）。
   3. 无关联条目则跳过。
-- **遗留登记**（与 Step 6 呼应，收尾再核一遍）：处置表所有 `status=遗留` 的行，其 `fix_ref` 必须指向 `fNNN` 或 follow-up tid。仍为空的立即补登 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id。
+- **遗留登记**（与 Step 6 呼应，收尾再核一遍）：处置表所有 `status=遗留` 的行，其 `fix_ref` 必须指向 `pNNN` 或 follow-up tid。仍为空的先运行 `scripts/pending.py next` 取编号，再补登 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id。
 - **findings 抽取**：本 task 做过 spike，或产出可跨 task 复用的已验证事实（工具行为、平台差异、依赖坑、性能特征、被证伪的假设），结论总结写入 `docs/findings.md`。报告留在 spike 目录。只记已验证的事实，推测不进。
 - 排在其后且未 `done` 的 task 若受影响，修订其 `spec.md`。
 

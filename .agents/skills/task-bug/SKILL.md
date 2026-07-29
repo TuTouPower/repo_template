@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-bug
 
-Bug 分析与修复立项入口。复现、定位根因、做补测分析，登记 `bNNN`，再按 `task-create` 建 backlog 修复 task。不在本 skill 内改生产代码。
+Bug 分析与修复立项入口。复现、定位根因、做补测分析，登记 `pNNN`，再按 `task-create` 建 backlog 修复 task。不在本 skill 内改生产代码。
 
 ## 步骤
 
@@ -21,7 +21,7 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
    - 现有测试为何没盖住（无测 / 弱断言 / mock 掉被测逻辑 / 只测假路径 / 缺集成层等）。
    - 应如何增删修改测试（层级、场景、断言对象）。
 
-5. **登记到 pending**。根因确认后写入 `docs/pending.md`「未修 bug」节，拿 `bNNN`：
+5. **登记到 pending**。根因确认后写入 `docs/pending.md`「未修 bug」节。已有条目时更新内容并保留原 `pNNN`；新条目先运行 `scripts/pending.py next` 取得编号，再填写：
    - 现象：期望 vs 实际，复现步骤
    - 影响：受影响功能与范围
    - 根因：可验证的机制 + 分类
@@ -29,13 +29,13 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
    - 线索：`.scratch/` 路径
    - 修复：未修
 
-   已有条目时更新内容、保留原 `bNNN`；没有条目追加新条目。
+   已有条目时更新内容、保留原 `pNNN`；没有条目时使用命令输出的新编号追加。
 
 6. **建修复 task**。产品缺陷或测试假绿已确认后，链式调用 `task-create`：
-   - spec 上下文区用结构化 `来源` 字段写 `bNNN`；
+   - spec 上下文区用结构化 `来源` 字段写 `pNNN`；
    - 写清根因、补测方向、风险与回退；
    - task 保持 `backlog`，生产修复交给 `tasks-run`；
-   - 环境或配置问题无需改仓库时，不建修复 task，保留 `bNNN` 并汇报所需外部动作。
+   - 环境或配置问题无需改仓库时，不建修复 task，保留 `pNNN` 并汇报所需外部动作。
 
 7. **询问提交 bug 总账**。`task-create` 已单独处理 task 目录与派生 index 的创建 commit；这里只列出 `docs/pending.md`。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
 
@@ -47,4 +47,4 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
 
 ## 完成
 
-汇报：`bNNN`、修复 task tid（若需仓库改动）、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，task 未 start。
+汇报：`pNNN`、修复 task tid（若需仓库改动）、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，task 未 start。
