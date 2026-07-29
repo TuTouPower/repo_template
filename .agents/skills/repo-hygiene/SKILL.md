@@ -23,7 +23,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **盘点**（只读）：
-   - `scripts/task.py list`：只读核对活跃 vs 归档与目录是否一致。发现两个派生 index 内容错误时，留到步骤 5 用 `list --rebuild` 修复并纳入本次维护 diff。
+   - task 状态按登记 worktree → 未合并 task 分支链尾 ref → main 盘点：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/task.py list/show --ref` 只读核对有效状态与目录。main 中被 worktree或链尾覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应 main 已合并状态；内容错误时留到步骤 5 处理。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`
@@ -53,9 +53,9 @@ disable-model-invocation: true
    - **review 迁移**：逐个检查 `docs/reviews/review_*/`；用户已确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`，保留目录名与全部内容。`review_*.md` 继续入库，`_meta/` 在 archive 路径继续 gitignore。目标目录同名项已存在时停止并报告，不覆盖或合并。
    - **不**把上述模板路径当过时文档归档或删除。
 
-5. **task 状态一致性**：发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
+5. **task 状态一致性**：按步骤 1 的有效来源发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
 
-   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）内容不对时跑 `task.py list --rebuild` 重建即可，不算不一致项；权责见 `AGENTS.md` 目录权责表。
+   派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）只反映 main 已合并状态。内容与 main 不符时可跑 `task.py list --rebuild`；存在未合并批次链时不得用链尾状态改写 main index。权责见 `AGENTS.md` 目录权责表。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 

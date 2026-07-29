@@ -15,22 +15,22 @@ disable-model-invocation: true
 | 无参数 | 全部 `backlog` |
 | 一个或多个 `tNNN` | 只分析这些；非 backlog 的记「跳过（已在基线）」或「跳过（已归档）」 |
 
-基线固定为**进行中**：全部 `active` + `blocked` task，以及仓库里已存在的 task git branch 及 worktree。
+基线固定为**进行中或尚未合并**：登记 worktree 中的 `active` / `blocked` task，以及尚未合并默认分支的 task 分支链。main 上的 task 状态可能落后于链尾，须以 worktree、`list/show --ref` 和 Git ancestry 为准。
 
 ## 步骤
 
 1. **建基线**：
 
    ```bash
-   scripts/task.py list --status active
-   scripts/task.py list --status blocked
-   git branch --list 't[0-9]*_*'
+   scripts/task.py list --status backlog
+   git worktree list --porcelain
+   git branch --no-merged <default> --list 't[0-9]*_*'
    ```
 
-   对每个已存在的 task 分支与登记 worktree 取实际占用文件。主干名取仓库默认分支（`main` / `master`，由 `scripts/task.py default_branch()` 探测；非 main 时替换）：
+   `<default>` 为主干分支名，与 `scripts/task.py` 的 `default_branch()` 口径一致：origin/HEAD → init.defaultBranch → 探测 main/master。main 的 list 只表示已合并状态与尚未进入链的 backlog。对每个登记 worktree直接读其 task 状态；对每条未合并 task 分支用 `scripts/task.py list --ref {branch}` 读累计状态，并用 `git merge-base --is-ancestor` 归并为链、找链尾。
 
    ```bash
-   git diff --name-status -M -C main...{branch}
+   git diff --name-status -M -C <default>...{branch}
    git -C {worktree} diff --name-status -M -C
    git -C {worktree} diff --cached --name-status -M -C
    git -C {worktree} ls-files --others --exclude-standard
@@ -38,9 +38,9 @@ disable-model-invocation: true
 
    rename/copy 同时计源路径与目标路径。基线占用集 = 各进行中 task 的已提交 diff ∪ worktree staged/unstaged/untracked 路径 ∪ spec 推导的待改路径。找不到归属的脏 worktree 单列并按冲突处理。
 
-   分支不在活跃索引时，先查归档 task 与合并状态：对应 task 已归档且分支已合并默认分支，则标「已完成待清理分支」，不算孤儿、不占用；否则记为「孤儿分支」，列出并当作占用。
+   分支已合并默认分支且 main 中对应 task 已归档，标「已完成保留分支」，不占用；分支未合并且其 ref 中能解析 task 状态，标「未合并批次链」，按链尾累计 diff 占用；ref 与 worktree 都找不到 task 归属才记「孤儿分支」。
 
-2. **列候选**。`scripts/task.py list --status backlog`；用户点名 tid 时以点名为准。候选为空则回复「当前没有 backlog task 可分析」，结束。
+2. **列候选**。从 main 的 backlog 集合中剔除 worktree或未合并链尾 ref 中已 active/blocked/done/dropped 的 tid；用户点名 tid 时也按该优先级判状态。候选为空则回复「当前没有 backlog task 可分析」，结束。
 
 3. **推导每个候选的改动面**。读 `docs/tasks/{tid}_{slug}/spec.md` 契约区（范围、非范围）与上下文区（依赖与约束、blueprint 更新点），推导：
 
@@ -73,8 +73,9 @@ disable-model-invocation: true
    |-----|------|------|----------|
    | t002 | active | t002_xxx | src/a/**, schemas/user.json |
 
-   孤儿分支：无 / t009_yyy（索引与归档中无对应 task）
-   已完成待清理分支：无 / t003_done（已归档且已合并，不占用）
+   未合并批次链：无 / t003_done（链尾，整条链占用）
+   孤儿分支：无 / t009_yyy（任一 ref 与 worktree 中无对应 task）
+   已完成保留分支：无 / t004_done（已归档且已合并，不占用）
 
    ### 可并发组
 
@@ -92,7 +93,7 @@ disable-model-invocation: true
    跳过：
    - t001：status=done，已归档
 
-   结论：可并发组 A（t005, t007）；执行仍为每个 tid 各自 /tasks-run。`task.py start` 为每个 task 创建独立 worktree（`../{repo}_{tid}`）；并发 task 必须在各自 worktree 内实施。本 skill 不代为创建。
+   结论：可并发组 A（t005, t007）；每个并发执行单元各自调用 `/tasks-run`，其内部 task 按输入顺序形成分支链。不同执行单元使用独立 worktree/分支链。本 skill 不代为创建。
    ```
 
 ## 边界

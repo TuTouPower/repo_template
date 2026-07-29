@@ -35,7 +35,7 @@
 | `config/` | 配置（默认 + 环境覆盖 + `.env.example`） | 仅 `.env.example` 入库；真值写本地 `.env` |
 | `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅在干净主仓默认分支创建；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；合并后从主仓清理；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从干净主仓默认分支调用；首 task 基于主干，后续 task 基于上一 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；task commit 后从主仓清理 worktree并保留分支；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -44,9 +44,10 @@
 - specs driven：需求拆分为可独立验证的 task，填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
-- 主仓只做 task 创建、start、合并、合并后的派生 index 重建和 worktree 清理；除非用户明确允许否则不在主仓直接 `task-run`。
-- `start` 无绕过参数；只能从干净主仓默认分支创建 task branch/worktree。active/blocked task 的 finish/drop 必须在登记的自身 worktree 执行。
-- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；index 仅在主仓协调点重建并提交。每个 commit 必须独立可验证，有工程意义。
+- 主仓负责 task 创建、从主干或上一 task 分支启动 worktree、task commit 后清理 worktree、整批最终合并与合并后的派生 index 重建；除非用户明确允许否则不在主仓直接 `task-run`。
+- `start` 无绕过参数；只能从干净主仓默认分支调用。首 task 基于本地主干，后续 task 基于上一已完成且已清理 worktree 的 task 分支；批次执行期间主仓 HEAD 与 task 状态不变。
+- task 状态读取优先级：登记 worktree → 未合并 task 分支链尾 ref → main。批次期间 main 中 task 状态可能滞后；`list/show/preflight --ref` 用于只读分支快照，不能据 main 旧 backlog 重复 start 或维护。
+- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；整批完成并获用户批准后只合并链尾分支，再在主仓重建并提交 index。每个 commit 必须独立可验证，有工程意义。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### skill 调用
@@ -71,7 +72,11 @@
 python3 scripts/task.py --help                  # 显示完整子命令与参数
 python3 scripts/task.py list                    # 当前工作区所有 task
 python3 scripts/task.py list --status backlog   # 按状态过滤
-python3 scripts/task.py show t001               # 某 task 的 front matter 详情
+python3 scripts/task.py show t001               # 当前工作区某 task 详情
+python3 scripts/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
+python3 scripts/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查链中 backlog
+python3 scripts/task.py start t002 --base t001_x # 从上一已完成 task 分支启动
+python3 scripts/task.py cleanup-worktree t001    # task commit 后清理 worktree，保留分支
 python3 scripts/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）

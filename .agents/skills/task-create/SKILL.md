@@ -19,7 +19,7 @@ disable-model-invocation: true
 
 ## 步骤
 
-1. **查重**。`scripts/task.py list`，避免重复 slug/等价范围。
+1. **查重**。按登记 worktree → 未合并 task 分支链尾 ref → main 的优先级读取现有 task，避免重复 slug/等价范围；main 中被链覆盖的旧状态不重复计。
 
 2. **拆分**。拆成结果可独立验证、对应一个 commit 有工程意义的 task；过大继续拆；记下建议顺序与依赖。
 

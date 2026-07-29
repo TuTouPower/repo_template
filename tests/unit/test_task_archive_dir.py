@@ -205,7 +205,7 @@ def test_list_is_readonly_by_default(fake_repo, capsys):
 
     _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
     assert not task_mod.ACTIVE_PATH.exists()
-    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=False))
+    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=False, ref=None))
     capsys.readouterr()
     assert not task_mod.ACTIVE_PATH.exists()
 
@@ -215,7 +215,7 @@ def test_list_rebuild_writes_index(fake_repo, capsys, monkeypatch):
 
     _make_task(task_mod.TASKS_DIR, "t001", "alpha", "backlog")
     monkeypatch.setattr(task_mod, "require_primary_worktree", lambda: None)
-    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=True))
+    task_mod.cmd_list(argparse.Namespace(status=None, rebuild=True, ref=None))
     out = capsys.readouterr().out
     assert task_mod.ACTIVE_PATH.exists()
     assert "index rebuilt" in out

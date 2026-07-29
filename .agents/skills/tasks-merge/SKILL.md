@@ -10,14 +10,15 @@ disable-model-invocation: true
 
 ## 前置
 
-- 源 task **全部**须为 `backlog`。`active` / `blocked` 已有分支与可能的 commit，直接拒绝并提示用户先 `scripts/task.py rewind`（或明确 drop）。
+- 源 task **全部**须为有效状态 `backlog`，且未进入任何登记 worktree或未合并 task 分支链。main 中仍显示 backlog 但 worktree/链尾 ref 已为 `active` / `blocked` / `done` / `dropped` 时直接拒绝。
+- `active` / `blocked` 已有分支与可能的 commit，提示用户先 `scripts/task.py rewind`（或明确 drop）。
 - `done` / `dropped` 在 archive，不可合并。
 
 ## 步骤
 
 1. **确认范围**。用户点名 tid 时用其列表；未点名时 `scripts/task.py list --status backlog`，读各 `docs/tasks/{tid}_{slug}/spec.md` 找范围重叠候选，向用户提出合并建议并等确认。不得自行决定合并哪些。
 
-2. **校验**。逐个 `scripts/task.py show {tid}`：状态非 `backlog` → 停止，报告哪个 tid 不合规，不做部分合并。
+2. **校验有效状态**。先查 `git worktree list --porcelain` 与 `git branch --no-merged <default> --list 't[0-9]*_*'`；对未合并链用 `scripts/task.py show {tid} --ref {chain_tail}`。仅无 worktree/链覆盖且 main 中 `scripts/task.py show {tid}` 为 `backlog` 时合规。任一不合规即停止，报告 tid、有效状态与来源，不做部分合并。`<default>` 口径同 `default_branch()`。
 
 3. **定目标**：
 

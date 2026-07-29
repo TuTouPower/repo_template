@@ -46,7 +46,7 @@ disable-model-invocation: true
 - `scripts/` 入库脚本；`.agents/`、`.claude/` skill 与软链
 - `AGENTS.md`、`README.md`、`CLAUDE.md`、`.gitignore`
 - `docs/archive/tasks_audit.log`
-- task worktree（`../{repo}_tNNN`）在仓库外，本 skill 不扫不删；清理由 `task.py finish` / `drop` 负责
+- task worktree（`../{repo}_tNNN`）在仓库外，本 skill 不扫不删；正常完成后由 `task.py cleanup-worktree` 从主仓清理，active/blocked worktree 保留
 - 不确定是否垃圾 → **不删**，列入「需用户决定」
 
 ## 步骤
@@ -81,7 +81,7 @@ disable-model-invocation: true
    1. 再扫一遍，与 dry-run 同规则。
    2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
    3. **`scratch`**（仅点名 `apply scratch`）：
-      - `scripts/task.py list` 取 backlog/active/blocked；读各 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。
+      - 以登记 worktree、未合并 task 分支链尾 ref、main 的优先级确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。main 中被 worktree或链尾覆盖的旧状态不重复计。
       - 其余 `.scratch/` 内容删掉，保留空目录。
       - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
    4. `artifacts` / `data`：清内容、保留目录。
