@@ -6,13 +6,13 @@ disable-model-invocation: true
 
 # repo-hygiene
 
-把**已修 / 已过时**内容迁入 `docs/archive/`，`docs/` 只保留**未做未修**与**整理后的最新**。
+把**已闭环 / 已过时**内容迁入 `docs/archive/`，`docs/` 只保留**未闭环 / 暂搁**与**整理后的最新**。
 
 ## 目标视图
 
 | 路径 | 只保留 | 迁 archive |
 |------|--------|------------|
-| `docs/pending.md` | 未闭环待办 | 已闭环条目 → `docs/archive/pending.md`「已处理待办」节（整条追加） |
+| `docs/pending.md` | 未闭环待办 + 暂搁（「不办」节） | 已闭环条目 → `docs/archive/pending.md`「已处理待办」节（整条追加） |
 | `docs/findings.md` | 全部已验证发现 | **不迁**：发现是长期资产，失效时就地改写「现状」并注明日期 |
 | `docs/handoff.md` | 最新一版交接 | 过时段落 → `docs/archive/handoff.md`（整段追加） |
 | `docs/tasks/{tid}_{slug}/task.md` | 活跃 task 状态（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
@@ -35,6 +35,7 @@ disable-model-invocation: true
 2. **pending**（补迁：`tasks-run` 收尾本应已迁；此处扫漏）：
    - 未闭环（`- 处理：未开` 或等价）→ 留在 `docs/pending.md`。
    - 已闭环（`- 处理：tXXX` 或明确外部动作说明）→ **整条**从 `docs/pending.md` 删掉，**追加**到 `docs/archive/pending.md`「已处理待办」节。
+   - **「不办」节条目保留不动**（`- 处理：不办` 属暂搁，非闭环，禁止迁 archive）；用户显式确认彻底放弃或复活闭环后才按对应规则处理。
    - 不改写条目历史字段；迁移时保持原标题与 bullet 原文。
    - 不把「看起来过时」但未标闭环的条目静默删掉；不确定则报告用户。
    - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`tasks-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/pending.py next` 取编号，再补登到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`- 来源` 写 finding_id 与原 tid。

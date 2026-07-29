@@ -146,7 +146,7 @@ flowchart TD
 ### Step 6：处置
 
 - 处置表唯一落点：`task.md` → `## Review 处置`。`status` 仅：`已修` / `遗留` / `撤回`。
-- `status=遗留` 的内容不写 task.md：先运行 `scripts/pending.py next`，登记到 `docs/pending.md`；`fix_ref` 填 `pNNN` 或已有 follow-up tid。
+- `status=遗留` 的内容不写 task.md：先运行 `scripts/pending.py next`，登记到 `docs/pending.md`「待办」节；`fix_ref` 填 `pNNN` 或已有 follow-up tid。
 - 运行：
   ```bash
   scripts/check_review_status.py \

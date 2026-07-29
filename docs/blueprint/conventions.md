@@ -7,7 +7,7 @@
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
 - task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding / worktree：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`、`../{repo}_{tid}`。
 - spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
-- 总账编号：`docs/pending.md` 所有条目统一使用 `pNNN`；新增条目前用 `scripts/pending.py next` 扫描当前与归档总账，共享全局序列，历史编号不复用；不维护 pending index。`docs/findings.md` 用 `dNNN`，递增不复用。
+- 总账编号：`docs/pending.md`（含「待办」「不办」两节）所有条目统一使用 `pNNN`；新增条目前用 `scripts/pending.py next` 扫描当前与归档总账，共享全局序列，历史编号不复用；不维护 pending index。`docs/findings.md` 用 `dNNN`，递增不复用。
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。

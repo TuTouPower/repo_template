@@ -4,8 +4,8 @@
 用法：
   python3 scripts/pending.py next
 
-编号历史 = docs/pending.md + docs/archive/pending.md 中规范 H3 条目
-（不分普通待办 / bug，共享一条 pNNN 序列）。
+编号历史 = docs/pending.md（待办 + 不办两节） + docs/archive/pending.md 中规范 H3 条目
+（不分待办 / 不办 / bug，共享一条 pNNN 序列）。
 本命令只计算并输出下一个编号，不写文件、不预留编号。
 """
 

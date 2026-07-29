@@ -18,7 +18,7 @@
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
-| `docs/pending.md` | 待办总账（统一 `pNNN`） | `task-bug` 登记 bug；`tasks-run` 收尾闭环并迁 archive；`pending-to-task` 捞条目建 task；`repo-hygiene` 补迁漏项 |
+| `docs/pending.md` | 待办与不办总账（统一 `pNNN`；「不办」节=用户确认暂搁，不迁 archive） | `task-bug` 登记 bug；`tasks-run` 收尾闭环迁 archive、遗留登「待办」节；`pending-to-task` 只捞「待办」节建 task；`repo-hygiene` 补迁漏项、不办节保留不动 |
 | `docs/findings.md` | 已验证的技术发现（跨 task 复用，`dNNN`） | 只追加与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
 | `docs/archive/{handoff,pending}.md` | 对应文件的已闭环/过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
 | `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策、测试 | finalization 时更新；写代码或文档前读 `conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md` |

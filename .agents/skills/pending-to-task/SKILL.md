@@ -15,7 +15,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **读总账**（只读）：
-   - `docs/pending.md` 中 `- 处理：未开` 的普通待办条目——**主要来源**（bug 条目由 `task-bug` 处理，不从这里捞）。
+   - `docs/pending.md` **「待办」节**中 `- 处理：未开` 的普通待办条目——**主要来源**（bug 条目由 `task-bug` 处理；「不办」节条目用户已确认暂搁，不自动捞，见边界）。
    - 补扫尚未登记进总账的项（登记本应由 `tasks-run` 收尾完成，此处扫漏）：
      - 按登记 worktree → 未合并 task 分支链尾 ref → main 的优先级读取 task；检查各有效来源 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
      - `review_code.md` / `review_test.md` / `review_general.md` 中仍开放的 important/critical
@@ -49,6 +49,7 @@ disable-model-invocation: true
 - 不把「已 done 且仅文档考古」无差别全建成 task。
 - 条目核实后判断不存在或已过时，不建 task；直接闭环归档即可。
 - 未修 bug 交给 `task-bug`；已验证的技术发现属 `docs/findings.md`，不是待办，不转 task。
+- 「不办」节条目不自动捞——用户显式要求复活时，先把条目移回「待办」节（`- 处理` 改 `未开`、删 `- 暂搁`、保留原 `pNNN`），再走核实→建 task 流程。
 
 ## 完成
 
