@@ -72,10 +72,12 @@ flowchart TD
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停本 task 及整批，先解决环境或走 spike，不盲目 start。
 2. 在干净主仓默认分支执行 `scripts/task.py start <tid>`。脚本创建分支 `{tid}_{slug}`、worktree `../{repo}_{tid}`，并软链 `.env`；成功后主仓保持干净。
    - **必须 `cd` 进该 worktree**；后续所有 Step 都在其中进行。`start` 没有不建 worktree 的绕过参数。
-3. 在 task worktree 执行 `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性。
-   - **FAIL 必须先修**，不得绕过继续。
-4. spec 契约区行为 AC 非空再进 Step 2（preflight 已查）。
-5. spec 上下文区要求 spike：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
+3. 在 task worktree 执行 `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
+   - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → **FAIL，必须停止**。
+   - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
+4. spec 契约区行为 AC 非空再继续（preflight 已查）。
+5. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`（可入库，仅作验证材料）。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
+6. 将全部 `UNVERIFIED-SPIKE` 条目改写为验证结论与验证方式，再运行 `scripts/task.py preflight <tid> --require-verified`。只有严格门禁 PASS 才可进入 Step 2；任何未解决标记都不得带进实现。
 
 ### Step 2：红
 
@@ -113,7 +115,7 @@ flowchart TD
 ### Step 6：处置
 
 - 处置表唯一落点：`task.md` → `## Review 处置`（格式见 `docs/tasks/task_template/task.md`）。`status` 仅：`已修` / `遗留` / `撤回`。
-- `status=遗留` 的**内容**不写在 task.md：新条目先运行 `scripts/pending.py next` 取编号，再登记到 `docs/pending.md`「遗留待办」节，`fix_ref` 填该 `pNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
+- `status=遗留` 的**内容**不写在 task.md：新条目先运行 `scripts/pending.py next` 取编号，再登记到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`fix_ref` 填该 `pNNN`（已有 follow-up task 则填 tid）。task.md 只留引用，不留正文——task 目录会随 `finish` 归档，遗留留在里面等于丢。
 - `max_review_round` 取本 skill 默认（5）或用户加轮后的新上限（实施笔记有记录）：
   ```bash
   scripts/check_review_status.py \
@@ -138,10 +140,10 @@ flowchart TD
 - 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
 - 写全 `task.md` 收尾报告（引用 AC 与证据，不复制 AC 正文；各轮 verdict）。收尾报告**不设遗留节**——遗留在 `docs/pending.md`。
 - **pending 闭环**（本 task 消化了 `docs/pending.md` 中条目，或 spec 引用 `pNNN`）：
-  1. bug 条目 `- 修复：未修` 改为 `- 修复：{tid}`；遗留条目 `- 处理：未开 task` 改为 `- 处理：{tid}`（已是本 tid 则不动）。
-  2. **整条**从 `docs/pending.md` 移除，**追加**到 `docs/archive/pending.md` 的对应节（不截断 archive）。
+  1. 条目 `- 处理：未开` 改为 `- 处理：{tid}`（已是本 tid 则不动）。
+  2. **整条**从 `docs/pending.md` 移除，**追加**到 `docs/archive/pending.md`「已处理待办」节（不截断 archive）。
   3. 无关联条目则跳过。
-- **遗留登记**（与 Step 6 呼应，收尾再核一遍）：处置表所有 `status=遗留` 的行，其 `fix_ref` 必须指向 `pNNN` 或 follow-up tid。仍为空的先运行 `scripts/pending.py next` 取编号，再补登 `docs/pending.md`「遗留待办」节，`- 来源` 写 finding_id。
+- **遗留登记**（与 Step 6 呼应，收尾再核一遍）：处置表所有 `status=遗留` 的行，其 `fix_ref` 必须指向 `pNNN` 或 follow-up tid。仍为空的先运行 `scripts/pending.py next` 取编号，再补登 `docs/pending.md`「待办」节，`- 来源` 写 finding_id。
 - **findings 抽取**：本 task 做过 spike，或产出可跨 task 复用的已验证事实（工具行为、平台差异、依赖坑、性能特征、被证伪的假设），结论总结写入 `docs/findings.md`。报告留在 spike 目录。只记已验证的事实，推测不进。
 - 排在其后且未 `done` 的 task 若受影响，修订其 `spec.md`。
 

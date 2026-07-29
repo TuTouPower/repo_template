@@ -41,7 +41,7 @@ def git_repo(tmp_path, monkeypatch):
     task_dir.mkdir()
     write_front_matter(
         task_dir / "task.md",
-        {"tid": "t001", "slug": "alpha", "title": "x", "status": "backlog"},
+        {"tid": "t001", "slug": "alpha", "title": "x", "status": "backlog", "review_level": "full"},
         "body\n",
     )
     monkeypatch.setattr(task_mod, "TASKS_DIR", tasks)
@@ -77,6 +77,29 @@ def _task_cli(repo, *args):
 
 def _worktree_path(repo):
     return repo.parent / f"{repo.name}_t001"
+
+
+def _set_spec(repo, unknown_contract_item):
+    spec = repo / "docs/tasks/t001_alpha/spec.md"
+    spec.write_text(
+        """# Task spec
+
+## 契约区
+
+### 验收标准
+
+- [ ] 可验证行为
+
+## 上下文区
+
+### 未知契约清单
+
+"""
+        + f"- {unknown_contract_item}\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", str(spec.relative_to(repo)))
+    _git(repo, "commit", "-m", "add spec")
 
 
 def test_start_creates_clean_worktree_from_primary_main(git_repo):
@@ -239,3 +262,72 @@ def test_preflight_rejects_primary_for_active_task(git_repo, capsys):
         task_mod.cmd_preflight(argparse.Namespace(tid="t001"))
 
     assert "当前不在 task worktree" in capsys.readouterr().out
+
+
+def test_start_rejects_blocking_unknown_contract_before_mutation(git_repo):
+    _set_spec(git_repo, "用户账号：UNVERIFIED-BLOCKING，需用户核实")
+    initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    with pytest.raises(SystemExit, match="UNVERIFIED-BLOCKING"):
+        _start(git_repo)
+
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
+    assert _git(git_repo, "status", "--porcelain").stdout.strip() == ""
+    assert not _worktree_path(git_repo).exists()
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+
+
+def test_start_rejects_ambiguous_unverified_marker(git_repo):
+    _set_spec(git_repo, "外部行为：UNVERIFIED，待决定")
+
+    with pytest.raises(SystemExit, match="裸 UNVERIFIED"):
+        _start(git_repo)
+
+    assert not _worktree_path(git_repo).exists()
+
+
+def test_spike_requires_strict_preflight_before_implementation(git_repo):
+    _set_spec(git_repo, "平台行为：UNVERIFIED-SPIKE，执行期实验")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+
+    default = _task_cli(worktree, "preflight", "t001")
+    assert default.returncode == 0, default.stderr
+    assert "WARN" in default.stdout
+    assert "仅可执行 Step 1" in default.stdout
+
+    strict = _task_cli(worktree, "preflight", "t001", "--require-verified")
+    assert strict.returncode != 0
+    assert "UNVERIFIED-SPIKE" in strict.stdout
+
+    spec = worktree / "docs/tasks/t001_alpha/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "平台行为：UNVERIFIED-SPIKE，执行期实验",
+            "平台行为：已通过本地兼容实验核实",
+        ),
+        encoding="utf-8",
+    )
+    verified = _task_cli(worktree, "preflight", "t001", "--require-verified")
+    assert verified.returncode == 0, verified.stderr
+    assert "preflight=PASS" in verified.stdout
+
+
+def test_preflight_rejects_blocking_marker_added_after_start(git_repo):
+    _set_spec(git_repo, "外部行为：已核实")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+    spec = worktree / "docs/tasks/t001_alpha/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "外部行为：已核实",
+            "用户账号：UNVERIFIED-BLOCKING，需用户核实",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _task_cli(worktree, "preflight", "t001")
+
+    assert result.returncode != 0
+    assert "UNVERIFIED-BLOCKING" in result.stdout

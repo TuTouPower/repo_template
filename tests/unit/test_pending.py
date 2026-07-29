@@ -29,17 +29,16 @@ def test_next_starts_at_001_for_empty_history(tmp_path):
 def test_template_placeholders_do_not_consume_ids(tmp_path):
     paths = _files(
         tmp_path,
-        active="### pNNN bug 示例\n### pNNN 遗留示例\n",
+        active="### pNNN bug 示例\n### pNNN 普通示例\n",
     )
     assert next_pending_id(paths) == "p001"
 
 
-def test_bug_and_follow_up_sections_share_sequence(tmp_path):
+def test_bug_and_normal_entries_share_single_sequence(tmp_path):
     paths = _files(
         tmp_path,
         active=(
-            "## 未修 bug\n### p002 当前 bug\n"
-            "## 遗留待办\n### p007 当前遗留\n"
+            "## 待办\n### p002 普通\n### p007 bug\n"
         ),
     )
     assert next_pending_id(paths) == "p008"
@@ -49,7 +48,7 @@ def test_archive_history_prevents_id_reuse(tmp_path):
     paths = _files(
         tmp_path,
         active="### p002 当前遗留\n",
-        archive="### p027 已处理遗留\n",
+        archive="### p027 已处理待办\n",
     )
     assert next_pending_id(paths) == "p028"
 
@@ -89,6 +88,22 @@ def test_only_visible_valid_h3_entries_count(tmp_path):
     assert next_pending_id(paths) == "p012"
 
 
+def test_ignores_html_comments_and_invalid_fence_close(tmp_path):
+    active = """```markdown
+```not-a-close
+### p900 代码示例
+```
+<!--
+### p901 多行注释
+-->
+<!-- ### p902 单行注释 -->
+### p010 合法
+"""
+    paths = _files(tmp_path, active=active)
+    assert read_pending_ids(paths[0]) == [10]
+    assert next_pending_id(paths) == "p011"
+
+
 def test_duplicate_id_across_active_and_archive_fails(tmp_path):
     paths = _files(
         tmp_path,
@@ -126,7 +141,7 @@ def test_cli_prints_only_id_and_does_not_write(tmp_path, monkeypatch, capsys):
     active, archive = _files(
         tmp_path,
         active="### p003 当前遗留\n",
-        archive="### p012 已处理遗留\n",
+        archive="### p012 已处理待办\n",
     )
     before = (active.read_bytes(), archive.read_bytes())
     monkeypatch.setattr(pending_mod, "PENDING_PATHS", (active, archive))
