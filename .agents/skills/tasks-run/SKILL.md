@@ -111,7 +111,7 @@ flowchart TD
    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
    - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
 5. spec 契约区行为 AC 非空再继续（preflight 已查）。
-6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
+6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。需外部环境的 SPIKE 先查环境齐备性（key、代理、夹具）并做最小实测；未实测不得以「难验证」上报阻断，实测失败须附输出证据；优先走 spec 预留的保守回退方案，而非中断。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
 7. 将全部 `UNVERIFIED-SPIKE` 改写为验证结论与验证方式，再运行 `scripts/task.py preflight <tid> --require-verified`。严格门禁 PASS 后才可进入 Step 2。
 
 ### Step 2：红
@@ -230,6 +230,8 @@ scripts/task.py cleanup-worktree <tid>
 - 不自动删除 task 分支。
 
 ## 整批停止条件
+
+停止条件仅限本节列举的可验证事件，agent 不得自行扩充（如 task 规模大、SPIKE 多、主观估计上下文将耗尽）。是否继续以系统提供的上下文占用客观数据为准，不以主观工作量感推断；数据不明确时默认继续——中断代价确定，耗尽风险由系统压缩与中间态恢复兜底。
 
 遇任一即停，不自动跳当前 task跑下一个：
 
