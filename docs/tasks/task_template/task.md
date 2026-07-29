@@ -27,7 +27,7 @@ note: ""
 逐条对应当前 `review_level` 的 review finding（`full`：code/test；`single`：general）。`status` 只许：`已修` / `遗留` / `撤回`（全处理，不静默丢 finding）。
 
 - `已修`：本 task 内已按 finding 改完
-- `遗留`：本 task 不处理。**内容登记到 `docs/pending.md`「遗留待办」节**，新条目先运行 `scripts/pending.py next` 取编号，`fix_ref` 填该 `pNNN`（已有 follow-up task 则填 tid）；本表只留引用与一句话 rationale。critical / important 遗留仍阻断，minor 遗留不阻断。
+- `遗留`：本 task 不处理。**内容登记到 `docs/pending.md`「待办」节（普通模板）**，新条目先运行 `scripts/pending.py next` 取编号，`fix_ref` 填该 `pNNN`（已有 follow-up task 则填 tid）；本表只留引用与一句话 rationale。critical / important 遗留仍阻断，minor 遗留不阻断。
 - `撤回`：误报；须原 reviewer 在对应 `review_*.md` 末尾追加撤回记录后，再在本表标 `撤回`
 
 本 task 目录会随 `finish` 归档，遗留正文留在这里等于丢失——`fix_ref` 为空的 `遗留` 行不算处置完成。
@@ -72,7 +72,7 @@ reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符
 
 - Round 1 general：PASS / FAIL
 
-遗留不在此列出——见 `docs/pending.md`「遗留待办」，本文件处置表的 `fix_ref` 指向对应 `pNNN`。
+遗留不在此列出——见 `docs/pending.md`「待办」，本文件处置表的 `fix_ref` 指向对应 `pNNN`。
 
 ### 结果摘要
 

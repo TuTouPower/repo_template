@@ -4,7 +4,8 @@
 用法：
   python3 scripts/pending.py next
 
-编号历史 = docs/pending.md + docs/archive/pending.md 中规范 H3 条目。
+编号历史 = docs/pending.md + docs/archive/pending.md 中规范 H3 条目
+（不分普通待办 / bug，共享一条 pNNN 序列）。
 本命令只计算并输出下一个编号，不写文件、不预留编号。
 """
 
@@ -18,6 +19,7 @@ PENDING_PATH = REPO_ROOT / "docs" / "pending.md"
 ARCHIVE_PENDING_PATH = REPO_ROOT / "docs" / "archive" / "pending.md"
 PENDING_PATHS = (PENDING_PATH, ARCHIVE_PENDING_PATH)
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 ENTRY_RE = re.compile(r"^ {0,3}###[ \t]+p([0-9]{3,})(?=[ \t]|$)")
 
 
@@ -33,20 +35,43 @@ def _display_path(path: Path) -> str:
 
 
 def visible_markdown_lines(text: str) -> list[str]:
-    """移除 fenced code 与 blockquote，保留可参与条目解析的正文行。"""
+    """移除 fenced code、blockquote 与 HTML 注释，保留可参与条目解析的正文行。"""
     lines = []
     fence_marker = None
+    in_comment = False
     for line in text.splitlines():
-        fence = FENCE_RE.match(line)
-        if fence:
-            marker = fence.group(1)[0]
-            width = len(fence.group(1))
-            if fence_marker is None:
-                fence_marker = (marker, width)
-            elif marker == fence_marker[0] and width >= fence_marker[1]:
+        if fence_marker is not None:
+            fence = FENCE_CLOSE_RE.match(line)
+            if (
+                fence
+                and fence.group(1)[0] == fence_marker[0]
+                and len(fence.group(1)) >= fence_marker[1]
+            ):
                 fence_marker = None
             continue
-        if fence_marker is not None or line.lstrip().startswith(">"):
+
+        fence = FENCE_RE.match(line)
+        if fence:
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+            continue
+
+        if in_comment:
+            end = line.find("-->")
+            if end < 0:
+                continue
+            line = line[end + 3 :]
+            in_comment = False
+
+        while "<!--" in line:
+            start = line.find("<!--")
+            end = line.find("-->", start + 4)
+            if end < 0:
+                line = line[:start]
+                in_comment = True
+                break
+            line = line[:start] + line[end + 3 :]
+
+        if line.lstrip().startswith(">"):
             continue
         lines.append(line)
     return lines

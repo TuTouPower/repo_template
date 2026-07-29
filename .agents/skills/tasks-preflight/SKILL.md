@@ -38,11 +38,14 @@ disable-model-invocation: true
    scripts/task.py preflight {tid}
    ```
 
-   它查状态、spec 完整、工作区一致性。FAIL 项直接进输出表，标「阻塞」。
+   它查状态、spec 完整、工作区一致性与未知契约分类。`UNVERIFIED-BLOCKING`、裸 `UNVERIFIED` 和其它 FAIL 项直接进输出表，标「阻塞」；`UNVERIFIED-SPIKE` 只警告，属于执行期 Step 1 工作。
 
 3. **逐 task 查用户侧缺口**。读 `docs/tasks/{tid}_{slug}/` 的 `spec.md`（契约区 AC、上下文区依赖与约束、未知契约清单）、`task.md`（实施笔记、阻塞说明）。对照 `.env.example`（若有）与 spec 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
 
-   spec 上下文区标 `UNVERIFIED` 的外部契约，若只有用户能核实（需账号、需线上环境），也算缺口。
+   未知契约按 spec 标记处理：
+   - `UNVERIFIED-BLOCKING`：只有用户或外部环境能核实，属于阻塞缺口；核实并改写结论前不得 `start`。
+   - `UNVERIFIED-SPIKE`：agent 可自行实验，不算用户侧缺口；执行期 Step 1 完成实验后须删除标记并改写结论。
+   - 裸 `UNVERIFIED`：分类不明，属于阻塞性 spec 格式错误。
 
    只记**必须用户提供、agent 不能编造**的缺口：
 

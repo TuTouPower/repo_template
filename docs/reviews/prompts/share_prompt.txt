@@ -8,7 +8,7 @@
 
 {context_section}
 
-上下文区是**已获批准的决策**，不是待商榷提案。「有意不测」列出的分支不出 finding；`UNVERIFIED` 契约只提示核实，不 blocking。上下文区写「无」或缺失时，按无特殊约定处理，不据此出 finding。
+上下文区是**已获批准的决策**，不是待商榷提案。「有意不测」列出的分支不出 finding。进入 review 前「未知契约清单」应已无 `UNVERIFIED-BLOCKING`、`UNVERIFIED-SPIKE` 或裸 `UNVERIFIED`；仍有任一标记说明实施前门禁被绕过，按 blocking finding 处理。上下文区写「无」或缺失时，按无特殊约定处理，不据此出 finding。
 
 ### read-only 边界
 
@@ -34,7 +34,7 @@
 
 - 「建议再测更细」「覆盖可更广」「可以补一个 case」类扩展建议 → `minor`
 - spec 上下文区已列入「有意不测」的分支 → **不出 finding**（该决策已获批准）
-- 「未知契约清单」中标 `UNVERIFIED` 的外部契约 → 只在结论段提示核实，不 blocking
+- 「未知契约清单」仍含 `UNVERIFIED-BLOCKING`、`UNVERIFIED-SPIKE` 或裸 `UNVERIFIED` → 最低 `important`；说明实施前严格门禁未完成，当前实现无法证明满足相关外部契约
 - 风格、命名、注释、文件组织偏好 → `minor`
 - 实现合理但与 spec 描述不符（spec 过时）→ 在 finding 里说明，处置为改 spec，不计 FAIL
 

@@ -24,7 +24,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
   task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL]
   task.py edit TID [--title TITLE] [--note NOTE | --note-append NOTE] [--review-level LEVEL]
   task.py start TID                 # 主仓默认分支执行：提交 front matter → 建 worktree
-  task.py preflight TID               # 开干前门禁
+  task.py preflight TID [--require-verified]  # 开干/进实现前门禁
   task.py block TID --reason blackbox|review|infra
   task.py resume TID
   task.py finish TID              # done + 目录归档（worktree 内执行时保留，合并后清理）
@@ -66,6 +66,14 @@ REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")
+H3_RE = re.compile(r"^ {0,3}###[ \t]+(.+?)[ \t]*$")
+LIST_ITEM_RE = re.compile(r"^ {0,3}-[ \t]+(.+)$")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+UNVERIFIED_RE = re.compile(
+    r"(?<![A-Z0-9_-])UNVERIFIED(?:-(BLOCKING|SPIKE))?(?![A-Z0-9_-])"
+)
+UNKNOWN_CONTRACT_HEADING = "未知契约清单"
 TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
@@ -305,6 +313,84 @@ def dump_front_matter(fm: dict) -> str:
 
 def write_front_matter(path: Path, fm: dict, body: str) -> None:
     path.write_text(dump_front_matter(fm) + "\n" + body, encoding="utf-8", newline="\n")
+
+
+def parse_unverified_contracts(spec_text: str) -> dict[str, list[str]]:
+    """分类「未知契约清单」直接列表项中的未核实标记。"""
+    entries = []
+    collecting = False
+    fence_marker = None
+
+    for line in spec_text.splitlines():
+        if fence_marker is not None:
+            fence = FENCE_CLOSE_RE.match(line)
+            if (
+                fence
+                and fence.group(1)[0] == fence_marker[0]
+                and len(fence.group(1)) >= fence_marker[1]
+            ):
+                fence_marker = None
+            continue
+
+        fence = FENCE_RE.match(line)
+        if fence:
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+            continue
+
+        heading = H3_RE.fullmatch(line)
+        if heading:
+            if collecting:
+                break
+            collecting = heading.group(1).strip() == UNKNOWN_CONTRACT_HEADING
+            continue
+
+        if collecting:
+            item = LIST_ITEM_RE.match(line)
+            if item:
+                entries.append(item.group(1).strip())
+
+    classified = {"blocking": [], "spike": [], "ambiguous": []}
+    for entry in entries:
+        kinds = {marker.group(1) for marker in UNVERIFIED_RE.finditer(entry)}
+        if "BLOCKING" in kinds:
+            classified["blocking"].append(entry)
+        if "SPIKE" in kinds:
+            classified["spike"].append(entry)
+        if None in kinds:
+            classified["ambiguous"].append(entry)
+    return classified
+
+
+def unverified_contract_gate(
+    spec_text: str,
+    *,
+    require_verified: bool = False,
+) -> tuple[list[str], list[str]]:
+    """返回未知契约的 (阻塞项, 警告项)。"""
+    contracts = parse_unverified_contracts(spec_text)
+    problems, warnings = [], []
+
+    if contracts["ambiguous"]:
+        problems.append(
+            f"未知契约清单有 {len(contracts['ambiguous'])} 项裸 UNVERIFIED；"
+            "须明确改为 UNVERIFIED-BLOCKING 或 UNVERIFIED-SPIKE"
+        )
+    if contracts["blocking"]:
+        problems.append(
+            f"未知契约清单有 {len(contracts['blocking'])} 项 UNVERIFIED-BLOCKING；"
+            "须由用户或外部环境核实并改写结论"
+        )
+    if contracts["spike"]:
+        message = (
+            f"未知契约清单有 {len(contracts['spike'])} 项 UNVERIFIED-SPIKE；"
+            "须完成实验并替换为验证结论"
+        )
+        if require_verified:
+            problems.append(message)
+        else:
+            warnings.append(f"{message}；当前仅可执行 Step 1")
+
+    return problems, warnings
 
 
 # --------------------------------------------------------------------------
@@ -630,6 +716,12 @@ def cmd_start(args):
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
 
+    spec = REPO_ROOT / task["dir"] / "spec.md"
+    if spec.is_file():
+        problems, _ = unverified_contract_gate(spec.read_text(encoding="utf-8"))
+        if problems:
+            sys.exit("start=FAIL：" + "；".join(problems))
+
     branch = f"{fm['tid']}_{fm['slug']}"
     worktree_rel = worktree_rel_path(fm["tid"])
     worktree = (REPO_ROOT / worktree_rel).resolve()
@@ -697,7 +789,7 @@ def cmd_preflight(args):
     elif fm["status"] == "blocked":
         problems.append("status=blocked，须用户放行（加轮 resume 或 drop）后再执行")
 
-    # 2. spec 完整
+    # 2. spec 完整与未知契约
     spec = task_dir / "spec.md"
     if not spec.is_file():
         problems.append("缺 spec.md")
@@ -707,6 +799,12 @@ def cmd_preflight(args):
             problems.append("spec.md 缺「## 契约区」小节")
         if not re.search(r"^\s*-\s*\[ \]\s*\S", text, re.MULTILINE):
             problems.append("spec.md 验收标准为空")
+        contract_problems, contract_warnings = unverified_contract_gate(
+            text,
+            require_verified=getattr(args, "require_verified", False),
+        )
+        problems.extend(contract_problems)
+        warnings.extend(contract_warnings)
 
     # 3. review 必要字段
     if fm["status"] == "active" and not fm.get("diff_anchor"):
@@ -965,8 +1063,13 @@ def main():
     s.add_argument("tid")
     s.set_defaults(func=cmd_start)
 
-    pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/索引交叉校验")
+    pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/spec/索引交叉校验")
     pf.add_argument("tid")
+    pf.add_argument(
+        "--require-verified",
+        action="store_true",
+        help="要求未知契约清单不再含 UNVERIFIED-SPIKE（进入实现前使用）",
+    )
     pf.set_defaults(func=cmd_preflight)
 
     b = sub.add_parser("block", help="active -> blocked")
