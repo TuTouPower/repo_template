@@ -36,11 +36,11 @@ main
             └─ t003_branch
 ```
 
-- 首 task 从批次开始时本地 main HEAD 创建。
-- 后续 task 从上一已完成 task 分支 HEAD 创建。
+- 首 task 从批次开始时本地 main HEAD（或用户指定 `--base`）创建。
+- 后续 task 从上一已完成 task 分支 HEAD 创建，**不要求该分支以当前 main 为祖先**（批次期间 main 可并行推进）。
 - 每个 task commit 后删除自身 worktree，保留分支。
 - Git ancestry 是链关系权威，不另写 parent/batch 元数据。
-- `batch_main_anchor` = 本批首 task 的 `diff_anchor`。首次启动时记录；恢复时从链尾 ref 中本批最早 task 的 front matter 读取，不另设持久字段。
+- `batch_main_anchor` = 本批首 task 的 `diff_anchor`（链根 base SHA）。合并阶段用于判断 main 是否与链根分叉；不要求批次期间 main 冻结。首次启动时记录；恢复时从链尾 ref 中本批最早 task 的 front matter 读取，不另设持久字段。
 
 开始或恢复前按以下优先级判断状态：
 
@@ -208,7 +208,7 @@ scripts/task.py cleanup-worktree <tid>
 
 询问前只读核对并展示：
 
-- `batch_main_anchor`、当前 main HEAD；两者不同则停止，不自动 rebase。
+- `batch_main_anchor`、当前 main HEAD。两者不同表示批次期间 main 已并行推进；合并为三方 merge，见下。
 - 链尾分支与 HEAD。
 - 固定队列及链尾 ref 中最终状态。
 - `git log --oneline main..<链尾>`。
@@ -220,7 +220,9 @@ scripts/task.py cleanup-worktree <tid>
 
 - 用户未批准或暂缓：main 不变；保留完整分支链；汇报恢复所需链尾与 HEAD。
 - 用户批准：再次确认 main、链尾 HEAD、工作区状态未变化，再执行：
-  1. `git merge --no-ff <链尾分支>`，只合并链尾一次；祖先链自动包含全部 task commit。
+  1. `git merge --no-ff <链尾分支>`，只合并链尾一次；祖先链自动包含全部 task commit。链尾与当前 main 分叉时为三方 merge：
+     - 无冲突：merge 完成，进入步骤 2。
+     - 有冲突：停下报告冲突文件；解决后 `git add` + `git commit` 完成 merge。无法解决则 `git merge --abort` 回退，链尾分支与 main 保持不变，报告失败由用户裁决，不盲目重试。
   2. 执行声明的合并后验证；失败则报告实际 merge 状态，不盲目重试或回退。
   3. `scripts/task.py list --rebuild`。
   4. 只提交 `docs/tasks_index.json` 与 `docs/archive/tasks_index.json`，形成独立维护 commit。
@@ -238,7 +240,6 @@ scripts/task.py cleanup-worktree <tid>
 - 用户限制本次终点。
 - 工作区有与本队列冲突的无关脏改动且无法安全隔离。
 - 出现多条不相容未合并 task 分支链。
-- main 在批次期间推进。
 
 停止时不询问合并。保留已完成前缀分支；当前 active/blocked worktree 保留；汇报已完成 tid、当前阻塞、剩余固定队列与恢复入口。只有用户明确 drop/移出剩余项并重新界定批次范围后，才按新范围判断是否进入整批合并审批。
 

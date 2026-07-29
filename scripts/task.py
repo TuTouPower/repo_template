@@ -730,12 +730,6 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
         raise TaskDataError(
             f"--base 只接受默认分支或本地 task 分支（收到 {base_branch!r}）"
         )
-    r = _git(["merge-base", "--is-ancestor", primary, base_sha])
-    if r.returncode != 0:
-        raise TaskDataError(
-            f"本地 {primary!r} 不是 {base_branch!r} 的祖先；"
-            "主干可能已推进或该分支不属于当前链"
-        )
     previous_tid = match.group(1)
     _, previous_fm, _ = load_task_at_ref(previous_tid, base_sha)
     expected_branch = f"{previous_tid}_{previous_fm.get('slug', '')}"

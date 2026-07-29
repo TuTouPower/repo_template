@@ -446,21 +446,25 @@ def test_start_rejects_completed_base_with_registered_worktree(git_repo):
         _start(git_repo, "t002", base="t001_alpha")
 
 
-def test_start_rejects_task_branch_not_based_on_current_main(git_repo):
-    _git(git_repo, "switch", "--orphan", "t999_other")
-    for path in list(git_repo.iterdir()):
-        if path.name != ".git":
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-    (git_repo / "placeholder").write_text("orphan", encoding="utf-8")
-    _git(git_repo, "add", "-A")
-    _git(git_repo, "commit", "-m", "orphan")
-    _git(git_repo, "switch", "main")
+def test_start_accepts_base_after_main_advanced(git_repo):
+    """main 并行推进后，旧链尾分支仍可作为 --base 继续链（取消 main 冻结约束）。"""
+    _start(git_repo, "t001")
+    branch, base_head = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
-    with pytest.raises(task_mod.TaskDataError, match="不是.*祖先"):
-        _start(git_repo, "t002", base="t999_other")
+    # main 并行推进：t001_alpha 不再以当前 main 为祖先
+    (git_repo / "parallel.txt").write_text("main advanced", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: parallel work on main")
+    assert _git(
+        git_repo, "merge-base", "--is-ancestor", "main", branch, check=False
+    ).returncode != 0
+
+    # 旧链尾仍可作为 --base 继续；start 不再要求 main 是 base 的祖先
+    _start(git_repo, "t002", base=branch)
+    worktree = _worktree_path(git_repo, "t002")
+    assert worktree.exists()
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == base_head
+
 
 
 def test_list_and_show_read_completed_state_from_branch(git_repo):
