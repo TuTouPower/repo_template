@@ -59,7 +59,7 @@
 | 待做 task 还缺我什么 | `tasks-preflight` | 只读汇总缺口 |
 | 哪些 backlog task 能并发 | `tasks-parallel` | 只读；以进行中 task 与已存在分支为基线出并发分组 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
-| 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；一个 task 目录一个 commit |
+| 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 把待办转成 task | `pending-to-task` | 从 `docs/pending.md` 重建 task 并回写归档 |
 | 多个 backlog task 合并成一个 | `tasks-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
 | 串行跑完待做 task | `tasks-run` | **串行**执行；每个 task 在自身 worktree 实施 |

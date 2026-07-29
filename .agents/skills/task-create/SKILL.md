@@ -21,7 +21,7 @@ disable-model-invocation: true
 
 1. **查重**。按登记 worktree → 未合并 task 分支链尾 ref → main 的优先级读取现有 task，避免重复 slug/等价范围；main 中被链覆盖的旧状态不重复计。
 
-2. **拆分**。拆成结果可独立验证、对应一个 commit 有工程意义的 task；过大继续拆；记下建议顺序与依赖。
+2. **拆分**。拆成结果可独立验证、对应一个实现 commit 有工程意义的 task；过大继续拆；记下建议顺序与依赖。
 
 3. **每个 task 落盘**：
    1. `scripts/task.py add --title "..." --slug "..." [--review-level full|single]`
@@ -46,7 +46,7 @@ disable-model-invocation: true
    - 只有用户或外部环境能核实的事项标 `UNVERIFIED-BLOCKING`；task 可保持 backlog，但核实前 `start` 必须失败。
    - 核实后删除标记，改写为结论与验证方式；裸 `UNVERIFIED` 视为格式错误。
 
-6. **逐 task 询问提交**。列出当前 task 目录与本次重建的两个 index；同意后立即提交，再创建下一个 task。一个 task 一个创建 commit，不含生产实现；避免共享 index 提前引用尚未提交的 task 目录。链式调用时，调用方改动的总账不纳入本 commit，由调用方在 task 创建完成后单独回写、确认与提交。用户不提交则保持工作区并停止继续批量创建。
+6. **全部 task 落盘自检后统一询问提交**。本次所有 task 完成第 3-5 步落盘与自检后，一次性列出全部新建 task 目录与本次重建的两个 index，询问用户是否提交；同意后用**一个创建 commit** 提交本次全部 task 目录与派生 index，不含生产实现。单 task 场景行为一致（落盘自检后提交一次）。链式调用时，调用方改动的总账不纳入本 commit，由调用方在 task 创建完成后单独回写、确认与提交。用户不提交则保持工作区。
 
 ## 边界
 

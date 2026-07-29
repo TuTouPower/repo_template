@@ -35,7 +35,7 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
    - task 保持 `backlog`，生产修复交给 `tasks-run`；
    - 环境或配置问题无需改仓库时，不建修复 task，保留 `pNNN` 并汇报所需外部动作。
 
-7. **询问提交 bug 总账**。`task-create` 已单独处理 task 目录与派生 index 的创建 commit；这里只列出 `docs/pending.md` 待办节。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
+7. **询问提交 bug 总账**。`task-create` 已批量提交 task 目录与派生 index；这里只列出 `docs/pending.md` 待办节。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
 
 ## 边界
 
