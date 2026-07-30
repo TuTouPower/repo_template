@@ -70,6 +70,7 @@ DEFAULT_REVIEW_LEVEL = "full"
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TASK_BRANCH_RE = re.compile(r"^(t[0-9]+)_[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")
+HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*$")
 H3_RE = re.compile(r"^ {0,3}###[ \t]+(.+?)[ \t]*$")
 LIST_ITEM_RE = re.compile(r"^ {0,3}-[ \t]+(.+)$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -77,7 +78,48 @@ FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 UNVERIFIED_RE = re.compile(
     r"(?<![A-Z0-9_-])UNVERIFIED(?:-(BLOCKING|SPIKE))?(?![A-Z0-9_-])"
 )
+TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{[^{}\n]*[一-鿿][^{}\n]*\}")
 UNKNOWN_CONTRACT_HEADING = "未知契约清单"
+SPEC_REQUIRED_HEADINGS = (
+    (1, "Task spec"),
+    (2, "背景"),
+    (2, "契约区"),
+    (3, "范围"),
+    (3, "非范围"),
+    (3, "验收标准"),
+    (3, "可测试性声明"),
+    (2, "上下文区"),
+    (3, "有意不测"),
+    (3, "测试策略"),
+    (3, "未知契约清单"),
+    (3, "风险与回退"),
+    (3, "依赖与约束"),
+    (3, "Finalization 时更新的 blueprint"),
+)
+SPEC_REQUIRED_LINES = (
+    "契约区执行期原则上不再改动；确需调整须经用户确认（渲染 review prompt 时脚本会附契约区相对 diff_anchor 的 drift diff 供 reviewer 核对）。上下文区执行期可补。",
+    "reviewer 判 AC 时只看本区。",
+    "只写用户或调用方可观察行为，每条可独立验证。普通版本号、底层库和目录结构不作为验收标准；需要长期约束后续工作的技术选择写入 `docs/blueprint/decisions.md`。",
+    "需真实部署或人工环境才能验证的条目加 `[deploy]` 前缀，标明 agent 无法自证。",
+    "逐条说明哪些 AC 不可自动测试及原因；全部可测则写「全部 AC 可自动测试」。",
+    "reviewer 判测试覆盖时核对本区；实施期可补。",
+    "已判定不写测试的分支与原因。reviewer 不得据此出 blocking finding。无则写「无」。",
+    "mock 边界、fixture 来源、断言目标。无特殊约定写「按项目默认」。",
+    "尚未核实的外部 endpoint、API 形态、数据结构、第三方行为须分类标记；核实后删除标记，改为结论并注明验证方式。无则写「无」。",
+    "`UNVERIFIED-BLOCKING`：只有用户或外部环境能核实；核实前 `start` 失败。",
+    "`UNVERIFIED-SPIKE`：agent 可在执行期 Step 1 实验核实；未核实前不得进入实现。",
+    "裸 `UNVERIFIED` 属歧义格式，门禁失败。",
+)
+TASK_REQUIRED_HEADINGS = (
+    (1, "Task 过程总账"),
+    (2, "实施笔记"),
+    (2, "Review 处置"),
+    (2, "收尾报告"),
+)
+IMPLEMENTATION_NOTE_GUIDANCE = (
+    "执行期边做边写：实际步骤、踩坑、中途决策、偏离 spec、关键验证、blocked 原因与用户放行的新轮次上限。",
+    "创建期不预测实施步骤——那时尚未读代码，预测必然失准。只记有追溯价值的内容，不写命令流水账。无事项时写：无",
+)
 TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
@@ -414,6 +456,158 @@ def unverified_contract_gate(
         else:
             warnings.append(f"{message}；当前仅可执行 Step 1")
 
+    return problems, warnings
+
+
+def _visible_markdown_lines(text: str) -> list[str]:
+    """返回 fenced code 外的 Markdown 行。"""
+    lines = []
+    fence_marker = None
+    for line in text.splitlines():
+        if fence_marker is not None:
+            fence = FENCE_CLOSE_RE.match(line)
+            if (
+                fence
+                and fence.group(1)[0] == fence_marker[0]
+                and len(fence.group(1)) >= fence_marker[1]
+            ):
+                fence_marker = None
+            continue
+        fence = FENCE_RE.match(line)
+        if fence:
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+            continue
+        lines.append(line)
+    return lines
+
+
+def _markdown_headings(text: str) -> list[tuple[int, str]]:
+    headings = []
+    for line in _visible_markdown_lines(text):
+        match = HEADING_RE.fullmatch(line)
+        if match:
+            headings.append((len(match.group(1)), match.group(2).strip()))
+    return headings
+
+
+def _missing_heading_sequence(
+    text: str,
+    required: tuple[tuple[int, str], ...],
+) -> list[str]:
+    """返回缺失、错层级或乱序的必需标题。"""
+    headings = _markdown_headings(text)
+    position = 0
+    missing = []
+    for expected in required:
+        try:
+            position = headings.index(expected, position) + 1
+        except ValueError:
+            missing.append(f"{'#' * expected[0]} {expected[1]}")
+    return missing
+
+
+def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
+    """提取指定标题到下一个同级或更高层级标题之间的正文。"""
+    lines = text.splitlines()
+    start = None
+    fence_marker = None
+    for index, line in enumerate(lines):
+        if fence_marker is not None:
+            fence = FENCE_CLOSE_RE.match(line)
+            if (
+                fence
+                and fence.group(1)[0] == fence_marker[0]
+                and len(fence.group(1)) >= fence_marker[1]
+            ):
+                fence_marker = None
+            continue
+        fence = FENCE_RE.match(line)
+        if fence:
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+            continue
+        heading = HEADING_RE.fullmatch(line)
+        if not heading:
+            continue
+        heading_level = len(heading.group(1))
+        heading_title = heading.group(2).strip()
+        if start is None:
+            if heading_level == level and heading_title == title:
+                start = index + 1
+        elif heading_level <= level:
+            return "\n".join(lines[start:index])
+    if start is None:
+        return None
+    return "\n".join(lines[start:])
+
+
+def validate_task_documents(
+    spec_text: str,
+    task_body: str,
+    *,
+    require_verified: bool = False,
+    allow_template_placeholders: bool = False,
+) -> tuple[list[str], list[str]]:
+    """校验 task 创建骨架与未知契约门禁，返回 (阻塞项, 警告项)。"""
+    problems, warnings = [], []
+
+    missing_spec_headings = _missing_heading_sequence(spec_text, SPEC_REQUIRED_HEADINGS)
+    if missing_spec_headings:
+        problems.append(
+            "spec.md 缺必需标题、标题层级错误或顺序错误："
+            + "、".join(missing_spec_headings)
+        )
+
+    visible_spec_lines = {line.strip() for line in _visible_markdown_lines(spec_text)}
+    missing_lines = [line for line in SPEC_REQUIRED_LINES if line not in visible_spec_lines]
+    if missing_lines:
+        problems.append(f"spec.md 缺 {len(missing_lines)} 条模板固定声明或引导语")
+
+    acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
+    if not acceptance or not re.search(
+        r"^\s*-\s*\[ \]\s*\S", acceptance, re.MULTILINE
+    ):
+        problems.append("spec.md 验收标准为空")
+
+    missing_task_headings = _missing_heading_sequence(task_body, TASK_REQUIRED_HEADINGS)
+    if missing_task_headings:
+        problems.append(
+            "task.md 缺必需标题、标题层级错误或顺序错误："
+            + "、".join(missing_task_headings)
+        )
+
+    visible_task_lines = {line.strip() for line in _visible_markdown_lines(task_body)}
+    missing_guidance = [
+        line for line in IMPLEMENTATION_NOTE_GUIDANCE if line not in visible_task_lines
+    ]
+    if missing_guidance:
+        problems.append("task.md 实施笔记缺模板固定说明")
+
+    notes = _extract_markdown_section(task_body, 2, "实施笔记")
+    if notes is not None:
+        payload_lines = [
+            line.strip()
+            for line in _visible_markdown_lines(notes)
+            if line.strip() and line.strip() not in IMPLEMENTATION_NOTE_GUIDANCE
+        ]
+        if not payload_lines:
+            problems.append("task.md 实施笔记为空；无事项时写「无」")
+
+    if not allow_template_placeholders:
+        placeholders = TEMPLATE_PLACEHOLDER_RE.findall(
+            "\n".join(_visible_markdown_lines(spec_text + "\n" + task_body))
+        )
+        if placeholders:
+            problems.append(
+                f"spec.md / task.md 残留 {len(placeholders)} 个模板占位符："
+                + "、".join(sorted(set(placeholders))[:3])
+            )
+
+    contract_problems, contract_warnings = unverified_contract_gate(
+        spec_text,
+        require_verified=require_verified,
+    )
+    problems.extend(contract_problems)
+    warnings.extend(contract_warnings)
     return problems, warnings
 
 
@@ -871,6 +1065,18 @@ def cmd_add(args):
         sys.exit(f"{_rel(task_dir)} 已存在；请提示用户处理")
     if not TEMPLATE_DIR.is_dir():
         sys.exit(f"缺模板目录 {_rel(TEMPLATE_DIR)}")
+    template_spec = TEMPLATE_DIR / "spec.md"
+    template_task = TEMPLATE_DIR / "task.md"
+    if not template_spec.is_file() or not template_task.is_file():
+        sys.exit(f"模板目录 {_rel(TEMPLATE_DIR)} 缺 spec.md 或 task.md")
+    _, template_task_body = parse_front_matter(template_task)
+    template_problems, _ = validate_task_documents(
+        template_spec.read_text(encoding="utf-8"),
+        template_task_body,
+        allow_template_placeholders=True,
+    )
+    if template_problems:
+        sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
     shutil.copytree(TEMPLATE_DIR, task_dir)
     task_md = task_dir / "task.md"
@@ -939,15 +1145,17 @@ def cmd_edit(args):
 def cmd_start(args):
     require_primary_worktree(clean=True)
     base_branch, base_sha = resolve_start_base(args.base)
-    task, ref_fm, _ = load_task_at_ref(args.tid, base_sha)
+    task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")
 
     spec_path = f"{task['dir']}/spec.md"
-    r = _git(["cat-file", "-e", f"{base_sha}:{spec_path}"])
-    if r.returncode == 0:
-        problems, _ = unverified_contract_gate(git_text_at_ref(base_sha, spec_path))
-        if problems:
-            sys.exit("start=FAIL：" + "；".join(problems))
+    try:
+        spec_text = git_text_at_ref(base_sha, spec_path)
+    except TaskDataError:
+        sys.exit("start=FAIL：缺 spec.md")
+    problems, _ = validate_task_documents(spec_text, ref_task_body)
+    if problems:
+        sys.exit("start=FAIL：" + "；".join(problems))
 
     branch = f"{ref_fm['tid']}_{ref_fm['slug']}"
     worktree_rel = worktree_rel_path(ref_fm["tid"])
@@ -999,10 +1207,10 @@ def cmd_preflight(args):
     source_ref = ""
     if ref_arg:
         source_ref, ref_sha = resolve_local_branch(ref_arg)
-        task, fm, _ = load_task_at_ref(args.tid, ref_sha)
+        task, fm, task_body = load_task_at_ref(args.tid, ref_sha)
         task_dir = None
     else:
-        task, _, fm, _ = load_task(args.tid)
+        task, _, fm, task_body = load_task(args.tid)
         task_dir = REPO_ROOT / task["dir"]
     problems, warnings = [], []
 
@@ -1033,16 +1241,13 @@ def cmd_preflight(args):
         else:
             text = spec.read_text(encoding="utf-8")
     if text:
-        if "## 契约区" not in text:
-            problems.append("spec.md 缺「## 契约区」小节")
-        if not re.search(r"^\s*-\s*\[ \]\s*\S", text, re.MULTILINE):
-            problems.append("spec.md 验收标准为空")
-        contract_problems, contract_warnings = unverified_contract_gate(
+        document_problems, document_warnings = validate_task_documents(
             text,
+            task_body,
             require_verified=args.require_verified,
         )
-        problems.extend(contract_problems)
-        warnings.extend(contract_warnings)
+        problems.extend(document_problems)
+        warnings.extend(document_warnings)
 
     # 3. review 必要字段
     if fm["status"] == "active" and not fm.get("diff_anchor"):

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "tasks" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import task as task_mod
@@ -20,6 +21,32 @@ def _git(repo, *args, check=True):
     )
 
 
+def _valid_spec(unknown_contract_item="外部行为：已核实"):
+    text = (TASK_TEMPLATE_DIR / "spec.md").read_text(encoding="utf-8")
+    replacements = {
+        "{为什么需要此变更。}": "测试背景。",
+        "{本 task 包含什么。}": "测试范围。",
+        "{明确不做什么。}": "无。",
+        "{可独立验证的行为结果。}": "可验证行为。",
+        "- {AC 编号}：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
+        "- {分支或场景}：{不测原因}": "- 无",
+        "- {内容}": "- 按项目默认",
+        "- {契约}：{分类标记}，{待验证方式}": f"- {unknown_contract_item}",
+        "- 风险：{可能失败的地方}": "- 风险：无",
+        "- 回退：{失败后如何恢复}": "- 回退：无",
+        "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
+        "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def _valid_task_body():
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "task.md")
+    return body
+
+
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     """真实 git 主仓 + 三个 backlog task。"""
@@ -28,18 +55,14 @@ def git_repo(tmp_path, monkeypatch):
     archive = repo / "docs" / "archive" / "tasks"
     template = tasks / "task_template"
     scripts = repo / "scripts"
-    template.mkdir(parents=True)
+    tasks.mkdir(parents=True)
     archive.mkdir(parents=True)
     scripts.mkdir()
     shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
-    write_front_matter(
-        template / "task.md",
-        {"tid": "t000", "slug": "example", "status": "backlog"},
-        "模板正文\n",
-    )
+    shutil.copytree(TASK_TEMPLATE_DIR, template)
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         task_dir = tasks / f"{tid}_{slug}"
-        task_dir.mkdir()
+        shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
         write_front_matter(
             task_dir / "task.md",
             {
@@ -53,8 +76,9 @@ def git_repo(tmp_path, monkeypatch):
                 "diff_anchor": "",
                 "note": "",
             },
-            "body\n",
+            _valid_task_body(),
         )
+        (task_dir / "spec.md").write_text(_valid_spec(), encoding="utf-8")
     monkeypatch.setattr(task_mod, "TASKS_DIR", tasks)
     monkeypatch.setattr(task_mod, "ARCHIVE_TASKS_DIR", archive)
     monkeypatch.setattr(task_mod, "TEMPLATE_DIR", template)
@@ -93,25 +117,10 @@ def _worktree_path(repo, tid="t001"):
 
 def _set_spec(repo, tid, slug, unknown_contract_item):
     spec = repo / f"docs/tasks/{tid}_{slug}/spec.md"
-    spec.write_text(
-        """# Task spec
-
-## 契约区
-
-### 验收标准
-
-- [ ] 可验证行为
-
-## 上下文区
-
-### 未知契约清单
-
-"""
-        + f"- {unknown_contract_item}\n",
-        encoding="utf-8",
-    )
+    spec.write_text(_valid_spec(unknown_contract_item), encoding="utf-8")
     _git(repo, "add", str(spec.relative_to(repo)))
-    _git(repo, "commit", "-m", f"add {tid} spec")
+    if _git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0:
+        _git(repo, "commit", "-m", f"add {tid} spec")
 
 
 def _finish_commit_cleanup(repo, tid, slug):
@@ -127,6 +136,49 @@ def _finish_commit_cleanup(repo, tid, slug):
     assert not worktree.exists()
     assert _git(repo, "branch", "--list", branch).stdout.strip() == branch
     return branch, branch_head
+
+
+def test_add_copies_validated_template(git_repo):
+    result = _task_cli(
+        git_repo,
+        "add",
+        "--title",
+        "delta",
+        "--slug",
+        "delta",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    task_dir = git_repo / "docs/tasks/t004_delta"
+    assert task_dir.is_dir()
+    _, body = parse_front_matter(task_dir / "task.md")
+    assert "## 实施笔记\n\n" in body
+    assert "\n无\n\n## Review 处置" in body
+
+
+def test_add_rejects_invalid_template_before_copy(git_repo):
+    template_task = git_repo / "docs/tasks/task_template/task.md"
+    template_task.write_text(
+        template_task.read_text(encoding="utf-8").replace(
+            "\n无\n\n## Review 处置",
+            "\n## Review 处置",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _task_cli(
+        git_repo,
+        "add",
+        "--title",
+        "delta",
+        "--slug",
+        "delta",
+    )
+
+    assert result.returncode != 0
+    assert "模板结构校验失败" in result.stderr
+    assert not (git_repo / "docs/tasks/t004_delta").exists()
 
 
 def test_start_keeps_main_unchanged_and_activates_only_worktree(git_repo):
@@ -399,13 +451,18 @@ def test_chained_start_inherits_previous_spec_revision(git_repo):
     _start(git_repo, "t001")
     first_worktree = _worktree_path(git_repo, "t001")
     spec = first_worktree / "docs/tasks/t002_beta/spec.md"
-    spec.write_text("previous branch revision\n", encoding="utf-8")
+    revised = spec.read_text(encoding="utf-8").replace(
+        "测试背景。",
+        "previous branch revision",
+        1,
+    )
+    spec.write_text(revised, encoding="utf-8")
     first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
     _start(git_repo, "t002", base=first_branch)
 
     inherited = _worktree_path(git_repo, "t002") / "docs/tasks/t002_beta/spec.md"
-    assert inherited.read_text(encoding="utf-8") == "previous branch revision\n"
+    assert inherited.read_text(encoding="utf-8") == revised
 
 
 @pytest.mark.parametrize("base", ["missing", "HEAD", "origin/main"])
@@ -555,6 +612,43 @@ def test_preflight_can_check_backlog_from_main_and_chain_ref(git_repo):
     assert f"source_ref: {branch}" in chain_backlog.stdout
     assert "未检查 task worktree 与当前脏改动" in chain_backlog.stdout
     assert "preflight=PASS" in chain_backlog.stdout
+
+
+def test_start_rejects_missing_scaffold_before_mutation(git_repo):
+    spec = git_repo / "docs/tasks/t001_alpha/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "reviewer 判 AC 时只看本区。\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    _git(git_repo, "add", str(spec.relative_to(git_repo)))
+    _git(git_repo, "commit", "-m", "break task scaffold")
+    initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    with pytest.raises(SystemExit, match="固定声明或引导语"):
+        _start(git_repo)
+
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
+    assert _git(git_repo, "status", "--porcelain").stdout.strip() == ""
+    assert not _worktree_path(git_repo).exists()
+
+
+def test_backlog_preflight_rejects_empty_implementation_notes(git_repo):
+    task_md = git_repo / "docs/tasks/t001_alpha/task.md"
+    text = task_md.read_text(encoding="utf-8").replace(
+        "\n无\n\n## Review 处置",
+        "\n## Review 处置",
+        1,
+    )
+    task_md.write_text(text, encoding="utf-8")
+
+    result = _task_cli(git_repo, "preflight", "t001", "--allow-backlog")
+
+    assert result.returncode != 0
+    assert "实施笔记为空" in result.stdout
 
 
 def test_start_rejects_blocking_unknown_contract_before_mutation(git_repo):
