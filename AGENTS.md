@@ -48,6 +48,7 @@
 - `start` 无绕过参数；只能从干净主仓默认分支调用。首 task 基于本地主干，后续 task 基于上一已完成且已清理 worktree 的 task 分支；批次执行期间允许 main 并行推进，链与 main 的对齐在合并阶段处理。
 - task 状态读取优先级：登记 worktree → 未合并 task 分支链尾 ref → main。批次期间 main 中 task 状态可能滞后；`list/show/preflight --ref` 用于只读分支快照，不能据 main 旧 backlog 重复 start 或维护。
 - task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；整批完成并获用户批准后只合并链尾分支，再在主仓重建并提交 index。每个 commit 必须独立可验证，有工程意义。
+- 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
 ### skill 调用
