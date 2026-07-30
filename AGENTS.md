@@ -84,6 +84,8 @@ python3 scripts/task.py next-batch --done t11,t012 13 # 宽松解析已完成 ta
 python3 scripts/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
 scripts/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN
+scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012           # dry-run：拟迁闭环条目到 archive
+scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write   # 落盘迁移（拒迁「不办」节）
 ```
 
 ## 文档规范
