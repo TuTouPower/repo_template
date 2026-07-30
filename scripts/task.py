@@ -24,6 +24,9 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
 命令：
   task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL]
   task.py edit TID [--title TITLE] [--note NOTE | --note-append NOTE] [--review-level LEVEL]
+                   [--depends-on TIDS | --depends-append TID | --depends-remove TID]
+                   [--conflicts-with TIDS | --conflicts-append TID | --conflicts-remove TID]
+                   [--schedule-status scheduled|pending_clarification]
   task.py start TID [--base TASK_BRANCH]  # 从 main/上一 task 分支建 worktree；主仓不变
   task.py preflight TID [--allow-backlog] [--ref BRANCH] [--require-verified]
                                    # 开干/进实现前门禁；可只读检查 backlog/ref 快照
@@ -36,6 +39,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
   task.py purge TID --reason TEXT
   task.py list [--status STATUS] [--ref BRANCH] [--rebuild]
   task.py show TID [--ref BRANCH]
+  task.py next-batch [--done TID ...]
 """
 
 import argparse
@@ -61,6 +65,7 @@ TEMPLATE_DIR = TASKS_DIR / "task_template"
 
 VALID_STATUSES = ("backlog", "active", "blocked", "done", "dropped")
 ARCHIVED_STATUSES = ("done", "dropped")
+SCHEDULE_STATUSES = ("scheduled", "pending_clarification")
 # 仅活跃目录内可 rewind 的状态及其顺序（防 forward）
 STATUS_ORDER = ("backlog", "active", "blocked")
 DEFAULT_REWIND = {"active": "backlog", "blocked": "active"}  # 撤一步映射
@@ -124,7 +129,8 @@ TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
     "tid", "slug", "title", "status", "branch", "worktree",
-    "review_level", "diff_anchor", "note",
+    "review_level", "diff_anchor", "depends_on", "conflicts_with",
+    "schedule_status", "note",
 )
 
 
@@ -379,6 +385,63 @@ def dump_front_matter(fm: dict) -> str:
 
 def write_front_matter(path: Path, fm: dict, body: str) -> None:
     path.write_text(dump_front_matter(fm) + "\n" + body, encoding="utf-8", newline="\n")
+
+
+def tid_sort_key(tid: str) -> int:
+    match = TID_RE.fullmatch(tid)
+    if not match:
+        raise TaskDataError(f"tid 非法：{tid!r}")
+    return int(match.group(1))
+
+
+def parse_tid_list(value: str, *, field: str, allow_empty: bool = True) -> list[str]:
+    """解析 front matter/严格 CLI 使用的逗号分隔规范 tid。"""
+    if value == "" and allow_empty:
+        return []
+    items = [item.strip() for item in value.split(",")]
+    if not items or any(not item for item in items):
+        raise TaskDataError(f"{field} 格式非法：{value!r}（须为逗号分隔 tid）")
+    invalid = [item for item in items if not TID_RE.fullmatch(item)]
+    if invalid:
+        raise TaskDataError(f"{field} 含非法 tid：{', '.join(invalid)}")
+    return sorted(set(items), key=tid_sort_key)
+
+
+def dump_tid_list(tids) -> str:
+    return ",".join(sorted(set(tids), key=tid_sort_key))
+
+
+def validate_tid_references(
+    tids: list[str],
+    *,
+    field: str,
+    owner_tid: str,
+    tasks_by_tid: dict[str, dict],
+) -> None:
+    if owner_tid in tids:
+        raise TaskDataError(f"{field} 不可引用自身 {owner_tid}")
+    missing = [tid for tid in tids if tid not in tasks_by_tid]
+    if missing:
+        raise TaskDataError(f"{field} 引用不存在 task：{', '.join(missing)}")
+
+
+def task_schedule_references(target_tid: str, tasks: list[dict] | None = None) -> list[str]:
+    """返回非归档 task 中引用 target_tid 的字段，供 drop/purge 拒绝悬空边。
+
+    只扫活跃目录：归档 task 的历史边无脚本清理途径（edit 拒绝归档、归档只准新增），
+    若计入会永久锁死被引用 task 的 drop。
+    """
+    references = []
+    for task in scan_tasks() if tasks is None else tasks:
+        if task["tid"] == target_tid:
+            continue
+        if task["status"] in ARCHIVED_STATUSES:
+            continue
+        for field in ("depends_on", "conflicts_with"):
+            tids = parse_tid_list(task.get(field, ""), field=f"{task['tid']}.{field}")
+            if target_tid in tids:
+                references.append(f"{task['tid']}.{field}")
+    return references
 
 
 def parse_unverified_contracts(spec_text: str) -> dict[str, list[str]]:
@@ -643,26 +706,43 @@ def _validate_task_records(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
-def scan_tasks() -> list[dict]:
-    """扫描当前工作区 task，按 tid 升序返回状态记录。"""
+def _scan_tasks_in_directories(tasks_dir: Path, archive_dir: Path) -> list[dict]:
     tasks = []
-    for base in (TASKS_DIR, ARCHIVE_TASKS_DIR):
+    for base, archived, rel_base in (
+        (tasks_dir, False, "docs/tasks"),
+        (archive_dir, True, "docs/archive/tasks"),
+    ):
         if not base.is_dir():
             continue
-        for d in sorted(base.iterdir()):
-            if not d.is_dir() or d.name == TEMPLATE_DIR.name:
+        for directory in sorted(base.iterdir()):
+            if not directory.is_dir() or (not archived and directory.name == TEMPLATE_DIR.name):
                 continue
-            task_md = d / "task.md"
+            task_md = directory / "task.md"
             if not task_md.is_file():
-                raise TaskDataError(f"{_rel(d)}: 缺 task.md")
-            fm, _ = parse_front_matter(task_md)
+                raise TaskDataError(f"{task_md.parent}: 缺 task.md")
+            fm, _ = parse_front_matter_text(
+                task_md.read_text(encoding="utf-8"), source=str(task_md)
+            )
             tasks.append(_task_record(
                 fm,
-                directory=_rel(d),
-                source=_rel(task_md),
-                archived=base is ARCHIVE_TASKS_DIR,
+                directory=f"{rel_base}/{directory.name}",
+                source=str(task_md),
+                archived=archived,
             ))
     return _validate_task_records(tasks)
+
+
+def scan_tasks() -> list[dict]:
+    """扫描当前工作区 task，按 tid 升序返回状态记录。"""
+    return _scan_tasks_in_directories(TASKS_DIR, ARCHIVE_TASKS_DIR)
+
+
+def scan_tasks_in_worktree(root: Path) -> list[dict]:
+    """扫描另一登记 worktree 的 task 状态，不修改 task.py 全局路径。"""
+    return _scan_tasks_in_directories(
+        root / "docs" / "tasks",
+        root / "docs" / "archive" / "tasks",
+    )
 
 
 def git_text_at_ref(ref: str, path: str) -> str:
@@ -797,6 +877,252 @@ def task_effective_state(tid: str, primary_fm: dict) -> str | None:
         if ref_status != "backlog":
             return f"未合并分支 {branch!r} 中 status={ref_status}"
     return None
+
+
+def _local_task_branches() -> list[str]:
+    r = _git(["branch", "--format=%(refname:short)", "--list", "t[0-9]*_*"])
+    if r.returncode != 0:
+        return []
+    return sorted(
+        branch.strip()
+        for branch in r.stdout.splitlines()
+        if TASK_BRANCH_RE.fullmatch(branch.strip())
+    )
+
+
+def discover_effective_tasks() -> dict[str, dict]:
+    """按 worktree → 未合并 task 分支 → main 发现每个 task 的有效状态。"""
+    require_primary_worktree()
+    effective = {task["tid"]: task for task in scan_tasks()}
+
+    for branch in _local_task_branches():
+        if not has_unmerged_commits(branch):
+            continue
+        owner_tid = TASK_BRANCH_RE.fullmatch(branch).group(1)
+        tasks = scan_tasks_at_ref(branch)
+        task = next((item for item in tasks if item["tid"] == owner_tid), None)
+        if task is None:
+            raise TaskDataError(f"未合并 task 分支 {branch!r} 缺自身 task {owner_tid}")
+        effective[owner_tid] = task
+
+    primary = primary_worktree_path()
+    for path_text, branch in worktree_paths().items():
+        path = Path(path_text).resolve()
+        if path == primary or not path.is_dir():
+            continue
+        match = TASK_BRANCH_RE.fullmatch(branch)
+        if not match:
+            continue
+        owner_tid = match.group(1)
+        tasks = scan_tasks_in_worktree(path)
+        task = next((item for item in tasks if item["tid"] == owner_tid), None)
+        if task is None:
+            raise TaskDataError(f"登记 worktree {path} 缺自身 task {owner_tid}")
+        effective[owner_tid] = task
+    return effective
+
+
+def parse_done_tids(values: list[str], known_tids) -> list[str]:
+    """宽松解析人类输入，并按 tid 数值与仓库实际记录唯一匹配。"""
+    raw = " ".join(values or []).strip()
+    if not raw:
+        return []
+    tokens = [token for token in re.split(r"[,\s]+", raw) if token]
+    by_number: dict[int, list[str]] = {}
+    for tid in known_tids:
+        by_number.setdefault(tid_sort_key(tid), []).append(tid)
+
+    normalized = []
+    for token in tokens:
+        match = re.fullmatch(r"[tT]?([0-9]+)", token)
+        if not match or int(match.group(1)) == 0:
+            raise TaskDataError(f"invalid_done: {token!r}")
+        number = int(match.group(1))
+        matches = sorted(by_number.get(number, []), key=lambda tid: (len(tid), tid))
+        if not matches:
+            raise TaskDataError(f"invalid_done: {token!r} 无对应 task")
+        if len(matches) != 1:
+            raise TaskDataError(
+                f"invalid_done: {token!r} 数值匹配不唯一（{', '.join(matches)}）"
+            )
+        normalized.append(matches[0])
+    return sorted(set(normalized), key=tid_sort_key)
+
+
+def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(tid: str) -> list[str] | None:
+        state[tid] = 1
+        stack.append(tid)
+        for dependency in dependencies.get(tid, []):
+            if dependency not in dependencies:
+                continue
+            if state.get(dependency, 0) == 0:
+                cycle = visit(dependency)
+                if cycle:
+                    return cycle
+            elif state.get(dependency) == 1:
+                start = stack.index(dependency)
+                return stack[start:] + [dependency]
+        stack.pop()
+        state[tid] = 2
+        return None
+
+    for tid in sorted(dependencies, key=tid_sort_key):
+        if state.get(tid, 0) == 0:
+            cycle = visit(tid)
+            if cycle:
+                return cycle
+    return None
+
+
+def cmd_next_batch(args):
+    require_primary_worktree()
+    try:
+        tasks = discover_effective_tasks()
+        done_override = parse_done_tids(args.done, tasks)
+        done_override_set = set(done_override)
+
+        dependencies: dict[str, list[str]] = {}
+        conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}
+        for tid, task in tasks.items():
+            if task["status"] in ARCHIVED_STATUSES:
+                continue
+            task_dependencies = parse_tid_list(
+                task.get("depends_on", ""), field=f"{tid}.depends_on"
+            )
+            task_conflicts = parse_tid_list(
+                task.get("conflicts_with", ""), field=f"{tid}.conflicts_with"
+            )
+            for field, references in (
+                ("depends_on", task_dependencies),
+                ("conflicts_with", task_conflicts),
+            ):
+                if tid in references:
+                    raise TaskDataError(f"invalid_graph: {tid}.{field} 引用自身")
+                missing = [reference for reference in references if reference not in tasks]
+                if missing:
+                    raise TaskDataError(
+                        f"invalid_graph: {tid}.{field} 引用不存在 task "
+                        f"{','.join(missing)}"
+                    )
+                dropped = [
+                    reference for reference in references
+                    if tasks[reference]["status"] == "dropped"
+                ]
+                if dropped:
+                    raise TaskDataError(
+                        f"invalid_graph: {tid}.{field} 引用 dropped task "
+                        f"{','.join(dropped)}"
+                    )
+            dependencies[tid] = task_dependencies
+            for peer in task_conflicts:
+                conflicts[tid].add(peer)
+                conflicts[peer].add(tid)
+
+        cycle = _dependency_cycle(dependencies)
+        if cycle:
+            raise TaskDataError(
+                "invalid_graph: depends_on cycle " + " -> ".join(cycle)
+            )
+
+        invalid_schedule = [
+            f"{tid}={task.get('schedule_status', '')!r}"
+            for tid, task in tasks.items()
+            if task["status"] == "backlog"
+            and task.get("schedule_status", "") not in ("", *SCHEDULE_STATUSES)
+        ]
+        if invalid_schedule:
+            raise TaskDataError(
+                "invalid_graph: schedule_status 非法 " + ",".join(invalid_schedule)
+            )
+
+        assumed_done = {
+            tid for tid, task in tasks.items() if task["status"] == "done"
+        } | done_override_set
+        active = {
+            tid for tid, task in tasks.items()
+            if task["status"] in ("active", "blocked") and tid not in done_override_set
+        }
+        scheduled = [
+            tid for tid, task in tasks.items()
+            if task["status"] == "backlog"
+            and task.get("schedule_status") == "scheduled"
+            and tid not in assumed_done
+        ]
+        pending = sorted(
+            (
+                tid for tid, task in tasks.items()
+                if task["status"] == "backlog"
+                and task.get("schedule_status") == "pending_clarification"
+                and tid not in assumed_done
+            ),
+            key=tid_sort_key,
+        )
+        unscheduled = sorted(
+            (
+                tid for tid, task in tasks.items()
+                if task["status"] == "backlog"
+                and not task.get("schedule_status")
+                and tid not in assumed_done
+            ),
+            key=tid_sort_key,
+        )
+
+        waiting: dict[str, list[str]] = {}
+        ready = []
+        for tid in sorted(scheduled, key=tid_sort_key):
+            missing = [dep for dep in dependencies.get(tid, []) if dep not in assumed_done]
+            if missing:
+                waiting[tid] = sorted(missing, key=tid_sort_key)
+            else:
+                ready.append(tid)
+
+        blocked: dict[str, list[str]] = {}
+        eligible = []
+        for tid in ready:
+            active_conflicts = sorted(conflicts[tid] & active, key=tid_sort_key)
+            if active_conflicts:
+                blocked[tid] = active_conflicts
+            else:
+                eligible.append(tid)
+
+        selected = []
+        for tid in eligible:
+            if any(peer in conflicts[tid] for peer in selected):
+                continue
+            selected.append(tid)
+
+        print("next_batch:" + (f" {' '.join(selected)}" if selected else ""))
+        referenced_done = {
+            dep for deps in dependencies.values() for dep in deps
+        } & assumed_done
+        printed_done = referenced_done | done_override_set
+        if printed_done:
+            print("assumed_done: " + " ".join(sorted(printed_done, key=tid_sort_key)))
+        if waiting:
+            entries = [
+                f"{tid}<-{','.join(waiting[tid])}"
+                for tid in sorted(waiting, key=tid_sort_key)
+            ]
+            print("waiting_dependencies: " + " ".join(entries))
+        if blocked:
+            entries = []
+            for tid in sorted(blocked, key=tid_sort_key):
+                for peer in blocked[tid]:
+                    entries.append(f"{tid}<->{peer}({tasks[peer]['status']})")
+            print("blocked_by_active_conflict: " + " ".join(entries))
+        if pending:
+            print("pending_clarification: " + " ".join(pending))
+        if unscheduled:
+            print("unscheduled: " + " ".join(unscheduled))
+    except TaskDataError as error:
+        message = str(error)
+        if not message.startswith(("invalid_graph:", "invalid_done:")):
+            message = f"invalid_graph: {message}"
+        sys.exit(f"next-batch=FAIL：{message}")
 
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
@@ -1090,8 +1416,11 @@ def cmd_add(args):
         "worktree": "",
         "review_level": args.review_level,
         "diff_anchor": "",
+        "depends_on": "",
+        "conflicts_with": "",
         "note": args.note or "",
     })
+    fm.pop("schedule_status", None)
     write_front_matter(task_md, fm, body)
     rebuild_index()
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
@@ -1100,11 +1429,32 @@ def cmd_add(args):
 
 def cmd_edit(args):
     require_primary_worktree()
-    fields = (args.title, args.note, args.note_append, args.review_level)
-    if all(v is None for v in fields):
-        sys.exit("没有要改的字段；传 --title / --note / --note-append / --review-level")
-    if args.note is not None and args.note_append is not None:
+    field_names = (
+        "title", "note", "note_append", "review_level", "depends_on",
+        "depends_append", "depends_remove", "conflicts_with",
+        "conflicts_append", "conflicts_remove", "schedule_status",
+    )
+    values = {name: getattr(args, name, None) for name in field_names}
+    if all(value is None for value in values.values()):
+        sys.exit(
+            "没有要改的字段；传 --title / --note / --note-append / --review-level / "
+            "--depends-* / --conflicts-* / --schedule-status"
+        )
+    if values["note"] is not None and values["note_append"] is not None:
         sys.exit("--note 与 --note-append 互斥")
+    dependency_actions = [
+        values["depends_on"], values["depends_append"], values["depends_remove"]
+    ]
+    conflict_actions = [
+        values["conflicts_with"], values["conflicts_append"], values["conflicts_remove"]
+    ]
+    if sum(value is not None for value in dependency_actions) > 1:
+        sys.exit("--depends-on / --depends-append / --depends-remove 互斥")
+    if sum(value is not None for value in conflict_actions) > 1:
+        sys.exit("--conflicts-with / --conflicts-append / --conflicts-remove 互斥")
+
+    tasks = scan_tasks()
+    tasks_by_tid = {task["tid"]: task for task in tasks}
     task, path, fm, body = load_task(args.tid)
     if fm["status"] in ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已归档（{fm['status']}），不可编辑")
@@ -1119,24 +1469,132 @@ def cmd_edit(args):
             f"{args.tid} 在 main 中为 backlog，但{covered}；"
             "main 副本已滞后，edit 拒绝操作过期状态"
         )
+
     changed = []
-    if args.title is not None:
-        title = args.title.strip()
+    peer_updates: dict[Path, tuple[dict, str]] = {}
+    if values["title"] is not None:
+        title = values["title"].strip()
         if not title:
             sys.exit("title 不能为空")
         fm["title"] = title
         changed.append(f"title={title!r}")
-    if args.note is not None:
-        fm["note"] = args.note
-        changed.append(f"note={args.note!r}")
-    if args.note_append is not None:
-        if not args.note_append.strip():
+    if values["note"] is not None:
+        fm["note"] = values["note"]
+        changed.append(f"note={values['note']!r}")
+    if values["note_append"] is not None:
+        if not values["note_append"].strip():
             sys.exit("--note-append 不能为空")
-        append_note(fm, args.note_append)
-        changed.append(f"note+={args.note_append!r}")
-    if args.review_level is not None:
-        fm["review_level"] = args.review_level
-        changed.append(f"review_level={args.review_level}")
+        append_note(fm, values["note_append"])
+        changed.append(f"note+={values['note_append']!r}")
+    if values["review_level"] is not None:
+        fm["review_level"] = values["review_level"]
+        changed.append(f"review_level={values['review_level']}")
+
+    if any(value is not None for value in dependency_actions):
+        current_dependencies = parse_tid_list(
+            fm.get("depends_on", ""), field=f"{args.tid}.depends_on"
+        )
+        dependencies = list(current_dependencies)
+        if values["depends_on"] is not None:
+            dependencies = parse_tid_list(values["depends_on"], field="--depends-on")
+        elif values["depends_append"] is not None:
+            append_tid = parse_tid_list(
+                values["depends_append"], field="--depends-append", allow_empty=False
+            )
+            if len(append_tid) != 1:
+                sys.exit("--depends-append 只接受一个 tid")
+            dependencies = sorted(set(dependencies + append_tid), key=tid_sort_key)
+        elif values["depends_remove"] is not None:
+            remove_tid = parse_tid_list(
+                values["depends_remove"], field="--depends-remove", allow_empty=False
+            )
+            if len(remove_tid) != 1:
+                sys.exit("--depends-remove 只接受一个 tid")
+            if remove_tid[0] not in dependencies:
+                sys.exit(f"{args.tid}.depends_on 不含 {remove_tid[0]}")
+            dependencies.remove(remove_tid[0])
+        validate_tid_references(
+            dependencies,
+            field="depends_on",
+            owner_tid=args.tid,
+            tasks_by_tid=tasks_by_tid,
+        )
+        dropped_dependencies = [
+            tid for tid in dependencies if tasks_by_tid[tid]["status"] == "dropped"
+        ]
+        if dropped_dependencies:
+            sys.exit(f"depends_on 不可引用 dropped task：{', '.join(dropped_dependencies)}")
+        fm["depends_on"] = dump_tid_list(dependencies)
+        changed.append(f"depends_on={fm['depends_on']!r}")
+
+    if any(value is not None for value in conflict_actions):
+        current_conflicts = parse_tid_list(
+            fm.get("conflicts_with", ""), field=f"{args.tid}.conflicts_with"
+        )
+        conflicts = list(current_conflicts)
+        if values["conflicts_with"] is not None:
+            conflicts = parse_tid_list(values["conflicts_with"], field="--conflicts-with")
+        elif values["conflicts_append"] is not None:
+            append_tid = parse_tid_list(
+                values["conflicts_append"], field="--conflicts-append", allow_empty=False
+            )
+            if len(append_tid) != 1:
+                sys.exit("--conflicts-append 只接受一个 tid")
+            conflicts = sorted(set(conflicts + append_tid), key=tid_sort_key)
+        elif values["conflicts_remove"] is not None:
+            remove_tid = parse_tid_list(
+                values["conflicts_remove"], field="--conflicts-remove", allow_empty=False
+            )
+            if len(remove_tid) != 1:
+                sys.exit("--conflicts-remove 只接受一个 tid")
+            if remove_tid[0] not in conflicts:
+                sys.exit(f"{args.tid}.conflicts_with 不含 {remove_tid[0]}")
+            conflicts.remove(remove_tid[0])
+        validate_tid_references(
+            conflicts,
+            field="conflicts_with",
+            owner_tid=args.tid,
+            tasks_by_tid=tasks_by_tid,
+        )
+        dropped_conflicts = [
+            tid for tid in conflicts if tasks_by_tid[tid]["status"] == "dropped"
+        ]
+        if dropped_conflicts:
+            sys.exit(f"conflicts_with 不可引用 dropped task：{', '.join(dropped_conflicts)}")
+
+        affected = sorted(set(current_conflicts) | set(conflicts), key=tid_sort_key)
+        for peer_tid in affected:
+            peer_task = tasks_by_tid[peer_tid]
+            if peer_task["status"] != "backlog":
+                sys.exit(
+                    f"无法维护冲突反向边：{peer_tid} status={peer_task['status']}，"
+                    "须为可编辑 backlog"
+                )
+            _, peer_path, peer_fm, peer_body = load_task(peer_tid)
+            peer_covered = task_effective_state(peer_tid, peer_fm)
+            if peer_covered:
+                sys.exit(f"无法维护冲突反向边：{peer_tid} {peer_covered}")
+            peer_conflicts = parse_tid_list(
+                peer_fm.get("conflicts_with", ""),
+                field=f"{peer_tid}.conflicts_with",
+            )
+            if peer_tid in conflicts:
+                peer_conflicts = sorted(
+                    set(peer_conflicts + [args.tid]), key=tid_sort_key
+                )
+            else:
+                peer_conflicts = [tid for tid in peer_conflicts if tid != args.tid]
+            peer_fm["conflicts_with"] = dump_tid_list(peer_conflicts)
+            peer_updates[peer_path] = (peer_fm, peer_body)
+        fm["conflicts_with"] = dump_tid_list(conflicts)
+        changed.append(f"conflicts_with={fm['conflicts_with']!r}")
+
+    if values["schedule_status"] is not None:
+        fm["schedule_status"] = values["schedule_status"]
+        changed.append(f"schedule_status={values['schedule_status']}")
+
+    for peer_path, (peer_fm, peer_body) in peer_updates.items():
+        write_front_matter(peer_path, peer_fm, peer_body)
     write_front_matter(path, fm, body)
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
@@ -1429,6 +1887,12 @@ def cmd_cleanup_worktree(args):
 
 
 def cmd_drop(args):
+    references = task_schedule_references(args.tid)
+    if references:
+        sys.exit(
+            f"{args.tid} 仍被调度图引用：{', '.join(references)}；"
+            "先清理引用或重跑 tasks-schedule"
+        )
     _close_task(args, "dropped", f"dropped: {args.reason}")
 
 
@@ -1514,6 +1978,8 @@ def cmd_rewind(args):
         require_own_task_worktree(fm)
 
     fm["status"] = target
+    if target == "backlog":
+        fm["schedule_status"] = "pending_clarification"
     if effective == recorded:
         transition = f"{effective} -> {target}"
     else:
@@ -1530,6 +1996,12 @@ def cmd_rewind(args):
 
 def cmd_purge(args):
     require_primary_worktree()
+    references = task_schedule_references(args.tid)
+    if references:
+        sys.exit(
+            f"{args.tid} 仍被调度图引用：{', '.join(references)}；"
+            "先清理引用后再 purge"
+        )
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
     task_dir = REPO_ROOT / task["dir"]
@@ -1619,12 +2091,19 @@ def main():
     a.add_argument("--review-level", choices=REVIEW_LEVELS, default=DEFAULT_REVIEW_LEVEL)
     a.set_defaults(func=cmd_add)
 
-    e = sub.add_parser("edit", help="改活跃 task 的 title / note / review_level")
+    e = sub.add_parser("edit", help="改 main 中未进入链的 backlog task")
     e.add_argument("tid")
     e.add_argument("--title")
     e.add_argument("--note", help="覆盖 note（传空串则清空）")
     e.add_argument("--note-append", help="在现有 note 后追加")
     e.add_argument("--review-level", choices=REVIEW_LEVELS)
+    e.add_argument("--depends-on", help="逗号分隔 tid；传空串清空")
+    e.add_argument("--depends-append", help="追加一个依赖 tid")
+    e.add_argument("--depends-remove", help="移除一个依赖 tid")
+    e.add_argument("--conflicts-with", help="逗号分隔 tid；传空串清空并同步反向边")
+    e.add_argument("--conflicts-append", help="追加一个冲突 tid 并同步反向边")
+    e.add_argument("--conflicts-remove", help="移除一个冲突 tid 并同步反向边")
+    e.add_argument("--schedule-status", choices=SCHEDULE_STATUSES)
     e.set_defaults(func=cmd_edit)
 
     s = sub.add_parser(
@@ -1704,6 +2183,15 @@ def main():
     sh.add_argument("tid")
     sh.add_argument("--ref", help="只读查看指定本地分支中的 task 状态")
     sh.set_defaults(func=cmd_show)
+
+    nb = sub.add_parser("next-batch", help="按已落盘调度图机械计算下一批 task")
+    nb.add_argument(
+        "--done",
+        nargs="*",
+        default=[],
+        help="本次视为完成的 task；支持空格/逗号和宽松 tid 格式",
+    )
+    nb.set_defaults(func=cmd_next_batch)
 
 
     args = p.parse_args()

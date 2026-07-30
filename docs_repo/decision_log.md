@@ -30,7 +30,7 @@
 | L18 | `review.md` 模板与 prompt 两处定义报告格式 | 本轮审阅 | 格式唯一定义在 prompt；`review.md` 只留指针 | `task_template/review.md` | 已落地 |
 | L19 | 模板占位符被原样留在 spec/task | retro_t001_t007（plan 复制 spec 的变体） | `preflight` 拒绝残留 `{...}` 占位符 | `task.py preflight` | 已落地 |
 | L20 | 契约在执行期被悄悄改动 | 本轮审阅（配合 L3 注入） | ~~`start` 时锁契约区 hash~~（原方案从未实现）；改为 `render_review_prompts.py` 渲染时 diff 契约区相对 diff_anchor 的变更并附警告块给 reviewer，合法变更可见、静默变更藏不住 | `render_review_prompts.py` | 已改向并落地 |
-| L21 | 依赖关系散落 spec 文字，无法机器校验 | feedback D、retro_t041_t061 | `depends_on` 进 front matter；`start` 拒绝依赖未完成的 task | `task.py add/edit/start` | 已落地 |
+| L21 | 依赖关系散落 spec 文字，无法机器校验；后续批次重复依赖 Agent 分析 | feedback D、retro_t041_t061、review_task_batch_scheduling 多路审阅 | task front matter 增加 `depends_on`、`conflicts_with`、`schedule_status`；`tasks-schedule` 负责 Agent 分析落盘，`task.py next-batch --done ...` 负责后续纯脚本调度。只做调度层，不修改 `tasks-run` / `task.py start` / 执行与合并流程 | `scripts/task.py`、`tasks-schedule`、task 模板 | 已落地 |
 | L22 | subagent prompt 内联正文撑爆 context | analysis §2 | 派发只传文件路径，正文写 `.scratch/review_prompts/` | `tasks-run` Step 5 | 已落地 |
 | L23 | 遗留待办与 bugs 无统一登记 | 11111#1、analysis §13 | `bugs.md` 扩为 `docs/pending.md`，「未修 bug」(`bNNN`) 与「遗留待办」(`fNNN`) 两节共一个入口；遗留 finding 的唯一落点是该节，`task.md` 只留 `fix_ref` 引用 | `docs/pending.md`、`tasks-run` Step 6/7、`task.md` 模板 | 已落地 |
 | L24 | 9 个 skill 之间规则重叠，可能成新漂移源 | review/glm §2.4 | 状态机、门禁、目录权责只在 AGENTS 定义；skill 只写操作顺序并引用 AGENTS | 各 SKILL.md | 开放（本轮已清一遍，需持续盯） |

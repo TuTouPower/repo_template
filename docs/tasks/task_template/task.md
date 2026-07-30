@@ -7,6 +7,8 @@ branch: ""
 worktree: ""
 review_level: full
 diff_anchor: ""
+depends_on: ""
+conflicts_with: ""
 note: ""
 ---
 

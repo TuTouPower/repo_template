@@ -58,7 +58,7 @@
 | 用户意图 | skill | 职责 |
 |----------|-------|------|
 | 待做 task 还缺我什么 | `tasks-preflight` | 只读汇总缺口 |
-| 哪些 backlog task 能并发 | `tasks-parallel` | 只读；以进行中 task 与已存在分支为基线出并发分组 |
+| 分析 backlog task 调度图并输出首批 | `tasks-schedule` | Agent 首次分析依赖/冲突并落盘；后续批次由 `task.py next-batch` 机械计算 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 把待办转成 task | `pending-to-task` | 从 `docs/pending.md` 重建 task 并回写归档 |
@@ -79,6 +79,8 @@ python3 scripts/task.py preflight t002 --allow-backlog --ref t001_x # 只读检�
 python3 scripts/task.py start t002 --base t001_x # 从上一已完成 task 分支启动
 python3 scripts/task.py cleanup-worktree t001    # task commit 后清理 worktree，保留分支
 python3 scripts/task.py edit t001 --title "新标题" --review-level single
+python3 scripts/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
+python3 scripts/task.py next-batch --done t11,t012 13 # 宽松解析已完成 task，机械计算下一批
 python3 scripts/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
 scripts/pending.py next                         # 当前+归档总账的下一个 pNNN 编号

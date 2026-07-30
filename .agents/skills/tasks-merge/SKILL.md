@@ -34,13 +34,17 @@ disable-model-invocation: true
    - 新建目标时由 `scripts/task.py add` 自动复制模板，不手工拷贝。
    - 合并后 `review_level` 优先取 `full`（任一源为 `full` 即 `full`），用 `scripts/task.py edit {目标tid} --review-level ...` 设置。
 
-5. **更新目标条目**：
+5. **更新目标与失效调度图**：
 
    ```bash
    scripts/task.py edit {目标tid} --title "{合并后标题}" --note-append "merged from t00X,t00Y"
+   scripts/task.py edit {目标tid} --schedule-status pending_clarification
    ```
 
-   标题仍贴切时可只 `--note-append`。
+   标题仍贴切时可只 `--note-append`。随后读取全部 backlog task 的 `depends_on` / `conflicts_with`：
+   - 每个引用源 tid 的 task，分别用 `--depends-remove {源tid}` / `--conflicts-remove {源tid}` 清除失效边，并同时设置 `--schedule-status pending_clarification`；冲突移除由脚本同步反向边。
+   - 目标 task、所有被清边的 task 均保持 `pending_clarification`，不猜测合并后依赖或冲突；合并结束后须重跑 `/tasks-schedule`。
+   - 禁止直接编辑 front matter。任一引用无法通过 `task.py edit` 清除时停止，不进入 drop。
 
 6. **处置源 task**（目标之外的每个）：
 

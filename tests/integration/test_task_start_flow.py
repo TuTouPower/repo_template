@@ -913,3 +913,396 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
 
     with pytest.raises(task_mod.TaskDataError, match="缺 task.md"):
         task_mod.scan_tasks_at_ref("t002_beta")
+
+
+# --------------------------------------------------------------------------
+# task 调度图与 next-batch
+# --------------------------------------------------------------------------
+
+def test_add_initializes_empty_schedule_edges_without_status(git_repo):
+    result = _task_cli(git_repo, "add", "--title", "delta", "--slug", "delta")
+
+    assert result.returncode == 0, result.stderr
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t004_delta/task.md")
+    assert fm["depends_on"] == ""
+    assert fm["conflicts_with"] == ""
+    assert "schedule_status" not in fm
+
+
+def test_edit_updates_dependencies_and_symmetric_conflicts(git_repo):
+    dependency = _task_cli(
+        git_repo,
+        "edit",
+        "t002",
+        "--depends-on",
+        "t003,t001,t003",
+        "--schedule-status",
+        "scheduled",
+    )
+    conflict = _task_cli(
+        git_repo,
+        "edit",
+        "t001",
+        "--conflicts-with",
+        "t003,t002",
+    )
+
+    assert dependency.returncode == 0, dependency.stderr
+    assert conflict.returncode == 0, conflict.stderr
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
+    assert second["depends_on"] == "t001,t003"
+    assert second["schedule_status"] == "scheduled"
+    assert first["conflicts_with"] == "t002,t003"
+    assert second["conflicts_with"] == "t001"
+    assert third["conflicts_with"] == "t001"
+
+    removed = _task_cli(git_repo, "edit", "t001", "--conflicts-remove", "t002")
+    assert removed.returncode == 0, removed.stderr
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    assert first["conflicts_with"] == "t003"
+    assert second["conflicts_with"] == ""
+
+
+def test_edit_rejects_conflict_reverse_edge_to_active_task(git_repo):
+    _start(git_repo, "t001")
+
+    result = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
+
+    assert result.returncode != 0
+    assert "无法维护冲突反向边" in result.stderr
+
+
+def test_rewind_to_backlog_marks_schedule_pending(git_repo):
+    scheduled = _task_cli(
+        git_repo, "edit", "t001", "--schedule-status", "scheduled"
+    )
+    assert scheduled.returncode == 0, scheduled.stderr
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "schedule t001")
+    _start(git_repo, "t001")
+
+    _rewind(git_repo, "t001")
+
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "backlog"
+    assert fm["schedule_status"] == "pending_clarification"
+
+
+def test_drop_rejects_referenced_task(git_repo):
+    result = _task_cli(git_repo, "edit", "t002", "--depends-on", "t001")
+    assert result.returncode == 0, result.stderr
+
+    dropped = _task_cli(git_repo, "drop", "t001", "--reason", "obsolete")
+
+    assert dropped.returncode != 0
+    assert "t002.depends_on" in dropped.stderr
+    assert (git_repo / "docs/tasks/t001_alpha/task.md").exists()
+
+
+def test_next_batch_uses_dag_conflicts_and_done_override(git_repo):
+    commands = (
+        ("t001", "--schedule-status", "scheduled"),
+        ("t002", "--depends-on", "t001", "--schedule-status", "scheduled"),
+        ("t003", "--conflicts-with", "t002", "--schedule-status", "scheduled"),
+    )
+    for command in commands:
+        result = _task_cli(git_repo, "edit", *command)
+        assert result.returncode == 0, result.stderr
+
+    first = _task_cli(git_repo, "next-batch")
+    second = _task_cli(git_repo, "next-batch", "--done", "T0001")
+
+    assert first.returncode == 0, first.stderr
+    assert "next_batch: t001 t003" in first.stdout
+    assert "waiting_dependencies: t002<-t001" in first.stdout
+    assert second.returncode == 0, second.stderr
+    assert "next_batch: t002" in second.stdout
+    assert "assumed_done: t001" in second.stdout
+
+
+def test_next_batch_prefers_worktree_then_unmerged_branch_state(git_repo):
+    for tid in ("t001", "t002"):
+        result = _task_cli(
+            git_repo, "edit", tid, "--schedule-status", "scheduled"
+        )
+        assert result.returncode == 0, result.stderr
+    conflict = _task_cli(git_repo, "edit", "t001", "--conflicts-with", "t002")
+    assert conflict.returncode == 0, conflict.stderr
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "schedule tasks")
+
+    _start(git_repo, "t001")
+    active = _task_cli(git_repo, "next-batch")
+    assert active.returncode == 0, active.stderr
+    assert "blocked_by_active_conflict: t002<->t001(active)" in active.stdout
+
+    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    completed = _task_cli(git_repo, "next-batch")
+    assert completed.returncode == 0, completed.stderr
+    # t001 归档后自动进 assumed_done，但 t002 不依赖它；新语义下不被引用的 done 不打印
+    assert "assumed_done:" not in completed.stdout
+    assert "next_batch: t002" in completed.stdout
+    assert branch == "t001_alpha"
+
+    # --done override 始终打印，即使用户声明的完成 task 不被任何 backlog 引用
+    override = _task_cli(git_repo, "next-batch", "--done", "t001")
+    assert override.returncode == 0, override.stderr
+    assert "assumed_done: t001" in override.stdout
+
+
+def test_next_batch_handles_diamond_dependencies(git_repo):
+    commands = (
+        ("t001", "--schedule-status", "scheduled"),
+        ("t002", "--schedule-status", "scheduled"),
+        (
+            "t003",
+            "--depends-on",
+            "t001,t002",
+            "--schedule-status",
+            "scheduled",
+        ),
+    )
+    for command in commands:
+        result = _task_cli(git_repo, "edit", *command)
+        assert result.returncode == 0, result.stderr
+
+    first = _task_cli(git_repo, "next-batch")
+    second = _task_cli(git_repo, "next-batch", "--done", "t1,t2")
+
+    assert first.returncode == 0, first.stderr
+    assert "next_batch: t001 t002" in first.stdout
+    assert "waiting_dependencies: t003<-t001,t002" in first.stdout
+    assert second.returncode == 0, second.stderr
+    assert "next_batch: t003" in second.stdout
+    assert "assumed_done: t001 t002" in second.stdout
+
+
+def test_next_batch_reads_done_from_main_archive(git_repo):
+    dependency = _task_cli(
+        git_repo,
+        "edit",
+        "t002",
+        "--depends-on",
+        "t001",
+        "--schedule-status",
+        "scheduled",
+    )
+    assert dependency.returncode == 0, dependency.stderr
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "schedule dependency")
+
+    _start(git_repo, "t001")
+    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _git(git_repo, "merge", "--ff-only", branch)
+
+    result = _task_cli(git_repo, "next-batch")
+
+    assert result.returncode == 0, result.stderr
+    assert "next_batch: t002" in result.stdout
+    assert "assumed_done: t001" in result.stdout
+
+
+def test_next_batch_rejects_dependency_cycle(git_repo):
+    first = _task_cli(
+        git_repo, "edit", "t001", "--depends-on", "t002",
+        "--schedule-status", "scheduled",
+    )
+    second = _task_cli(
+        git_repo, "edit", "t002", "--depends-on", "t001",
+        "--schedule-status", "scheduled",
+    )
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+
+    result = _task_cli(git_repo, "next-batch")
+
+    assert result.returncode != 0
+    assert "next-batch=FAIL：invalid_graph: depends_on cycle" in result.stderr
+
+
+def test_next_batch_reports_pending_and_unscheduled(git_repo):
+    scheduled = _task_cli(
+        git_repo, "edit", "t001", "--schedule-status", "scheduled"
+    )
+    pending = _task_cli(
+        git_repo,
+        "edit",
+        "t002",
+        "--schedule-status",
+        "pending_clarification",
+    )
+    assert scheduled.returncode == 0, scheduled.stderr
+    assert pending.returncode == 0, pending.stderr
+
+    result = _task_cli(git_repo, "next-batch")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "next_batch: t001",
+        "pending_clarification: t002",
+        "unscheduled: t003",
+    ]
+
+
+def test_next_batch_reads_historical_conflict_as_undirected(git_repo):
+    first_path = git_repo / "docs/tasks/t001_alpha/task.md"
+    first, first_body = parse_front_matter(first_path)
+    first["schedule_status"] = "scheduled"
+    first["conflicts_with"] = "t002"
+    write_front_matter(first_path, first, first_body)
+
+    second_path = git_repo / "docs/tasks/t002_beta/task.md"
+    second, second_body = parse_front_matter(second_path)
+    second["schedule_status"] = "scheduled"
+    second["conflicts_with"] = ""
+    write_front_matter(second_path, second, second_body)
+
+    result = _task_cli(git_repo, "next-batch")
+
+    assert result.returncode == 0, result.stderr
+    assert "next_batch: t001" in result.stdout
+    assert "next_batch: t001 t002" not in result.stdout
+
+
+def test_next_batch_rejects_dangling_and_dropped_references(git_repo):
+    first_path = git_repo / "docs/tasks/t001_alpha/task.md"
+    first, first_body = parse_front_matter(first_path)
+    first["schedule_status"] = "scheduled"
+    first["depends_on"] = "t999"
+    write_front_matter(first_path, first, first_body)
+
+    dangling = _task_cli(git_repo, "next-batch")
+
+    assert dangling.returncode != 0
+    assert "invalid_graph: t001.depends_on 引用不存在 task t999" in dangling.stderr
+
+    first["depends_on"] = ""
+    first["conflicts_with"] = "t999"
+    write_front_matter(first_path, first, first_body)
+    dangling_conflict = _task_cli(git_repo, "next-batch")
+
+    assert dangling_conflict.returncode != 0
+    assert "invalid_graph: t001.conflicts_with 引用不存在 task t999" in dangling_conflict.stderr
+
+    first["conflicts_with"] = ""
+    write_front_matter(first_path, first, first_body)
+    dropped = _task_cli(git_repo, "drop", "t003", "--reason", "obsolete")
+    assert dropped.returncode == 0, dropped.stderr
+    first["depends_on"] = "t003"
+    write_front_matter(first_path, first, first_body)
+
+    stale = _task_cli(git_repo, "next-batch")
+
+    assert stale.returncode != 0
+    assert "invalid_graph: t001.depends_on 引用 dropped task t003" in stale.stderr
+
+    first["depends_on"] = ""
+    first["conflicts_with"] = "t003"
+    write_front_matter(first_path, first, first_body)
+    stale_conflict = _task_cli(git_repo, "next-batch")
+
+    assert stale_conflict.returncode != 0
+    assert "invalid_graph: t001.conflicts_with 引用 dropped task t003" in stale_conflict.stderr
+
+
+def test_drop_ignores_archived_task_historical_edges(git_repo):
+    """归档 done task 的历史调度边不应锁死活跃 task 的 drop。"""
+    archived = git_repo / "docs/archive/tasks/t099_archived"
+    archived.mkdir(parents=True)
+    template_task = git_repo / "docs/tasks/task_template/task.md"
+    _, body = parse_front_matter(template_task)
+    write_front_matter(
+        archived / "task.md",
+        {
+            "tid": "t099",
+            "slug": "archived",
+            "title": "archived",
+            "status": "done",
+            "branch": "",
+            "worktree": "",
+            "review_level": "full",
+            "diff_anchor": "",
+            "depends_on": "t003",
+            "conflicts_with": "",
+            "schedule_status": "scheduled",
+            "note": "",
+        },
+        body,
+    )
+
+    result = _task_cli(git_repo, "drop", "t003", "--reason", "obsolete")
+
+    assert result.returncode == 0, result.stderr
+    assert not (git_repo / "docs/tasks/t003_gamma").exists()
+
+
+def test_edit_title_not_blocked_by_stale_dependency_edges(git_repo):
+    """--title 等无关编辑不应被历史脏数据 depends_on/conflicts_with 卡住。"""
+    first_path = git_repo / "docs/tasks/t001_alpha/task.md"
+    first, first_body = parse_front_matter(first_path)
+    first["depends_on"] = "t999"
+    first["conflicts_with"] = "t999"
+    write_front_matter(first_path, first, first_body)
+
+    result = _task_cli(git_repo, "edit", "t001", "--title", "renamed")
+
+    assert result.returncode == 0, result.stderr
+    updated, _ = parse_front_matter(first_path)
+    assert updated["title"] == "renamed"
+
+
+def test_edit_supports_append_remove_and_clear_for_schedule_edges(git_repo):
+    commands = (
+        ("t001", "--depends-append", "t003"),
+        ("t001", "--depends-append", "t002"),
+        ("t001", "--depends-remove", "t003"),
+        ("t001", "--depends-on", ""),
+        ("t001", "--conflicts-append", "t003"),
+        ("t001", "--conflicts-append", "t002"),
+        ("t001", "--conflicts-remove", "t003"),
+        ("t001", "--conflicts-with", ""),
+    )
+    for command in commands:
+        result = _task_cli(git_repo, "edit", *command)
+        assert result.returncode == 0, result.stderr
+
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
+    assert first["depends_on"] == ""
+    assert first["conflicts_with"] == ""
+    assert second["conflicts_with"] == ""
+    assert third["conflicts_with"] == ""
+
+
+def test_done_override_removes_blocked_task_from_active_set(git_repo):
+    dependency = _task_cli(
+        git_repo,
+        "edit",
+        "t002",
+        "--depends-on",
+        "t001",
+        "--schedule-status",
+        "scheduled",
+    )
+    assert dependency.returncode == 0, dependency.stderr
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "schedule dependency")
+    _start(git_repo, "t001")
+    worktree = _worktree_path(git_repo, "t001")
+    blocked = _task_cli(worktree, "block", "t001", "--reason", "infra")
+    assert blocked.returncode == 0, blocked.stderr
+
+    result = _task_cli(git_repo, "next-batch", "--done", "T0001")
+
+    assert result.returncode == 0, result.stderr
+    assert "next_batch: t002" in result.stdout
+    assert "assumed_done: t001" in result.stdout
+    assert "blocked_by_active_conflict:" not in result.stdout
+    blocked_fm, _ = parse_front_matter(
+        worktree / "docs/tasks/t001_alpha/task.md"
+    )
+    assert blocked_fm["status"] == "blocked"
