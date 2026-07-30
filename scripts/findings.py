@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""pending.py - pending 编号只读分配入口。
+"""findings.py - findings 编号只读分配入口。
 
 用法：
-  python3 scripts/pending.py next
+  python3 scripts/findings.py next
 
-扫描所有本地分支 git 树 + 所有 worktree 工作区的 docs/pending.md 与 docs/archive/pending.md，
-取全局最大 pNNN 编号加一。不写文件、不预留编号。
+扫描所有本地分支 git 树 + 所有 worktree 工作区的 docs/findings.md 与 docs/archive/findings.md，
+取全局最大 dNNN 编号加一。不写文件、不预留编号。
 """
 
 import argparse
@@ -17,22 +17,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, scan_max_id
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ENTRY_RE = re.compile(r"^ {0,3}###[ \t]+p([0-9]{3,})(?=[ \t]|$)")
-REL_PATHS = ("docs/pending.md", "docs/archive/pending.md")
+ENTRY_RE = re.compile(r"^ {0,3}##[ \t]+d([0-9]{3,})(?=[ \t]|$)")
+REL_PATHS = ("docs/findings.md", "docs/archive/findings.md")
 
 
-def next_pending_id() -> str:
+def next_finding_id() -> str:
     maximum = scan_max_id(REPO_ROOT, ENTRY_RE, REL_PATHS)
-    return f"p{maximum + 1:03d}"
+    return f"d{maximum + 1:03d}"
 
 
 def cmd_next(_args: argparse.Namespace) -> None:
-    print(next_pending_id())
+    print(next_finding_id())
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="从所有分支/worktree 的 pending 历史计算下一个 pNNN"
+        description="从所有分支/worktree 的 findings 历史计算下一个 dNNN"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

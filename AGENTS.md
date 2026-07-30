@@ -83,7 +83,7 @@ python3 scripts/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t00
 python3 scripts/task.py next-batch --done t11,t012 13 # 宽松解析已完成 task，机械计算下一批
 python3 scripts/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
-scripts/pending.py next                         # 当前+归档总账的下一个 pNNN 编号
+scripts/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN
 ```
 
 ## 文档规范
