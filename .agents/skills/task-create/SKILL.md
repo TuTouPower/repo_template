@@ -39,7 +39,9 @@ disable-model-invocation: true
    4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 留空（`tasks-run` Step 1 实写）。
       **不预测实施步骤**——创建期未读代码，写出来的步骤执行时必然失准；步骤由 `tasks-run` 边做边记进「实施笔记」。
 
-4. **逐 task 自检**：AC 可验收；`spec.md` / `task.md` 无残留 `{...}` 占位符。
+4. **逐 task 自检**：
+   - AC 可验收，`spec.md` / `task.md` 无残留 `{...}` 占位符。
+   - 每个 task 填写完成后运行 `python3 scripts/task.py preflight {tid} --allow-backlog`；全部 `preflight=PASS` 才能进入统一询问提交。
 
 5. **未知契约分类**：
    - task 需要先做实验确认的事项（新 major、非标准 provider、协议兼容、平台差异、性能或工具行为），写进「未知契约清单」并标 `UNVERIFIED-SPIKE`。不在创建期写生产代码，留给 `tasks-run` Step 1 实验。
