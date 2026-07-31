@@ -544,6 +544,18 @@ def _visible_markdown_lines(text: str) -> list[str]:
     return lines
 
 
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+
+
+def _strip_inline_code(text: str) -> str:
+    """剥除 inline code 片段（一对反引号包裹的内容）。
+
+    占位符扫描专用：真实 spec 里的 API 契约 `{ code:"未登录" }`、JSX
+    `{author.name + " 头像"}` 常包在 inline code 内，剥除后不再误判为模板占位符。
+    """
+    return INLINE_CODE_RE.sub("", text)
+
+
 def _markdown_headings(text: str) -> list[tuple[int, str]]:
     headings = []
     for line in _visible_markdown_lines(text):
@@ -656,9 +668,8 @@ def validate_task_documents(
             problems.append("task.md 实施笔记为空；无事项时写「无」")
 
     if not allow_template_placeholders:
-        placeholders = TEMPLATE_PLACEHOLDER_RE.findall(
-            "\n".join(_visible_markdown_lines(spec_text + "\n" + task_body))
-        )
+        visible_text = "\n".join(_visible_markdown_lines(spec_text + "\n" + task_body))
+        placeholders = TEMPLATE_PLACEHOLDER_RE.findall(_strip_inline_code(visible_text))
         if placeholders:
             problems.append(
                 f"spec.md / task.md 残留 {len(placeholders)} 个模板占位符："
