@@ -29,11 +29,11 @@ TOKEN_TTL_SECONDS = 600  # 10 分钟
 STATE_PATH = Path(__file__).resolve().parent.parent / "state" / "merge_tokens.json"
 TOKEN_COMMENT_RE = re.compile(r"#\s*merge-token\s*=\s*([0-9a-fA-F]+)\b", re.IGNORECASE)
 GIT_MERGE_TARGET_RE = re.compile(
-    r"\bgit\s+merge\b.*?(?:\s|^)(?P<target>[A-Za-z0-9_./@:-]+)\s*$",
+    r"(?:^|\s)git\s+merge(?:\s+(?P<target>[A-Za-z0-9_./@:-]+))?\s*$",
     re.IGNORECASE,
 )
 GH_PR_MERGE_RE = re.compile(
-    r"\bgh\s+(?:pr\s+)?merge\b",
+    r"(?:^|\s)gh\s+(?:pr\s+)?merge\b",
     re.IGNORECASE,
 )
 
