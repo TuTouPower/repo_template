@@ -71,7 +71,7 @@ disable-model-invocation: true
 
    | 路径 | 类别 | 说明 |
    |------|------|------|
-   | ./tests/unit/__pycache__/ | pycache | 目录 |
+   | ./tests/repo_template/__pycache__/ | pycache | 目录 |
 
    合计：N 项
    下一步：确认后 `/repo-cleanup apply`（或带类别）。
