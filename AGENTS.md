@@ -18,14 +18,14 @@
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
-| `docs/pending.md` | 待办与不办总账（统一 `pNNN`；「不办」节=用户确认暂搁，不迁 archive） | `task-bug` 登记 bug；`tasks-run` 收尾闭环迁 archive、遗留登「待办」节；`pending-to-task` 只捞「待办」节建 task；`repo-hygiene` 补迁漏项、不办节保留不动 |
+| `docs/pending.md` | 待办与不办总账（统一 `pNNN`；「不办」节=用户确认暂搁，不迁 archive） | `task-bug` 登记 bug；`task-run` 收尾闭环迁 archive、遗留登「待办」节；`task-from-pending` 只捞「待办」节建 task；`repo-hygiene` 补迁漏项、不办节保留不动 |
 | `docs/findings.md` | 已验证的技术发现（跨 task 复用，`dNNN`） | 只追加与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
 | `docs/archive/{handoff,pending}.md` | 对应文件的已闭环/过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
 | `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策、测试 | finalization 时更新；写代码或文档前读 `conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md` |
 | `docs/reviews/prompts/` | review prompt 模板 | 改审查标准时更新 |
 | `docs/reviews/review_*/` | 多路 review 会话产物（my-review 等外部评审生成） | 报告 `review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/` |
 | `docs/spikes/report_template.md` | spike 报告模板 | 只改模板本身 |
-| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `tasks-run`（Step 1 spike 项）；结论入 `docs/findings.md`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
+| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `task-run`（Step 1 spike 项）；结论入 `docs/findings.md`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
 | `.agents/skills/` | 项目 skill 正文 | 改 skill 走文档纪律；不放业务代码 |
 | `.claude/skills/` | 指向 `.agents/skills/` 的软链 | 只维护软链 |
 | `docs/guides/` | 给人看的使用指南 | 给人读，不写 agent 行为规则 |
@@ -57,15 +57,15 @@
 
 | 用户意图 | skill | 职责 |
 |----------|-------|------|
-| 待做 task 还缺我什么 | `tasks-preflight` | 只读汇总缺口 |
-| 分析 backlog task 调度图并输出首批 | `tasks-schedule` | Agent 首次分析依赖/冲突并落盘；后续批次由 `task.py next-batch` 机械计算 |
+| 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
+| 分析 backlog task 调度图并输出首批 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；后续批次由 `task.py next-batch` 机械计算 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
-| 把待办转成 task | `pending-to-task` | 从 `docs/pending.md` 重建 task 并回写归档 |
-| 多个 backlog task 合并成一个 | `tasks-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 串行跑完待做 task | `tasks-run` | **串行**执行；每个 task 在自身 worktree 实施 |
+| 把待办转成 task | `task-from-pending` | 从 `docs/pending.md` 重建 task 并回写归档 |
+| 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
+| 串行跑完待做 task | `task-run` | **串行**执行；每个 task 在自身 worktree 实施 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
-| 清理缓存/无用文件 | `repo-clean` | 默认 dry-run |
+| 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
 
 ### `scripts/task.py` 使用示例
 

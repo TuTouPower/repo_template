@@ -1,10 +1,10 @@
 ---
-name: repo-clean
+name: repo-cleanup
 description: none
 disable-model-invocation: true
 ---
 
-# repo-clean
+# repo-cleanup
 
 删仓库内**明确无用**的文件系统垃圾（缓存、OS/编辑器垃圾、点名的运行产物）。默认只列清单；确认后再删。文档归档用 `repo-hygiene`，不用本 skill。
 
@@ -64,7 +64,7 @@ disable-model-invocation: true
 3. **dry-run 输出**（到此结束，不删）：
 
    ```markdown
-   ## repo-clean 预览（未删除）
+   ## repo-cleanup 预览（未删除）
 
    模式：dry-run
    类别：…
@@ -74,7 +74,7 @@ disable-model-invocation: true
    | ./tests/unit/__pycache__/ | pycache | 目录 |
 
    合计：N 项
-   下一步：确认后 `/repo-clean apply`（或带类别）。
+   下一步：确认后 `/repo-cleanup apply`（或带类别）。
    ```
 
 4. **apply 删除**（仅本次调用含 `apply`）：
@@ -89,7 +89,7 @@ disable-model-invocation: true
 5. **汇报**：
 
    ```markdown
-   ## repo-clean 结果
+   ## repo-cleanup 结果
 
    模式：apply / dry-run
    已删除：

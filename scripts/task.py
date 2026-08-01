@@ -1902,7 +1902,7 @@ def cmd_drop(args):
     if references:
         sys.exit(
             f"{args.tid} 仍被调度图引用：{', '.join(references)}；"
-            "先清理引用或重跑 tasks-schedule"
+            "先清理引用或重跑 task-schedule"
         )
     _close_task(args, "dropped", f"dropped: {args.reason}")
 

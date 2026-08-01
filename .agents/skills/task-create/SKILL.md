@@ -6,16 +6,16 @@ disable-model-invocation: true
 
 # task-create
 
-把**用户需求**拆成合格 **backlog** task。规则见 `AGENTS.md`；`task-bug` / `pending-to-task` 建 task 的落盘步骤也以本 skill 为准。
+把**用户需求**拆成合格 **backlog** task。规则见 `AGENTS.md`；`task-bug` / `task-from-pending` 建 task 的落盘步骤也以本 skill 为准。
 
 ## 不用本 skill 的场景
 
 | 场景 | 用 |
 |------|-----|
 | 修 bug、复现、根因、补测分析 | `task-bug` |
-| 把待办转成 task | `pending-to-task` |
-| 执行实施 | `tasks-run` |
-| 只查缺什么资源 | `tasks-preflight` |
+| 把待办转成 task | `task-from-pending` |
+| 执行实施 | `task-run` |
+| 只查缺什么资源 | `task-preflight` |
 
 ## 步骤
 
@@ -36,15 +36,15 @@ disable-model-invocation: true
       - **契约区**：范围、非范围、行为 AC（非空）、可测试性声明。版本号/库/目录不进 AC；需部署或人工验证的 AC 加 `[deploy]`。
       - **上下文区**：有意不测、测试策略、未知契约清单、风险与回退、依赖与约束、finalization 更新的 blueprint。未知契约须分类：只有用户或外部环境能核实的标 `UNVERIFIED-BLOCKING`；agent 可在执行期实验核实的标 `UNVERIFIED-SPIKE`；禁止裸 `UNVERIFIED`。
       - 契约区执行期不改；上下文区执行期可补。
-   4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 留空（`tasks-run` Step 1 实写）。
-      **不预测实施步骤**——创建期未读代码，写出来的步骤执行时必然失准；步骤由 `tasks-run` 边做边记进「实施笔记」。
+   4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 留空（`task-run` Step 1 实写）。
+      **不预测实施步骤**——创建期未读代码，写出来的步骤执行时必然失准；步骤由 `task-run` 边做边记进「实施笔记」。
 
 4. **逐 task 自检**：
    - AC 可验收，`spec.md` / `task.md` 无残留 `{...}` 占位符。
    - 每个 task 填写完成后运行 `python3 scripts/task.py preflight {tid} --allow-backlog`；全部 `preflight=PASS` 才能进入统一询问提交。
 
 5. **未知契约分类**：
-   - task 需要先做实验确认的事项（新 major、非标准 provider、协议兼容、平台差异、性能或工具行为），写进「未知契约清单」并标 `UNVERIFIED-SPIKE`。不在创建期写生产代码，留给 `tasks-run` Step 1 实验。
+   - task 需要先做实验确认的事项（新 major、非标准 provider、协议兼容、平台差异、性能或工具行为），写进「未知契约清单」并标 `UNVERIFIED-SPIKE`。不在创建期写生产代码，留给 `task-run` Step 1 实验。
    - 只有用户或外部环境能核实的事项标 `UNVERIFIED-BLOCKING`；task 可保持 backlog，但核实前 `start` 必须失败。
    - 核实后删除标记，改写为结论与验证方式；裸 `UNVERIFIED` 视为格式错误。
 
@@ -57,4 +57,4 @@ disable-model-invocation: true
 
 ## 完成
 
-backlog 已就绪，未 start。下一步 `tasks-run`（或先 `tasks-preflight`）。
+backlog 已就绪，未 start。下一步 `task-run`（或先 `task-preflight`）。

@@ -1,10 +1,10 @@
 ---
-name: pending-to-task
+name: task-from-pending
 description: none
 disable-model-invocation: true
 ---
 
-# pending-to-task
+# task-from-pending
 
 把 `docs/pending.md` 里该做未做的普通待办（非 bug）转成 backlog task。
 
@@ -16,7 +16,7 @@ disable-model-invocation: true
 
 1. **读总账**（只读）：
    - `docs/pending.md` **「待办」节**中 `- 处理：未开` 的普通待办条目——**主要来源**（bug 条目由 `task-bug` 处理；「不办」节条目用户已确认暂搁，不自动捞，见边界）。
-   - 补扫尚未登记进总账的项（登记本应由 `tasks-run` 收尾完成，此处扫漏）：
+   - 补扫尚未登记进总账的项（登记本应由 `task-run` 收尾完成，此处扫漏）：
      - 按登记 worktree → 未合并 task 分支链尾 ref → main 的优先级读取 task；检查各有效来源 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
      - `review_code.md` / `review_test.md` / `review_general.md` 中仍开放的 important/critical
      - `docs/handoff.md` 末段待办
@@ -45,7 +45,7 @@ disable-model-invocation: true
 
 ## 边界
 
-- 新建时不写生产代码；编码与补测方向写进 spec 上下文区，等 `tasks-run`。
+- 新建时不写生产代码；编码与补测方向写进 spec 上下文区，等 `task-run`。
 - 不把「已 done 且仅文档考古」无差别全建成 task。
 - 条目核实后判断不存在或已过时，不建 task；直接闭环归档即可。
 - 未修 bug 交给 `task-bug`；已验证的技术发现属 `docs/findings.md`，不是待办，不转 task。
@@ -53,4 +53,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：核实后仍有效的条目、新建 tid、合并的条目列表、判断已不存在的条目（已闭环）、跳过（已有）列表、建议 `tasks-run` 顺序。
+汇报：核实后仍有效的条目、新建 tid、合并的条目列表、判断已不存在的条目（已闭环）、跳过（已有）列表、建议 `task-run` 顺序。

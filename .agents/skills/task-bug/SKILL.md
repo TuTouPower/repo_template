@@ -32,7 +32,7 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
 6. **建修复 task**。产品缺陷或测试假绿已确认后，链式调用 `task-create`：
    - spec 上下文区用结构化 `来源` 字段写 `pNNN`；
    - 写清根因、补测方向、风险与回退；
-   - task 保持 `backlog`，生产修复交给 `tasks-run`；
+   - task 保持 `backlog`，生产修复交给 `task-run`；
    - 环境或配置问题无需改仓库时，不建修复 task，保留 `pNNN` 并汇报所需外部动作。
 
 7. **询问提交 bug 总账**。`task-create` 已批量提交 task 目录与派生 index；这里只列出 `docs/pending.md` 待办节。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
@@ -41,7 +41,7 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
 
 - 复现/探索代码**只许** `.scratch/`；禁止写未 ignore 路径（`src/` `tests/` `scripts/` 等）。
 - 不 `start`，不做生产修复；修复 task 只按 `task-create` 落盘。
-- 后续编码走 `tasks-run`；环境或配置问题按第 6 步汇报外部动作。
+- 后续编码走 `task-run`；环境或配置问题按第 6 步汇报外部动作。
 
 ## 完成
 

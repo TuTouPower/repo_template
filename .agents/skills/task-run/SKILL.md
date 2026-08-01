@@ -1,10 +1,10 @@
 ---
-name: tasks-run
+name: task-run
 description: none
 disable-model-invocation: true
 ---
 
-# tasks-run
+# task-run
 
 串行执行待做 task，直到固定队列完成或必须停。状态机、blocked、目录权责等权威规则见 `AGENTS.md`；门禁数字见本 skill；本 skill 定义链式分支与批次操作顺序。
 

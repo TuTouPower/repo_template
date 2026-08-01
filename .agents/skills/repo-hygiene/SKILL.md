@@ -32,7 +32,7 @@ disable-model-invocation: true
    - `docs/handoff.md`、`docs/pending.md`、`docs/findings.md`、`docs/guides/`、`docs/reviews/review_*/`、根目录杂散 md、明显草案。
    - `docs/archive/pending.md`、`docs/archive/handoff.md` 是否已存在（只追加，不截断）。
 
-2. **pending**（补迁：`tasks-run` 收尾本应已迁；此处扫漏）：
+2. **pending**（补迁：`task-run` 收尾本应已迁；此处扫漏）：
    - 未闭环（`- 处理：未开` 或等价）→ 留在 `docs/pending.md`。
    - 已闭环（`- 处理：tXXX` 或明确外部动作说明）→ 用 `scripts/pending.py archive` 批量迁入 `docs/archive/pending.md`「## 已处理待办」节：
      ```bash
@@ -45,7 +45,7 @@ disable-model-invocation: true
    - **「不办」节条目保留不动**（`- 处理：不办` 属暂搁，非闭环，禁止迁 archive）；用户显式确认彻底放弃或复活闭环后才按对应规则处理。
    - 不改写条目历史字段；脚本迁移时保持原标题与 bullet 原文（仅 `- 处理:` 字段按 `--fix-ref` 改写）。
    - 不把「看起来过时」但未标闭环的条目静默删掉；不确定则报告用户。
-   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`tasks-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/pending.py next` 取编号，再补登到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`- 来源` 写 finding_id 与原 tid。
+   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`task-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/pending.py next` 取编号，再补登到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`- 来源` 写 finding_id 与原 tid。
    - **扫 findings 漏抽**：`docs/archive/spikes/` 中已归档但结论未进 `docs/findings.md` 的 spike → 报告用户，由用户确认后补抽（不自行判断哪条结论值得留）。
 
 3. **handoff**：

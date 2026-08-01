@@ -1,10 +1,10 @@
 ---
-name: tasks-merge
+name: task-merge
 description: none
 disable-model-invocation: true
 ---
 
-# tasks-merge
+# task-merge
 
 把范围重叠或拆得过细的 **backlog** task 合并成一个。
 
@@ -43,7 +43,7 @@ disable-model-invocation: true
 
    标题仍贴切时可只 `--note-append`。随后读取全部 backlog task 的 `depends_on` / `conflicts_with`：
    - 每个引用源 tid 的 task，分别用 `--depends-remove {源tid}` / `--conflicts-remove {源tid}` 清除失效边，并同时设置 `--schedule-status pending_clarification`；冲突移除由脚本同步反向边。
-   - 目标 task、所有被清边的 task 均保持 `pending_clarification`，不猜测合并后依赖或冲突；合并结束后须重跑 `/tasks-schedule`。
+   - 目标 task、所有被清边的 task 均保持 `pending_clarification`，不猜测合并后依赖或冲突；合并结束后须重跑 `/task-schedule`。
    - 禁止直接编辑 front matter。任一引用无法通过 `task.py edit` 清除时停止，不进入 drop。
 
 6. **处置源 task**（目标之外的每个）：
@@ -66,4 +66,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `tasks-run`（或先 `tasks-preflight`）。
+汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `task-run`（或先 `task-preflight`）。

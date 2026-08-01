@@ -16,7 +16,7 @@
   general_verdict=PASS|FAIL|MISSING    # single 才有
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
-  max_review_round=N      # 默认 5，与 tasks-run 的 max_review_round 默认一致
+  max_review_round=N      # 默认 5，与 task-run 的 max_review_round 默认一致
   withdraw_rate=0.NN
   prompt_hint=...       # 撤回率超阈值时的下一轮 prompt 附加要求
 """

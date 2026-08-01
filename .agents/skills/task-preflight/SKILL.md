@@ -1,10 +1,10 @@
 ---
-name: tasks-preflight
+name: task-preflight
 description: none
 disable-model-invocation: true
 ---
 
-# tasks-preflight
+# task-preflight
 
 只读，不修改任何文件。查待做 task 还需用户提供什么。
 
@@ -66,7 +66,7 @@ disable-model-invocation: true
 
    不算缺口：读代码/文档能搞定的；agent 可装可查且不违硬约束的。
 
-   每条标严重度：**阻塞**（缺它 `/tasks-run` 跑不下去）/ **可后补**（能开干但某条 AC 或上线会缺）。
+   每条标严重度：**阻塞**（缺它 `/task-run` 跑不下去）/ **可后补**（能开干但某条 AC 或上线会缺）。
 
 4. **输出缺口表**：
 
@@ -84,16 +84,16 @@ disable-model-invocation: true
    - t009：status=done，非待做
 
    结论：
-   - 有阻塞：先补齐「是」的行，再 /tasks-run
-   - 或：无阻塞；执行请 /tasks-run（参数可与本次一致）
+   - 有阻塞：先补齐「是」的行，再 /task-run
+   - 或：无阻塞；执行请 /task-run（参数可与本次一致）
    ```
 
 ## 边界
 
 - 只读：不改代码、测试、task 状态、环境。`task.py preflight`、`list/show --ref` 只读不写。
 - 不把 main 中被 worktree或未合并链覆盖的旧 backlog 当成待启动 task。
-- 不自动执行 `tasks-run`；无阻塞时只**提示**用户可自行 `/tasks-run`。
+- 不自动执行 `task-run`；无阻塞时只**提示**用户可自行 `/task-run`。
 
 ## 完成
 
-输出缺口表 + 结论。有阻塞→先补齐再 run；无→提示 `/tasks-run`。
+输出缺口表 + 结论。有阻塞→先补齐再 run；无→提示 `/task-run`。
