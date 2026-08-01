@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 import secrets
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -28,14 +29,29 @@ from typing import Any
 TOKEN_TTL_SECONDS = 600  # 10 分钟
 STATE_PATH = Path(__file__).resolve().parent.parent / "state" / "merge_tokens.json"
 TOKEN_COMMENT_RE = re.compile(r"#\s*merge-token\s*=\s*([0-9a-fA-F]+)\b", re.IGNORECASE)
-GIT_MERGE_TARGET_RE = re.compile(
-    r"(?:^|\s)git\s+merge(?:\s+(?P<target>[A-Za-z0-9_./@:-]+))?\s*$",
-    re.IGNORECASE,
-)
+# 命令边界匹配 git merge：行首或换行 / ; / & / | 之后，避免引号内文本误判。
+# 不锚定命令尾，复合命令（`git merge X && git push`）同样纳入授权。
+GIT_MERGE_RE = re.compile(r"(?:^|[\n;&|]\s*)git\s+merge\b", re.IGNORECASE)
 GH_PR_MERGE_RE = re.compile(
     r"(?:^|\s)gh\s+(?:pr\s+)?merge\b",
     re.IGNORECASE,
 )
+
+
+def _git_merge_target(command: str) -> str:
+    """取 `git merge` 后第一个非选项、非注释参数作为 target key。"""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    for index, token in enumerate(tokens):
+        if token == "git" and index + 1 < len(tokens) and tokens[index + 1] == "merge":
+            for following in tokens[index + 2:]:
+                if following.startswith("-") or following.startswith("#"):
+                    continue
+                return following.strip('"\'')
+            return "unspecified"
+    return "unspecified"
 
 
 def allow() -> None:
@@ -79,11 +95,8 @@ def detect_merge(command: str) -> tuple[str, str] | None:
     命令的归一化文本（PR 号/URL 可能出现在多种位置，整条命令作键更稳）。
     非 merge 返回 None。
     """
-    if GIT_MERGE_TARGET_RE.search(command):
-        m = GIT_MERGE_TARGET_RE.search(command)
-        target = (m.group("target") if m else "").strip().strip('"\'')
-        target = target or "unspecified"
-        return ("git-merge", f"git-merge:{target}")
+    if GIT_MERGE_RE.search(command):
+        return ("git-merge", f"git-merge:{_git_merge_target(command)}")
     if GH_PR_MERGE_RE.search(command):
         return ("gh-pr-merge", f"gh-pr-merge:{compact(command, 120)}")
     return None
