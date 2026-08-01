@@ -2,8 +2,8 @@
 """pending.py - pending 编号只读分配 + 闭环归档入口。
 
 用法：
-  python3 scripts/pending.py next
-  python3 scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012 [--write]
+  python3 scripts/repo_template/pending.py next
+  python3 scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012 [--write]
 
 `next` 扫描所有本地分支 git 树 + 所有 worktree 工作区的 docs/pending.md 与
 docs/archive/pending.md，取全局最大 pNNN 编号加一。不写文件、不预留编号。
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, scan_max_id
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENTRY_RE = re.compile(r"^ {0,3}###[ \t]+p([0-9]{3,})(?=[ \t]|$)")
 REL_PATHS = ("docs/pending.md", "docs/archive/pending.md")
 PENDING_PATH = REPO_ROOT / "docs/pending.md"

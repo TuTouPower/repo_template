@@ -43,7 +43,7 @@ disable-model-invocation: true
 - **业务与契约正文**：`src/`、`tests/`、`schemas/`、`config/` 下的源码、测试、契约与配置（**不是**类别表里的垃圾名）。  
   类别表命中的垃圾**可清**，即使落在这些目录下（如 `src/**/__pycache__/`、`tests/**/.pytest_cache/`）。
 - `docs/` 下除 OS/编辑器垃圾文件名以外的一切（含 task 文档、specs、handoff/pending/findings）
-- `scripts/` 入库脚本；`.agents/`、`.claude/` skill 与软链
+- `scripts/` 与 `scripts/repo_template/` 入库脚本；`.agents/`、`.claude/` skill 与软链
 - `AGENTS.md`、`README.md`、`CLAUDE.md`、`.gitignore`
 - `docs/archive/tasks_audit.log`
 - task worktree（`../{repo}_tNNN`）在仓库外，本 skill 不扫不删；正常完成后由 `task.py cleanup-worktree` 从主仓清理，active/blocked worktree 保留

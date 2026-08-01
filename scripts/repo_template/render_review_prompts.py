@@ -7,9 +7,9 @@ reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 pr
 契约区自 diff_anchor 后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
 
 用法：
-  python3 scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
-  python3 scripts/render_review_prompts.py --task docs/tasks/t001_my_slug/task.md
-  python3 scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
+  python3 scripts/repo_template/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
+  python3 scripts/repo_template/render_review_prompts.py --task docs/tasks/t001_my_slug/task.md
+  python3 scripts/repo_template/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
 
 必填 front matter：tid, slug, diff_anchor
 可选：spec_path（默认 <task_dir>/spec.md）、review_level
@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
 PLACEHOLDER_RE = re.compile(
     r"\{(tid|slug|spec_path|task_dir|diff_anchor|review_level|contract_section|context_section)\}"

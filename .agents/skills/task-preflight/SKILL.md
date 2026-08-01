@@ -23,15 +23,15 @@ disable-model-invocation: true
 
 1. **建立状态视图**。main 在链式批次期间可能仍显示旧 backlog；按以下优先级确定每个 tid 的有效状态与读取位置：
 
-   1. 登记 worktree：进入该 worktree，`scripts/task.py show {tid}`。
-   2. 未合并 task 分支链：列出分支并按 Git ancestry 找各链尾，在链尾执行 `scripts/task.py show/list --ref {branch}`。
+   1. 登记 worktree：进入该 worktree，`scripts/repo_template/task.py show {tid}`。
+   2. 未合并 task 分支链：列出分支并按 Git ancestry 找各链尾，在链尾执行 `scripts/repo_template/task.py show/list --ref {branch}`。
    3. main：只代表尚未进入链的 task 与已合并归档状态。
 
    ```bash
-   scripts/task.py list --status backlog
+   scripts/repo_template/task.py list --status backlog
    git worktree list --porcelain
    git branch --no-merged <default> --list 't[0-9]*_*'
-   scripts/task.py list --ref {chain_tail}
+   scripts/repo_template/task.py list --ref {chain_tail}
    ```
 
    多条链中同一 tid 出现冲突状态时列为阻塞性状态冲突，不猜。按输入范围合并去重、tid 升序；effective status 为 `done` / `dropped` 的记「跳过」。清单空且无跳过：回复「当前没有待做 task 需要 preflight」，结束。
@@ -40,10 +40,10 @@ disable-model-invocation: true
 
    | 有效状态 / 来源 | 命令 |
    |-----------------|------|
-   | main 中尚未进入链的 `backlog` | `scripts/task.py preflight {tid} --allow-backlog` |
-   | 链尾 ref 中等待后续 start 的 `backlog` | `scripts/task.py preflight {tid} --allow-backlog --ref {chain_tail}` |
-   | 登记 worktree 中的 `active` | 在该 worktree 执行 `scripts/task.py preflight {tid}` |
-   | 登记 worktree 中的 `blocked` | 在该 worktree 执行 `scripts/task.py preflight {tid}`，保留 blocked FAIL |
+   | main 中尚未进入链的 `backlog` | `scripts/repo_template/task.py preflight {tid} --allow-backlog` |
+   | 链尾 ref 中等待后续 start 的 `backlog` | `scripts/repo_template/task.py preflight {tid} --allow-backlog --ref {chain_tail}` |
+   | 登记 worktree 中的 `active` | 在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}` |
+   | 登记 worktree 中的 `blocked` | 在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}`，保留 blocked FAIL |
 
    `--ref` 只检查快照状态、spec 与 front matter，不检查 worktree 和当前脏改动；输出该警告属预期，不算用户缺口。机器门禁检查状态、spec 完整、工作区一致性与未知契约分类。`UNVERIFIED-BLOCKING`、裸 `UNVERIFIED` 和其它 FAIL 项直接进输出表，标「阻塞」；`UNVERIFIED-SPIKE` 只警告，属于执行期 Step 1 工作。
 

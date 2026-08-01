@@ -2,7 +2,7 @@
 """findings.py - findings 编号只读分配入口。
 
 用法：
-  python3 scripts/findings.py next
+  python3 scripts/repo_template/findings.py next
 
 扫描所有本地分支 git 树 + 所有 worktree 工作区的 docs/findings.md 与 docs/archive/findings.md，
 取全局最大 dNNN 编号加一。不写文件、不预留编号。
@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, scan_max_id
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENTRY_RE = re.compile(r"^ {0,3}##[ \t]+d([0-9]{3,})(?=[ \t]|$)")
 REL_PATHS = ("docs/findings.md", "docs/archive/findings.md")
 

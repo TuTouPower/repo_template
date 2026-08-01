@@ -12,11 +12,11 @@
 |------|------|----------|
 | `docs/specs_index.md` | 当前生效 spec 清单（在表即生效） | task 收尾时更新；废弃删除行 |
 | `docs/specs/<slug>.md` | 需求级 spec（按已完成 task 累积） | task 收尾时累积更新；废弃移入 `docs/archive/specs/` |
-| `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
+| `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/repo_template/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
-| `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
-| `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
+| `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/repo_template/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
+| `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending.md` | 待办与不办总账（统一 `pNNN`；「不办」节=用户确认暂搁，不迁 archive） | `task-bug` 登记 bug；`task-run` 收尾闭环迁 archive、遗留登「待办」节；`task-from-pending` 只捞「待办」节建 task；`repo-hygiene` 补迁漏项、不办节保留不动 |
 | `docs/findings.md` | 已验证的技术发现（跨 task 复用，`dNNN`） | 只追加与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -33,7 +33,9 @@
 | `docs_repo/` | **仅本模板仓**的设计笔记/复盘（非业务） | 不参与 task 状态机；**复制新项目时不得带入** |
 | `schemas/` | 跨服务接口契约 | 改契约走 task 流程 |
 | `config/` | 配置（默认 + 环境覆盖 + `.env.example`） | 仅 `.env.example` 入库；真值写本地 `.env` |
-| `src/` `tests/` `scripts/` `assets/` | 源码、测试、脚本、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
+| `src/` `tests/` `assets/` | 源码、测试、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
+| `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
+| `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py 等） | 仅模板演进时修改；随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
 | `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从干净主仓默认分支调用；首 task 基于主干，后续 task 基于上一 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；task commit 后从主仓清理 worktree并保留分支；本地 `.env` 软链回主仓 |
 
@@ -67,25 +69,25 @@
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
 
-### `scripts/task.py` 使用示例
+### `scripts/repo_template/task.py` 使用示例
 
 ```bash
-python3 scripts/task.py --help                  # 显示完整子命令与参数
-python3 scripts/task.py list                    # 当前工作区所有 task
-python3 scripts/task.py list --status backlog   # 按状态过滤
-python3 scripts/task.py show t001               # 当前工作区某 task 详情
-python3 scripts/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
-python3 scripts/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查链中 backlog
-python3 scripts/task.py start t002 --base t001_x # 从上一已完成 task 分支启动
-python3 scripts/task.py cleanup-worktree t001    # task commit 后清理 worktree，保留分支
-python3 scripts/task.py edit t001 --title "新标题" --review-level single
-python3 scripts/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
-python3 scripts/task.py next-batch --done t11,t012 13 # 宽松解析已完成 task，机械计算下一批
-python3 scripts/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
-python3 scripts/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
-scripts/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN
-scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012           # dry-run：拟迁闭环条目到 archive
-scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write   # 落盘迁移（拒迁「不办」节）
+python3 scripts/repo_template/task.py --help                  # 显示完整子命令与参数
+python3 scripts/repo_template/task.py list                    # 当前工作区所有 task
+python3 scripts/repo_template/task.py list --status backlog   # 按状态过滤
+python3 scripts/repo_template/task.py show t001               # 当前工作区某 task 详情
+python3 scripts/repo_template/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
+python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查链中 backlog
+python3 scripts/repo_template/task.py start t002 --base t001_x # 从上一已完成 task 分支启动
+python3 scripts/repo_template/task.py cleanup-worktree t001    # task commit 后清理 worktree，保留分支
+python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
+python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
+python3 scripts/repo_template/task.py next-batch --done t11,t012 13 # 宽松解析已完成 task，机械计算下一批
+python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
+python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
+scripts/repo_template/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN
+scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012           # dry-run：拟迁闭环条目到 archive
+scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write   # 落盘迁移（拒迁「不办」节）
 ```
 
 ## 文档规范

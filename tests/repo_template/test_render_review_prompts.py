@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import pytest

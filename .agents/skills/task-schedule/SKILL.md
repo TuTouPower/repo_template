@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-schedule
 
-首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用纯脚本输出第一批。后续批次直接运行 `scripts/task.py next-batch --done ...`，无需再次调用本 skill。
+首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用纯脚本输出第一批。后续批次直接运行 `scripts/repo_template/task.py next-batch --done ...`，无需再次调用本 skill。
 
 ## 输入
 
@@ -22,12 +22,12 @@ disable-model-invocation: true
 1. **建有效状态基线**。
 
    ```bash
-   scripts/task.py list --status backlog
+   scripts/repo_template/task.py list --status backlog
    git worktree list --porcelain
    git branch --no-merged <default> --list 't[0-9]*_*'
    ```
 
-   `<default>` 与 `scripts/task.py` 的 `default_branch()` 一致。状态优先级：登记 worktree → 未合并 task 分支 ref → main → archive。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/task.py list/show --ref {branch}` 和 Git ancestry 归并链尾。main 中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
+   `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。状态优先级：登记 worktree → 未合并 task 分支 ref → main → archive。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 和 Git ancestry 归并链尾。main 中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
 
    ```bash
    git diff --name-status -M -C <default>...{branch}
@@ -60,7 +60,7 @@ disable-model-invocation: true
 5. **落盘**。禁止直接编辑 `task.md` 或 index。对判断完整的每个候选执行一次完整覆盖：
 
    ```bash
-   scripts/task.py edit {tid} \
+   scripts/repo_template/task.py edit {tid} \
      --depends-on "t001,t003" \
      --conflicts-with "t006,t008" \
      --schedule-status scheduled
@@ -69,7 +69,7 @@ disable-model-invocation: true
    无依赖/冲突时对应参数传空字符串。无法判断时只执行：
 
    ```bash
-   scripts/task.py edit {tid} --schedule-status pending_clarification
+   scripts/repo_template/task.py edit {tid} --schedule-status pending_clarification
    ```
 
    若新冲突指向非可编辑 backlog，`edit` 会拒绝反向边写入；该候选改标 `pending_clarification`，报告阻断来源，不绕过状态机。
@@ -77,7 +77,7 @@ disable-model-invocation: true
 6. **校验并输出首批**。
 
    ```bash
-   scripts/task.py next-batch
+   scripts/repo_template/task.py next-batch
    ```
 
    `invalid_graph` 时按错误中 tid 修正调度字段后重跑；禁止绕过。成功时原样保留脚本固定输出，另用一句话报告本次已调度、待澄清、跳过 tid。
@@ -93,4 +93,4 @@ disable-model-invocation: true
 
 ## 完成
 
-报告：已写图 tid、待澄清/跳过 tid；随后原样输出 `scripts/task.py next-batch` 结果。
+报告：已写图 tid、待澄清/跳过 tid；随后原样输出 `scripts/repo_template/task.py next-batch` 结果。

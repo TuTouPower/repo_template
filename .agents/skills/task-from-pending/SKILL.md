@@ -21,7 +21,7 @@ disable-model-invocation: true
      - `review_code.md` / `review_test.md` / `review_general.md` 中仍开放的 important/critical
      - `docs/handoff.md` 末段待办
      - 用户点名的目录或 diff
-   - 扫到未登记项：先运行 `scripts/pending.py next` 取编号，补进 `docs/pending.md`（按普通或 bug 模板选；`- 来源` 写 finding_id 或原 tid），再走下面流程。总账是唯一入口，不绕过。
+   - 扫到未登记项：先运行 `scripts/repo_template/pending.py next` 取编号，补进 `docs/pending.md`（按普通或 bug 模板选；`- 来源` 写 finding_id 或原 tid），再走下面流程。总账是唯一入口，不绕过。
 
 2. **核实条目**（必做，不是可选）。pending 里的描述可能过时、片面或记错——登记时的情况跟现在不一样是常态。对每条候选：
    - 读当前代码确认「这个问题现在还在吗」；不在 → 标闭环（`- 处理：已验证不存在`），不走 task
@@ -37,7 +37,7 @@ disable-model-invocation: true
 
 4. **确认范围**。候选多、含争议、或评估后判断条目不重要时，向用户呈核实结论（现在还在不在、影响、建议）并确认；用户已说「全部捞」则全建非重复、仍有效的项。
 
-5. **每个确认项落盘**（按 `task-create` 流程，链式调用）。必须先用 `scripts/task.py add` 复制完整模板，禁止手写简化版 `spec.md` / `task.md` 骨架；填写后通过 `task-create` 规定的 backlog preflight。spec 上下文区写清来源 `pNNN` / finding_id / 原 tid + 核实结论（什么时候核实、核实结果）。
+5. **每个确认项落盘**（按 `task-create` 流程，链式调用）。必须先用 `scripts/repo_template/task.py add` 复制完整模板，禁止手写简化版 `spec.md` / `task.md` 骨架；填写后通过 `task-create` 规定的 backlog preflight。spec 上下文区写清来源 `pNNN` / finding_id / 原 tid + 核实结论（什么时候核实、核实结果）。
 
 6. **回写总账**。每个已建 task 的条目：`- 处理：未开` 改为 `- 处理：{tid}`，**整条**移入 `docs/archive/pending.md`「已处理待办」节。条目留在总账里等于没转。
 

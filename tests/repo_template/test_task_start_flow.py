@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "tasks" / "task_template"
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
+TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent.parent / "docs" / "tasks" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import task as task_mod
@@ -57,8 +57,8 @@ def git_repo(tmp_path, monkeypatch):
     scripts = repo / "scripts"
     tasks.mkdir(parents=True)
     archive.mkdir(parents=True)
-    scripts.mkdir()
-    shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
+    (scripts / "repo_template").mkdir(parents=True)
+    shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "repo_template" / "task.py")
     shutil.copytree(TASK_TEMPLATE_DIR, template)
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         task_dir = tasks / f"{tid}_{slug}"
@@ -104,7 +104,7 @@ def _start(repo, tid="t001", base=None):
 
 def _task_cli(repo, *args):
     return subprocess.run(
-        [sys.executable, str(repo / "scripts" / "task.py"), *args],
+        [sys.executable, str(repo / "scripts" / "repo_template" / "task.py"), *args],
         cwd=repo,
         capture_output=True,
         text=True,

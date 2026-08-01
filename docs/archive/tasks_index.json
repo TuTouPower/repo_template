@@ -1,5 +1,5 @@
 {
-    "generated_by": "scripts/task.py",
+    "generated_by": "scripts/repo_template/task.py",
     "authority": "docs/archive/tasks/{tid}_{slug}/task.md front matter",
     "workspace": ".",
     "tasks": []

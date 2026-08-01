@@ -23,7 +23,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **盘点**（只读）：
-   - task 状态按登记 worktree → 未合并 task 分支链尾 ref → main 盘点：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/task.py list/show --ref` 只读核对有效状态与目录。main 中被 worktree或链尾覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应 main 已合并状态；内容错误时留到步骤 5 处理。
+   - task 状态按登记 worktree → 未合并 task 分支链尾 ref → main 盘点：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/repo_template/task.py list/show --ref` 只读核对有效状态与目录。main 中被 worktree或链尾覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应 main 已合并状态；内容错误时留到步骤 5 处理。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`
@@ -34,18 +34,18 @@ disable-model-invocation: true
 
 2. **pending**（补迁：`task-run` 收尾本应已迁；此处扫漏）：
    - 未闭环（`- 处理：未开` 或等价）→ 留在 `docs/pending.md`。
-   - 已闭环（`- 处理：tXXX` 或明确外部动作说明）→ 用 `scripts/pending.py archive` 批量迁入 `docs/archive/pending.md`「## 已处理待办」节：
+   - 已闭环（`- 处理：tXXX` 或明确外部动作说明）→ 用 `scripts/repo_template/pending.py archive` 批量迁入 `docs/archive/pending.md`「## 已处理待办」节：
      ```bash
      # dry-run 先看拟定改动
-     python3 scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012
+     python3 scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012
      # 确认后落盘
-     python3 scripts/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write
+     python3 scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write
      ```
      脚本整条从 `docs/pending.md` 删除、整条追加到 archive；`--fix-ref` 必传，统一改写 `- 处理:` 字段为指定 tid；「不办」节条目脚本自动拒迁；缺号、重复归档、缺 `- 处理:` 字段均报错。单条手工迁移也可直接编辑两文件，遵循下方规则。
    - **「不办」节条目保留不动**（`- 处理：不办` 属暂搁，非闭环，禁止迁 archive）；用户显式确认彻底放弃或复活闭环后才按对应规则处理。
    - 不改写条目历史字段；脚本迁移时保持原标题与 bullet 原文（仅 `- 处理:` 字段按 `--fix-ref` 改写）。
    - 不把「看起来过时」但未标闭环的条目静默删掉；不确定则报告用户。
-   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`task-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/pending.py next` 取编号，再补登到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`- 来源` 写 finding_id 与原 tid。
+   - **扫遗留漏登**：已归档 task 的处置表中 `status=遗留` 但 `fix_ref` 为空的行（`task-run` 收尾应已登记，此处扫漏）→ 先运行 `scripts/repo_template/pending.py next` 取编号，再补登到 `docs/pending.md`「待办」节（按普通或 bug 模板选），`- 来源` 写 finding_id 与原 tid。
    - **扫 findings 漏抽**：`docs/archive/spikes/` 中已归档但结论未进 `docs/findings.md` 的 spike → 报告用户，由用户确认后补抽（不自行判断哪条结论值得留）。
 
 3. **handoff**：

@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-REPO_ROOT = SCRIPTS_DIR.parent
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
+REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from task import parse_front_matter, validate_task_documents

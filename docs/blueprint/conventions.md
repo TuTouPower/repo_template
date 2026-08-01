@@ -7,11 +7,11 @@
 - `AGENTS.md`、`CLAUDE.md`、`README.md` 是工具入口例外。
 - task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding / worktree：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`、`../{repo}_{tid}`。
 - spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
-- 总账编号：`docs/pending.md`（含「待办」「不办」两节）所有条目统一使用 `pNNN`；新增条目前用 `scripts/pending.py next` 扫描所有本地分支 git 树 + 所有 worktree 工作区的 `docs/pending.md` 与 `docs/archive/pending.md`，共享全局序列，历史编号不复用；不维护 pending index。`docs/findings.md` 用 `dNNN`，`scripts/findings.py next` 同法扫描，递增不复用。
+- 总账编号：`docs/pending.md`（含「待办」「不办」两节）所有条目统一使用 `pNNN`；新增条目前用 `scripts/repo_template/pending.py next` 扫描所有本地分支 git 树 + 所有 worktree 工作区的 `docs/pending.md` 与 `docs/archive/pending.md`，共享全局序列，历史编号不复用；不维护 pending index。`docs/findings.md` 用 `dNNN`，`scripts/repo_template/findings.py next` 同法扫描，递增不复用。
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。
-- 例外：`docs/archive/tasks_audit.log` 使用 ISO8601 带时区（`2026-07-22T15:30:00+08:00`），机器 grep 友好；由 `scripts/task.py rewind`/`purge` 自动写入。
+- 例外：`docs/archive/tasks_audit.log` 使用 ISO8601 带时区（`2026-07-22T15:30:00+08:00`），机器 grep 友好；由 `scripts/repo_template/task.py rewind`/`purge` 自动写入。
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
 
 ## schema 类型落点

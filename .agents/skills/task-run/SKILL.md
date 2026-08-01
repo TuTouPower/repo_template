@@ -44,8 +44,8 @@ main
 
 开始或恢复前按以下优先级判断状态：
 
-1. 已登记 task worktree：进入该 worktree，用 `scripts/task.py show <tid>` 读 active/blocked 与未提交证据。
-2. 未合并 task 分支链：用 `scripts/task.py show/list --ref <branch>` 读累计状态。
+1. 已登记 task worktree：进入该 worktree，用 `scripts/repo_template/task.py show <tid>` 读 active/blocked 与未提交证据。
+2. 未合并 task 分支链：用 `scripts/repo_template/task.py show/list --ref <branch>` 读累计状态。
 3. main：只用于尚未进入链的 backlog task。
 
 链尾发现：列出未合并 main 的 `t[0-9]*_*` 本地分支，用 `git merge-base --is-ancestor` 比较本批候选分支。唯一不被其他候选包含的分支是链尾。存在多个互不为祖先的链尾时整批停止，列出分支与 HEAD，请用户选择；禁止自动选链、merge 或 rebase。
@@ -86,7 +86,7 @@ flowchart TD
     Q -->|是| APPROVE["整批一次合并审批"]
 ```
 
-开始或继续每个 task 时，先重新读仓库判断入口（worktree/链尾 ref 中的 `scripts/task.py show <tid>` + task 目录下 `spec.md` / `task.md` / `review_*.md` + 分支 + `git status` + `diff_anchor` + 测试与实施笔记）：
+开始或继续每个 task 时，先重新读仓库判断入口（worktree/链尾 ref 中的 `scripts/repo_template/task.py show <tid>` + task 目录下 `spec.md` / `task.md` / `review_*.md` + 分支 + `git status` + `diff_anchor` + 测试与实施笔记）：
 
 | 状态 / 证据 | 从哪继续 |
 |-------------|---------|
@@ -103,16 +103,16 @@ flowchart TD
 
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停本 task 及整批，先解决环境或走 spike，不盲目 start。
 2. 没有现成 active worktree时，在干净主仓默认分支执行 start：
-   - 批次首 task、无链尾：`scripts/task.py start <tid>`。
-   - 后续 task：`scripts/task.py start <tid> --base <上一 task 分支>`。
+   - 批次首 task、无链尾：`scripts/repo_template/task.py start <tid>`。
+   - 后续 task：`scripts/repo_template/task.py start <tid> --base <上一 task 分支>`。
    - `start` 不修改 main、不建 start commit；新 worktree 中 task.md 的 active 改动属于当前 task 执行 commit。
 3. 必须 `cd` 进新 worktree；后续 Step 1–7c 都在其中进行。
-4. 执行 `scripts/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
+4. 执行 `scripts/repo_template/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
    - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
 5. spec 契约区行为 AC 非空再继续（preflight 已查）。
 6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。需外部环境的 SPIKE 先查环境齐备性（key、代理、夹具）并做最小实测；未实测不得以「难验证」上报阻断，实测失败须附输出证据；优先走 spec 预留的保守回退方案，而非中断。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`。结论总结写入 `docs/findings.md`，报告留在 spike 目录。
-7. 将全部 `UNVERIFIED-SPIKE` 改写为验证结论与验证方式，再运行 `scripts/task.py preflight <tid> --require-verified`。严格门禁 PASS 后才可进入 Step 2。
+7. 将全部 `UNVERIFIED-SPIKE` 改写为验证结论与验证方式，再运行 `scripts/repo_template/task.py preflight <tid> --require-verified`。严格门禁 PASS 后才可进入 Step 2。
 
 ### Step 2：红
 
@@ -135,7 +135,7 @@ flowchart TD
 - 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
 - 渲染 prompt：
   ```bash
-  scripts/render_review_prompts.py \
+  scripts/repo_template/render_review_prompts.py \
     --task-dir docs/tasks/{tid}_{slug} \
     --out-dir .scratch/review_prompts
   ```
@@ -146,10 +146,10 @@ flowchart TD
 ### Step 6：处置
 
 - 处置表唯一落点：`task.md` → `## Review 处置`。`status` 仅：`已修` / `遗留` / `撤回`。
-- `status=遗留` 的内容不写 task.md：先运行 `scripts/pending.py next`，登记到 `docs/pending.md`「待办」节；`fix_ref` 填 `pNNN` 或已有 follow-up tid。
+- `status=遗留` 的内容不写 task.md：先运行 `scripts/repo_template/pending.py next`，登记到 `docs/pending.md`「待办」节；`fix_ref` 填 `pNNN` 或已有 follow-up tid。
 - 运行：
   ```bash
-  scripts/check_review_status.py \
+  scripts/repo_template/check_review_status.py \
     --task-dir docs/tasks/{tid}_{slug} \
     --max-review-round <N>
   ```
@@ -170,7 +170,7 @@ flowchart TD
 - 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
 - 写全 `task.md` 收尾报告；收尾报告不设遗留节，遗留在 `docs/pending.md`。
 - pending 闭环：相关条目标记当前 tid，整条从 `docs/pending.md` 移除并追加到 `docs/archive/pending.md`。
-- 顺手发现登记（必做）：实施/测试/黑盒中观察到、但不属本 task 范围且未修的疑似存量问题，不得只写 `task.md` 笔记——`task.md` 随 task 归档后这些发现无人跟踪。逐条盘点处置：已复现确认的 bug 链式走 `task-bug`（根因 + 补测 + 登记）；疑点或技术债按普通模板登记 `docs/pending.md`（先 `scripts/pending.py next` 取号）。已随本 task 修复或确认不成立的不登记。
+- 顺手发现登记（必做）：实施/测试/黑盒中观察到、但不属本 task 范围且未修的疑似存量问题，不得只写 `task.md` 笔记——`task.md` 随 task 归档后这些发现无人跟踪。逐条盘点处置：已复现确认的 bug 链式走 `task-bug`（根因 + 补测 + 登记）；疑点或技术债按普通模板登记 `docs/pending.md`（先 `scripts/repo_template/pending.py next` 取号）。已随本 task 修复或确认不成立的不登记。
 - 测试假绿专项（必做）：测试过程中发现疑似假绿（断言过弱、mock 掉被测逻辑、只测假路径、缺集成层导致测试通过但逻辑有误）的存量测试，同样必须登记——能定位根因的走 `task-bug` 补测分析，暂不能定位的按普通模板登记 `docs/pending.md` 并注明疑似假绿。不得在收尾报告里一笔带过。
 - 核对所有 `status=遗留` 行的 `fix_ref` 已指向 `pNNN` 或 follow-up tid。
 - 抽取可跨 task 复用的已验证事实到 `docs/findings.md`。
@@ -179,7 +179,7 @@ flowchart TD
 **7b finish（worktree 内）**：
 
 ```bash
-scripts/task.py finish <tid>
+scripts/repo_template/task.py finish <tid>
 ```
 
 `finish` 将 task 归档并清空归档 front matter 的 worktree 字段；物理 worktree 此时仍存在。
@@ -194,7 +194,7 @@ scripts/task.py finish <tid>
 
 ```bash
 cd <主仓>
-scripts/task.py cleanup-worktree <tid>
+scripts/repo_template/task.py cleanup-worktree <tid>
 ```
 
 - 清理后确认 worktree 已移除、task 分支保留。
@@ -224,7 +224,7 @@ scripts/task.py cleanup-worktree <tid>
      - 无冲突：merge 完成，进入步骤 2。
      - 有冲突：停下报告冲突文件；解决后 `git add` + `git commit` 完成 merge。无法解决则 `git merge --abort` 回退，链尾分支与 main 保持不变，报告失败由用户裁决，不盲目重试。
   2. 执行声明的合并后验证；失败则报告实际 merge 状态，不盲目重试或回退。
-  3. `scripts/task.py list --rebuild`。
+  3. `scripts/repo_template/task.py list --rebuild`。
   4. 只提交 `docs/tasks_index.json` 与 `docs/archive/tasks_index.json`，形成独立维护 commit。
   5. 再执行 `docs/blueprint/testing.md` 声明的合并后动作及验证。
 - 不自动删除 task 分支。

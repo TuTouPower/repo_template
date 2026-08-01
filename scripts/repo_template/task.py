@@ -54,7 +54,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
 
 ACTIVE_PATH = REPO_ROOT / "docs/tasks_index.json"
 ARCHIVE_PATH = REPO_ROOT / "docs/archive/tasks_index.json"
@@ -827,7 +827,7 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
     for path, rows, authority in groups:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "generated_by": "scripts/task.py",
+            "generated_by": "scripts/repo_template/task.py",
             "authority": authority,
             "workspace": _rel(REPO_ROOT) or str(REPO_ROOT),
             "tasks": rows,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from task import TaskDataError, _dependency_cycle, parse_done_tids

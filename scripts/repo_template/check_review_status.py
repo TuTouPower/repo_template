@@ -2,8 +2,8 @@
 """check_review_status.py - 读 review 报告与处置表，输出 verdict、回归轮次与撤回率（Step 6 处置用）。
 
 用法：
-  python3 scripts/check_review_status.py --task-dir docs/tasks/t001_foo
-  python3 scripts/check_review_status.py --task-dir docs/tasks/t001_foo --max-review-round 3
+  python3 scripts/repo_template/check_review_status.py --task-dir docs/tasks/t001_foo
+  python3 scripts/repo_template/check_review_status.py --task-dir docs/tasks/t001_foo --max-review-round 3
 
 按 front matter 的 review_level 自动选报告文件：
   full   → review_code.md + review_test.md（两轴）
@@ -25,7 +25,7 @@ import argparse
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
 ROUND_HEADER_RE = re.compile(r"^##\s+Round\s+([0-9]+)(?:\s|$)", re.MULTILINE)
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
