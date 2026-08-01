@@ -628,7 +628,10 @@ def validate_task_documents(
     visible_spec_lines = {line.strip() for line in _visible_markdown_lines(spec_text)}
     missing_lines = [line for line in SPEC_REQUIRED_LINES if line not in visible_spec_lines]
     if missing_lines:
-        problems.append(f"spec.md 缺 {len(missing_lines)} 条模板固定声明或引导语")
+        problems.append(
+            "spec.md 缺模板固定声明或引导语（需原样复制自模板，勿手抄）：\n  - "
+            + "\n  - ".join(missing_lines)
+        )
 
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
     if not acceptance or not re.search(
