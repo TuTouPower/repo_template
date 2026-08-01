@@ -29,20 +29,25 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
    - 线索：`.scratch/` 路径
    - 处理：未开
 
-6. **建修复 task**。产品缺陷或测试假绿已确认后，链式调用 `task-create`：
+6. **汇报根因，等待用户审批立项**。简明汇报根因机制与分类（第 3 步）、测试缺口结论（第 4 步）、影响范围与拟建修复 task 的范围，请用户批准立项。批准进入第 7 步；拒绝或暂缓则跳过第 7 步，直接进第 8 步提交 bug 总账（不建 task，保留 `pNNN`）。
+
+7. **建修复 task**（仅用户已批准立项）。产品缺陷或测试假绿已确认后，链式调用 `task-create`：
    - spec 上下文区用结构化 `来源` 字段写 `pNNN`；
    - 写清根因、补测方向、风险与回退；
    - task 保持 `backlog`，生产修复交给 `task-run`；
    - 环境或配置问题无需改仓库时，不建修复 task，保留 `pNNN` 并汇报所需外部动作。
 
-7. **询问提交 bug 总账**。`task-create` 已批量提交 task 目录与派生 index；这里只列出 `docs/pending.md` 待办节。用户同意后提交 bug 登记；`.scratch/` 已 ignore，不入 commit。
+8. **询问提交 bug 总账**。列出 `docs/pending.md` 待办节：
+   - 已批准立项：`task-create` 已批量提交 task 目录与派生 index；这里一并列出，用户同意后提交 bug 登记。
+   - 拒绝/暂缓：无 task；只提交 `docs/pending.md` 的 bug 登记。
+   `.scratch/` 已 ignore，不入 commit。
 
 ## 边界
 
 - 复现/探索代码**只许** `.scratch/`；禁止写未 ignore 路径（`src/` `tests/` `scripts/` 等）。
-- 不 `start`，不做生产修复；修复 task 只按 `task-create` 落盘。
-- 后续编码走 `task-run`；环境或配置问题按第 6 步汇报外部动作。
+- 不 `start`，不做生产修复；未获用户批准立项不建修复 task。
+- 后续编码走 `task-run`；环境或配置问题按第 7 步汇报外部动作。
 
 ## 完成
 
-汇报：`pNNN`、修复 task tid（若需仓库改动）、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，task 未 start。
+汇报：`pNNN`、修复 task tid（若用户批准立项且需仓库改动）、根因一句话、补测要点、`.scratch/` 线索路径。自检：生产树无修复 diff，task 未 start。
