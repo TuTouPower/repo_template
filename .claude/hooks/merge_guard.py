@@ -7,8 +7,8 @@
 1. 首次执行（命令无 `# merge-token=XXX`）：deny 并签发一次性 token，
    写入状态文件，把 token 与「需用户明确授权」提示注入 agent 上下文。
 2. agent 拿到用户授权后，重跑命令并在末尾追加 `# merge-token=XXX`。
-3. hook 校验 token：存在、未过期、未用过、绑定同一目标；通过则标记已用并 allow，
-   否则 deny。
+3. hook 校验 token：存在、未过期、未用过、绑定同一目标与命令；通过则标记已用并 allow，
+   否则回退到步骤 1 重新签发（失效 token 不卡死，agent 拿新 token 重新走授权流程）。
 
 token 单命令一次性，10 分钟过期，绑定到 merge 目标（branch 名 / PR 标识），
 防串用。
@@ -188,18 +188,19 @@ def main() -> None:
         allow()
     kind, target_key = detected
 
+    stale_reason = ""
     if token_match:
         ok, reason = verify_token(token_match.group(1), target_key, command_body)
         if ok:
             allow()
-        emit("deny", f"[Merge Guard] {reason}")
-        return
+        # token 失效（过期/已用/不匹配）：记录原因，重新签发并提示。
+        stale_reason = f"原 token 失效（{reason}）已废弃；"
 
     token = issue_token(target_key, command_body)
     message = (
         "[Merge Guard] merge 操作需用户明确授权。\n"
+        f"  {stale_reason}新 token：{token}\n"
         f"  目标：{target_key}\n"
-        f"  token：{token}\n"
         "  流程：向用户说明此次 merge 的目标与影响，得到用户明确同意后，"
         "在原命令末尾追加注释重跑：\n"
         f"    {compact(command_body)} # merge-token={token}\n"
