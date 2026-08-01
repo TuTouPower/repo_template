@@ -1047,7 +1047,7 @@ def test_view_dag_conflicts_and_groups(git_repo):
 
 
 def test_view_shows_active_conflict_block(git_repo):
-    """active task 与 backlog 冲突时，view 在「被 active 冲突阻塞」组列出双向箭头。"""
+    """冲突 task 未合入 main 前一直阻塞；合入 main 后才解冲突进下一批。"""
     for tid in ("t001", "t002"):
         result = _task_cli(
             git_repo, "edit", tid, "--schedule-status", "scheduled"
@@ -1065,12 +1065,20 @@ def test_view_shows_active_conflict_block(git_repo):
     assert "t002 ↔ t001" in active.stdout
 
     branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    # t001 done 但未合入 main：t002 仍被冲突阻塞
+    unmerged = _task_cli(git_repo, "view")
+    assert unmerged.returncode == 0, unmerged.stderr
+    assert "▸ 被 active 冲突阻塞" in unmerged.stdout
+    assert "t002 ↔ t001" in unmerged.stdout
+    assert "未入 main" in unmerged.stdout
+
+    # 合入 main 后 t001 进 main_done_set，t002 解冲突进下一批
+    _git(git_repo, "merge", "--ff-only", branch)
     completed = _task_cli(git_repo, "view")
     assert completed.returncode == 0, completed.stderr
-    # t001 done 后 t002 解冲突，进下一批
     assert "▸ 下一批可跑" in completed.stdout
     assert "t002" in completed.stdout
-    assert branch == "t001_alpha"
+    assert "未入 main" not in completed.stdout
 
 
 def test_view_handles_diamond_dependencies(git_repo):
@@ -1222,7 +1230,7 @@ def test_view_reports_pending_and_unscheduled(git_repo):
 
 
 def test_view_reads_historical_conflict_as_undirected(git_repo):
-    """单向冲突声明（历史脏数据）按无向处理：选其一进下一批，另一个不进。"""
+    """单向冲突声明（历史脏数据）按无向处理：双方互相阻塞，都进冲突组。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
     first["schedule_status"] = "scheduled"
@@ -1238,11 +1246,11 @@ def test_view_reads_historical_conflict_as_undirected(git_repo):
     result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    assert "▸ 下一批可跑" in result.stdout
-    # tid 升序优先选 t001；t002 与 t001 互斥不进下一批
-    next_batch_section = result.stdout.split("▸ 下一批可跑", 1)[1]
-    assert "t001" in next_batch_section
-    assert "t002" not in next_batch_section
+    # 双向冲突：t001 声明 t002，t002 反向继承；两者都未入 main，互相阻塞
+    assert "▸ 被 active 冲突阻塞" in result.stdout
+    assert "t001 ↔ t002" in result.stdout
+    assert "t002 ↔ t001" in result.stdout
+    assert "▸ 下一批可跑" not in result.stdout
 
 
 def test_view_rejects_dangling_and_dropped_references(git_repo):

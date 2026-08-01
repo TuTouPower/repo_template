@@ -1027,9 +1027,21 @@ def cmd_view(args):
                 "invalid_graph: schedule_status 非法 " + ",".join(invalid_schedule)
             )
 
-        done_set = {
+        # done 分两种语义：
+        # - main_done_set：已合入 main 的 done（scan_tasks 读当前工作区=main 视角），
+        #   用于解依赖/解冲突——只有前置真正入 main，下游才算可跑。
+        # - effective done（tasks 里 status=done）：含未合并分支的 done，仅计数展示。
+        main_tasks = {task["tid"]: task for task in scan_tasks()}
+        main_done_set = {
+            tid for tid, task in main_tasks.items() if task["status"] == "done"
+        }
+        effective_done_set = {
             tid for tid, task in tasks.items() if task["status"] == "done"
         }
+        unmerged_done = sorted(
+            effective_done_set - main_done_set, key=tid_sort_key
+        )
+        done_set = main_done_set  # 调度判断用 main 视角
         dropped_set = {
             tid for tid, task in tasks.items() if task["status"] == "dropped"
         }
@@ -1070,10 +1082,17 @@ def cmd_view(args):
                 for dep in sorted(missing_deps, key=tid_sort_key):
                     waiting_deps.append((dep, tid))
                 continue
-            # 检查 active 冲突
-            active_conflicts = sorted(conflicts[tid] & active_set, key=tid_sort_key)
-            if active_conflicts:
-                for peer in active_conflicts:
+            # 检查冲突：对手未合入 main（active/blocked/未合并分支 done）都算占用
+            unresolved_conflicts = sorted(
+                (
+                    peer for peer in conflicts[tid]
+                    if peer not in main_done_set
+                    and peer not in dropped_set
+                ),
+                key=tid_sort_key,
+            )
+            if unresolved_conflicts:
+                for peer in unresolved_conflicts:
                     blocked_conflicts.append((tid, peer))
                 continue
             ready.append(tid)
@@ -1133,7 +1152,15 @@ def cmd_view(args):
                 lines.append(f"    {tid}  {tasks[tid]['title']}")
 
         lines.append("")
-        lines.append(f"[已结束] done={len(done_set)}  dropped={len(dropped_set)}")
+        lines.append(
+            f"[已结束] done={len(main_done_set)}  dropped={len(dropped_set)}"
+        )
+        if unmerged_done:
+            lines.append(
+                f"  （{len(unmerged_done)} 个 done 在未合并分支，未入 main："
+                + " ".join(unmerged_done)
+                + "）"
+            )
 
         print("\n".join(lines))
     except TaskDataError as error:
