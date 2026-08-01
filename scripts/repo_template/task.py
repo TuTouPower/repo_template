@@ -1082,17 +1082,24 @@ def cmd_view(args):
                 for dep in sorted(missing_deps, key=tid_sort_key):
                     waiting_deps.append((dep, tid))
                 continue
-            # 检查冲突：对手未合入 main（active/blocked/未合并分支 done）都算占用
-            unresolved_conflicts = sorted(
-                (
-                    peer for peer in conflicts[tid]
-                    if peer not in main_done_set
-                    and peer not in dropped_set
-                ),
-                key=tid_sort_key,
-            )
-            if unresolved_conflicts:
-                for peer in unresolved_conflicts:
+            # 检查冲突：peer 真正占资源（active/blocked/未合 main 的 done）才阻塞；
+            # peer 是 backlog 时，序号小者优先，序号大者被序号小者阻塞（强制择一）。
+            blocking = []
+            for peer in conflicts[tid]:
+                if peer in main_done_set or peer in dropped_set:
+                    continue
+                peer_status = tasks[peer]["status"]
+                if peer_status in ("active", "blocked"):
+                    blocking.append(peer)
+                elif peer_status == "done":
+                    # 未合 main 的 done：占住资源，阻塞
+                    blocking.append(peer)
+                elif peer_status == "backlog":
+                    # backlog peer：序号小者优先，序号大者被阻塞
+                    if tid_sort_key(peer) < tid_sort_key(tid):
+                        blocking.append(peer)
+            if blocking:
+                for peer in sorted(blocking, key=tid_sort_key):
                     blocked_conflicts.append((tid, peer))
                 continue
             ready.append(tid)
@@ -1622,6 +1629,10 @@ def cmd_edit(args):
         affected = sorted(set(current_conflicts) | set(conflicts), key=tid_sort_key)
         for peer_tid in affected:
             peer_task = tasks_by_tid[peer_tid]
+            # done target 已合 main 或归档，不可编辑：跳过反向边同步，
+            # owner 单边增删即可；调度由 view 的 main_done_set 释放。
+            if peer_task["status"] == "done":
+                continue
             if peer_task["status"] != "backlog":
                 sys.exit(
                     f"无法维护冲突反向边：{peer_tid} status={peer_task['status']}，"

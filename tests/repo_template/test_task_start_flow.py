@@ -997,6 +997,31 @@ def test_edit_rejects_conflict_reverse_edge_to_active_task(git_repo):
     assert "无法维护冲突反向边" in result.stderr
 
 
+def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
+    """done target 已合 main、归档不可写：owner 单边增删 conflicts，
+    不再因 peer.status=done 而卡死。"""
+    _start(git_repo, "t001")
+    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _git(git_repo, "merge", "--no-ff", branch, "-m", "merge t001")
+    _task_cli(git_repo, "list", "--rebuild")
+    _git(git_repo, "add", "docs/tasks_index.json", "docs/archive/tasks_index.json")
+    _git(git_repo, "commit", "-m", "chore: rebuild index")
+    # t001 已归档 done；t002 单边声明冲突应成功（不写 t001 反向边）
+    declared = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
+    assert declared.returncode == 0, declared.stderr
+    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    assert t002_fm["conflicts_with"] == "t001"
+    t001_fm, _ = parse_front_matter(
+        git_repo / "docs/archive/tasks/t001_alpha/task.md"
+    )
+    assert t001_fm.get("conflicts_with", "") == ""
+
+    removed = _task_cli(git_repo, "edit", "t002", "--conflicts-remove", "t001")
+    assert removed.returncode == 0, removed.stderr
+    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    assert t002_fm["conflicts_with"] == ""
+
+
 def test_rewind_to_backlog_marks_schedule_pending(git_repo):
     scheduled = _task_cli(
         git_repo, "edit", "t001", "--schedule-status", "scheduled"
@@ -1246,11 +1271,31 @@ def test_view_reads_historical_conflict_as_undirected(git_repo):
     result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    # 双向冲突：t001 声明 t002，t002 反向继承；两者都未入 main，互相阻塞
+    # 无向冲突：t001 声明 t002，t002 反向继承；序号小者优先可跑，大者被阻塞
+    assert "▸ 下一批可跑" in result.stdout
+    assert "t001" in result.stdout
     assert "▸ 被 active 冲突阻塞" in result.stdout
-    assert "t001 ↔ t002" in result.stdout
     assert "t002 ↔ t001" in result.stdout
-    assert "▸ 下一批可跑" not in result.stdout
+
+
+def test_view_picks_lower_tid_for_symmetric_backlog_conflict(git_repo):
+    """两个 backlog 互相冲突：序号小者优先可跑，大者被序号小者阻塞。"""
+    for tid in ("t002", "t001"):
+        result = _task_cli(
+            git_repo, "edit", tid, "--schedule-status", "scheduled"
+        )
+        assert result.returncode == 0, result.stderr
+    # t001 序号小，先声明冲突；t001 进 ready，t002 被 t001 阻塞
+    conflict = _task_cli(git_repo, "edit", "t001", "--conflicts-with", "t002")
+    assert conflict.returncode == 0, conflict.stderr
+
+    result = _task_cli(git_repo, "view")
+    assert result.returncode == 0, result.stderr
+    assert "▸ 下一批可跑" in result.stdout
+    assert "t001" in result.stdout
+    assert "t002" not in result.stdout.split("▸ 被 active 冲突阻塞")[0]
+    assert "▸ 被 active 冲突阻塞" in result.stdout
+    assert "t002 ↔ t001" in result.stdout
 
 
 def test_view_rejects_dangling_and_dropped_references(git_repo):
