@@ -31,7 +31,8 @@ STATE_PATH = Path(__file__).resolve().parent.parent / "state" / "merge_tokens.js
 TOKEN_COMMENT_RE = re.compile(r"#\s*merge-token\s*=\s*([0-9a-fA-F]+)\b", re.IGNORECASE)
 # 命令边界匹配 git merge：行首或换行 / ; / & / | 之后，避免引号内文本误判。
 # 不锚定命令尾，复合命令（`git merge X && git push`）同样纳入授权。
-GIT_MERGE_RE = re.compile(r"(?:^|[\n;&|]\s*)git\s+merge\b", re.IGNORECASE)
+# 否定前瞻排除 `git merge-*` 子命令（merge-base / merge-tree / merge-file 等），避免误判。
+GIT_MERGE_RE = re.compile(r"(?:^|[\n;&|]\s*)git\s+merge(?![-])", re.IGNORECASE)
 GH_PR_MERGE_RE = re.compile(
     r"(?:^|\s)gh\s+(?:pr\s+)?merge\b",
     re.IGNORECASE,

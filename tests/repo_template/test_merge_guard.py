@@ -35,6 +35,8 @@ def test_detect_merge_catches_merge_commands(command, expected):
     [
         "git push",
         "git status",
+        "git merge-base HEAD origin/main",
+        "git merge-base --is-ancestor A B",
         'git commit -m "fix: git merge conflict"',
         'git commit -m "git merge" && git push',
         "echo git merge foo",
