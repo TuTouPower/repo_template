@@ -759,6 +759,24 @@ def test_rewind_without_yes_warns_branch_kept_and_recovery(git_repo, monkeypatch
     assert "git worktree add" in err
 
 
+def test_rewind_backlog_not_covered_by_stale_branch(git_repo):
+    """A31：rewind 保留分支后，next-batch 读到 main 的 backlog，而非旧分支 active。"""
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "checkpoint")
+    _rewind(git_repo, "t001")
+    # 分支保留（own commit），main 已显式回 backlog
+    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
+    assert not worktree.exists()
+
+    result = _task_cli(git_repo, "next-batch")
+
+    assert result.returncode == 0, result.stderr
+    # rewind 将 schedule_status 置为 pending_clarification；若被旧分支 active 覆盖则不会出现
+    assert "pending_clarification: t001" in result.stdout
+
+
 def test_rewind_rejects_foreign_registered_branch(git_repo):
     """rewind 拒绝强制删除登记为其他分支的 worktree。"""
     _start(git_repo)
@@ -1106,21 +1124,72 @@ def test_next_batch_reads_done_from_main_archive(git_repo):
 
 
 def test_next_batch_rejects_dependency_cycle(git_repo):
-    first = _task_cli(
-        git_repo, "edit", "t001", "--depends-on", "t002",
-        "--schedule-status", "scheduled",
-    )
-    second = _task_cli(
-        git_repo, "edit", "t002", "--depends-on", "t001",
-        "--schedule-status", "scheduled",
-    )
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
+    """next-batch 对依赖环报错（edit 已在写入前拦截新环，此处构造历史脏数据）。"""
+    first_path = git_repo / "docs/tasks/t001_alpha/task.md"
+    first, first_body = parse_front_matter(first_path)
+    first["depends_on"] = "t002"
+    write_front_matter(first_path, first, first_body)
+    second_path = git_repo / "docs/tasks/t002_beta/task.md"
+    second, second_body = parse_front_matter(second_path)
+    second["depends_on"] = "t001"
+    write_front_matter(second_path, second, second_body)
 
     result = _task_cli(git_repo, "next-batch")
 
     assert result.returncode != 0
     assert "next-batch=FAIL：invalid_graph: depends_on cycle" in result.stderr
+
+
+def test_edit_rejects_dependency_cycle_before_write(git_repo):
+    """A30：edit 在写盘前检测依赖环，拒绝持久化无效图。"""
+    first = _task_cli(git_repo, "edit", "t001", "--depends-on", "t002")
+    assert first.returncode == 0, first.stderr
+
+    second = _task_cli(git_repo, "edit", "t002", "--depends-on", "t001")
+
+    assert second.returncode != 0
+    assert "依赖环" in second.stderr
+    # task.md 未被污染，index 保持上一次重建结果
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    assert fm.get("depends_on", "") == ""
+    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert first_fm["depends_on"] == "t002"
+
+
+def test_edit_rejects_multi_node_cycle(git_repo):
+    """A30：多节点间接环同样在写盘前拒绝。"""
+    for command in (
+        ("t001", "--depends-on", "t002"),
+        ("t002", "--depends-on", "t003"),
+    ):
+        result = _task_cli(git_repo, "edit", *command)
+        assert result.returncode == 0, result.stderr
+
+    blocked = _task_cli(git_repo, "edit", "t003", "--depends-on", "t001")
+
+    assert blocked.returncode != 0
+    assert "依赖环" in blocked.stderr
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
+    assert fm.get("depends_on", "") == ""
+
+
+def test_edit_cycle_resolved_by_dependency_removal(git_repo):
+    """A30：移除依赖解除环后，edit 允许继续修改并持久化。"""
+    first = _task_cli(git_repo, "edit", "t001", "--depends-on", "t002")
+    assert first.returncode == 0, first.stderr
+    # 手动注入 t002 -> t001 环，模拟绕过 edit 的历史脏数据
+    second_path = git_repo / "docs/tasks/t002_beta/task.md"
+    second, second_body = parse_front_matter(second_path)
+    second["depends_on"] = "t001"
+    write_front_matter(second_path, second, second_body)
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "inject cycle")
+
+    removed = _task_cli(git_repo, "edit", "t001", "--depends-remove", "t002")
+
+    assert removed.returncode == 0, removed.stderr
+    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
+    assert first_fm["depends_on"] == ""
 
 
 def test_next_batch_reports_pending_and_unscheduled(git_repo):

@@ -914,7 +914,17 @@ def discover_effective_tasks() -> dict[str, dict]:
         task = next((item for item in tasks if item["tid"] == owner_tid), None)
         if task is None:
             raise TaskDataError(f"未合并 task 分支 {branch!r} 缺自身 task {owner_tid}")
-        effective[owner_tid] = task
+        branch_task = task
+        main_task = effective.get(owner_tid)
+        # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active/blocked 不覆盖。
+        # worktree 从 start 到 finish 一直存在，无登记 worktree 的 active 分支只来自 rewind。
+        if (
+            main_task is not None
+            and main_task["status"] == "backlog"
+            and branch_task["status"] in ("active", "blocked")
+        ):
+            continue
+        effective[owner_tid] = branch_task
 
     primary = primary_worktree_path()
     for path_text, branch in worktree_paths().items():
@@ -1535,6 +1545,18 @@ def cmd_edit(args):
         ]
         if dropped_dependencies:
             sys.exit(f"depends_on 不可引用 dropped task：{', '.join(dropped_dependencies)}")
+        candidate_dependencies = {
+            candidate["tid"]: parse_tid_list(
+                candidate.get("depends_on", ""),
+                field=f"{candidate['tid']}.depends_on",
+            )
+            for candidate in tasks
+            if candidate["status"] not in ARCHIVED_STATUSES
+        }
+        candidate_dependencies[args.tid] = list(dependencies)
+        cycle = _dependency_cycle(candidate_dependencies)
+        if cycle:
+            sys.exit(f"depends_on 变更会形成依赖环：{' -> '.join(cycle)}")
         fm["depends_on"] = dump_tid_list(dependencies)
         changed.append(f"depends_on={fm['depends_on']!r}")
 
