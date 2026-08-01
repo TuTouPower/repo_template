@@ -5,7 +5,7 @@
 祖先链；每个 task 只写自己那份状态与实现，最终只合并链尾分支。
 
 **工作区语义**：主仓负责 task 创建、从 main/上一 task 分支启动 worktree、批次最终合并、
-派生 index 重建和 worktree 清理。`start` 只在干净主仓默认分支执行，但不修改主仓；
+派生 index 重建和 worktree 清理。`start` 只在主仓默认分支执行（不要求干净，基于当前 main HEAD），不修改主仓；
 激活状态先写入新 worktree，随该 task 唯一执行 commit 入库。task 实施、review、block、
 resume、finish 与 active/blocked 的 drop 必须在自身 worktree 进行。每个 task commit 后清理
 worktree、保留分支；批次完成前主仓 `list` 仍只反映 main，链上状态用 `list/show --ref`。
@@ -274,20 +274,13 @@ def current_branch() -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def require_primary_worktree(*, clean: bool = False) -> None:
+def require_primary_worktree() -> None:
     if not in_primary_worktree():
         sys.exit("此命令只能在主工作区执行；请 cd 回主仓")
     base = default_branch()
     branch = current_branch()
     if branch != base:
         sys.exit(f"此命令只能在主干 {base!r} 执行（当前 {branch!r}）")
-    if clean:
-        dirty = porcelain_entries()
-        if dirty:
-            sys.exit(
-                f"主工作区有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；"
-                "先提交、stash 或处理后再 start"
-            )
 
 
 def task_worktree_path(fm: dict) -> Path:
@@ -1634,7 +1627,7 @@ def cmd_edit(args):
 
 
 def cmd_start(args):
-    require_primary_worktree(clean=True)
+    require_primary_worktree()
     base_branch, base_sha = resolve_start_base(args.base)
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")

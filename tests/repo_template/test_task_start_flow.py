@@ -219,13 +219,17 @@ def test_start_rejects_non_primary_branch(git_repo):
     assert not _worktree_path(git_repo).exists()
 
 
-def test_start_rejects_dirty_primary_worktree(git_repo):
+def test_start_ignores_dirty_primary_worktree(git_repo):
     (git_repo / "unrelated.txt").write_text("dirty", encoding="utf-8")
 
-    with pytest.raises(SystemExit, match="未提交改动"):
-        _start(git_repo)
+    _start(git_repo)
 
-    assert not _worktree_path(git_repo).exists()
+    worktree = _worktree_path(git_repo)
+    assert worktree.is_dir()
+    assert not (worktree / "unrelated.txt").exists()
+    assert (git_repo / "unrelated.txt").read_text(encoding="utf-8") == "dirty"
+    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/task.md")
+    assert worktree_fm["status"] == "active"
 
 
 def test_start_rejects_existing_task_branch(git_repo):

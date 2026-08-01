@@ -37,7 +37,7 @@
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py 等） | 仅模板演进时修改；随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从干净主仓默认分支调用；首 task 基于主干，后续 task 基于上一 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；task commit 后从主仓清理 worktree并保留分支；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）；首 task 基于主干，后续 task 基于上一 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；task commit 后从主仓清理 worktree并保留分支；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -47,7 +47,7 @@
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
 - 主仓负责 task 创建、从主干或上一 task 分支启动 worktree、task commit 后清理 worktree、整批最终合并与合并后的派生 index 重建；除非用户明确允许否则不在主仓直接 `task-run`。
-- `start` 无绕过参数；只能从干净主仓默认分支调用。首 task 基于本地主干，后续 task 基于上一已完成且已清理 worktree 的 task 分支；批次执行期间允许 main 并行推进，链与 main 的对齐在合并阶段处理。
+- `start` 只在主仓默认分支调用，不要求主仓干净：worktree 基于当前 main HEAD（commit）创建，主仓未提交改动不阻塞 start、不入 worktree、不被触碰。首 task 基于本地主干，后续 task 基于上一已完成且已清理 worktree 的 task 分支；批次执行期间允许 main 并行推进，链与 main 的对齐在合并阶段处理。
 - task 状态读取优先级：登记 worktree → 未合并 task 分支链尾 ref → main。批次期间 main 中 task 状态可能滞后；`list/show/preflight --ref` 用于只读分支快照，不能据 main 旧 backlog 重复 start 或维护。
 - task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；整批完成并获用户批准后只合并链尾分支，再在主仓重建并提交 index。每个 commit 必须独立可验证，有工程意义。
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。

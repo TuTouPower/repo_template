@@ -102,7 +102,7 @@ flowchart TD
 ### Step 1：开干与前置
 
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停本 task 及整批，先解决环境或走 spike，不盲目 start。
-2. 没有现成 active worktree时，在干净主仓默认分支执行 start：
+2. 没有现成 active worktree时，在主仓默认分支执行 start（不要求主仓干净，worktree 基于当前 main HEAD 创建）：
    - 批次首 task、无链尾：`scripts/repo_template/task.py start <tid>`。
    - 后续 task：`scripts/repo_template/task.py start <tid> --base <上一 task 分支>`。
    - `start` 不修改 main、不建 start commit；新 worktree 中 task.md 的 active 改动属于当前 task 执行 commit。
