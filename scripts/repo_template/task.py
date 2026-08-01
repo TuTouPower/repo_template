@@ -39,7 +39,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
   task.py purge TID --reason TEXT
   task.py list [--status STATUS] [--ref BRANCH] [--rebuild]
   task.py show TID [--ref BRANCH]
-  task.py next-batch [--done TID ...]
+  task.py view                         # task 全景：运行中 / 待运行分组 / 已结束
 """
 
 import argparse
@@ -939,33 +939,6 @@ def discover_effective_tasks() -> dict[str, dict]:
     return effective
 
 
-def parse_done_tids(values: list[str], known_tids) -> list[str]:
-    """宽松解析人类输入，并按 tid 数值与仓库实际记录唯一匹配。"""
-    raw = " ".join(values or []).strip()
-    if not raw:
-        return []
-    tokens = [token for token in re.split(r"[,\s]+", raw) if token]
-    by_number: dict[int, list[str]] = {}
-    for tid in known_tids:
-        by_number.setdefault(tid_sort_key(tid), []).append(tid)
-
-    normalized = []
-    for token in tokens:
-        match = re.fullmatch(r"[tT]?([0-9]+)", token)
-        if not match or int(match.group(1)) == 0:
-            raise TaskDataError(f"invalid_done: {token!r}")
-        number = int(match.group(1))
-        matches = sorted(by_number.get(number, []), key=lambda tid: (len(tid), tid))
-        if not matches:
-            raise TaskDataError(f"invalid_done: {token!r} 无对应 task")
-        if len(matches) != 1:
-            raise TaskDataError(
-                f"invalid_done: {token!r} 数值匹配不唯一（{', '.join(matches)}）"
-            )
-        normalized.append(matches[0])
-    return sorted(set(normalized), key=tid_sort_key)
-
-
 def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
     state: dict[str, int] = {}
     stack: list[str] = []
@@ -995,12 +968,10 @@ def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
     return None
 
 
-def cmd_next_batch(args):
+def cmd_view(args):
     require_primary_worktree()
     try:
         tasks = discover_effective_tasks()
-        done_override = parse_done_tids(args.done, tasks)
-        done_override_set = set(done_override)
 
         dependencies: dict[str, list[str]] = {}
         conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}
@@ -1056,90 +1027,120 @@ def cmd_next_batch(args):
                 "invalid_graph: schedule_status 非法 " + ",".join(invalid_schedule)
             )
 
-        assumed_done = {
+        done_set = {
             tid for tid, task in tasks.items() if task["status"] == "done"
-        } | done_override_set
-        active = {
-            tid for tid, task in tasks.items()
-            if task["status"] in ("active", "blocked") and tid not in done_override_set
         }
-        scheduled = [
-            tid for tid, task in tasks.items()
+        dropped_set = {
+            tid for tid, task in tasks.items() if task["status"] == "dropped"
+        }
+        active_list = sorted(
+            (
+                tid for tid, task in tasks.items()
+                if task["status"] in ("active", "blocked")
+            ),
+            key=tid_sort_key,
+        )
+        backlog_tasks = {
+            tid: task for tid, task in tasks.items()
             if task["status"] == "backlog"
-            and task.get("schedule_status") == "scheduled"
-            and tid not in assumed_done
-        ]
-        pending = sorted(
-            (
-                tid for tid, task in tasks.items()
-                if task["status"] == "backlog"
-                and task.get("schedule_status") == "pending_clarification"
-                and tid not in assumed_done
-            ),
-            key=tid_sort_key,
-        )
-        unscheduled = sorted(
-            (
-                tid for tid, task in tasks.items()
-                if task["status"] == "backlog"
-                and not task.get("schedule_status")
-                and tid not in assumed_done
-            ),
-            key=tid_sort_key,
-        )
+        }
 
-        waiting: dict[str, list[str]] = {}
-        ready = []
-        for tid in sorted(scheduled, key=tid_sort_key):
-            missing = [dep for dep in dependencies.get(tid, []) if dep not in assumed_done]
-            if missing:
-                waiting[tid] = sorted(missing, key=tid_sort_key)
-            else:
-                ready.append(tid)
+        # 按阻塞原因分组
+        ready: list[str] = []
+        waiting_deps: list[tuple[str, str]] = []  # (前置, 后继)
+        blocked_conflicts: list[tuple[str, str]] = []  # (tid, active 对端)
+        pending_clarify: list[str] = []
+        unscheduled: list[str] = []
 
-        blocked: dict[str, list[str]] = {}
-        eligible = []
-        for tid in ready:
-            active_conflicts = sorted(conflicts[tid] & active, key=tid_sort_key)
+        active_set = set(active_list)
+        for tid in sorted(backlog_tasks, key=tid_sort_key):
+            task = backlog_tasks[tid]
+            schedule = task.get("schedule_status", "")
+            if schedule == "pending_clarification":
+                pending_clarify.append(tid)
+                continue
+            if not schedule:
+                unscheduled.append(tid)
+                continue
+            # scheduled：检查依赖
+            missing_deps = [
+                dep for dep in dependencies.get(tid, []) if dep not in done_set
+            ]
+            if missing_deps:
+                for dep in sorted(missing_deps, key=tid_sort_key):
+                    waiting_deps.append((dep, tid))
+                continue
+            # 检查 active 冲突
+            active_conflicts = sorted(conflicts[tid] & active_set, key=tid_sort_key)
             if active_conflicts:
-                blocked[tid] = active_conflicts
-            else:
-                eligible.append(tid)
+                for peer in active_conflicts:
+                    blocked_conflicts.append((tid, peer))
+                continue
+            ready.append(tid)
 
+        # 下一批：ready 中互相冲突的择优（保留原 next-batch 选择逻辑）
         selected = []
-        for tid in eligible:
+        for tid in ready:
             if any(peer in conflicts[tid] for peer in selected):
                 continue
             selected.append(tid)
 
-        print("next_batch:" + (f" {' '.join(selected)}" if selected else ""))
-        referenced_done = {
-            dep for deps in dependencies.values() for dep in deps
-        } & assumed_done
-        printed_done = referenced_done | done_override_set
-        if printed_done:
-            print("assumed_done: " + " ".join(sorted(printed_done, key=tid_sort_key)))
-        if waiting:
-            entries = [
-                f"{tid}<-{','.join(waiting[tid])}"
-                for tid in sorted(waiting, key=tid_sort_key)
-            ]
-            print("waiting_dependencies: " + " ".join(entries))
-        if blocked:
-            entries = []
-            for tid in sorted(blocked, key=tid_sort_key):
-                for peer in blocked[tid]:
-                    entries.append(f"{tid}<->{peer}({tasks[peer]['status']})")
-            print("blocked_by_active_conflict: " + " ".join(entries))
-        if pending:
-            print("pending_clarification: " + " ".join(pending))
+        # 输出全景
+        lines: list[str] = ["== task 全景 =="]
+
+        lines.append("")
+        lines.append(f"[运行中] active {len(active_list)}")
+        if active_list:
+            for tid in active_list:
+                task = tasks[tid]
+                peer_conflicts = sorted(conflicts[tid] & active_set, key=tid_sort_key)
+                peer_conflicts += sorted(
+                    (c for c in conflicts[tid] if c not in active_set
+                     and tasks[c]["status"] == "backlog"),
+                    key=tid_sort_key,
+                )
+                tag = f"  conflicts: {', '.join(peer_conflicts)}" if peer_conflicts else ""
+                lines.append(f"  {tid}  {task['title']}{tag}")
+        else:
+            lines.append("  -")
+
+        lines.append("")
+        lines.append(f"[待运行] backlog {len(backlog_tasks)}")
+        if selected:
+            lines.append("")
+            lines.append("  ▸ 下一批可跑")
+            for tid in selected:
+                lines.append(f"    {tid}  {tasks[tid]['title']}")
+        if waiting_deps:
+            lines.append("")
+            lines.append("  ▸ 被依赖阻塞")
+            for dep, tid in waiting_deps:
+                lines.append(f"    {dep} → {tid}")
+        if blocked_conflicts:
+            lines.append("")
+            lines.append("  ▸ 被 active 冲突阻塞")
+            for tid, peer in blocked_conflicts:
+                lines.append(f"    {tid} ↔ {peer}")
+        if pending_clarify:
+            lines.append("")
+            lines.append("  ▸ 调度未就绪")
+            for tid in pending_clarify:
+                lines.append(f"    {tid}  schedule_status=pending_clarification")
         if unscheduled:
-            print("unscheduled: " + " ".join(unscheduled))
+            lines.append("")
+            lines.append("  ▸ 未排程")
+            for tid in unscheduled:
+                lines.append(f"    {tid}  {tasks[tid]['title']}")
+
+        lines.append("")
+        lines.append(f"[已结束] done={len(done_set)}  dropped={len(dropped_set)}")
+
+        print("\n".join(lines))
     except TaskDataError as error:
         message = str(error)
         if not message.startswith(("invalid_graph:", "invalid_done:")):
             message = f"invalid_graph: {message}"
-        sys.exit(f"next-batch=FAIL：{message}")
+        sys.exit(f"view=FAIL：{message}")
 
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
@@ -2213,14 +2214,8 @@ def main():
     sh.add_argument("--ref", help="只读查看指定本地分支中的 task 状态")
     sh.set_defaults(func=cmd_show)
 
-    nb = sub.add_parser("next-batch", help="按已落盘调度图机械计算下一批 task")
-    nb.add_argument(
-        "--done",
-        nargs="*",
-        default=[],
-        help="本次视为完成的 task；支持空格/逗号和宽松 tid 格式",
-    )
-    nb.set_defaults(func=cmd_next_batch)
+    nb = sub.add_parser("view", help="task 全景：运行中 / 待运行分组 / 已结束")
+    nb.set_defaults(func=cmd_view)
 
 
     args = p.parse_args()

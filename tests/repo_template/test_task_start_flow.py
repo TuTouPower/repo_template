@@ -764,7 +764,7 @@ def test_rewind_without_yes_warns_branch_kept_and_recovery(git_repo, monkeypatch
 
 
 def test_rewind_backlog_not_covered_by_stale_branch(git_repo):
-    """A31：rewind 保留分支后，next-batch 读到 main 的 backlog，而非旧分支 active。"""
+    """A31：rewind 保留分支后，view 读到 main 的 backlog，而非旧分支 active。"""
     _start(git_repo)
     worktree = _worktree_path(git_repo)
     _git(worktree, "add", "-A")
@@ -774,11 +774,11 @@ def test_rewind_backlog_not_covered_by_stale_branch(git_repo):
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
     assert not worktree.exists()
 
-    result = _task_cli(git_repo, "next-batch")
+    result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
     # rewind 将 schedule_status 置为 pending_clarification；若被旧分支 active 覆盖则不会出现
-    assert "pending_clarification: t001" in result.stdout
+    assert "schedule_status=pending_clarification" in result.stdout
 
 
 def test_rewind_rejects_foreign_registered_branch(git_repo):
@@ -938,7 +938,7 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
 
 
 # --------------------------------------------------------------------------
-# task 调度图与 next-batch
+# task 调度图与 view
 # --------------------------------------------------------------------------
 
 def test_add_initializes_empty_schedule_edges_without_status(git_repo):
@@ -1024,7 +1024,8 @@ def test_drop_rejects_referenced_task(git_repo):
     assert (git_repo / "docs/tasks/t001_alpha/task.md").exists()
 
 
-def test_next_batch_uses_dag_conflicts_and_done_override(git_repo):
+def test_view_dag_conflicts_and_groups(git_repo):
+    """view 输出全景：下一批、被依赖阻塞、被 active 冲突阻塞分组展示。"""
     commands = (
         ("t001", "--schedule-status", "scheduled"),
         ("t002", "--depends-on", "t001", "--schedule-status", "scheduled"),
@@ -1034,18 +1035,19 @@ def test_next_batch_uses_dag_conflicts_and_done_override(git_repo):
         result = _task_cli(git_repo, "edit", *command)
         assert result.returncode == 0, result.stderr
 
-    first = _task_cli(git_repo, "next-batch")
-    second = _task_cli(git_repo, "next-batch", "--done", "T0001")
+    first = _task_cli(git_repo, "view")
 
     assert first.returncode == 0, first.stderr
-    assert "next_batch: t001 t003" in first.stdout
-    assert "waiting_dependencies: t002<-t001" in first.stdout
-    assert second.returncode == 0, second.stderr
-    assert "next_batch: t002" in second.stdout
-    assert "assumed_done: t001" in second.stdout
+    # t001、t003 无依赖且无 active 冲突，进下一批
+    assert "▸ 下一批可跑" in first.stdout
+    assert "t001" in first.stdout and "t003" in first.stdout
+    # t002 依赖 t001，进被依赖阻塞组
+    assert "▸ 被依赖阻塞" in first.stdout
+    assert "t001 → t002" in first.stdout
 
 
-def test_next_batch_prefers_worktree_then_unmerged_branch_state(git_repo):
+def test_view_shows_active_conflict_block(git_repo):
+    """active task 与 backlog 冲突时，view 在「被 active 冲突阻塞」组列出双向箭头。"""
     for tid in ("t001", "t002"):
         result = _task_cli(
             git_repo, "edit", tid, "--schedule-status", "scheduled"
@@ -1057,25 +1059,22 @@ def test_next_batch_prefers_worktree_then_unmerged_branch_state(git_repo):
     _git(git_repo, "commit", "-m", "schedule tasks")
 
     _start(git_repo, "t001")
-    active = _task_cli(git_repo, "next-batch")
+    active = _task_cli(git_repo, "view")
     assert active.returncode == 0, active.stderr
-    assert "blocked_by_active_conflict: t002<->t001(active)" in active.stdout
+    assert "▸ 被 active 冲突阻塞" in active.stdout
+    assert "t002 ↔ t001" in active.stdout
 
     branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    completed = _task_cli(git_repo, "next-batch")
+    completed = _task_cli(git_repo, "view")
     assert completed.returncode == 0, completed.stderr
-    # t001 归档后自动进 assumed_done，但 t002 不依赖它；新语义下不被引用的 done 不打印
-    assert "assumed_done:" not in completed.stdout
-    assert "next_batch: t002" in completed.stdout
+    # t001 done 后 t002 解冲突，进下一批
+    assert "▸ 下一批可跑" in completed.stdout
+    assert "t002" in completed.stdout
     assert branch == "t001_alpha"
 
-    # --done override 始终打印，即使用户声明的完成 task 不被任何 backlog 引用
-    override = _task_cli(git_repo, "next-batch", "--done", "t001")
-    assert override.returncode == 0, override.stderr
-    assert "assumed_done: t001" in override.stdout
 
-
-def test_next_batch_handles_diamond_dependencies(git_repo):
+def test_view_handles_diamond_dependencies(git_repo):
+    """菱形依赖：t003 依赖 t001+t002，二者未完成时 t003 进被依赖阻塞组。"""
     commands = (
         ("t001", "--schedule-status", "scheduled"),
         ("t002", "--schedule-status", "scheduled"),
@@ -1091,18 +1090,17 @@ def test_next_batch_handles_diamond_dependencies(git_repo):
         result = _task_cli(git_repo, "edit", *command)
         assert result.returncode == 0, result.stderr
 
-    first = _task_cli(git_repo, "next-batch")
-    second = _task_cli(git_repo, "next-batch", "--done", "t1,t2")
+    result = _task_cli(git_repo, "view")
 
-    assert first.returncode == 0, first.stderr
-    assert "next_batch: t001 t002" in first.stdout
-    assert "waiting_dependencies: t003<-t001,t002" in first.stdout
-    assert second.returncode == 0, second.stderr
-    assert "next_batch: t003" in second.stdout
-    assert "assumed_done: t001 t002" in second.stdout
+    assert result.returncode == 0, result.stderr
+    assert "▸ 下一批可跑" in result.stdout
+    assert "t001" in result.stdout and "t002" in result.stdout
+    assert "▸ 被依赖阻塞" in result.stdout
+    assert "t001 → t003" in result.stdout
+    assert "t002 → t003" in result.stdout
 
 
-def test_next_batch_reads_done_from_main_archive(git_repo):
+def test_view_reads_done_from_main_archive(git_repo):
     dependency = _task_cli(
         git_repo,
         "edit",
@@ -1120,15 +1118,16 @@ def test_next_batch_reads_done_from_main_archive(git_repo):
     branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     _git(git_repo, "merge", "--ff-only", branch)
 
-    result = _task_cli(git_repo, "next-batch")
+    result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    assert "next_batch: t002" in result.stdout
-    assert "assumed_done: t001" in result.stdout
+    # t001 done 后 t002 解依赖，进下一批
+    assert "▸ 下一批可跑" in result.stdout
+    assert "t002" in result.stdout
 
 
-def test_next_batch_rejects_dependency_cycle(git_repo):
-    """next-batch 对依赖环报错（edit 已在写入前拦截新环，此处构造历史脏数据）。"""
+def test_view_rejects_dependency_cycle(git_repo):
+    """view 对依赖环报错（edit 已在写入前拦截新环，此处构造历史脏数据）。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
     first["depends_on"] = "t002"
@@ -1138,10 +1137,10 @@ def test_next_batch_rejects_dependency_cycle(git_repo):
     second["depends_on"] = "t001"
     write_front_matter(second_path, second, second_body)
 
-    result = _task_cli(git_repo, "next-batch")
+    result = _task_cli(git_repo, "view")
 
     assert result.returncode != 0
-    assert "next-batch=FAIL：invalid_graph: depends_on cycle" in result.stderr
+    assert "view=FAIL：invalid_graph: depends_on cycle" in result.stderr
 
 
 def test_edit_rejects_dependency_cycle_before_write(git_repo):
@@ -1196,7 +1195,8 @@ def test_edit_cycle_resolved_by_dependency_removal(git_repo):
     assert first_fm["depends_on"] == ""
 
 
-def test_next_batch_reports_pending_and_unscheduled(git_repo):
+def test_view_reports_pending_and_unscheduled(git_repo):
+    """view：scheduled 进下一批，pending_clarification 与未排程各自成组。"""
     scheduled = _task_cli(
         git_repo, "edit", "t001", "--schedule-status", "scheduled"
     )
@@ -1210,17 +1210,19 @@ def test_next_batch_reports_pending_and_unscheduled(git_repo):
     assert scheduled.returncode == 0, scheduled.stderr
     assert pending.returncode == 0, pending.stderr
 
-    result = _task_cli(git_repo, "next-batch")
+    result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
-        "next_batch: t001",
-        "pending_clarification: t002",
-        "unscheduled: t003",
-    ]
+    assert "▸ 下一批可跑" in result.stdout
+    assert "t001" in result.stdout
+    assert "▸ 调度未就绪" in result.stdout
+    assert "t002  schedule_status=pending_clarification" in result.stdout
+    assert "▸ 未排程" in result.stdout
+    assert "t003" in result.stdout
 
 
-def test_next_batch_reads_historical_conflict_as_undirected(git_repo):
+def test_view_reads_historical_conflict_as_undirected(git_repo):
+    """单向冲突声明（历史脏数据）按无向处理：选其一进下一批，另一个不进。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
     first["schedule_status"] = "scheduled"
@@ -1233,21 +1235,25 @@ def test_next_batch_reads_historical_conflict_as_undirected(git_repo):
     second["conflicts_with"] = ""
     write_front_matter(second_path, second, second_body)
 
-    result = _task_cli(git_repo, "next-batch")
+    result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    assert "next_batch: t001" in result.stdout
-    assert "next_batch: t001 t002" not in result.stdout
+    assert "▸ 下一批可跑" in result.stdout
+    # tid 升序优先选 t001；t002 与 t001 互斥不进下一批
+    next_batch_section = result.stdout.split("▸ 下一批可跑", 1)[1]
+    assert "t001" in next_batch_section
+    assert "t002" not in next_batch_section
 
 
-def test_next_batch_rejects_dangling_and_dropped_references(git_repo):
+def test_view_rejects_dangling_and_dropped_references(git_repo):
+    """view 图校验：依赖/冲突引用不存在或 dropped task 均报错。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
     first["schedule_status"] = "scheduled"
     first["depends_on"] = "t999"
     write_front_matter(first_path, first, first_body)
 
-    dangling = _task_cli(git_repo, "next-batch")
+    dangling = _task_cli(git_repo, "view")
 
     assert dangling.returncode != 0
     assert "invalid_graph: t001.depends_on 引用不存在 task t999" in dangling.stderr
@@ -1255,7 +1261,7 @@ def test_next_batch_rejects_dangling_and_dropped_references(git_repo):
     first["depends_on"] = ""
     first["conflicts_with"] = "t999"
     write_front_matter(first_path, first, first_body)
-    dangling_conflict = _task_cli(git_repo, "next-batch")
+    dangling_conflict = _task_cli(git_repo, "view")
 
     assert dangling_conflict.returncode != 0
     assert "invalid_graph: t001.conflicts_with 引用不存在 task t999" in dangling_conflict.stderr
@@ -1267,7 +1273,7 @@ def test_next_batch_rejects_dangling_and_dropped_references(git_repo):
     first["depends_on"] = "t003"
     write_front_matter(first_path, first, first_body)
 
-    stale = _task_cli(git_repo, "next-batch")
+    stale = _task_cli(git_repo, "view")
 
     assert stale.returncode != 0
     assert "invalid_graph: t001.depends_on 引用 dropped task t003" in stale.stderr
@@ -1275,7 +1281,7 @@ def test_next_batch_rejects_dangling_and_dropped_references(git_repo):
     first["depends_on"] = ""
     first["conflicts_with"] = "t003"
     write_front_matter(first_path, first, first_body)
-    stale_conflict = _task_cli(git_repo, "next-batch")
+    stale_conflict = _task_cli(git_repo, "view")
 
     assert stale_conflict.returncode != 0
     assert "invalid_graph: t001.conflicts_with 引用 dropped task t003" in stale_conflict.stderr
@@ -1349,33 +1355,3 @@ def test_edit_supports_append_remove_and_clear_for_schedule_edges(git_repo):
     assert first["conflicts_with"] == ""
     assert second["conflicts_with"] == ""
     assert third["conflicts_with"] == ""
-
-
-def test_done_override_removes_blocked_task_from_active_set(git_repo):
-    dependency = _task_cli(
-        git_repo,
-        "edit",
-        "t002",
-        "--depends-on",
-        "t001",
-        "--schedule-status",
-        "scheduled",
-    )
-    assert dependency.returncode == 0, dependency.stderr
-    _git(git_repo, "add", "-A")
-    _git(git_repo, "commit", "-m", "schedule dependency")
-    _start(git_repo, "t001")
-    worktree = _worktree_path(git_repo, "t001")
-    blocked = _task_cli(worktree, "block", "t001", "--reason", "infra")
-    assert blocked.returncode == 0, blocked.stderr
-
-    result = _task_cli(git_repo, "next-batch", "--done", "T0001")
-
-    assert result.returncode == 0, result.stderr
-    assert "next_batch: t002" in result.stdout
-    assert "assumed_done: t001" in result.stdout
-    assert "blocked_by_active_conflict:" not in result.stdout
-    blocked_fm, _ = parse_front_matter(
-        worktree / "docs/tasks/t001_alpha/task.md"
-    )
-    assert blocked_fm["status"] == "blocked"

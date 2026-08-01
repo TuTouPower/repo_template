@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-schedule
 
-首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用纯脚本输出第一批。后续批次直接运行 `scripts/repo_template/task.py next-batch --done ...`，无需再次调用本 skill。
+首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用 `view` 输出全景。后续批次直接运行 `scripts/repo_template/task.py view`，无需再次调用本 skill。
 
 ## 输入
 
@@ -15,7 +15,7 @@ disable-model-invocation: true
 | 无参数 | 全部有效 `backlog` task |
 | 一个或多个规范 `tNNN` | 重算指定 task；判冲突时仍比较全部已调度 backlog 与进行中 task |
 
-仅接受仓库规范 tid。人类宽松 tid 格式只用于 `next-batch --done`。
+仅接受仓库规范 tid。
 
 ## 步骤
 
@@ -74,10 +74,10 @@ disable-model-invocation: true
 
    若新冲突指向非可编辑 backlog，`edit` 会拒绝反向边写入；该候选改标 `pending_clarification`，报告阻断来源，不绕过状态机。
 
-6. **校验并输出首批**。
+6. **校验并输出全景**。
 
    ```bash
-   scripts/repo_template/task.py next-batch
+   scripts/repo_template/task.py view
    ```
 
    `invalid_graph` 时按错误中 tid 修正调度字段后重跑；禁止绕过。成功时原样保留脚本固定输出，另用一句话报告本次已调度、待澄清、跳过 tid。
@@ -88,9 +88,9 @@ disable-model-invocation: true
 
 - 本 skill 只写 task 调度字段和脚本派生 index；不改 spec、代码、测试或 blueprint。
 - 不建分支/worktree，不调用 `task-run`，不执行、finish、drop 或合并 task。
-- `next-batch` 只输出 task ID 和原因分类，不执行 task。用户自行把同批 tid 交给多个 Agent 分别调用现有 `task-run`。
+- `view` 只输出 task 全景（运行中/待运行分组/已结束），不执行 task。用户自行把同批 tid 交给多个 Agent 分别调用现有 `task-run`。
 - 新增、rewind、merge 后出现 `unscheduled` / `pending_clarification` 时，用户再次调用本 skill 重算相关 task。
 
 ## 完成
 
-报告：已写图 tid、待澄清/跳过 tid；随后原样输出 `scripts/repo_template/task.py next-batch` 结果。
+报告：已写图 tid、待澄清/跳过 tid；随后原样输出 `scripts/repo_template/task.py view` 结果。
