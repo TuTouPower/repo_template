@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 用户触发本 skill 表示批准固定队列内全部 task 执行至各自执行 commit 完成，**不表示批准修改本地 main**。禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述计划征求同意，禁止把 spec 已写明内容再问一遍。直接从 Step 1 开始。
 
-每个 task 完成后不询问合并。只有固定队列全部完成，才一次询问是否把链尾分支合并本地 main。
+每个 task 完成后不询问合并。只有固定队列全部完成，才一次询问是否把链尾分支合并本地 main，并在合并后验证通过后清理链尾祖先链中已合入 main 的本地 task 分支。
 
 ## 输入与固定队列
 
@@ -38,7 +38,7 @@ main
 
 - 首 task 从批次开始时本地 main HEAD（或用户指定 `--base`）创建。
 - 后续 task 从上一已完成 task 分支 HEAD 创建，**不要求该分支以当前 main 为祖先**（批次期间 main 可并行推进）。
-- 每个 task commit 后删除自身 worktree，保留分支。
+- 每个 task commit 后删除自身 worktree，分支保留至整批合并与验证完成。
 - Git ancestry 是链关系权威，不另写 parent/batch 元数据。
 - `batch_main_anchor` = 本批首 task 的 `diff_anchor`（链根 base SHA）。合并阶段用于判断 main 是否与链根分叉；不要求批次期间 main 冻结。首次启动时记录；恢复时从链尾 ref 中本批最早 task 的 front matter 读取，不另设持久字段。
 
@@ -83,7 +83,7 @@ flowchart TD
     D -->|FAIL 满轮| W2["写处置表"] --> BLK
     S7 --> Q{"固定队列完成?"}
     Q -->|否| S1
-    Q -->|是| APPROVE["整批一次合并审批"]
+    Q -->|是| APPROVE["整批一次合并与分支清理审批"]
 ```
 
 开始或继续每个 task 时，先重新读仓库判断入口（worktree/链尾 ref 中的 `scripts/repo_template/task.py show <tid>` + task 目录下 `spec.md` / `task.md` / `review_*.md` + 分支 + `git status` + `diff_anchor` + 测试与实施笔记）：
@@ -197,7 +197,7 @@ cd <主仓>
 scripts/repo_template/task.py cleanup-worktree <tid>
 ```
 
-- 清理后确认 worktree 已移除、task 分支保留。
+- 清理后确认 worktree 已移除、task 分支保留至整批合并与验证完成。
 - 不 merge main，不重建 index，不询问用户。
 - 当前 task 分支成为下一 task `--base`。
 - blocked 未放行前不 finish、不 commit终态、不清理 worktree。
@@ -214,20 +214,21 @@ scripts/repo_template/task.py cleanup-worktree <tid>
 - `git log --oneline main..<链尾>`。
 - 测试、黑盒、review 结果。
 - `git worktree list` 中无本批 task worktree。
-- 批准后还会产生一条 merge commit 与一条 index 维护 commit。
+- 链尾祖先链中尚未合入当前 main 的全部本地 task 分支及各自 HEAD；用 `git merge-base --is-ancestor <候选分支> <链尾>` 与 `git merge-base --is-ancestor <候选分支> main` 逐个判定。这是批准后分支清理的完整范围，包含之前暂缓合并后续接到本链的已完成分支，禁止按固定队列漏项或用通配符扩大。
+- 批准后还会产生一条 merge commit 与一条 index 维护 commit；合并后动作及验证全部通过后，删除上述已完全合入 main 的本地 task 分支。
 
-然后只询问一次是否合并本地 main。
+然后只询问一次是否合并本地 main 并清理上述本地 task 分支。
 
 - 用户未批准或暂缓：main 不变；保留完整分支链；汇报恢复所需链尾与 HEAD。
-- 用户批准：再次确认 main、链尾 HEAD、工作区状态未变化，再执行：
+- 用户批准：再次确认 main、链尾 HEAD、待清理分支 HEAD、工作区状态未变化，再执行：
   1. `git merge --no-ff <链尾分支>`，只合并链尾一次；祖先链自动包含全部 task commit。链尾与当前 main 分叉时为三方 merge：
      - 无冲突：merge 完成，进入步骤 2。
      - 有冲突：停下报告冲突文件；解决后 `git add` + `git commit` 完成 merge。无法解决则 `git merge --abort` 回退，链尾分支与 main 保持不变，报告失败由用户裁决，不盲目重试。
-  2. 执行声明的合并后验证；失败则报告实际 merge 状态，不盲目重试或回退。
+  2. 执行声明的合并后验证；失败则报告实际 merge 状态并停止后续步骤，保留询问前列明的待清理分支。main 已含 merge commit；恢复时在用户处置后从步骤 3 重入（rebuild index → 提交 → 合并后动作与验证 → 分支清理）。不盲目重试或回退 merge。
   3. `scripts/repo_template/task.py list --rebuild`。
   4. 只提交 `docs/tasks_index.json` 与 `docs/archive/tasks_index.json`，形成独立维护 commit。
-  5. 再执行 `docs/blueprint/testing.md` 声明的合并后动作及验证。
-- 不自动删除 task 分支。
+  5. 再执行 `docs/blueprint/testing.md` 声明的合并后动作及验证；失败则报告实际状态并停止分支清理。恢复时从本步骤重入，重建后的派生 index 已提交，可继续验证与清理。
+  6. 逐个清理询问前列出的待清理 task 分支：确认分支 HEAD 未变化、未被 worktree 使用，且 `git merge-base --is-ancestor refs/heads/<分支> main` 成功后执行 `git branch -d -- <分支>`。任一条件不满足或删除失败时保留该分支并报告；禁止 `git branch -D`。
 
 ## 整批停止条件
 
@@ -242,9 +243,10 @@ scripts/repo_template/task.py cleanup-worktree <tid>
 - 用户限制本次终点。
 - 工作区有与本队列冲突的无关脏改动且无法安全隔离。
 - 出现多条不相容未合并 task 分支链。
+- 整批 merge 冲突未解决，或任一合并后动作/验证失败；保留询问前列明的待清理分支。
 
 停止时不询问合并。保留已完成前缀分支；当前 active/blocked worktree 保留；汇报已完成 tid、当前阻塞、剩余固定队列与恢复入口。只有用户明确 drop/移出剩余项并重新界定批次范围后，才按新范围判断是否进入整批合并审批。
 
 ## 完成
 
-汇报：固定队列、已完成 tid、链尾分支与 HEAD、main 是否已获批合并、index 维护结果、停止原因与剩余队列（若有）。
+汇报：固定队列、已完成 tid、链尾分支与 HEAD、main 是否已获批合并、index 维护结果、待清理 task 分支删除/保留结果、停止原因与剩余队列（若有）。
