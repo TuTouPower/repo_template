@@ -198,7 +198,7 @@ scripts/repo_template/task.py cleanup-worktree <tid>
 ```
 
 - 清理后确认 worktree 已移除、task 分支保留至整批合并与验证完成。
-- 不 merge main，不重建 index，不询问用户。
+- 本步骤止于 worktree 清理；merge、index 重建、用户询问均推迟到整批合并审批。
 - 当前 task 分支成为下一 task `--base`。
 - blocked 未放行前不 finish、不 commit终态、不清理 worktree。
 

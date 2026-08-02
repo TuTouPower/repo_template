@@ -27,7 +27,7 @@ disable-model-invocation: true
    git branch --no-merged <default> --list 't[0-9]*_*'
    ```
 
-   `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。状态优先级：登记 worktree → 未合并 task 分支 ref → main → archive。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 和 Git ancestry 归并链尾。main 中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
+   `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。有效状态按 `AGENTS.md`「task 状态读取优先级」判定（archive 仅作历史回溯，不参与有效状态判定）。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 和 Git ancestry 归并链尾。main 中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
 
    ```bash
    git diff --name-status -M -C <default>...{branch}

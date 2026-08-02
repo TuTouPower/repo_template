@@ -23,7 +23,7 @@ disable-model-invocation: true
 ## 步骤
 
 1. **盘点**（只读）：
-   - task 状态按登记 worktree → 未合并 task 分支链尾 ref → main 盘点：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/repo_template/task.py list/show --ref` 只读核对有效状态与目录。main 中被 worktree或链尾覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应 main 已合并状态；内容错误时留到步骤 5 处理。
+   - 按 `AGENTS.md`「task 状态读取优先级」盘点 task 状态：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/repo_template/task.py list/show --ref` 只读核对有效状态与目录。main 中被 worktree 或链尾覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应 main 已合并状态；内容错误时留到步骤 5 处理。
    - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
      - `docs/tasks/task_template/`
      - `docs/spikes/report_template.md`

@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 ## 前置
 
-- 源 task **全部**须为有效状态 `backlog`，且未进入任何登记 worktree或未合并 task 分支链。main 中仍显示 backlog 但 worktree/链尾 ref 已为 `active` / `blocked` / `done` / `dropped` 时直接拒绝。
+- 源 task **全部**须为有效状态 `backlog`（按 `AGENTS.md`「task 状态读取优先级」判定），且未进入任何登记 worktree 或未合并 task 分支链。任一源有效状态已为 `active` / `blocked` / `done` / `dropped` 时直接拒绝。
 - `active` / `blocked` 已有分支与可能的 commit，提示用户先 `scripts/repo_template/task.py rewind`（或明确 drop）。
 - `done` / `dropped` 在 archive，不可合并。
 

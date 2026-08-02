@@ -17,7 +17,7 @@ disable-model-invocation: true
 1. **读总账**（只读）：
    - `docs/pending.md` **「待办」节**中 `- 处理：未开` 的普通待办条目——**主要来源**（bug 条目由 `task-bug` 处理；「不办」节条目用户已确认暂搁，不自动捞，见边界）。
    - 补扫尚未登记进总账的项（登记本应由 `task-run` 收尾完成，此处扫漏）：
-     - 按登记 worktree → 未合并 task 分支链尾 ref → main 的优先级读取 task；检查各有效来源 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
+     - 按 `AGENTS.md`「task 状态读取优先级」读取 task；检查各有效来源 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
      - `review_code.md` / `review_test.md` / `review_general.md` 中仍开放的 important/critical
      - `docs/handoff.md` 末段待办
      - 用户点名的目录或 diff
@@ -30,7 +30,7 @@ disable-model-invocation: true
    - 能通过小修直接解决的（非 bug 级小调整），报给用户判断要不要直接修——不是每条都值得走 task 流程
 
 3. **合并与去重**：
-   - 查重也按登记 worktree → 未合并链尾 ref → main 判断有效状态；main 中被链覆盖的旧 backlog 不能当新候选
+   - 查重按 `AGENTS.md`「task 状态读取优先级」判断有效状态；main 中被链覆盖的旧 backlog 不当新候选
    - 已有等价 backlog/active task → 不新建，把该 tid 写进条目 `- 处理：`，汇报已有 tid
    - 同主题的多个条目 → **合并成一个 task**；跨条目的同一系统性缺口 → 一个 follow-up task
    - minor 品味项默认不建，除非用户要求或累积为明确债务包
