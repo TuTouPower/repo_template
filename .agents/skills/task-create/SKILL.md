@@ -1,7 +1,6 @@
 ---
 name: task-create
-description: none
-disable-model-invocation: true
+description: 把用户需求拆成合格 backlog task。用户批准立项或要求拆 task 时调用。
 ---
 
 # task-create
