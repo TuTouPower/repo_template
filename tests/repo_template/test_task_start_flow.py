@@ -1088,6 +1088,7 @@ def test_view_shows_active_conflict_block(git_repo):
     assert active.returncode == 0, active.stderr
     assert "▸ 被 active 冲突阻塞" in active.stdout
     assert "t002 ↔ t001" in active.stdout
+    assert "t002 ↔ t001  — t002: beta" in active.stdout
 
     branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     # t001 done 但未合入 main：t002 仍被冲突阻塞
@@ -1296,6 +1297,7 @@ def test_view_picks_lower_tid_for_symmetric_backlog_conflict(git_repo):
     assert "t002" not in result.stdout.split("▸ 被 active 冲突阻塞")[0]
     assert "▸ 被 active 冲突阻塞" in result.stdout
     assert "t002 ↔ t001" in result.stdout
+    assert "t002 ↔ t001  — t002: beta" in result.stdout
 
 
 def test_view_rejects_dangling_and_dropped_references(git_repo):

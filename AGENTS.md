@@ -82,7 +82,7 @@ python3 scripts/repo_template/task.py start t002 --base t001_x # 从上一已完
 python3 scripts/repo_template/task.py cleanup-worktree t001    # task commit 后清理 worktree，分支保留至整批合并与验证完成
 python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
-python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束
+python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
 scripts/repo_template/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN

@@ -80,7 +80,7 @@ disable-model-invocation: true
    scripts/repo_template/task.py view
    ```
 
-   `invalid_graph` 时按错误中 tid 修正调度字段后重跑；禁止绕过。成功时原样保留脚本固定输出，另用一句话报告本次已调度、待澄清、跳过 tid。
+   `invalid_graph` 时按错误中 tid 修正调度字段后重跑；禁止绕过。成功时原样报告 `scripts/repo_template/task.py view` 输出，冲突阻塞行附带被阻塞 task 标题；另用一句话报告本次已调度、待澄清、跳过 tid。
 
 7. **询问提交**。列出本次改动的 `task.md`（含 peer 反向边）与两个派生 index，询问用户是否提交；同意后才 commit（维护期自成一个 commit，subject 含已写图 tid）。index 已入库且由 `edit` 重建，须随维护 commit 一起提交。用户不提交则保持工作区；但未 commit 时 `task-run` 的 `start` 会因脏工作区拒绝执行，且 worktree 从 main HEAD 创建、未 commit 的调度字段不会进入链——须先 commit 再 run。
 

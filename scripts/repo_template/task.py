@@ -1146,7 +1146,9 @@ def cmd_view(args):
             lines.append("")
             lines.append("  ▸ 被 active 冲突阻塞")
             for tid, peer in blocked_conflicts:
-                lines.append(f"    {tid} ↔ {peer}")
+                lines.append(
+                    f"    {tid} ↔ {peer}  — {tid}: {tasks[tid]['title']}"
+                )
         if pending_clarify:
             lines.append("")
             lines.append("  ▸ 调度未就绪")
