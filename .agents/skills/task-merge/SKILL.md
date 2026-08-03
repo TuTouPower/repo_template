@@ -18,7 +18,7 @@ disable-model-invocation: true
 
 1. **确认范围**。用户点名 tid 时用其列表；未点名时 `scripts/repo_template/task.py list --status backlog`，读各 `docs/tasks/{tid}_{slug}/spec.md` 找范围重叠候选，向用户提出合并建议并等确认。不得自行决定合并哪些。
 
-2. **校验有效状态**。先查 `git worktree list --porcelain` 与 `git branch --no-merged <default> --list 't[0-9]*_*'`；对未合并链用 `scripts/repo_template/task.py show {tid} --ref {chain_tail}`。仅无 worktree/链覆盖且 main 中 `scripts/repo_template/task.py show {tid}` 为 `backlog` 时合规。任一不合规即停止，报告 tid、有效状态与来源，不做部分合并。`<default>` 口径同 `default_branch()`。
+2. **校验有效状态**。先查 `git worktree list --porcelain` 与 `git branch --no-merged <default> --list 't[0-9]*_*'`；对未合并分支用 `scripts/repo_template/task.py show {tid} --ref {branch}`。仅无 worktree/分支覆盖且主干中 `scripts/repo_template/task.py show {tid}` 为 `backlog` 时合规。任一不合规即停止，报告 tid、有效状态与来源，不做部分合并。`<default>` 口径同 `default_branch()`。
 
 3. **定目标**：
 
@@ -66,4 +66,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `task-run`（或先 `task-preflight`）。
+汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `task-run` / `task-dispatch`（或先 `task-preflight`）。

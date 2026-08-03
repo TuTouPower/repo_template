@@ -81,7 +81,7 @@ disable-model-invocation: true
    1. 再扫一遍，与 dry-run 同规则。
    2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
    3. **`scratch`**（仅点名 `apply scratch`）：
-      - 按 `AGENTS.md`「task 状态读取优先级」确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。main 中被 worktree 或链尾覆盖的旧状态不重复计。
+      - 按 `AGENTS.md`「task 状态读取优先级」确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。主干中被 worktree 或未合并分支覆盖的旧状态不重复计。
       - 其余 `.scratch/` 内容删掉，保留空目录。
       - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
    4. `artifacts` / `data`：清内容、保留目录。

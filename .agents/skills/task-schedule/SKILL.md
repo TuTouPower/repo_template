@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-schedule
 
-首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用 `view` 输出全景。后续批次直接运行 `scripts/repo_template/task.py view`，无需再次调用本 skill。
+首次分析 backlog task 的依赖与并发冲突，把调度图写入 task front matter，再调用 `view` 输出全景。之后 `task.py view` 随 task 合并进主干持续刷新可跑集，无需再次调用本 skill。
 
 ## 输入
 
@@ -27,7 +27,7 @@ disable-model-invocation: true
    git branch --no-merged <default> --list 't[0-9]*_*'
    ```
 
-   `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。有效状态按 `AGENTS.md`「task 状态读取优先级」判定（archive 仅作历史回溯，不参与有效状态判定）。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 和 Git ancestry 归并链尾。main 中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
+   `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。有效状态按 `AGENTS.md`「task 状态读取优先级」判定（archive 仅作历史回溯，不参与有效状态判定）。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 读取。主干中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
 
    ```bash
    git diff --name-status -M -C <default>...{branch}
@@ -82,13 +82,13 @@ disable-model-invocation: true
 
    `invalid_graph` 时按错误中 tid 修正调度字段后重跑；禁止绕过。成功时原样报告 `scripts/repo_template/task.py view` 输出，冲突阻塞行附带被阻塞 task 标题；另用一句话报告本次已调度、待澄清、跳过 tid。
 
-7. **询问提交**。列出本次改动的 `task.md`（含 peer 反向边）与两个派生 index，询问用户是否提交；同意后才 commit（维护期自成一个 commit，subject 含已写图 tid）。index 已入库且由 `edit` 重建，须随维护 commit 一起提交。用户不提交则保持工作区；但未 commit 时 `task-run` 的 `start` 会因脏工作区拒绝执行，且 worktree 从 main HEAD 创建、未 commit 的调度字段不会进入链——须先 commit 再 run。
+7. **询问提交**。列出本次改动的 `task.md`（含 peer 反向边）与两个派生 index，询问用户是否提交；同意后才 commit（维护期自成一个 commit，subject 含已写图 tid）。index 已入库且由 `edit` 重建，须随维护 commit 一起提交。用户不提交则保持工作区；但 worktree 从主干 HEAD 创建，未 commit 的调度字段不会进入 task 分支——须先 commit 再执行。
 
 ## 边界
 
 - 本 skill 只写 task 调度字段和脚本派生 index；不改 spec、代码、测试或 blueprint。
-- 不建分支/worktree，不调用 `task-run`，不执行、finish、drop 或合并 task。
-- `view` 只输出 task 全景（运行中/待运行分组/已结束），不执行 task。用户自行把同批 tid 交给多个 Agent 分别调用现有 `task-run`。
+- 不建分支/worktree，不调用执行类 skill，不执行、finish、drop 或合并 task。
+- `view` 只输出 task 全景（运行中/待运行分组/已结束），不执行 task。执行由 `task-run`（串行）或 `task-dispatch`（并行调度）承担。
 - 新增、rewind、merge 后出现 `unscheduled` / `pending_clarification` 时，用户再次调用本 skill 重算相关 task。
 
 ## 完成

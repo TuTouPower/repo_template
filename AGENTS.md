@@ -15,17 +15,18 @@
 | `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/repo_template/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓协调点由 `scripts/repo_template/task.py` 重建；`list` 只读，`list --rebuild` 手动重建；入库但不进 task worktree 的执行 commit |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓 coordinator 由 `scripts/repo_template/task.py integrate` 在合并后重建并单独 commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
-| `docs/pending.md` | 待办与不办总账（统一 `pNNN`；「不办」节=用户确认暂搁，不迁 archive） | `task-bug` 登记 bug；`task-run` 收尾闭环迁 archive、遗留登「待办」节；`task-from-pending` 只捞「待办」节建 task；`repo-hygiene` 补迁漏项、不办节保留不动 |
-| `docs/findings.md` | 已验证的技术发现（跨 task 复用，`dNNN`） | 只追加与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
-| `docs/archive/{handoff,pending}.md` | 对应文件的已闭环/过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
+| `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
+| `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
+| `docs/archive/pending/pNNN_{slug}.md` | 已闭环待办 | 仅由 `scripts/repo_template/pending.py archive` 迁入；只准新增 |
+| `docs/archive/handoff.md` | handoff 的过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
 | `docs/blueprint/` | 当前长期真相：架构、领域、约定、决策、测试 | finalization 时更新；写代码或文档前读 `conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md` |
 | `docs/reviews/prompts/` | review prompt 模板 | 改审查标准时更新 |
 | `docs/reviews/review_*/` | 多路 review 会话产物（my-review 等外部评审生成） | 报告 `review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/` |
 | `docs/spikes/report_template.md` | spike 报告模板 | 只改模板本身 |
-| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `task-run`（Step 1 spike 项）；结论入 `docs/findings.md`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
+| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `task-work`（Step 1 spike 项）；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
 | `.agents/skills/` | 项目 skill 正文 | 改 skill 走文档纪律；不放业务代码 |
 | `.claude/skills/` | 指向 `.agents/skills/` 的软链 | 只维护软链 |
 | `docs/guides/` | 给人看的使用指南 | 给人读，不写 agent 行为规则 |
@@ -37,7 +38,7 @@
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py 等） | 仅模板演进时修改；随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）；首 task 基于主干，后续 task 基于上一 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；task commit 后从主仓清理 worktree，分支保留至整批合并与验证完成；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动），恒基于当前主干 HEAD；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；执行 commit 后由 coordinator 清理 worktree 并合并分支；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -46,24 +47,48 @@
 - specs driven：需求拆分为可独立验证的 task，填写 `spec.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确允许或者不在 skill 流程时，绝不准手动直接更改未被 gitignore 的代码文件。
-- 主仓负责 task 创建、从主干或上一 task 分支启动 worktree、task commit 后清理 worktree、整批最终合并、合并后链尾祖先链中已合入本地 task 分支的清理与派生 index 重建；除非用户明确允许否则不在主仓直接 `task-run`。
-- `start` 只在主仓默认分支调用，不要求主仓干净：worktree 基于当前 main HEAD（commit）创建，主仓未提交改动不阻塞 start、不入 worktree、不被触碰。首 task 基于本地主干，后续 task 基于上一已完成且已清理 worktree 的 task 分支；批次执行期间允许 main 并行推进，链与 main 的对齐在合并阶段处理。
-- task 状态读取优先级：登记 worktree → 未合并 task 分支链尾 ref → main。批次期间 main 中 task 状态可能滞后；`list/show/preflight --ref` 用于只读分支快照，不能据 main 旧 backlog 重复 start 或维护。
-- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。task worktree 的执行 commit 不提交派生 index；整批完成并获用户批准后只合并链尾分支，再在主仓重建并提交 index。每个 commit 必须独立可验证，有工程意义。
+- task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → 主干。进行中 task 的状态在其合并前不进主干；`list/show/preflight --ref` 用于只读分支快照，不能据主干旧 backlog 重复 start 或维护。
+- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。每个 commit 必须独立可验证，有工程意义。
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
+
+### 执行角色与合并时机
+
+每个 task 从主干 HEAD 扇出一条分支，完成后单独合并回主干——**完成即合并**，不设批次栅栏。快 task 先合并、先释放并发位、先解锁下游；慢 task 不阻塞任何人。
+
+```text
+        主干 ──┬── t260 ──► 完成即 merge
+               ├── t264 ──► 完成即 merge
+               └── t268 ──► 完成即 merge
+```
+
+两个角色，写域互不重叠：
+
+| 角色 | 唯一写域 | 职责 | skill |
+|------|---------|------|-------|
+| worker | 自己的 task worktree | 实施、测试、黑盒、review、finish、执行 commit；交出 `{tid}: {branch} @ {sha}` | `task-work` |
+| coordinator | 主仓 | task 创建、`start`、`cleanup-worktree`、合并、派生 index 重建、分支清理、合并后验证 | `task-integrate` / `task-dispatch` |
+
+worker 不合并任何分支、不重建 index、不 push、不删分支、不清理自己的 worktree、不询问是否合并主干。主干只有 coordinator 一个写者且串行处理，因此不需要额外的锁。
+
+串行（`task-run`）是并发度为 1 的调度，当前会话同时担任两个角色；并行（`task-dispatch`）由 coordinator 派发多个 worker，自身不执行 task。两种模式的合并动作相同，都由 `scripts/repo_template/task.py integrate` 承担。
+
+合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后逐个 task 自动合并，不再逐个询问。只有 merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大四种情况停下来问用户。
 
 ### skill 调用
 
 | 用户意图 | skill | 职责 |
 |----------|-------|------|
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
-| 分析 backlog task 调度图并输出首批 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；后续批次由 `task.py view` 机械计算 |
+| 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
-| 把待办转成 task | `task-from-pending` | 从 `docs/pending.md` 重建 task 并回写归档 |
+| 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
 | 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 串行跑完待做 task | `task-run` | **串行**执行；每个 task 在自身 worktree 实施 |
+| 串行跑完待做 task | `task-run` | 并发度 1 的调度：逐个执行并合并 |
+| 并行跑多个 task | `task-dispatch` | coordinator：派发 worker、收汇报、完成即合并、解锁补位 |
+| 执行单个 task | `task-work` | worker：在自身 worktree 实施至执行 commit |
+| 合并已完成 task | `task-integrate` | coordinator：cleanup-worktree → merge → 重建 index → 验证 → 删分支 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
 
@@ -75,17 +100,23 @@ python3 scripts/repo_template/task.py list                    # 当前工作区�
 python3 scripts/repo_template/task.py list --status backlog   # 按状态过滤
 python3 scripts/repo_template/task.py show t001               # 当前工作区某 task 详情
 python3 scripts/repo_template/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
-python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查链中 backlog
-python3 scripts/repo_template/task.py start t002 --base t001_x # 从上一已完成 task 分支启动
-python3 scripts/repo_template/task.py cleanup-worktree t001    # task commit 后清理 worktree，分支保留至整批合并与验证完成
+python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查分支中 backlog
+python3 scripts/repo_template/task.py start t002               # 从主干 HEAD 扇出 worktree
+python3 scripts/repo_template/task.py cleanup-worktree t001    # 执行 commit 后清理 worktree，保留分支
+python3 scripts/repo_template/task.py integrate t001           # 合并分支进主干 + 重建 index + 删分支
+python3 scripts/repo_template/task.py integrate t001 --continue # 冲突解决并 git add 后继续
 python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
 python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
-scripts/repo_template/pending.py next                         # 扫描所有本地分支+worktree 的下一个 pNNN
-scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012           # dry-run：拟迁闭环条目到 archive
-scripts/repo_template/pending.py archive p112 p113 p120-p146 --fix-ref t012 --write   # 落盘迁移（拒迁「不办」节）
+scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件
+scripts/repo_template/pending.py list --state all                                     # 列举 todo/parked/archived
+scripts/repo_template/pending.py archive p047 p051 --fix-ref t012                     # dry-run：拟迁闭环条目
+scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 --write             # 落盘迁移（拒迁 parked）
+scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write               # todo → parked
+scripts/repo_template/pending.py revive p047 --write                                  # parked → todo
+scripts/repo_template/findings.py new --slug uv_lock_platform_marker                  # 锁内取号并建发现条目
 ```
 
 ## 文档规范
