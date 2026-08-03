@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """task.py - task 状态唯一操作入口。
 
-状态权威 = 每个 task 目录下 `task.md` 的 YAML front matter。task 分支按执行顺序形成
-祖先链；每个 task 只写自己那份状态与实现，最终只合并链尾分支。
+状态权威 = 每个 task 目录下 `task.md` 的 YAML front matter。每个 task 从主干 HEAD 扇出
+一条分支，只写自己那份状态与实现，完成后单独合并回主干。
 
-**工作区语义**：主仓负责 task 创建、从 main/上一 task 分支启动 worktree、批次最终合并、
-派生 index 重建和 worktree 清理。`start` 只在主仓默认分支执行（不要求干净，基于当前 main HEAD），不修改主仓；
-激活状态先写入新 worktree，随该 task 唯一执行 commit 入库。task 实施、review、block、
-resume、finish 与 active/blocked 的 drop 必须在自身 worktree 进行。每个 task commit 后清理
-worktree、保留分支；批次完成前主仓 `list` 仍只反映 main，链上状态用 `list/show --ref`。
+**角色语义**：主仓是唯一协调点，负责 task 创建、启动 worktree、合并、派生 index 重建、
+worktree 与分支清理；`start` / `integrate` / `cleanup-worktree` / `list --rebuild` 只在主仓
+默认分支执行。task 实施、review、block、resume、finish 与 active/blocked 的 drop 必须在自身
+worktree 进行，且不触碰主仓。`start` 不要求主仓干净，基于当前主干 HEAD 建 worktree，不修改
+主仓；激活状态先写入新 worktree，随该 task 唯一执行 commit 入库。
+
+task 完成即合并：执行 commit 后 `cleanup-worktree` 清理工作副本，`integrate` 合并分支并删除
+它。并行 task 各自独立完成、独立合并，慢 task 不阻塞快 task。合并前主仓 `list` 只反映主干，
+分支中的状态用 `list/show --ref` 读取。
 
 docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
-只在链尾合并主仓后重建并入库；task worktree 的执行 commit 不更新它们。
+只由 `integrate` 在合并后重建并入库；task worktree 的执行 commit 不更新它们。
 `list` 只读，用 `list --rebuild` 在主仓手动重建。
 
 数据：
@@ -27,13 +31,15 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
                    [--depends-on TIDS | --depends-append TID | --depends-remove TID]
                    [--conflicts-with TIDS | --conflicts-append TID | --conflicts-remove TID]
                    [--schedule-status scheduled|pending_clarification]
-  task.py start TID [--base TASK_BRANCH]  # 从 main/上一 task 分支建 worktree；主仓不变
+  task.py start TID               # 从主干 HEAD 建 worktree；主仓不变
   task.py preflight TID [--allow-backlog] [--ref BRANCH] [--require-verified]
                                    # 开干/进实现前门禁；可只读检查 backlog/ref 快照
   task.py block TID --reason blackbox|review|infra
   task.py resume TID
   task.py finish TID              # done + 目录归档；执行 commit 后 cleanup-worktree
   task.py cleanup-worktree TID    # 主仓清理已提交 worktree，保留分支
+  task.py integrate TID [--continue] [--keep-branch]
+                                   # 合并分支进主干 + 重建 index + 删分支
   task.py drop TID --reason TEXT  # dropped + 目录归档
   task.py rewind TID [--to backlog|active] --reason TEXT
   task.py purge TID --reason TEXT
@@ -1290,39 +1296,12 @@ def unlink_managed_env_links(worktree: Path) -> None:
             link.unlink()
 
 
-def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
-    """解析 start base；后续 task 只接受已完成且已清理 worktree 的本地 task 分支。"""
+def resolve_start_base() -> tuple[str, str]:
+    """start base 恒为主干当前 HEAD：每个 task 从 main 扇出，完成即合并回 main。"""
     primary = default_branch()
-    base_branch, base_sha = resolve_local_branch(base_arg or primary)
-    if base_branch == primary:
-        if current_branch() != primary or _get_head() != base_sha:
-            raise TaskDataError(f"主工作区 HEAD 与本地 {primary!r} 不一致")
-        return base_branch, base_sha
-
-    match = TASK_BRANCH_RE.fullmatch(base_branch)
-    if not match:
-        raise TaskDataError(
-            f"--base 只接受默认分支或本地 task 分支（收到 {base_branch!r}）"
-        )
-    previous_tid = match.group(1)
-    _, previous_fm, _ = load_task_at_ref(previous_tid, base_sha)
-    expected_branch = f"{previous_tid}_{previous_fm.get('slug', '')}"
-    if base_branch != expected_branch:
-        raise TaskDataError(
-            f"--base 分支名 {base_branch!r} 与 {previous_tid} slug 不符"
-            f"（应为 {expected_branch!r}）；拒绝伪装成 task 分支的普通分支"
-        )
-    if previous_fm.get("status") not in ARCHIVED_STATUSES:
-        raise TaskDataError(
-            f"--base {base_branch!r} 对应 {previous_tid} status="
-            f"{previous_fm.get('status')!r}，须先完成或 drop"
-        )
-    registered = [path for path, branch in worktree_paths().items() if branch == base_branch]
-    if registered:
-        raise TaskDataError(
-            f"--base {base_branch!r} 仍登记 worktree：{', '.join(registered)}；"
-            "先 cleanup-worktree"
-        )
+    base_branch, base_sha = resolve_local_branch(primary)
+    if current_branch() != primary or _get_head() != base_sha:
+        raise TaskDataError(f"主工作区 HEAD 与本地 {primary!r} 不一致")
     return base_branch, base_sha
 
 
@@ -1672,7 +1651,7 @@ def cmd_edit(args):
 
 def cmd_start(args):
     require_primary_worktree()
-    base_branch, base_sha = resolve_start_base(args.base)
+    base_branch, base_sha = resolve_start_base()
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")
 
@@ -1956,6 +1935,129 @@ def cmd_cleanup_worktree(args):
     print(f"worktree 已移除：{rel}；分支 {registered_branch!r} 保留")
 
 
+def _merge_in_progress() -> bool:
+    return (Path(_git(["rev-parse", "--git-dir"]).stdout.strip() or ".git") / "MERGE_HEAD").exists()
+
+
+def _conflicted_paths() -> list[str]:
+    r = _git(["diff", "--name-only", "--diff-filter=U"])
+    return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+
+
+def _resolve_integrate_branch(tid: str) -> tuple[str, str]:
+    """定位 task 分支并校验其 tip 中该 task 已终态。"""
+    branches = _task_branch_names(tid)
+    if not branches:
+        raise TaskDataError(f"{tid} 没有本地 task 分支；无可合并内容")
+    if len(branches) > 1:
+        raise TaskDataError(
+            f"{tid} 存在多个本地 task 分支：{', '.join(branches)}；请先处理"
+        )
+    branch, sha = resolve_local_branch(branches[0])
+    _, ref_fm, _ = load_task_at_ref(tid, sha)
+    expected = f"{tid}_{ref_fm.get('slug', '')}"
+    if branch != expected:
+        raise TaskDataError(
+            f"分支 {branch!r} 与 {tid} slug 不符（应为 {expected!r}）"
+        )
+    status = ref_fm.get("status", "")
+    if status not in ARCHIVED_STATUSES:
+        raise TaskDataError(
+            f"{tid} 在分支 {branch!r} 中 status={status!r}，须为 done/dropped"
+        )
+    return branch, sha
+
+
+def _commit_index() -> None:
+    """重建派生 index 并单独成 commit；无变化则跳过。"""
+    rebuild_index()
+    paths = [_rel(ACTIVE_PATH), _rel(ARCHIVE_PATH)]
+    _git(["add", "--", *paths])
+    if _git(["diff", "--cached", "--quiet", "--", *paths]).returncode == 0:
+        print("index 无变化，跳过维护 commit")
+        return
+    r = _git(["commit", "-m", "chore(task): rebuild task indexes", "--", *paths])
+    if r.returncode != 0:
+        raise TaskDataError(f"index commit 失败：{r.stderr.strip()}")
+    print(f"index 维护 commit：{_get_head_short()}")
+
+
+def cmd_integrate(args):
+    """把已完成 task 分支合并进主干，重建 index，删除分支。"""
+    require_primary_worktree()
+    if not TID_RE.fullmatch(args.tid):
+        sys.exit(f"tid 非法：{args.tid!r}")
+    base = default_branch()
+
+    if args.continue_merge:
+        if not _merge_in_progress():
+            sys.exit("当前无进行中的 merge；--continue 只用于冲突解决后继续")
+        conflicted = _conflicted_paths()
+        if conflicted:
+            sys.exit(
+                f"仍有 {len(conflicted)} 个文件未解决冲突："
+                f"{', '.join(conflicted[:5])}；解决并 git add 后重试"
+            )
+        r = _git(["commit", "--no-edit"])
+        if r.returncode != 0:
+            sys.exit(f"merge commit 失败：{r.stderr.strip()}")
+        print(f"merge 已完成：{_get_head_short()}")
+    else:
+        if _merge_in_progress():
+            sys.exit("存在进行中的 merge；先用 --continue 完成或 git merge --abort")
+        dirty = porcelain_entries()
+        if dirty:
+            sys.exit(
+                f"主仓有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；"
+                "merge 前请先清理工作区"
+            )
+
+    try:
+        branch, sha = _resolve_integrate_branch(args.tid)
+    except TaskDataError as e:
+        sys.exit(str(e))
+
+    registered = [path for path, name in worktree_paths().items() if name == branch]
+    if registered:
+        sys.exit(
+            f"分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；"
+            f"先 cleanup-worktree {args.tid}"
+        )
+
+    if not args.continue_merge:
+        if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
+            print(f"{branch} 已合入 {base}，跳过 merge")
+        else:
+            r = _git(["merge", "--no-ff", "-m", f"merge({args.tid}): {branch}", branch])
+            if r.returncode != 0:
+                conflicted = _conflicted_paths()
+                if conflicted:
+                    print(f"merge 冲突，共 {len(conflicted)} 个文件：", file=sys.stderr)
+                    for path in conflicted:
+                        print(f"  {path}", file=sys.stderr)
+                    sys.exit(
+                        f"解决后 git add，再执行 integrate {args.tid} --continue；"
+                        "放弃用 git merge --abort"
+                    )
+                sys.exit(f"merge 失败：{r.stderr.strip()}")
+            print(f"merge 完成：{_get_head_short()}")
+
+    try:
+        _commit_index()
+    except TaskDataError as e:
+        sys.exit(str(e))
+
+    if args.keep_branch:
+        print(f"分支 {branch!r} 按要求保留")
+        return
+    if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"]).returncode != 0:
+        sys.exit(f"分支 {branch!r} 未完全合入 {base}；保留分支")
+    r = _git(["branch", "-d", "--", branch])
+    if r.returncode != 0:
+        sys.exit(f"删除分支 {branch!r} 失败：{r.stderr.strip()}；已保留")
+    print(f"分支已删除：{branch}")
+
+
 def cmd_drop(args):
     references = task_schedule_references(args.tid)
     if references:
@@ -2178,13 +2280,9 @@ def main():
 
     s = sub.add_parser(
         "start",
-        help="backlog -> active：从 main 或上一 task 分支建 worktree，不修改主仓",
+        help="backlog -> active：从主干 HEAD 建 worktree，不修改主仓",
     )
     s.add_argument("tid")
-    s.add_argument(
-        "--base",
-        help="上一已完成 task 的本地分支；省略时使用本地默认分支",
-    )
     s.set_defaults(func=cmd_start)
 
     pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/spec/索引交叉校验")
@@ -2224,6 +2322,24 @@ def main():
     )
     cw.add_argument("tid")
     cw.set_defaults(func=cmd_cleanup_worktree)
+
+    ig = sub.add_parser(
+        "integrate",
+        help="把已完成 task 分支合并进主干、重建 index、删除分支",
+    )
+    ig.add_argument("tid")
+    ig.add_argument(
+        "--continue",
+        dest="continue_merge",
+        action="store_true",
+        help="冲突解决并 git add 后继续未完成的 merge",
+    )
+    ig.add_argument(
+        "--keep-branch",
+        action="store_true",
+        help="合并后保留 task 分支",
+    )
+    ig.set_defaults(func=cmd_integrate)
 
     d = sub.add_parser("drop", help="任意活跃状态 -> dropped；目录归档")
     d.add_argument("tid")

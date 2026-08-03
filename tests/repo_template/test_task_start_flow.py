@@ -1,5 +1,6 @@
-"""task.py 链式 start、worktree 门禁与失败补偿（真实 git 仓库）。"""
+"""task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。"""
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -98,8 +99,8 @@ def git_repo(tmp_path, monkeypatch):
     return repo
 
 
-def _start(repo, tid="t001", base=None):
-    task_mod.cmd_start(argparse.Namespace(tid=tid, base=base))
+def _start(repo, tid="t001"):
+    task_mod.cmd_start(argparse.Namespace(tid=tid))
 
 
 def _task_cli(repo, *args):
@@ -406,8 +407,8 @@ def test_block_resume_preserves_worktree_notes_and_chain_can_continue(git_repo):
     assert resumed_fm["status"] == "active"
     assert "implementation note" in resumed_body
 
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    _start(git_repo, "t002", base=branch)
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _start(git_repo, "t002")
     assert _worktree_path(git_repo, "t002").is_dir()
 
 
@@ -432,100 +433,39 @@ def test_blocked_task_can_be_dropped_committed_and_cleaned(git_repo):
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
 
 
-def test_chained_start_uses_previous_completed_branch(git_repo):
+def test_start_always_forks_from_current_main_head(git_repo):
     main_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
     _start(git_repo, "t001")
-    first_branch, first_head = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _start(git_repo, "t002")
 
-    _start(git_repo, "t002", base=first_branch)
-
-    second_worktree = _worktree_path(git_repo, "t002")
-    second_fm, _ = parse_front_matter(second_worktree / "docs/tasks/t002_beta/task.md")
-    first_fm, _ = parse_front_matter(
-        second_worktree / "docs/archive/tasks/t001_alpha/task.md"
-    )
-    assert second_fm["status"] == "active"
-    assert second_fm["diff_anchor"] == first_head
-    assert first_fm["status"] == "done"
-    assert _git(second_worktree, "rev-parse", "HEAD").stdout.strip() == first_head
+    for tid, slug in (("t001", "alpha"), ("t002", "beta")):
+        worktree = _worktree_path(git_repo, tid)
+        fm, _ = parse_front_matter(worktree / f"docs/tasks/{tid}_{slug}/task.md")
+        assert fm["status"] == "active"
+        assert fm["diff_anchor"] == main_head
+        assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == main_head
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == main_head
 
 
-def test_chained_start_inherits_previous_spec_revision(git_repo):
+def test_start_picks_up_main_advanced_between_starts(git_repo):
     _start(git_repo, "t001")
-    first_worktree = _worktree_path(git_repo, "t001")
-    spec = first_worktree / "docs/tasks/t002_beta/spec.md"
-    revised = spec.read_text(encoding="utf-8").replace(
-        "测试背景。",
-        "previous branch revision",
-        1,
-    )
-    spec.write_text(revised, encoding="utf-8")
-    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-
-    _start(git_repo, "t002", base=first_branch)
-
-    inherited = _worktree_path(git_repo, "t002") / "docs/tasks/t002_beta/spec.md"
-    assert inherited.read_text(encoding="utf-8") == revised
-
-
-@pytest.mark.parametrize("base", ["missing", "HEAD", "origin/main"])
-def test_start_rejects_non_local_branch_base(git_repo, base):
-    with pytest.raises(task_mod.TaskDataError, match="本地分支"):
-        _start(git_repo, "t002", base=base)
-
-
-def test_start_rejects_tag_as_base(git_repo):
-    _git(git_repo, "tag", "snapshot")
-
-    with pytest.raises(task_mod.TaskDataError, match="本地分支"):
-        _start(git_repo, "t002", base="snapshot")
-
-
-def test_start_rejects_ordinary_feature_base(git_repo):
-    _git(git_repo, "branch", "feature")
-
-    with pytest.raises(task_mod.TaskDataError, match="task 分支"):
-        _start(git_repo, "t002", base="feature")
-
-
-def test_start_rejects_unfinished_task_base(git_repo):
-    _start(git_repo, "t001")
-
-    with pytest.raises(task_mod.TaskDataError, match="须先完成"):
-        _start(git_repo, "t002", base="t001_alpha")
-
-
-def test_start_rejects_completed_base_with_registered_worktree(git_repo):
-    _start(git_repo, "t001")
-    worktree = _worktree_path(git_repo)
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
-    _git(worktree, "add", "-A")
-    _git(worktree, "commit", "-m", "feat(t001): complete alpha")
-
-    with pytest.raises(task_mod.TaskDataError, match="仍登记 worktree"):
-        _start(git_repo, "t002", base="t001_alpha")
-
-
-def test_start_accepts_base_after_main_advanced(git_repo):
-    """main 并行推进后，旧链尾分支仍可作为 --base 继续链（取消 main 冻结约束）。"""
-    _start(git_repo, "t001")
-    branch, base_head = _finish_commit_cleanup(git_repo, "t001", "alpha")
-
-    # main 并行推进：t001_alpha 不再以当前 main 为祖先
     (git_repo / "parallel.txt").write_text("main advanced", encoding="utf-8")
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-m", "chore: parallel work on main")
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", "main", branch, check=False
-    ).returncode != 0
+    advanced = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 
-    # 旧链尾仍可作为 --base 继续；start 不再要求 main 是 base 的祖先
-    _start(git_repo, "t002", base=branch)
+    _start(git_repo, "t002")
+
     worktree = _worktree_path(git_repo, "t002")
-    assert worktree.exists()
-    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == base_head
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == advanced
+    assert (worktree / "parallel.txt").is_file()
 
+
+def test_start_rejects_when_primary_head_differs_from_main(git_repo):
+    _git(git_repo, "checkout", "-b", "feature")
+
+    with pytest.raises(SystemExit, match="主干"):
+        _start(git_repo, "t002")
 
 
 def test_list_and_show_read_completed_state_from_branch(git_repo):
@@ -544,41 +484,150 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
     assert invalid.returncode != 0 and "不能与 --rebuild 同用" in invalid.stderr
 
 
-def test_three_task_chain_merges_only_tail_and_rebuilds_index(git_repo):
-    main_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
-    previous = None
-    branches = []
-    heads = []
-    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
-        _start(git_repo, tid, base=previous)
-        previous, head = _finish_commit_cleanup(git_repo, tid, slug)
-        branches.append(previous)
-        heads.append(head)
+# --------------------------------------------------------------------------
+# integrate：完成即合并
+# --------------------------------------------------------------------------
 
-    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == main_head
-    assert _git(git_repo, "rev-list", "--count", f"main..{branches[-1]}").stdout.strip() == "3"
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", branches[0], branches[1], check=False
-    ).returncode == 0
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", branches[1], branches[2], check=False
-    ).returncode == 0
 
-    _git(git_repo, "merge", "--no-ff", branches[-1], "-m", "merge task batch")
-    rebuilt = _task_cli(git_repo, "list", "--rebuild")
-    assert rebuilt.returncode == 0, rebuilt.stderr
-    _git(git_repo, "add", "docs/tasks_index.json", "docs/archive/tasks_index.json")
-    _git(git_repo, "commit", "-m", "chore: rebuild task indexes")
+def test_integrate_merges_rebuilds_index_and_deletes_branch(git_repo):
+    _start(git_repo, "t001")
+    branch, head = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode == 0, result.stderr
     assert _git(
-        git_repo, "merge-base", "--is-ancestor", heads[-1], "main", check=False
+        git_repo, "merge-base", "--is-ancestor", head, "main", check=False
     ).returncode == 0
-    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
+    assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
+    fm, _ = parse_front_matter(git_repo / "docs/archive/tasks/t001_alpha/task.md")
+    assert fm["status"] == "done"
+    assert fm["worktree"] == ""
+    index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
+    assert [row["tid"] for row in index["tasks"]] == ["t001"]
+    subjects = _git(git_repo, "log", "--format=%s", "-2").stdout.split("\n")
+    assert subjects[0] == "chore(task): rebuild task indexes"
+    assert subjects[1].startswith("merge(t001)")
+
+
+def test_integrate_keeps_branch_when_requested(git_repo):
+    _start(git_repo, "t001")
+    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+
+    result = _task_cli(git_repo, "integrate", "t001", "--keep-branch")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
+
+
+def test_parallel_tasks_integrate_independently_in_completion_order(git_repo):
+    _start(git_repo, "t001")
+    _start(git_repo, "t002")
+    # t002 先完成先合并；t001 后完成，合并时 main 已推进 → 三方 merge
+    _, second_head = _finish_commit_cleanup(git_repo, "t002", "beta")
+    assert _task_cli(git_repo, "integrate", "t002").returncode == 0
+
+    _, first_head = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode == 0, result.stderr
+    for head in (first_head, second_head):
+        assert _git(
+            git_repo, "merge-base", "--is-ancestor", head, "main", check=False
+        ).returncode == 0
+    for tid, slug in (("t001", "alpha"), ("t002", "beta")):
         fm, _ = parse_front_matter(
             git_repo / f"docs/archive/tasks/{tid}_{slug}/task.md"
         )
         assert fm["status"] == "done"
-        assert fm["worktree"] == ""
+
+
+def test_integrate_rejects_unfinished_task(git_repo):
+    _start(git_repo, "t001")
+
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode != 0
+    assert "须为 done/dropped" in result.stderr
+
+
+def test_integrate_rejects_registered_worktree(git_repo):
+    _start(git_repo, "t001")
+    worktree = _worktree_path(git_repo)
+    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode != 0
+    assert "cleanup-worktree" in result.stderr
+
+
+def test_integrate_rejects_dirty_primary_worktree(git_repo):
+    _start(git_repo, "t001")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    (git_repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode != 0
+    assert "未提交改动" in result.stderr
+
+
+def test_integrate_reports_conflict_and_continues_after_resolution(git_repo):
+    shared = git_repo / "shared.txt"
+    shared.write_text("base\n", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: add shared file")
+
+    _start(git_repo, "t001")
+    worktree = _worktree_path(git_repo)
+    (worktree / "shared.txt").write_text("from task\n", encoding="utf-8")
+    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+
+    shared.write_text("from main\n", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: edit shared on main")
+
+    conflicted = _task_cli(git_repo, "integrate", "t001")
+    assert conflicted.returncode != 0
+    assert "shared.txt" in conflicted.stderr
+    assert "--continue" in conflicted.stderr
+
+    premature = _task_cli(git_repo, "integrate", "t001", "--continue")
+    assert premature.returncode != 0
+    assert "未解决冲突" in premature.stderr
+
+    shared.write_text("resolved\n", encoding="utf-8")
+    _git(git_repo, "add", "shared.txt")
+    resumed = _task_cli(git_repo, "integrate", "t001", "--continue")
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert shared.read_text(encoding="utf-8") == "resolved\n"
+    assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
+
+
+def test_integrate_is_idempotent_after_merge(git_repo):
+    _start(git_repo, "t001")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    assert _task_cli(git_repo, "integrate", "t001", "--keep-branch").returncode == 0
+
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode == 0, result.stderr
+    assert "跳过 merge" in result.stdout
+    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
+
+
+def test_integrate_requires_primary_worktree(git_repo):
+    _start(git_repo, "t001")
+    worktree = _worktree_path(git_repo)
+
+    result = _task_cli(worktree, "integrate", "t001")
+
+    assert result.returncode != 0
+    assert "主工作区" in result.stderr
 
 
 def test_preflight_reads_active_state_only_inside_task_worktree(git_repo):
@@ -885,23 +934,12 @@ def test_edit_allows_fresh_backlog(git_repo):
     assert fm["review_level"] == "single"
 
 
-def test_start_rejects_base_branch_slug_mismatch(git_repo):
-    """--base 拒绝 slug 与 front matter 不符的伪装 task 分支。"""
-    _start(git_repo, "t001")
-    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    # 基于 t001 分支建一个 t002_scratch，但其中 t002 是 backlog（未归档）
-    _git(git_repo, "branch", "t002_wrongslug", first_branch)
-
-    with pytest.raises(task_mod.TaskDataError, match="slug 不符"):
-        _start(git_repo, "t002", base="t002_wrongslug")
-
-
 def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
     """scan_tasks_at_ref 忽略 task 目录内嵌套的 task.md，不误判为独立 task。"""
     _start(git_repo)
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
     # 在 t002 目录放一个嵌套 task.md（模拟附件），提交到 t002 分支
-    _start(git_repo, "t002", base=branch)
+    _start(git_repo, "t002")
     worktree = _worktree_path(git_repo, "t002")
     nested = worktree / "docs/tasks/t002_beta/attachments"
     nested.mkdir(parents=True)
@@ -923,9 +961,9 @@ def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
 def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
     """scan_tasks_at_ref 对缺根 task.md 的目录报数据损坏而非静默忽略。"""
     _start(git_repo)
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
     # 在 t002 分支建一个无 task.md 的目录
-    _start(git_repo, "t002", base=branch)
+    _start(git_repo, "t002")
     worktree = _worktree_path(git_repo, "t002")
     broken = worktree / "docs/tasks/t005_broken"
     broken.mkdir(parents=True)
