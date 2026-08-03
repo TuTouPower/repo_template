@@ -77,20 +77,30 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 
 ### skill 调用
 
+用户入口——由用户斜杠触发：
+
 | 用户意图 | skill | 职责 |
 |----------|-------|------|
-| 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
-| 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
-| 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
+| 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
+| 并行跑多个 task | `task-dispatch` | coordinator：派发 worker、收汇报、完成即合并、解锁补位 |
+| 串行跑完待做 task | `task-run` | 并发度 1 的调度：逐个执行并合并 |
+| 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
+| 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
 | 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 串行跑完待做 task | `task-run` | 并发度 1 的调度：逐个执行并合并 |
-| 并行跑多个 task | `task-dispatch` | coordinator：派发 worker、收汇报、完成即合并、解锁补位 |
-| 执行单个 task | `task-work` | worker：在自身 worktree 实施至执行 commit |
-| 合并已完成 task | `task-integrate` | coordinator：cleanup-worktree → merge → 重建 index → 验证 → 删分支 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
+
+内部件——由上表 skill 链式调用，用户通常不直接触发：
+
+| skill | 调用方 | 职责 |
+|-------|--------|------|
+| `task-work` | `task-dispatch` 派发给 worker；`task-run` 自调 | worker：在自身 worktree 实施至执行 commit |
+| `task-integrate` | `task-dispatch` / `task-run` 收到完成汇报后 | coordinator：cleanup-worktree → merge → 重建 index → 验证 → 删分支 |
+
+典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（并行）或 `/task-run`（串行）。
+task 彼此冲突面大时并行无收益，看 `task-schedule` 输出的全景图决定。
 
 ### `scripts/repo_template/task.py` 使用示例
 
