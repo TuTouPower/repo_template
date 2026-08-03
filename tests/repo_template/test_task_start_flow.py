@@ -564,15 +564,63 @@ def test_integrate_rejects_registered_worktree(git_repo):
     assert "cleanup-worktree" in result.stderr
 
 
-def test_integrate_rejects_dirty_primary_worktree(git_repo):
+def test_integrate_rejects_tracked_dirty_primary_worktree(git_repo):
+    tracked = git_repo / "tracked.txt"
+    tracked.write_text("base", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: add tracked file")
     _start(git_repo, "t001")
     _finish_commit_cleanup(git_repo, "t001", "alpha")
-    (git_repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+    tracked.write_text("modified", encoding="utf-8")
 
     result = _task_cli(git_repo, "integrate", "t001")
 
     assert result.returncode != 0
-    assert "未提交改动" in result.stderr
+    assert "已跟踪文件未提交" in result.stderr
+
+
+def test_integrate_ignores_untracked_files(git_repo):
+    _start(git_repo, "t001")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    (git_repo / "scratch_note.txt").write_text("untracked", encoding="utf-8")
+
+    result = _task_cli(git_repo, "integrate", "t001")
+
+    assert result.returncode == 0, result.stderr
+    assert (git_repo / "scratch_note.txt").is_file()
+
+
+def test_integrate_detects_merge_state_from_any_cwd(git_repo, tmp_path):
+    """_merge_in_progress 用绝对 git-dir；从仓库外调用不得误判为无 merge。"""
+    shared = git_repo / "shared.txt"
+    shared.write_text("base\n", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: add shared file")
+    _start(git_repo, "t001")
+    worktree = _worktree_path(git_repo)
+    (worktree / "shared.txt").write_text("from task\n", encoding="utf-8")
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    shared.write_text("from main\n", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore: edit shared on main")
+    assert _task_cli(git_repo, "integrate", "t001").returncode != 0
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(git_repo / "scripts" / "repo_template" / "task.py"),
+            "integrate",
+            "t001",
+        ],
+        cwd=outside,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "进行中的 merge" in result.stderr
 
 
 def test_integrate_reports_conflict_and_continues_after_resolution(git_repo):

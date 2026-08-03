@@ -15,7 +15,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md`、`testing.md` 初稿；`decisions.md` 初始可为空。
 7. 确认 `docs/tasks/` 下无遗留 task 目录、`docs/specs_index.md` 无伪 active 数据；`docs/tasks/task_template/`（`spec.md` / `task.md`）仅作复制源。
-8. 保留 `tests/repo_template/` 下模板自带的测试文件——它们持续验证 task 工具链（`scripts/repo_template/task.py`、`scripts/repo_template/pending.py` 等）的正确性，新项目沿用这些脚本即沿用对应测试。
+8. 保留 `tests/repo_template/` 下模板自带的测试文件——它们持续验证 task 工具链（`scripts/repo_template/task.py`、`scripts/repo_template/pending.py`、`scripts/repo_template/spikes.py` 等）的正确性，新项目沿用这些脚本即沿用对应测试。
 
 README 应改成项目自身介绍，不继续保留模板说明。
 

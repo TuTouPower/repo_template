@@ -14,12 +14,14 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _id_scan import IdScanError, allocate, scan_max_id
+from _id_scan import IdScanError, allocate, allocate_dir, scan_max_id
 import pending as pending_mod
 import findings as findings_mod
+import spikes as spikes_mod
 
 PENDING_DIRS = pending_mod.SCAN_DIRS
 FINDING_DIRS = findings_mod.SCAN_DIRS
+SPIKE_DIRS = spikes_mod.SCAN_DIRS
 
 
 def _git(repo, *args):
@@ -69,6 +71,12 @@ def _bind(monkeypatch, repo):
     )
     monkeypatch.setattr(findings_mod, "REPO_ROOT", repo)
     monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
+    monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
+    monkeypatch.setattr(spikes_mod, "ARCHIVE_DIR", repo / "docs/archive/spikes")
+    monkeypatch.setattr(
+        spikes_mod, "TEMPLATE_PATH", repo / "docs/spikes/report_template.md"
+    )
 
 
 # ---------- 编号扫描 ----------
@@ -332,3 +340,139 @@ def test_cli_rejects_missing_slug():
     with pytest.raises(SystemExit) as exc:
         pending_mod.main(["new"])
     assert exc.value.code == 2
+
+
+# ---------- 目录型条目（spike） ----------
+
+
+def _init_spikes(repo):
+    template = repo / "docs/spikes/report_template.md"
+    template.parent.mkdir(parents=True, exist_ok=True)
+    template.write_text("# {id} spike 报告\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add spike template")
+
+
+def test_spike_dirs_drive_max(tmp_path):
+    repo = _init_repo(tmp_path)
+    _commit_entry(repo, "docs/spikes/s004_probe/report.md")
+    _commit_entry(repo, "docs/archive/spikes/s009_old/report.md")
+    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 9
+
+
+def test_spike_scan_ignores_template_and_loose_files(tmp_path):
+    repo = _init_repo(tmp_path)
+    _commit_entry(repo, "docs/spikes/report_template.md")
+    _commit_entry(repo, "docs/spikes/s003_probe/report.md")
+    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 3
+
+
+def test_spike_nested_files_counted_once(tmp_path):
+    repo = _init_repo(tmp_path)
+    _commit_entry(repo, "docs/spikes/s002_probe/report.md")
+    _commit_entry(repo, "docs/spikes/s002_probe/code/run.md")
+    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 2
+
+
+def _allocate_spike(repo_and_slug):
+    repo, slug = repo_and_slug
+    repo = Path(repo)
+    path = allocate_dir(
+        repo,
+        prefix="s",
+        dirs=SPIKE_DIRS,
+        target_dir=repo / "docs/spikes",
+        slug=slug,
+        files={"report.md": "# {id}\n"},
+    )
+    return path.name
+
+
+def test_concurrent_spike_allocation_yields_unique_ids(tmp_path):
+    repo = _init_repo(tmp_path)
+    slugs = [f"probe_{i}" for i in range(6)]
+    with ProcessPoolExecutor(max_workers=6) as pool:
+        names = list(pool.map(_allocate_spike, [(str(repo), slug) for slug in slugs]))
+    numbers = sorted(int(name[1:4]) for name in names)
+    assert numbers == list(range(1, 7))
+
+
+def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _init_spikes(repo)
+    _bind(monkeypatch, repo)
+    spikes_mod.main(["new", "--slug", "uv_lock"])
+    assert capsys.readouterr().out == "docs/spikes/s001_uv_lock\n"
+    report = repo / "docs/spikes/s001_uv_lock/report.md"
+    assert report.read_text(encoding="utf-8") == "# s001 spike 报告\n"
+
+
+def test_spikes_new_requires_template(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    with pytest.raises(SystemExit, match="缺模板"):
+        spikes_mod.main(["new", "--slug", "uv_lock"])
+
+
+def test_spikes_list_reports_state(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _init_spikes(repo)
+    _bind(monkeypatch, repo)
+    spikes_mod.main(["new", "--slug", "uv_lock"])
+    (repo / "docs/archive/spikes/s000_old").mkdir(parents=True)
+    capsys.readouterr()
+    spikes_mod.main(["list"])
+    out = capsys.readouterr().out
+    assert "active    s001_uv_lock" in out
+    assert "archived  s000_old" in out
+
+
+# ---------- git mv 迁移（已入库条目） ----------
+
+
+def test_archive_uses_git_mv_and_preserves_history(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add p001")
+
+    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+
+    staged = _git(repo, "diff", "--cached", "--name-status", "-M").stdout
+    assert "docs/pending/todo/p001_demo.md" in staged
+    assert "docs/archive/pending/p001_demo.md" in staged
+    assert not (repo / "docs/pending/todo/p001_demo.md").exists()
+
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "archive p001")
+    history = _git(
+        repo, "log", "--follow", "--format=%s", "--", "docs/archive/pending/p001_demo.md"
+    ).stdout
+    assert "add p001" in history
+
+
+def test_park_uses_git_mv_for_committed_entry(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add p001")
+
+    pending_mod.main(["park", "p001", "--reason", "later", "--write"])
+
+    staged = _git(repo, "diff", "--cached", "--name-status", "-M").stdout
+    assert "docs/pending/parked/p001_demo.md" in staged
+    assert (repo / "docs/pending/parked/p001_demo.md").is_file()
+
+
+def test_move_refuses_to_overwrite_existing_destination(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    archived = repo / "docs/archive/pending"
+    archived.mkdir(parents=True, exist_ok=True)
+    (archived / "p001_demo.md").write_text("occupied\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="同时存在于多处"):
+        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])

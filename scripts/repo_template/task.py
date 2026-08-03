@@ -248,6 +248,24 @@ def porcelain_entries(root: Path | None = None) -> list[str]:
     return out
 
 
+def tracked_dirty_entries(root: Path | None = None) -> list[str]:
+    """只含已跟踪文件的未提交改动；未跟踪文件不影响 merge 结果，不计入。"""
+    r = _git(["status", "--porcelain", "-z", "--untracked-files=no"], root=root)
+    if r.returncode != 0:
+        return []
+    out, fields, i = [], r.stdout.split("\0"), 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if not entry:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in ("R", "C"):
+            i += 1
+        out.append(path)
+    return out
+
+
 def worktree_paths() -> dict[str, str]:
     """`git worktree list --porcelain` → {绝对路径: 分支名}。"""
     result, current = {}, None
@@ -1841,8 +1859,8 @@ def _close_task(args, status: str, note: str | None) -> None:
             covered = task_effective_state(args.tid, fm)
             if covered:
                 sys.exit(
-                    f"{args.tid} 在 main 中为 backlog，但{covered}；"
-                    "main 副本已滞后。请到对应 worktree 执行 drop，或先合并链尾分支"
+                    f"{args.tid} 在主干中为 backlog，但{covered}；"
+                    "主干副本已滞后。请到对应 worktree 执行 drop，或先合并该 task 分支"
                 )
 
     src = REPO_ROOT / task["dir"]
@@ -1936,7 +1954,11 @@ def cmd_cleanup_worktree(args):
 
 
 def _merge_in_progress() -> bool:
-    return (Path(_git(["rev-parse", "--git-dir"]).stdout.strip() or ".git") / "MERGE_HEAD").exists()
+    """MERGE_HEAD 是否存在。git-dir 取绝对路径，避免按调用方 cwd 解析。"""
+    r = _git(["rev-parse", "--absolute-git-dir"])
+    if r.returncode != 0 or not r.stdout.strip():
+        raise TaskDataError("无法解析 git 目录，无法判断 merge 状态")
+    return (Path(r.stdout.strip()) / "MERGE_HEAD").exists()
 
 
 def _conflicted_paths() -> list[str]:
@@ -2005,11 +2027,11 @@ def cmd_integrate(args):
     else:
         if _merge_in_progress():
             sys.exit("存在进行中的 merge；先用 --continue 完成或 git merge --abort")
-        dirty = porcelain_entries()
+        dirty = tracked_dirty_entries()
         if dirty:
             sys.exit(
-                f"主仓有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；"
-                "merge 前请先清理工作区"
+                f"主仓有 {len(dirty)} 项已跟踪文件未提交：{', '.join(dirty[:5])}；"
+                "merge 前请先提交或还原。未跟踪文件不阻塞合并"
             )
 
     try:

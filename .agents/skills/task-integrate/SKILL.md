@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 - 用户已给出会话级合并授权（`task-run` / `task-dispatch` 在启动时取得；单独调用本 skill 时视为用户当次授权）。
 - task 在自身分支 tip 中为 `done` 或 `dropped`。
-- 该 task 的 worktree 已清理。
+- 该 task 的执行 commit 已完成，worktree 干净。
 
 ## 输入
 
@@ -32,7 +32,7 @@ disable-model-invocation: true
    scripts/repo_template/task.py integrate {tid}
    ```
 
-   脚本按序执行：校验分支 tip 终态与 worktree 已清理 → `merge --no-ff` → `list --rebuild` → 单独提交两个派生 index → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。
+   脚本按序执行：校验分支 tip 终态与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。
 
 3. **冲突处置**。脚本停在冲突处并列出文件时，按语义解决——不是取一侧了事：
 
@@ -41,6 +41,7 @@ disable-model-invocation: true
    | `docs/blueprint/` | 真语义冲突。读双方意图后合成一致表述，不叠加两段 |
    | `docs/specs_index.md` | 两侧各加一行；保留双方，按 slug 排序 |
    | `docs/tasks_index.json` | 派生缓存。取任一侧解决冲突即可，第 2 步会重建覆盖 |
+   | `docs/tasks/{tid}/` 与 `docs/archive/tasks/{tid}/` | task 归档是 rename，相似度不足时表现为 delete/add 冲突。保留 archive 侧、删除 active 侧，即归档后的正确形态 |
    | 源码 / 测试 | 读双方改动意图；无法确定时停止，报告给用户 |
 
    条目化账本（`docs/pending/`、`docs/findings/`）为一条目一文件，正常不冲突；若出现同号不同文件，说明取号锁被绕过，停止并报告。
@@ -54,6 +55,8 @@ disable-model-invocation: true
    放弃合并用 `git merge --abort`，分支与主干均不变，报告给用户裁决。
 
 4. **合并后验证**。执行 `docs/blueprint/testing.md` 声明的合并后动作与验证。失败则停止后续全部 integrate，报告主干实际状态（已含 merge commit 与 index commit）交用户裁决，不盲目重试或回退。
+
+5. **处置 worker 上报的跨 task 影响**。worker 汇报中列出的「其他 task 需改 spec」条目，在合并后的主干上逐条落实：目标 task 仍为 backlog 则直接改其 `spec.md`，已在执行中则登记 `pending.py new` 并通知用户。改动单独成 commit，不混入 merge 或 index commit。
 
 ## 边界
 

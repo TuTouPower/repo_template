@@ -88,13 +88,14 @@ def worktree_roots(repo_root: Path) -> list[Path]:
     return roots
 
 
-def _entry_number(prefix: str, name: str) -> int | None:
-    match = re.fullmatch(rf"{prefix}([0-9]{{3,}})_[a-z0-9_]+\.md", name)
+def _entry_number(prefix: str, name: str, *, kind: str) -> int | None:
+    suffix = r"\.md" if kind == "file" else ""
+    match = re.fullmatch(rf"{prefix}([0-9]{{3,}})_[a-z0-9_]+{suffix}", name)
     return int(match.group(1)) if match else None
 
 
 def _numbers_from_branch(
-    repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...]
+    repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...], kind: str
 ) -> dict[int, list[str]]:
     text = _run_git(
         repo_root, ["ls-tree", "-r", "--name-only", branch, "--", *dirs]
@@ -104,22 +105,33 @@ def _numbers_from_branch(
         rel = rel.strip()
         if not rel:
             continue
-        number = _entry_number(prefix, Path(rel).name)
-        if number is not None:
-            found.setdefault(number, []).append(rel)
+        path = Path(rel)
+        # 目录型条目在 ls-tree -r 下只出现为其内部文件路径，取条目目录名。
+        names = [path.name] if kind == "file" else [part for part in path.parts]
+        for name in names:
+            number = _entry_number(prefix, name, kind=kind)
+            if number is not None:
+                identity = name if kind == "dir" else rel
+                paths = found.setdefault(number, [])
+                if identity not in paths:
+                    paths.append(identity)
+                break
     return found
 
 
 def _numbers_from_worktree(
-    root: Path, prefix: str, dirs: tuple[str, ...]
+    root: Path, prefix: str, dirs: tuple[str, ...], kind: str
 ) -> dict[int, list[str]]:
     found: dict[int, list[str]] = {}
     for rel_dir in dirs:
         base = root / rel_dir
         if not base.is_dir():
             continue
-        for path in base.rglob("*.md"):
-            number = _entry_number(prefix, path.name)
+        entries = base.rglob("*.md") if kind == "file" else base.iterdir()
+        for path in entries:
+            if kind == "dir" and not path.is_dir():
+                continue
+            number = _entry_number(prefix, path.name, kind=kind)
             if number is not None:
                 found.setdefault(number, []).append(str(path.relative_to(root)))
     return found
@@ -135,15 +147,20 @@ def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> 
         raise IdScanError(f"{source} 中条目编号重复：{detail}")
 
 
-def scan_max_id(repo_root: Path, prefix: str, dirs: tuple[str, ...]) -> int:
-    """扫描所有本地分支与 worktree，返回已用最大编号；无条目返回 0。"""
+def scan_max_id(
+    repo_root: Path, prefix: str, dirs: tuple[str, ...], kind: str = "file"
+) -> int:
+    """扫描所有本地分支与 worktree，返回已用最大编号；无条目返回 0。
+
+    kind="file" 时条目是 `{prefix}NNN_{slug}.md`；kind="dir" 时是同名目录。
+    """
     maximum = 0
     for branch in local_branches(repo_root):
-        found = _numbers_from_branch(repo_root, branch, prefix, dirs)
+        found = _numbers_from_branch(repo_root, branch, prefix, dirs, kind)
         _check_duplicates(f"分支 {branch}", found, prefix)
         maximum = max([maximum, *found])
     for root in worktree_roots(repo_root):
-        found = _numbers_from_worktree(root, prefix, dirs)
+        found = _numbers_from_worktree(root, prefix, dirs, kind)
         _check_duplicates(f"worktree {root}", found, prefix)
         maximum = max([maximum, *found])
     return maximum
@@ -172,4 +189,33 @@ def allocate(
             raise IdScanError(f"{path} 已存在；请先处理后重试")
         target_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(body.replace("{id}", entry_id), encoding="utf-8", newline="\n")
+    return path
+
+
+def allocate_dir(
+    repo_root: Path,
+    *,
+    prefix: str,
+    dirs: tuple[str, ...],
+    target_dir: Path,
+    slug: str,
+    files: dict[str, str],
+) -> Path:
+    """锁内分配编号并建目录型条目，返回新目录路径。
+
+    files 为 {相对文件名: 内容}；内容中的 `{id}` 替换为分配到的编号。
+    """
+    if not SLUG_RE.match(slug):
+        raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
+    with id_lock(repo_root):
+        number = scan_max_id(repo_root, prefix, dirs, kind="dir") + 1
+        entry_id = f"{prefix}{number:03d}"
+        path = target_dir / f"{entry_id}_{slug}"
+        if path.exists():
+            raise IdScanError(f"{path} 已存在；请先处理后重试")
+        path.mkdir(parents=True)
+        for name, content in files.items():
+            (path / name).write_text(
+                content.replace("{id}", entry_id), encoding="utf-8", newline="\n"
+            )
     return path

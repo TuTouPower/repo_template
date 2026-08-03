@@ -26,7 +26,7 @@
 | `docs/reviews/prompts/` | review prompt 模板 | 改审查标准时更新 |
 | `docs/reviews/review_*/` | 多路 review 会话产物（my-review 等外部评审生成） | 报告 `review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/` |
 | `docs/spikes/report_template.md` | spike 报告模板 | 只改模板本身 |
-| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 流程见 `task-work`（Step 1 spike 项）；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
+| `docs/spikes/{sid}_{slug}/` | 当前 spike（`report.md` 必需；有实验代码建 `code/`） | 目录创建只经 `scripts/repo_template/spikes.py new`；流程见 `task-work`（Step 1 spike 项）；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/` |
 | `.agents/skills/` | 项目 skill 正文 | 改 skill 走文档纪律；不放业务代码 |
 | `.claude/skills/` | 指向 `.agents/skills/` 的软链 | 只维护软链 |
 | `docs/guides/` | 给人看的使用指南 | 给人读，不写 agent 行为规则 |
@@ -36,7 +36,7 @@
 | `config/` | 配置（默认 + 环境覆盖 + `.env.example`） | 仅 `.env.example` 入库；真值写本地 `.env` |
 | `src/` `tests/` `assets/` | 源码、测试、静态源 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
-| `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py 等） | 仅模板演进时修改；随模板复制进新项目 |
+| `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py/spikes.py 等） | 仅模板演进时修改；随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
 | `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动），恒基于当前主干 HEAD；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；执行 commit 后由 coordinator 清理 worktree 并合并分支；本地 `.env` 软链回主仓 |
 
@@ -73,7 +73,7 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 
 串行（`task-run`）是并发度为 1 的调度，当前会话同时担任两个角色；并行（`task-dispatch`）由 coordinator 派发多个 worker，自身不执行 task。两种模式的合并动作相同，都由 `scripts/repo_template/task.py integrate` 承担。
 
-合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后逐个 task 自动合并，不再逐个询问。只有 merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大四种情况停下来问用户。
+合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后逐个 task 自动合并，不再逐个询问。合并环节只有四种情况停下来问用户：merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大。执行环节的停止条件另见各 skill。
 
 ### skill 调用
 
@@ -117,6 +117,7 @@ scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 --write       
 scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write               # todo → parked
 scripts/repo_template/pending.py revive p047 --write                                  # parked → todo
 scripts/repo_template/findings.py new --slug uv_lock_platform_marker                  # 锁内取号并建发现条目
+scripts/repo_template/spikes.py new --slug uv_lock_platform_marker                    # 锁内取号并建 spike 目录
 ```
 
 ## 文档规范

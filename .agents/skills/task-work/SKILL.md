@@ -67,7 +67,7 @@ flowchart TD
    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
    - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
 5. spec 契约区行为 AC 非空再继续（preflight 已查）。
-6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。需外部环境的 SPIKE 先查环境齐备性（key、代理、夹具）并做最小实测；未实测不得以「难验证」上报阻断，实测失败须附输出证据；优先走 spec 预留的保守回退方案，而非中断。建 `docs/spikes/{sid}_{slug}/`（`sid` 取 spikes 与 archive 中最大编号加一），复制 `docs/spikes/report_template.md` 为 `report.md`；有实验代码建 `code/`。结论用 `scripts/repo_template/findings.py new` 建条目写入，报告留在 spike 目录。
+6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。需外部环境的 SPIKE 先查环境齐备性（key、代理、夹具）并做最小实测；未实测不得以「难验证」上报阻断，实测失败须附输出证据；优先走 spec 预留的保守回退方案，而非中断。用 `scripts/repo_template/spikes.py new --slug <主题>` 建 `docs/spikes/{sid}_{slug}/`（锁内取号并从模板生成 `report.md`）；有实验代码自行加 `code/`。结论用 `scripts/repo_template/findings.py new` 建条目写入，报告留在 spike 目录。
 7. 将全部 `UNVERIFIED-SPIKE` 改写为验证结论与验证方式，再运行 `scripts/repo_template/task.py preflight <tid> --require-verified`。严格门禁 PASS 后才可进入 Step 2。
 
 ### Step 2：红
@@ -130,7 +130,7 @@ flowchart TD
 - 测试假绿专项（必做）：测试过程中发现疑似假绿（断言过弱、mock 掉被测逻辑、只测假路径、缺集成层导致测试通过但逻辑有误）的存量测试，同样必须登记——能定位根因的走 `task-bug` 补测分析，暂不能定位的用 `pending.py new` 登记并注明疑似假绿。不得在收尾报告里一笔带过。
 - 核对所有 `status=遗留` 行的 `fix_ref` 已指向 `pNNN` 或 follow-up tid。
 - 用 `scripts/repo_template/findings.py new` 抽取可跨 task 复用的已验证事实。
-- 未 `done` 的其他 task 若受本 task 影响，修订其 `spec.md`。
+- 其他 task 若受本 task 影响需改 spec，不在此直接改——扇出模型下改动只存在于本分支，其他 worker 看不到且合并时制造冲突。列进交出汇报，由 coordinator 处置。
 
 **7b finish**：
 

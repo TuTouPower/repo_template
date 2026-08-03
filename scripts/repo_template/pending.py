@@ -144,17 +144,20 @@ def cmd_list(args: argparse.Namespace) -> None:
         for path in sorted(directory.glob("*.md")):
             if not ENTRY_FILE_RE.match(path.name):
                 continue
-            first = ""
+            summary = ""
             for line in path.read_text(encoding="utf-8").splitlines():
-                if line.startswith("# "):
-                    first = line[2:].strip()
+                for field in ("- 内容：", "- 现象："):
+                    if line.startswith(field):
+                        summary = line[len(field):].strip()
+                        break
+                if summary:
                     break
-            rows.append((state, path.stem, first))
+            rows.append((state, path.stem, summary))
     if not rows:
         print("(no entries)")
         return
-    for state, stem, title in sorted(rows, key=lambda row: row[1]):
-        print(f"{state:<8} {stem:<40} {title}")
+    for state, stem, summary in sorted(rows, key=lambda row: row[1]):
+        print(f"{state:<8} {stem:<40} {summary}")
 
 
 def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> None:

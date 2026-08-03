@@ -53,17 +53,17 @@ def cmd_list(_args: argparse.Namespace) -> None:
         for path in sorted(FINDINGS_DIR.glob("*.md")):
             if not ENTRY_FILE_RE.match(path.name):
                 continue
-            title = ""
+            summary = ""
             for line in path.read_text(encoding="utf-8").splitlines():
-                if line.startswith("# "):
-                    title = line[2:].strip()
+                if line.startswith("- 结论："):
+                    summary = line[len("- 结论："):].strip()
                     break
-            rows.append((path.stem, title))
+            rows.append((path.stem, summary))
     if not rows:
         print("(no findings)")
         return
-    for stem, title in rows:
-        print(f"{stem:<40} {title}")
+    for stem, summary in rows:
+        print(f"{stem:<40} {summary}")
 
 
 def main(argv: list[str] | None = None) -> None:
