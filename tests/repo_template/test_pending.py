@@ -1,11 +1,12 @@
-"""_id_scan.py 跨分支/跨 worktree 编号扫描与 pending/findings 只读 CLI。
+"""_id_scan.py 跨分支/跨 worktree 编号扫描、互斥分配与 pending/findings CLI。
 
-测试用临时 git 仓库（tmp_path 下 init）模拟多分支、多 worktree 与当前工作区未提交
-改动，覆盖解析规则、重复检测、坏文件报错与 CLI 行为。
+条目为「一条目一文件」，编号来自文件名。测试用临时 git 仓库（tmp_path 下 init）
+模拟多分支、多 worktree 与未提交条目，覆盖扫描、并发取号、状态迁移与 CLI 行为。
 """
 
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -13,15 +14,12 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import _id_scan
-from _id_scan import IdScanError, scan_max_id, visible_markdown_lines
+from _id_scan import IdScanError, allocate, scan_max_id
 import pending as pending_mod
 import findings as findings_mod
 
-ENTRY_H3 = pending_mod.ENTRY_RE
-PENDING_PATHS = pending_mod.REL_PATHS
-FINDING_PATHS = findings_mod.REL_PATHS
-ENTRY_H2 = findings_mod.ENTRY_RE
+PENDING_DIRS = pending_mod.SCAN_DIRS
+FINDING_DIRS = findings_mod.SCAN_DIRS
 
 
 def _git(repo, *args):
@@ -39,216 +37,298 @@ def _init_repo(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
-    (repo / "docs").mkdir()
-    (repo / "docs" / "pending.md").write_text("# pending\n", encoding="utf-8")
+    (repo / "docs" / "pending" / "todo").mkdir(parents=True)
+    (repo / "docs" / "pending" / "todo" / ".gitkeep").write_text("", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
 
 
-def _commit(repo, rel, text, msg="update"):
-    f = repo / rel
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(text, encoding="utf-8")
+def _commit_entry(repo, rel, text="# entry\n", msg="add entry"):
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", msg)
 
 
-# ---------- 解析规则 ----------
+def _bind(monkeypatch, repo):
+    """把 pending/findings 模块的路径常量重绑到临时仓库。"""
+    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(pending_mod, "TODO_DIR", repo / "docs/pending/todo")
+    monkeypatch.setattr(pending_mod, "PARKED_DIR", repo / "docs/pending/parked")
+    monkeypatch.setattr(pending_mod, "ARCHIVE_DIR", repo / "docs/archive/pending")
+    monkeypatch.setattr(
+        pending_mod,
+        "STATE_DIRS",
+        {
+            "todo": repo / "docs/pending/todo",
+            "parked": repo / "docs/pending/parked",
+            "archived": repo / "docs/archive/pending",
+        },
+    )
+    monkeypatch.setattr(findings_mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
 
 
-def test_visible_lines_strips_fence_blockquote_html_comment():
-    text = """正文 p900
-## p901 H2
-#### p902 H4
-- ### p903 列表
-`### p904 行内代码`
-> ### p905 引用
-```markdown
-### p906 fence
-```
-~~~
-### p907 fence
-~~~
-### P908 大写
-### p91 位数不足
-### p909x 非独立编号
-### b910 旧 bug 前缀
-### f911 旧遗留前缀
-   ### p010 合法前导空格
-### p011 合法
-"""
-    matches = [
-        m.group(1) for line in visible_markdown_lines(text) if (m := ENTRY_H3.match(line))
-    ]
-    assert matches == ["010", "011"]
-
-
-def test_ignores_html_comments_and_invalid_fence_close():
-    text = """```markdown
-```not-a-close
-### p900 代码示例
-```
-<!--
-### p901 多行注释
--->
-<!-- ### p902 单行注释 -->
-### p010 合法
-"""
-    assert _id_scan._scan_source([("docs/pending.md", text)], ENTRY_H3, "x") == [10]
-
-
-# ---------- 空历史与编号推进 ----------
+# ---------- 编号扫描 ----------
 
 
 def test_empty_history_starts_at_zero(tmp_path):
     repo = _init_repo(tmp_path)
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 0
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
 
-def test_template_placeholders_do_not_consume_ids(tmp_path):
+def test_todo_entries_drive_max(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### pNNN bug 示例\n### pNNN 普通示例\n")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 0
+    _commit_entry(repo, "docs/pending/todo/p007_bug.md")
+    _commit_entry(repo, "docs/pending/todo/p002_debt.md")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 7
 
 
-def test_main_worktree_active_drives_max(tmp_path):
+def test_archived_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p007 bug\n### p002 普通\n")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 7
+    _commit_entry(repo, "docs/pending/todo/p002_open.md")
+    _commit_entry(repo, "docs/archive/pending/p027_closed.md")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 27
 
 
-def test_archive_in_main_worktree_counts(tmp_path):
+def test_parked_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p002 当前遗留\n")
-    _commit(repo, "docs/archive/pending.md", "### p027 已处理\n")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 27
+    _commit_entry(repo, "docs/pending/parked/p013_later.md")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 13
+
+
+def test_non_entry_filenames_ignored(tmp_path):
+    repo = _init_repo(tmp_path)
+    _commit_entry(repo, "docs/pending/README.md")
+    _commit_entry(repo, "docs/pending/todo/p01_short.md")
+    _commit_entry(repo, "docs/pending/todo/p012_Upper.md")
+    _commit_entry(repo, "docs/pending/todo/p013_ok.md")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 13
 
 
 def test_ids_can_exceed_999(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p999 当前\n")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 999
-
-
-# ---------- 跨分支扫描 ----------
+    _commit_entry(repo, "docs/pending/todo/p1024_big.md")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 1024
 
 
 def test_other_branch_bigger_id_is_picked_up(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p003 main\n")
-    _git(repo, "branch", "feature")
-    _git(repo, "checkout", "feature")
-    _commit(repo, "docs/pending.md", "### p005 feature\n")
+    _commit_entry(repo, "docs/pending/todo/p003_main.md")
+    _git(repo, "checkout", "-b", "feature")
+    _commit_entry(repo, "docs/pending/todo/p005_feature.md")
     _git(repo, "checkout", "main")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 5
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 5
 
 
-def test_detached_worktree_uncommitted_picked_up(tmp_path):
+def test_worktree_uncommitted_entry_picked_up(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p003 main\n")
-    wt = tmp_path / "wt"
-    _git(repo, "worktree", "add", "--detach", str(wt))
-    (wt / "docs" / "pending.md").write_text("### p009 wt-uncommitted\n", encoding="utf-8")
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 9
+    _commit_entry(repo, "docs/pending/todo/p003_main.md")
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "--detach", str(worktree))
+    (worktree / "docs/pending/todo/p009_wip.md").write_text("x\n", encoding="utf-8")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 9
 
 
-# ---------- 重复检测（同一来源内跨文件）----------
-
-
-def test_duplicate_within_active_fails(tmp_path):
+def test_duplicate_within_source_fails(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p003 bug\n### p003 遗留\n")
-    with pytest.raises(IdScanError, match="编号重复 003"):
-        scan_max_id(repo, ENTRY_H3, PENDING_PATHS)
-
-
-def test_duplicate_across_active_and_archive_fails(tmp_path):
-    repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p010 当前\n")
-    _commit(repo, "docs/archive/pending.md", "### p010 历史\n")
-    with pytest.raises(IdScanError, match="编号重复 010"):
-        scan_max_id(repo, ENTRY_H3, PENDING_PATHS)
+    _commit_entry(repo, "docs/pending/todo/p010_open.md")
+    _commit_entry(repo, "docs/archive/pending/p010_closed.md")
+    with pytest.raises(IdScanError, match="p010"):
+        scan_max_id(repo, "p", PENDING_DIRS)
 
 
 def test_duplicate_across_sources_not_reported(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p010 main\n")
-    _git(repo, "branch", "feature")
-    _git(repo, "checkout", "feature")
-    _commit(repo, "docs/pending.md", "### p010 feature\n")
+    _commit_entry(repo, "docs/pending/todo/p010_main.md")
+    _git(repo, "checkout", "-b", "feature")
+    _git(repo, "rm", "-q", "docs/pending/todo/p010_main.md")
+    _commit_entry(repo, "docs/pending/todo/p010_feature.md")
     _git(repo, "checkout", "main")
-    # 跨分支重复不报，取 max
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 10
-
-
-# ---------- 坏文件 ----------
-
-
-def test_main_worktree_active_missing_treated_as_empty(tmp_path):
-    repo = _init_repo(tmp_path)
-    (repo / "docs" / "pending.md").unlink()
-    # 主路径不存在视为空历史，不报错
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 0
-
-
-def test_main_worktree_active_invalid_utf8_fails(tmp_path):
-    repo = _init_repo(tmp_path)
-    (repo / "docs" / "pending.md").write_bytes(b"\xff")
-    with pytest.raises(IdScanError, match="不是合法 UTF-8"):
-        scan_max_id(repo, ENTRY_H3, PENDING_PATHS)
-
-
-def test_other_worktree_bad_file_skipped(tmp_path):
-    repo = _init_repo(tmp_path)
-    _commit(repo, "docs/pending.md", "### p003 main\n")
-    wt = tmp_path / "wt"
-    _git(repo, "worktree", "add", "--detach", str(wt))
-    (wt / "docs" / "pending.md").write_bytes(b"\xff")
-    # 其他 worktree 坏文件静默跳过，不影响主 worktree 结果
-    assert scan_max_id(repo, ENTRY_H3, PENDING_PATHS) == 3
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 10
 
 
 def test_git_failure_wrapped(tmp_path):
     not_a_repo = tmp_path / "norepo"
     not_a_repo.mkdir()
     with pytest.raises(IdScanError):
-        scan_max_id(not_a_repo, ENTRY_H3, PENDING_PATHS)
+        scan_max_id(not_a_repo, "p", PENDING_DIRS)
 
 
-# ---------- findings ----------
+# ---------- 互斥分配 ----------
 
 
-def test_findings_h2_format_picked_up(tmp_path):
+def _allocate_one(repo_and_slug):
+    repo, slug = repo_and_slug
+    repo = Path(repo)
+    path = allocate(
+        repo,
+        prefix="p",
+        dirs=PENDING_DIRS,
+        target_dir=repo / "docs/pending/todo",
+        slug=slug,
+        body="# {id}\n",
+    )
+    return path.name
+
+
+def test_concurrent_allocation_yields_unique_ids(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/findings.md", "## d005 发现\n")
-    assert scan_max_id(repo, ENTRY_H2, FINDING_PATHS) == 5
+    slugs = [f"job_{i}" for i in range(8)]
+    with ProcessPoolExecutor(max_workers=8) as pool:
+        names = list(pool.map(_allocate_one, [(str(repo), slug) for slug in slugs]))
+    numbers = sorted(int(name[1:4]) for name in names)
+    assert numbers == list(range(1, 9))
 
 
-def test_findings_h3_not_mismatched(tmp_path):
+def test_allocate_writes_id_into_body(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit(repo, "docs/findings.md", "### d005 H3 误配\n## d003 真 H2\n")
-    assert scan_max_id(repo, ENTRY_H2, FINDING_PATHS) == 3
+    path = allocate(
+        repo,
+        prefix="p",
+        dirs=PENDING_DIRS,
+        target_dir=repo / "docs/pending/todo",
+        slug="demo",
+        body="# {id} title\n",
+    )
+    assert path.name == "p001_demo.md"
+    assert path.read_text(encoding="utf-8") == "# p001 title\n"
+
+
+def test_allocate_rejects_bad_slug(tmp_path):
+    repo = _init_repo(tmp_path)
+    with pytest.raises(IdScanError, match="slug"):
+        allocate(
+            repo,
+            prefix="p",
+            dirs=PENDING_DIRS,
+            target_dir=repo / "docs/pending/todo",
+            slug="Bad-Slug",
+            body="# {id}\n",
+        )
+
+
+# ---------- 状态迁移 ----------
+
+
+def test_park_then_revive_round_trip(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+
+    pending_mod.main(["park", "p001", "--reason", "2026-08-03 等依赖", "--write"])
+    parked = repo / "docs/pending/parked/p001_demo.md"
+    assert parked.is_file()
+    text = parked.read_text(encoding="utf-8")
+    assert "- 处理：不办" in text
+    assert "- 暂搁：2026-08-03 等依赖" in text
+
+    pending_mod.main(["revive", "p001", "--write"])
+    revived = repo / "docs/pending/todo/p001_demo.md"
+    text = revived.read_text(encoding="utf-8")
+    assert "- 处理：未开" in text
+    assert "暂搁" not in text
+
+
+def test_archive_writes_fix_ref(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    archived = repo / "docs/archive/pending/p001_demo.md"
+    assert "- 处理：t012" in archived.read_text(encoding="utf-8")
+
+
+def test_archive_defaults_to_dry_run(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    pending_mod.main(["archive", "p001", "--fix-ref", "t012"])
+    assert (repo / "docs/pending/todo/p001_demo.md").is_file()
+    assert not (repo / "docs/archive/pending/p001_demo.md").exists()
+
+
+def test_archive_rejects_parked_entry(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    pending_mod.main(["park", "p001", "--reason", "later", "--write"])
+    with pytest.raises(SystemExit, match="revive"):
+        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+
+
+def test_archive_rejects_already_archived(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    with pytest.raises(SystemExit, match="重复归档"):
+        pending_mod.main(["archive", "p001", "--fix-ref", "t013", "--write"])
+
+
+def test_archived_id_not_reused(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "first"])
+    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["new", "--slug", "second"])
+    assert (repo / "docs/pending/todo/p002_second.md").is_file()
+
+
+def test_missing_entry_reports_error(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    with pytest.raises(SystemExit, match="未找到 p001"):
+        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
 
 
 # ---------- CLI ----------
 
 
-def test_cli_pending_prints_id(tmp_path, monkeypatch, capsys):
+def test_pending_new_prints_path(tmp_path, monkeypatch, capsys):
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    pending_mod.main(["next"])
-    assert capsys.readouterr().out == "p001\n"
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    assert capsys.readouterr().out == "docs/pending/todo/p001_demo.md\n"
 
 
-def test_cli_findings_prints_id(tmp_path, monkeypatch, capsys):
+def test_pending_new_bug_template(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(findings_mod, "REPO_ROOT", repo)
-    findings_mod.main(["next"])
-    assert capsys.readouterr().out == "d001\n"
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "crash", "--kind", "bug"])
+    text = (repo / "docs/pending/todo/p001_crash.md").read_text(encoding="utf-8")
+    assert "- 现象：" in text
+    assert "- 测试缺口：" in text
 
 
-def test_cli_rejects_extra_argument():
+def test_findings_new_prints_path(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    findings_mod.main(["new", "--slug", "uv_lock_marker"])
+    assert capsys.readouterr().out == "docs/findings/d001_uv_lock_marker.md\n"
+
+
+def test_findings_list_empty(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    findings_mod.main(["list"])
+    assert capsys.readouterr().out == "(no findings)\n"
+
+
+def test_pending_list_shows_state(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    capsys.readouterr()
+    pending_mod.main(["list"])
+    out = capsys.readouterr().out
+    assert "todo" in out
+    assert "p001_demo" in out
+
+
+def test_cli_rejects_missing_slug():
     with pytest.raises(SystemExit) as exc:
-        pending_mod.main(["next", "b"])
+        pending_mod.main(["new"])
     assert exc.value.code == 2

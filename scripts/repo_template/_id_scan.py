@@ -1,74 +1,33 @@
 #!/usr/bin/env python3
-"""_id_scan.py - 跨 worktree 跨分支的编号扫描共用逻辑。
+"""_id_scan.py - 跨 worktree 跨分支的条目编号扫描与互斥分配。
 
-pending.py / findings.py 共用：扫描所有本地分支 git 树 + 所有 worktree 工作区文件，
-提取规范条目编号，返回全局最大值。
+pending.py / findings.py 共用。条目以「一条目一文件」形式存放，文件名形如
+`p047_cli_exit_code.md` / `d012_uv_lock_marker.md`，编号直接来自文件名，无需解析正文。
+
+扫描来源：
+- 所有本地分支的 git 树（`git ls-tree`）；
+- 所有登记 worktree 的工作区文件（含未提交条目）。
 
 重复检测语义：
-- 同一来源（单个 worktree 或单个分支）内，active 与 archive 两份文件的编号共享一个
-  序列，跨文件查重——repo-hygiene 迁移残留导致同一编号同时出现在 active 与 archive 时报错。
-- 跨来源（不同 worktree / 不同分支）重复不报——并行 task worktree 各自含主干历史，
-  合并前允许暂时重复。
+- 同一来源（单个分支或单个 worktree）内同号出现在多个状态目录时报错——迁移残留需立即暴露。
+- 跨来源重复不报——并行 task worktree 各自含主干历史，合并前允许暂时重复。
 
-坏文件处理：
-- 当前 worktree（repo_root 所在）的主路径（rel_paths[0]）不存在视为空历史；存在但损坏
-  （非 UTF-8 / 读取失败）报错——工具调用者维护的权威总账损坏需立即暴露。
-- 其他来源（archive、历史分支、其他 worktree）的坏文件静默跳过。
+互斥分配：
+`allocate` 在 git 公共目录的锁文件上取排他锁，锁内完成「扫描取号 → 建文件」。
+释放锁时新条目已落盘，后续扫描必然可见，不存在两个进程取到同号的窗口。
 """
 
+import fcntl
 import re
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+LOCK_NAME = "repo_template_id.lock"
 
 
 class IdScanError(ValueError):
-    """编号历史文件结构或读取错误。"""
-
-
-def visible_markdown_lines(text: str) -> list[str]:
-    """移除 fenced code、blockquote 与 HTML 注释，保留可参与条目解析的正文行。"""
-    lines = []
-    fence_marker = None
-    in_comment = False
-    for line in text.splitlines():
-        if fence_marker is not None:
-            fence = FENCE_CLOSE_RE.match(line)
-            if (
-                fence
-                and fence.group(1)[0] == fence_marker[0]
-                and len(fence.group(1)) >= fence_marker[1]
-            ):
-                fence_marker = None
-            continue
-
-        fence = FENCE_RE.match(line)
-        if fence:
-            fence_marker = (fence.group(1)[0], len(fence.group(1)))
-            continue
-
-        if in_comment:
-            end = line.find("-->")
-            if end < 0:
-                continue
-            line = line[end + 3 :]
-            in_comment = False
-
-        while "<!--" in line:
-            start = line.find("<!--")
-            end = line.find("-->", start + 4)
-            if end < 0:
-                line = line[:start]
-                in_comment = True
-                break
-            line = line[:start] + line[end + 3 :]
-
-        if line.lstrip().startswith(">"):
-            continue
-        lines.append(line)
-    return lines
+    """编号扫描或分配失败。"""
 
 
 def _run_git(repo_root: Path, args: list[str]) -> str:
@@ -88,131 +47,129 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
     return result.stdout
 
 
-def _read_blob_optional(repo_root: Path, ref: str, rel_path: str) -> str | None:
-    """git show ref:rel_path；不存在返回 None，非 UTF-8 返回 None。"""
-    result = subprocess.run(
-        ["git", "-C", str(repo_root), "show", f"{ref}:{rel_path}"],
-        capture_output=True,
+def git_common_dir(repo_root: Path) -> Path:
+    """返回所有 worktree 共享的 git 公共目录绝对路径。"""
+    text = _run_git(repo_root, ["rev-parse", "--git-common-dir"]).strip()
+    if not text:
+        raise IdScanError("无法解析 git 公共目录")
+    path = Path(text)
+    return path if path.is_absolute() else (repo_root / path).resolve()
+
+
+@contextmanager
+def id_lock(repo_root: Path):
+    """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。"""
+    lock_path = git_common_dir(repo_root) / LOCK_NAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def local_branches(repo_root: Path) -> list[str]:
+    text = _run_git(
+        repo_root, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]
     )
-    if result.returncode != 0:
-        return None
-    try:
-        return result.stdout.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    return [line.strip() for line in text.splitlines() if line.strip()]
 
 
-def _read_worktree_file_optional(root: Path, rel_path: str) -> str | None:
-    f = root / rel_path
-    if not f.is_file():
-        return None
-    try:
-        return f.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return None
-
-
-def _read_worktree_main_strict(root: Path, rel_path: str, display: str) -> str | None:
-    """读取当前 worktree 主路径。
-
-    不存在视为空历史（返回 None）；存在但损坏（非 UTF-8 / 读取失败）报错。
-    """
-    f = root / rel_path
-    if not f.is_file():
-        return None
-    try:
-        return f.read_text(encoding="utf-8")
-    except UnicodeDecodeError as e:
-        raise IdScanError(f"{display}: 不是合法 UTF-8") from e
-    except OSError as e:
-        raise IdScanError(f"{display}: 无法读取（{e}）") from e
-
-
-def _scan_source(
-    texts: list[tuple[str, str]],
-    entry_re: re.Pattern,
-    source_label: str,
-) -> list[int]:
-    """对同一来源（单 worktree 或单分支）的多份文本提取编号。
-
-    来源内跨文件查重——active 与 archive 同一编号同时出现时报错。
-    """
-    ids: list[int] = []
-    seen: set[int] = set()
-    for rel, text in texts:
-        for line in visible_markdown_lines(text):
-            match = entry_re.match(line)
-            if match:
-                number = int(match.group(1))
-                if number in seen:
-                    raise IdScanError(
-                        f"{source_label}: 编号重复 {number:03d}（{rel}）"
-                    )
-                seen.add(number)
-                ids.append(number)
-    return ids
-
-
-def _list_local_branches(repo_root: Path) -> list[str]:
-    out = _run_git(repo_root, ["for-each-ref", "--format=%(refname)", "refs/heads/"])
-    return [line.strip() for line in out.splitlines() if line.strip()]
-
-
-def _list_worktree_roots(repo_root: Path) -> list[Path]:
-    out = _run_git(repo_root, ["worktree", "list", "--porcelain"])
-    roots = []
-    for line in out.splitlines():
+def worktree_roots(repo_root: Path) -> list[Path]:
+    """返回所有登记 worktree 的根目录（含主仓）。"""
+    text = _run_git(repo_root, ["worktree", "list", "--porcelain"])
+    roots: list[Path] = []
+    for line in text.splitlines():
         if line.startswith("worktree "):
-            roots.append(Path(line[len("worktree ") :]))
+            path = Path(line[len("worktree ") :].strip())
+            if path.is_dir():
+                roots.append(path.resolve())
     return roots
 
 
-def _worktree_main_root(repo_root: Path) -> Path:
-    """取 repo_root 所在的主 worktree 根目录（用于主路径严格校验）。"""
-    roots = _list_worktree_roots(repo_root)
-    resolved_root = repo_root.resolve()
-    for root in roots:
-        if root.resolve() == resolved_root:
-            return root
-    return roots[0] if roots else resolved_root
+def _entry_number(prefix: str, name: str) -> int | None:
+    match = re.fullmatch(rf"{prefix}([0-9]{{3,}})_[a-z0-9_]+\.md", name)
+    return int(match.group(1)) if match else None
 
 
-def scan_max_id(
-    repo_root: Path,
-    entry_re: re.Pattern,
-    rel_paths: tuple[str, ...],
-) -> int:
-    """扫所有本地分支 git 树 + 所有 worktree 工作区，返回最大编号（无则 0）。
+def _numbers_from_branch(
+    repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...]
+) -> dict[int, list[str]]:
+    text = _run_git(
+        repo_root, ["ls-tree", "-r", "--name-only", branch, "--", *dirs]
+    )
+    found: dict[int, list[str]] = {}
+    for rel in text.splitlines():
+        rel = rel.strip()
+        if not rel:
+            continue
+        number = _entry_number(prefix, Path(rel).name)
+        if number is not None:
+            found.setdefault(number, []).append(rel)
+    return found
 
-    rel_paths[0] 为 active 主路径；其他为 archive 等补充路径。当前 worktree 的主路径
-    损坏报错，其余来源坏文件静默跳过。
-    """
+
+def _numbers_from_worktree(
+    root: Path, prefix: str, dirs: tuple[str, ...]
+) -> dict[int, list[str]]:
+    found: dict[int, list[str]] = {}
+    for rel_dir in dirs:
+        base = root / rel_dir
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.md"):
+            number = _entry_number(prefix, path.name)
+            if number is not None:
+                found.setdefault(number, []).append(str(path.relative_to(root)))
+    return found
+
+
+def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> None:
+    duplicated = {n: paths for n, paths in found.items() if len(paths) > 1}
+    if duplicated:
+        detail = "；".join(
+            f"{prefix}{n:03d} 出现在 {', '.join(sorted(paths))}"
+            for n, paths in sorted(duplicated.items())
+        )
+        raise IdScanError(f"{source} 中条目编号重复：{detail}")
+
+
+def scan_max_id(repo_root: Path, prefix: str, dirs: tuple[str, ...]) -> int:
+    """扫描所有本地分支与 worktree，返回已用最大编号；无条目返回 0。"""
     maximum = 0
-
-    for ref in _list_local_branches(repo_root):
-        texts: list[tuple[str, str]] = []
-        for rel in rel_paths:
-            text = _read_blob_optional(repo_root, ref, rel)
-            if text is not None:
-                texts.append((rel, text))
-        for number in _scan_source(texts, entry_re, ref):
-            maximum = max(maximum, number)
-
-    main_root = _worktree_main_root(repo_root)
-    for root in _list_worktree_roots(repo_root):
-        is_main_root = root.resolve() == main_root.resolve()
-        texts = []
-        for idx, rel in enumerate(rel_paths):
-            if is_main_root and idx == 0:
-                display = f"{root}/{rel}"
-                text = _read_worktree_main_strict(root, rel, display)
-                if text is not None:
-                    texts.append((rel, text))
-            else:
-                text = _read_worktree_file_optional(root, rel)
-                if text is not None:
-                    texts.append((rel, text))
-        for number in _scan_source(texts, entry_re, f"worktree:{root}"):
-            maximum = max(maximum, number)
-
+    for branch in local_branches(repo_root):
+        found = _numbers_from_branch(repo_root, branch, prefix, dirs)
+        _check_duplicates(f"分支 {branch}", found, prefix)
+        maximum = max([maximum, *found])
+    for root in worktree_roots(repo_root):
+        found = _numbers_from_worktree(root, prefix, dirs)
+        _check_duplicates(f"worktree {root}", found, prefix)
+        maximum = max([maximum, *found])
     return maximum
+
+
+SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+
+
+def allocate(
+    repo_root: Path,
+    *,
+    prefix: str,
+    dirs: tuple[str, ...],
+    target_dir: Path,
+    slug: str,
+    body: str,
+) -> Path:
+    """锁内分配编号并落盘条目文件，返回新文件路径。"""
+    if not SLUG_RE.match(slug):
+        raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
+    with id_lock(repo_root):
+        number = scan_max_id(repo_root, prefix, dirs) + 1
+        entry_id = f"{prefix}{number:03d}"
+        path = target_dir / f"{entry_id}_{slug}.md"
+        if path.exists():
+            raise IdScanError(f"{path} 已存在；请先处理后重试")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.replace("{id}", entry_id), encoding="utf-8", newline="\n")
+    return path
