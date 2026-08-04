@@ -435,6 +435,31 @@ def test_findings_rename_writes(tmp_path, monkeypatch):
     assert not (repo / "docs/findings/d001_demo.md").exists()
 
 
+def test_pending_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch):
+    """新建条目尚未 git add 时 rename 退化为普通改名，不经 git mv。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+
+    pending_mod.main(["rename", "p001", "--slug", "renamed", "--write"])
+
+    renamed = repo / "docs/pending/todo/p001_renamed.md"
+    assert renamed.is_file()
+    assert not (repo / "docs/pending/todo/p001_demo.md").exists()
+
+
+def test_findings_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch):
+    """findings 的 rename 同样对未入库条目退化为普通改名。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    findings_mod.main(["new", "--slug", "demo"])
+
+    findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
+
+    assert (repo / "docs/findings/d001_renamed.md").is_file()
+    assert not (repo / "docs/findings/d001_demo.md").exists()
+
+
 # ---------- 目录型条目（spike） ----------
 
 
@@ -569,3 +594,96 @@ def test_move_refuses_to_overwrite_existing_destination(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit, match="同时存在于多处"):
         pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+
+
+# ---------- legacy 单文件正文编号（旧格式分支） ----------
+
+
+def test_branch_legacy_pending_body_numbers_counted(tmp_path):
+    """未合并旧分支的 docs/pending.md 小节标题编号计入最大值；正文引用不计。"""
+    repo = _init_repo(tmp_path)
+    _git(repo, "checkout", "-b", "legacy")
+    _commit_entry(
+        repo,
+        "docs/pending.md",
+        text=(
+            "# 待办与不办总账\n\n## 待办\n\n"
+            "### p047 cli 退出码（2026-07-01 发现）\n\n"
+            "- 现象：退出码恒为 0\n"
+            "- 线索：关联 p099 一并处理\n"
+            "- 处理：未开\n"
+        ),
+    )
+    _git(repo, "checkout", "main")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 47
+
+
+def test_branch_legacy_findings_body_numbers_counted(tmp_path):
+    """未合并旧分支的 docs/findings.md 小节标题编号计入最大值。"""
+    repo = _init_repo(tmp_path)
+    _git(repo, "checkout", "-b", "legacy")
+    _commit_entry(
+        repo,
+        "docs/findings.md",
+        text="# 发现总账\n\n## d012 uv lock 平台标记（2026-07-01）\n\n- 现状：有效\n",
+    )
+    _git(repo, "checkout", "main")
+    assert scan_max_id(repo, "d", FINDING_DIRS) == 12
+
+
+def test_branch_legacy_archive_ledger_body_numbers_counted(tmp_path):
+    """旧格式归档总账 docs/archive/pending.md 的正文编号同样计入。"""
+    repo = _init_repo(tmp_path)
+    _git(repo, "checkout", "-b", "legacy")
+    _commit_entry(
+        repo,
+        "docs/archive/pending.md",
+        text="# 已闭环待办\n\n### p051 旧事（2026-06-01 闭环）\n\n- 处理：t001\n",
+    )
+    _git(repo, "checkout", "main")
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 51
+
+
+def test_allocate_skips_legacy_body_numbers(tmp_path, monkeypatch):
+    """旧分支单文件里的编号不会被 new 重复分配。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    _git(repo, "checkout", "-b", "legacy")
+    _commit_entry(
+        repo,
+        "docs/pending.md",
+        text="# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
+    )
+    _git(repo, "checkout", "main")
+    pending_mod.main(["new", "--slug", "demo"])
+    assert (repo / "docs/pending/todo/p048_demo.md").is_file()
+
+
+def test_branch_legacy_body_number_conflicts_with_entry_file(tmp_path):
+    """legacy 正文编号与同分支条目文件同号时报重复（迁移残留）。"""
+    repo = _init_repo(tmp_path)
+    _commit_entry(
+        repo,
+        "docs/pending.md",
+        text="# 待办\n\n### p010 旧事（2026-06-01 发现）\n\n- 处理：未开\n",
+    )
+    _commit_entry(repo, "docs/pending/todo/p010_open.md")
+    with pytest.raises(IdScanError, match="p010"):
+        scan_max_id(repo, "p", PENDING_DIRS)
+
+
+# ---------- 分支内 active/archive 同号迁移残留 ----------
+
+
+def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
+    """分支内同号 spike 目录同时出现在 active 与 archive 两侧时报重复。
+
+    迁移是移动而非复制，即使两侧内容一致也属于残留；与工作区扫描口径一致。
+    """
+    repo = _init_repo(tmp_path)
+    _git(repo, "checkout", "-b", "feature")
+    _commit_entry(repo, "docs/spikes/s012_probe/report.md", text="# s012\n")
+    _commit_entry(repo, "docs/archive/spikes/s012_probe/report.md", text="# s012\n")
+    _git(repo, "checkout", "main")
+    with pytest.raises(IdScanError, match="s012"):
+        scan_max_id(repo, "s", SPIKE_DIRS, kind="dir")

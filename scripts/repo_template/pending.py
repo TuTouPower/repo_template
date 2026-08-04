@@ -17,7 +17,8 @@
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
 `archive` 要求 --fix-ref TID 作为闭环标识；parked 条目须先 revive 才能闭环。
-`rename` 用 `git mv` 改条目文件名（保留编号，仅换 slug）；dry-run 默认，加 `--write` 落盘。
+`rename` 改条目文件名（保留编号，仅换 slug）：已入库文件用 `git mv` 保留历史，
+未入库（新建尚未 git add）文件退化为普通改名；dry-run 默认，加 `--write` 落盘。
 rename 不自动改正文引用——slug 改动需人工核对 docs/ 与 src/ 内的 pNNN 引用。
 迁移用 git mv 保留历史；仓库无该文件记录时退化为普通移动。
 """
@@ -225,7 +226,7 @@ def cmd_revive(args: argparse.Namespace) -> None:
 
 
 def cmd_rename(args: argparse.Namespace) -> None:
-    """rename：保留编号，仅换 slug。git mv 改文件名；dry-run 默认。
+    """rename：保留编号，仅换 slug。已入库用 git mv、未入库普通改名；dry-run 默认。
 
     不改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 pNNN 引用。
     """
@@ -255,9 +256,12 @@ def cmd_rename(args: argparse.Namespace) -> None:
         print(f"dry-run：{_rel(old_path)} → {_rel(new_path)}")
         print("（rename 不自动改正文 pNNN 引用；如需同步，请人工核对 docs/ 与 src/）")
         return
-    result = _git(["mv", _rel(old_path), _rel(new_path)])
-    if result.returncode != 0:
-        sys.exit(f"git mv 失败：{result.stderr.strip()}")
+    if _git(["ls-files", "--error-unmatch", _rel(old_path)]).returncode == 0:
+        result = _git(["mv", _rel(old_path), _rel(new_path)])
+        if result.returncode != 0:
+            sys.exit(f"git mv 失败：{result.stderr.strip()}")
+    else:
+        old_path.rename(new_path)
     print(f"已重命名：{_rel(new_path)}")
 
 
@@ -297,7 +301,7 @@ def main(argv: list[str] | None = None) -> None:
     revive_parser.add_argument("--write", action="store_true", help="落盘")
     revive_parser.set_defaults(func=cmd_revive)
 
-    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号，git mv）")
+    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号）")
     rename_parser.add_argument("entry_id", metavar="pNNN", help="要改的待办编号")
     rename_parser.add_argument("--slug", required=True, help="新 snake_case slug")
     rename_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")

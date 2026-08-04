@@ -5,8 +5,12 @@ pending.py / findings.py 共用。条目以「一条目一文件」形式存放�
 `p047_cli_exit_code.md` / `d012_uv_lock_marker.md`，编号直接来自文件名，无需解析正文。
 
 扫描来源：
-- 所有本地分支的 git 树（`git ls-tree`）；
+- 所有本地分支的 git 树（`git ls-tree` 文件名 + legacy 单文件正文编号）；
 - 所有登记 worktree 的工作区文件（含未提交条目）。
+
+旧格式曾把同类条目集中在一个单文件（`docs/pending.md`、`docs/findings.md` 等，
+编号只在正文小节标题里）。未合并旧分支里这种文件的编号对文件名扫描不可见，
+分支扫描额外用正则解析 `{目录}.md` 正文的小节标题编号，防止分配重号。
 
 重复检测语义：
 - 同一来源（单个分支或单个 worktree）内同号出现在多个状态目录时报错——迁移残留需立即暴露。
@@ -131,18 +135,50 @@ def _numbers_from_branch(
         rel = rel.strip()
         if not rel:
             continue
-        path = Path(rel)
-        # 目录型条目在 ls-tree -r 下只出现为其内部文件路径，取条目目录名。
-        names = [path.name] if kind == "file" else [part for part in path.parts]
-        for name in names:
+        parts = Path(rel).parts
+        # 目录型条目在 ls-tree -r 下只出现为其内部文件路径；身份取条目目录的完整
+        # 相对路径，同号出现在 active 与 archive 两侧才不会被目录基名折叠漏检。
+        candidates = (
+            [(parts[-1], rel)]
+            if kind == "file"
+            else [(part, "/".join(parts[: i + 1])) for i, part in enumerate(parts)]
+        )
+        for name, identity in candidates:
             number = _entry_number(prefix, name, kind=kind)
             if number is not None:
-                identity = name if kind == "dir" else rel
                 paths = found.setdefault(number, [])
                 if identity not in paths:
                     paths.append(identity)
                 break
+    if kind == "file":
+        _merge_legacy_body_numbers(repo_root, branch, prefix, dirs, found)
     return found
+
+
+def _merge_legacy_body_numbers(
+    repo_root: Path,
+    branch: str,
+    prefix: str,
+    dirs: tuple[str, ...],
+    found: dict[int, list[str]],
+) -> None:
+    """把 legacy 单文件正文小节标题中的编号并入扫描结果。
+
+    旧格式一个目录对应一个总账文件（`docs/pending.md`、`docs/findings.md`），
+    条目是 `### pNNN …` / `## dNNN …` 小节；文件不存在时零成本跳过。
+    """
+    heading_re = re.compile(rf"^#+[ \t]+{prefix}([0-9]{{3,}})(?![0-9])", re.MULTILINE)
+    for directory in dirs:
+        legacy = f"{directory}.md"
+        listed = _run_git(repo_root, ["ls-tree", "--name-only", branch, "--", legacy])
+        if not listed.strip():
+            continue
+        body = _run_git(repo_root, ["show", f"{branch}:{legacy}"])
+        for match in heading_re.finditer(body):
+            number = int(match.group(1))
+            paths = found.setdefault(number, [])
+            if legacy not in paths:
+                paths.append(legacy)
 
 
 def _numbers_from_worktree(

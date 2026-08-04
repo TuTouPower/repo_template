@@ -10,7 +10,8 @@
   python3 scripts/repo_template/findings.py rename d012 --slug new_slug [--write]
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
-`rename` 用 `git mv` 改条目文件名（保留编号，仅换 slug）；dry-run 默认，加 `--write` 落盘。
+`rename` 改条目文件名（保留编号，仅换 slug）：已入库文件用 `git mv` 保留历史，
+未入库（新建尚未 git add）文件退化为普通改名；dry-run 默认，加 `--write` 落盘。
 rename 不自动改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 dNNN 引用，
 脚本只负责让文件名与新的 slug 一致。
 """
@@ -57,7 +58,7 @@ def _run_git(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def cmd_rename(args: argparse.Namespace) -> None:
-    """rename：保留编号，仅换 slug。git mv 改文件名；dry-run 默认。
+    """rename：保留编号，仅换 slug。已入库用 git mv、未入库普通改名；dry-run 默认。
 
     不改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 dNNN 引用。
     """
@@ -79,9 +80,13 @@ def cmd_rename(args: argparse.Namespace) -> None:
         print(f"dry-run：{old_path.relative_to(REPO_ROOT).as_posix()} → {new_path.relative_to(REPO_ROOT).as_posix()}")
         print("（rename 不自动改正文 dNNN 引用；如需同步，请人工核对 docs/ 与 src/）")
         return
-    r = _run_git(["mv", str(old_path.relative_to(REPO_ROOT)), str(new_path.relative_to(REPO_ROOT))])
-    if r.returncode != 0:
-        sys.exit(f"git mv 失败：{r.stderr.strip()}")
+    r = _run_git(["ls-files", "--error-unmatch", str(old_path.relative_to(REPO_ROOT))])
+    if r.returncode == 0:
+        r = _run_git(["mv", str(old_path.relative_to(REPO_ROOT)), str(new_path.relative_to(REPO_ROOT))])
+        if r.returncode != 0:
+            sys.exit(f"git mv 失败：{r.stderr.strip()}")
+    else:
+        old_path.rename(new_path)
     print(f"已重命名：{new_path.relative_to(REPO_ROOT).as_posix()}")
 
 
@@ -116,7 +121,7 @@ def main(argv: list[str] | None = None) -> None:
     list_parser = sub.add_parser("list", help="列举全部发现")
     list_parser.set_defaults(func=cmd_list)
 
-    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号，git mv）")
+    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号）")
     rename_parser.add_argument("entry_id", metavar="dNNN", help="要改的发现编号")
     rename_parser.add_argument("--slug", required=True, help="新 snake_case slug")
     rename_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
