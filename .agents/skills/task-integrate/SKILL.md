@@ -32,7 +32,7 @@ disable-model-invocation: true
    scripts/repo_template/task.py integrate {tid}
    ```
 
-   脚本按序执行：校验分支 tip 终态与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。
+   脚本按序执行：校验分支 tip 终态与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。合并成功自动向调度账本（`docs/runtime/dispatch_ledger.jsonl`）append `integrated` 事件。
 
 3. **冲突处置**。脚本停在冲突处并列出文件时，按语义解决——不是取一侧了事：
 

@@ -17,6 +17,7 @@
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
+| `docs/runtime/dispatch_ledger.jsonl` | 并行调度账本（attempt 事件，append-only；已 gitignore，仅主仓） | `start`/`integrate` 自动 append；coordinator 经 `task.py ledger record`；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -93,7 +94,7 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 |----------|-------|------|
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
-| 并行跑多个 task | `task-dispatch` | coordinator：派发 worker、收汇报、完成即合并、解锁补位 |
+| 并行跑多个 task | `task-dispatch` | coordinator：reconcile 驱动——派发 worker、收汇报分诊、完成即合并、解锁补位、cron 兜底 |
 | 串行跑完待做 task | `task-run` | 链式串行：逐个执行+cleanup；链尾一次 merge |
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
@@ -130,6 +131,10 @@ python3 scripts/repo_template/task.py integrate t001 --continue # 冲突解决�
 python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
 python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
+python3 scripts/repo_template/task.py ps [--all]                   # 在飞 attempt 活表（账本+refs+worktree 观察派生）
+python3 scripts/repo_template/task.py reconcile --limit 3 [--model-ladder "opus>haiku"] # 只读行动计划：dispatch/redispatch/integrate/escalate
+python3 scripts/repo_template/task.py ledger record --event dispatch --tid t001 --model haiku  # coordinator 落账
+python3 scripts/repo_template/task.py ledger tail --tid t001       # 读调度账本
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
 scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件

@@ -130,6 +130,12 @@ flowchart TD
 - 测试假绿专项（必做）：测试过程中发现疑似假绿（断言过弱、mock 掉被测逻辑、只测假路径、缺集成层导致测试通过但逻辑有误）的存量测试，同样必须登记——能定位根因的走 `task-bug` 补测分析，暂不能定位的用 `pending.py new` 登记并注明疑似假绿。不得在收尾报告里一笔带过。
 - 核对所有 `status=遗留` 行的 `fix_ref` 已指向 `pNNN` 或 follow-up tid。
 - 用 `scripts/repo_template/findings.py new` 抽取可跨 task 复用的已验证事实。
+- 写交接单 `docs/tasks/{tid}_{slug}/handoff.json`（机器可读契约，随执行 commit 入库；coordinator 的 reconcile 据此验证后才合并）：
+  ```json
+  {"tid": "{tid}", "status": "done", "branch": "{task 分支}", "base_sha": "<执行 commit 前 HEAD>",
+   "tests": "<测试结果摘要>", "blackbox": "<黑盒结果>", "review": "<轮次与结论>",
+   "pending": ["pNNN"], "findings": ["dNNN"]}
+  ```
 - 其他 task 若受本 task 影响需改 spec，不在此直接改——扇出模型下改动只存在于本分支，其他 worker 看不到且合并时制造冲突。列进交出汇报，由 coordinator 处置。
 
 **7b finish**：
@@ -165,4 +171,4 @@ scripts/repo_template/task.py finish <tid>
 {tid}: {branch} @ {sha}
 ```
 
-另附：测试与黑盒结果、review 轮次与结论、登记的 `pNNN` / `dNNN`、worktree 路径（待 coordinator 清理）。停止时改为汇报当前阻塞与恢复入口。
+交接本体是已入库的 `handoff.json`（7a），这行只是给 coordinator 的线索；coordinator 以 reconcile 的机器验证为准。另附：测试与黑盒结果、review 轮次与结论、登记的 `pNNN` / `dNNN`、worktree 路径（待 coordinator 清理）。停止时改为汇报当前阻塞与恢复入口。

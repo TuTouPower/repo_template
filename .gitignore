@@ -20,3 +20,6 @@ docs/archive/reviews/review_*/_meta/
 
 # merge guard hook 运行时状态（token 一次性，不入库）
 .claude/state/
+
+# 并行调度账本，运行态不入库
+docs/runtime/
