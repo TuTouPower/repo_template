@@ -25,6 +25,7 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
   docs/tasks_index.json                    活跃派生缓存
   docs/archive/tasks_index.json            归档派生缓存
   docs/archive/tasks_audit.log             rewind/purge 审计（append-only）
+  docs/runtime/dispatch_ledger.jsonl       并行调度账本（append-only，gitignore 不入库）
 
 命令：
   task.py add --title TITLE --slug SLUG [--note NOTE] [--review-level LEVEL]
@@ -50,6 +51,16 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
   task.py list [--status STATUS] [--ref BRANCH] [--rebuild]
   task.py show TID [--ref BRANCH]
   task.py view                         # task 全景：运行中 / 待运行分组 / 已结束
+  task.py ps [--all] [--stall-minutes N]
+                                     # 调度活表：tid/attempt/model/state/last_activity
+  task.py reconcile [--limit N] [--tids TIDS] [--model-ladder "a>b"] [--json]
+                                     # 只读输出行动计划（dispatch/redispatch/integrate/escalate）
+  task.py ledger record --event EVENT --tid TID [--attempt N] [--model M]
+                        [--status S] [--sha SHA] [--class C] [--reason TEXT]
+                                     # 追加调度账本事件（--attempt 省略时 dispatch 自动编号，
+                                     # report/failed/escalated 归属该 tid 当前 attempt）
+  task.py ledger tail [--tid TID] [-n N]
+                                     # 读调度账本末 N 条（倒序）
 """
 
 import argparse
@@ -72,6 +83,8 @@ AUDIT_PATH = REPO_ROOT / "docs/archive/tasks_audit.log"
 TASKS_DIR = REPO_ROOT / "docs" / "tasks"
 ARCHIVE_TASKS_DIR = REPO_ROOT / "docs" / "archive" / "tasks"
 TEMPLATE_DIR = TASKS_DIR / "task_template"
+RUNTIME_DIR = REPO_ROOT / "docs" / "runtime"
+LEDGER_PATH = RUNTIME_DIR / "dispatch_ledger.jsonl"
 
 VALID_STATUSES = ("backlog", "active", "blocked", "done", "dropped")
 ARCHIVED_STATUSES = ("done", "dropped")
@@ -82,6 +95,10 @@ DEFAULT_REWIND = {"active": "backlog", "blocked": "active"}  # 撤一步映射
 BLOCK_REASONS = ("blackbox", "review", "infra")
 REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
+LEDGER_EVENTS = ("dispatch", "report", "failed", "escalated", "note", "breaker")
+LEDGER_REPORT_STATUSES = ("done", "blocked", "failed")
+LEDGER_FAIL_CLASSES = ("infra", "task", "resource", "contract")
+LEDGER_BREAKER_STATES = ("open", "closed")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TASK_BRANCH_RE = re.compile(r"^(t[0-9]+)_[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")
@@ -1003,148 +1020,312 @@ def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
     return None
 
 
-def cmd_view(args):
-    require_primary_worktree()
+# --------------------------------------------------------------------------
+# 调度账本（dispatch ledger，append-only JSONL，gitignore）
+# --------------------------------------------------------------------------
+
+def ledger_append(event: dict) -> dict:
+    """补 ts 后 append 一行 JSON；字符串值内换行替换为空格，保证行格式可解析。"""
+    final = {
+        key: (value.replace("\n", " ").replace("\r", " ") if isinstance(value, str) else value)
+        for key, value in event.items()
+    }
+    final["ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LEDGER_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(final, ensure_ascii=False) + "\n")
+    return final
+
+
+def ledger_read() -> list[dict]:
+    """读取账本全部事件；文件不存在返回 []；空行跳过。
+
+    截断/损坏行（如追加写被打断）stderr 警告并跳过——自愈优先于中断，
+    坏行不应让整个调度控制面失读。
+    """
+    if not LEDGER_PATH.is_file():
+        return []
+    events = []
+    for line_no, line in enumerate(
+        LEDGER_PATH.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            print(
+                f"WARNING: 调度账本 {_rel(LEDGER_PATH)} 第 {line_no} 行无法解析，已跳过",
+                file=sys.stderr,
+            )
+    return events
+
+
+def ledger_next_attempt(tid: str, events: list[dict]) -> int:
+    """该 tid 账本中 max(attempt)+1；从未派发返回 1。"""
+    attempts = [
+        e["attempt"]
+        for e in events
+        if e.get("tid") == tid and isinstance(e.get("attempt"), int)
+    ]
+    return max(attempts, default=0) + 1
+
+
+def _ledger_append_safely(event: dict) -> None:
+    """start/integrate 自动记账；失败只警告，不影响命令本身。
+
+    账本路径不在本仓内时跳过（测试重定向 REPO_ROOT 而未重定向 LEDGER_PATH 的情形，
+    避免向真实仓库的运行态目录写入）。
+    """
     try:
-        tasks = discover_effective_tasks()
-
-        dependencies: dict[str, list[str]] = {}
-        conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}
-        for tid, task in tasks.items():
-            if task["status"] in ARCHIVED_STATUSES:
-                continue
-            task_dependencies = parse_tid_list(
-                task.get("depends_on", ""), field=f"{tid}.depends_on"
-            )
-            task_conflicts = parse_tid_list(
-                task.get("conflicts_with", ""), field=f"{tid}.conflicts_with"
-            )
-            for field, references in (
-                ("depends_on", task_dependencies),
-                ("conflicts_with", task_conflicts),
-            ):
-                if tid in references:
-                    raise TaskDataError(f"invalid_graph: {tid}.{field} 引用自身")
-                missing = [reference for reference in references if reference not in tasks]
-                if missing:
-                    raise TaskDataError(
-                        f"invalid_graph: {tid}.{field} 引用不存在 task "
-                        f"{','.join(missing)}"
-                    )
-                dropped = [
-                    reference for reference in references
-                    if tasks[reference]["status"] == "dropped"
-                ]
-                if dropped:
-                    raise TaskDataError(
-                        f"invalid_graph: {tid}.{field} 引用 dropped task "
-                        f"{','.join(dropped)}"
-                    )
-            dependencies[tid] = task_dependencies
-            for peer in task_conflicts:
-                conflicts[tid].add(peer)
-                conflicts[peer].add(tid)
-
-        cycle = _dependency_cycle(dependencies)
-        if cycle:
-            raise TaskDataError(
-                "invalid_graph: depends_on cycle " + " -> ".join(cycle)
-            )
-
-        invalid_schedule = [
-            f"{tid}={task.get('schedule_status', '')!r}"
-            for tid, task in tasks.items()
-            if task["status"] == "backlog"
-            and task.get("schedule_status", "") not in ("", *SCHEDULE_STATUSES)
-        ]
-        if invalid_schedule:
-            raise TaskDataError(
-                "invalid_graph: schedule_status 非法 " + ",".join(invalid_schedule)
-            )
-
-        # done 分两种语义：
-        # - main_done_set：已合入 main 的 done（scan_tasks 读当前工作区=main 视角），
-        #   用于解依赖/解冲突——只有前置真正入 main，下游才算可跑。
-        # - effective done（tasks 里 status=done）：含未合并分支的 done，仅计数展示。
-        main_tasks = {task["tid"]: task for task in scan_tasks()}
-        main_done_set = {
-            tid for tid, task in main_tasks.items() if task["status"] == "done"
-        }
-        effective_done_set = {
-            tid for tid, task in tasks.items() if task["status"] == "done"
-        }
-        unmerged_done = sorted(
-            effective_done_set - main_done_set, key=tid_sort_key
+        if not LEDGER_PATH.resolve().is_relative_to(REPO_ROOT.resolve()):
+            return
+        ledger_append(event)
+    except OSError as error:
+        print(
+            f"WARNING: 调度账本写入失败（{error}）；{event.get('event')} 事件未记录",
+            file=sys.stderr,
         )
-        done_set = main_done_set  # 调度判断用 main 视角
-        dropped_set = {
-            tid for tid, task in tasks.items() if task["status"] == "dropped"
-        }
-        active_list = sorted(
-            (
-                tid for tid, task in tasks.items()
-                if task["status"] in ("active", "blocked")
-            ),
-            key=tid_sort_key,
+
+
+def _ledger_tid_sort_key(tid: str):
+    """账本 tid 排序：规范 tid 按序号，其余按字符串排最后。"""
+    match = TID_RE.fullmatch(tid or "")
+    return (0, int(match.group(1)), "") if match else (1, 0, tid or "")
+
+
+def _parse_instant(text: str) -> datetime | None:
+    if not text:
+        return None
+    try:
+        instant = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if instant.tzinfo is None:
+        return instant.astimezone()  # naive 时间戳按本地时区解释，避免与 aware 比较 TypeError
+    return instant
+
+
+def is_stalled(last_activity: str, stall_minutes: int, now: datetime) -> bool:
+    """last_activity（ISO）距今超 stall_minutes 分钟视为停滞。"""
+    instant = _parse_instant(last_activity)
+    if instant is None:
+        return False
+    return now - instant > timedelta(minutes=stall_minutes)
+
+
+def observe_last_activity(tid: str, events_for_tid: list[dict]) -> str | None:
+    """worktree HEAD / task 分支 tip commit 时间与最近 dispatch ts 的较大者。
+
+    worktree 不在则退到 task 分支 tip；两者都无观察点返回 None。
+    """
+    dispatch_ts = None
+    for e in events_for_tid:
+        if e.get("event") == "dispatch" and e.get("ts"):
+            dispatch_ts = e["ts"]
+    commit_ts = None
+    start_events = [
+        e for e in events_for_tid
+        if e.get("event") == "start" and e.get("worktree")
+    ]
+    worktree_rel = start_events[-1]["worktree"] if start_events else worktree_rel_path(tid)
+    worktree = (REPO_ROOT / worktree_rel).resolve()
+    if worktree.is_dir():
+        r = _git(["log", "-1", "--format=%cI"], root=worktree)
+        if r.returncode == 0 and r.stdout.strip():
+            commit_ts = r.stdout.strip()
+    else:
+        branches = _task_branch_names(tid)
+        if branches:
+            r = _git(["log", "-1", "--format=%cI", branches[0]])
+            if r.returncode == 0 and r.stdout.strip():
+                commit_ts = r.stdout.strip()
+    candidates = [ts for ts in (dispatch_ts, commit_ts) if ts]
+    if not candidates:
+        return None
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    return max(candidates, key=lambda ts: _parse_instant(ts) or epoch)
+
+
+def compute_schedule() -> dict:
+    """可跑集与分组计算：cmd_view 渲染与 reconcile 行动计划共用的只读调度图。"""
+    require_primary_worktree()
+    tasks = discover_effective_tasks()
+
+    dependencies: dict[str, list[str]] = {}
+    conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}
+    for tid, task in tasks.items():
+        if task["status"] in ARCHIVED_STATUSES:
+            continue
+        task_dependencies = parse_tid_list(
+            task.get("depends_on", ""), field=f"{tid}.depends_on"
         )
-        backlog_tasks = {
-            tid: task for tid, task in tasks.items()
-            if task["status"] == "backlog"
-        }
-
-        # 按阻塞原因分组
-        ready: list[str] = []
-        waiting_deps: list[tuple[str, str]] = []  # (前置, 后继)
-        blocked_conflicts: list[tuple[str, str]] = []  # (tid, active 对端)
-        pending_clarify: list[str] = []
-        unscheduled: list[str] = []
-
-        active_set = set(active_list)
-        for tid in sorted(backlog_tasks, key=tid_sort_key):
-            task = backlog_tasks[tid]
-            schedule = task.get("schedule_status", "")
-            if schedule == "pending_clarification":
-                pending_clarify.append(tid)
-                continue
-            if not schedule:
-                unscheduled.append(tid)
-                continue
-            # scheduled：检查依赖
-            missing_deps = [
-                dep for dep in dependencies.get(tid, []) if dep not in done_set
+        task_conflicts = parse_tid_list(
+            task.get("conflicts_with", ""), field=f"{tid}.conflicts_with"
+        )
+        for field, references in (
+            ("depends_on", task_dependencies),
+            ("conflicts_with", task_conflicts),
+        ):
+            if tid in references:
+                raise TaskDataError(f"invalid_graph: {tid}.{field} 引用自身")
+            missing = [reference for reference in references if reference not in tasks]
+            if missing:
+                raise TaskDataError(
+                    f"invalid_graph: {tid}.{field} 引用不存在 task "
+                    f"{','.join(missing)}"
+                )
+            dropped = [
+                reference for reference in references
+                if tasks[reference]["status"] == "dropped"
             ]
-            if missing_deps:
-                for dep in sorted(missing_deps, key=tid_sort_key):
-                    waiting_deps.append((dep, tid))
-                continue
-            # 检查冲突：peer 真正占资源（active/blocked/未合 main 的 done）才阻塞；
-            # peer 是 backlog 时，序号小者优先，序号大者被序号小者阻塞（强制择一）。
-            blocking = []
-            for peer in conflicts[tid]:
-                if peer in main_done_set or peer in dropped_set:
-                    continue
-                peer_status = tasks[peer]["status"]
-                if peer_status in ("active", "blocked"):
-                    blocking.append(peer)
-                elif peer_status == "done":
-                    # 未合 main 的 done：占住资源，阻塞
-                    blocking.append(peer)
-                elif peer_status == "backlog":
-                    # backlog peer：序号小者优先，序号大者被阻塞
-                    if tid_sort_key(peer) < tid_sort_key(tid):
-                        blocking.append(peer)
-            if blocking:
-                for peer in sorted(blocking, key=tid_sort_key):
-                    blocked_conflicts.append((tid, peer))
-                continue
-            ready.append(tid)
+            if dropped:
+                raise TaskDataError(
+                    f"invalid_graph: {tid}.{field} 引用 dropped task "
+                    f"{','.join(dropped)}"
+                )
+        dependencies[tid] = task_dependencies
+        for peer in task_conflicts:
+            conflicts[tid].add(peer)
+            conflicts[peer].add(tid)
 
-        # 下一批：ready 中互相冲突的择优（保留原 next-batch 选择逻辑）
-        selected = []
-        for tid in ready:
-            if any(peer in conflicts[tid] for peer in selected):
+    cycle = _dependency_cycle(dependencies)
+    if cycle:
+        raise TaskDataError(
+            "invalid_graph: depends_on cycle " + " -> ".join(cycle)
+        )
+
+    invalid_schedule = [
+        f"{tid}={task.get('schedule_status', '')!r}"
+        for tid, task in tasks.items()
+        if task["status"] == "backlog"
+        and task.get("schedule_status", "") not in ("", *SCHEDULE_STATUSES)
+    ]
+    if invalid_schedule:
+        raise TaskDataError(
+            "invalid_graph: schedule_status 非法 " + ",".join(invalid_schedule)
+        )
+
+    # done 分两种语义：
+    # - main_done_set：已合入 main 的 done（scan_tasks 读当前工作区=main 视角），
+    #   用于解依赖/解冲突——只有前置真正入 main，下游才算可跑。
+    # - effective done（tasks 里 status=done）：含未合并分支的 done，仅计数展示。
+    main_tasks = {task["tid"]: task for task in scan_tasks()}
+    main_done_set = {
+        tid for tid, task in main_tasks.items() if task["status"] == "done"
+    }
+    effective_done_set = {
+        tid for tid, task in tasks.items() if task["status"] == "done"
+    }
+    unmerged_done = sorted(
+        effective_done_set - main_done_set, key=tid_sort_key
+    )
+    done_set = main_done_set  # 调度判断用 main 视角
+    dropped_set = {
+        tid for tid, task in tasks.items() if task["status"] == "dropped"
+    }
+    active_list = sorted(
+        (
+            tid for tid, task in tasks.items()
+            if task["status"] in ("active", "blocked")
+        ),
+        key=tid_sort_key,
+    )
+    backlog_tasks = {
+        tid: task for tid, task in tasks.items()
+        if task["status"] == "backlog"
+    }
+
+    # 按阻塞原因分组
+    ready: list[str] = []
+    waiting_deps: list[tuple[str, str]] = []  # (前置, 后继)
+    blocked_conflicts: list[tuple[str, str]] = []  # (tid, active 对端)
+    pending_clarify: list[str] = []
+    unscheduled: list[str] = []
+
+    active_set = set(active_list)
+    for tid in sorted(backlog_tasks, key=tid_sort_key):
+        task = backlog_tasks[tid]
+        schedule = task.get("schedule_status", "")
+        if schedule == "pending_clarification":
+            pending_clarify.append(tid)
+            continue
+        if not schedule:
+            unscheduled.append(tid)
+            continue
+        # scheduled：检查依赖
+        missing_deps = [
+            dep for dep in dependencies.get(tid, []) if dep not in done_set
+        ]
+        if missing_deps:
+            for dep in sorted(missing_deps, key=tid_sort_key):
+                waiting_deps.append((dep, tid))
+            continue
+        # 检查冲突：peer 真正占资源（active/blocked/未合 main 的 done）才阻塞；
+        # peer 是 backlog 时，序号小者优先，序号大者被序号小者阻塞（强制择一）。
+        blocking = []
+        for peer in conflicts[tid]:
+            if peer in main_done_set or peer in dropped_set:
                 continue
-            selected.append(tid)
+            peer_status = tasks[peer]["status"]
+            if peer_status in ("active", "blocked"):
+                blocking.append(peer)
+            elif peer_status == "done":
+                # 未合 main 的 done：占住资源，阻塞
+                blocking.append(peer)
+            elif peer_status == "backlog":
+                # backlog peer：序号小者优先，序号大者被阻塞
+                if tid_sort_key(peer) < tid_sort_key(tid):
+                    blocking.append(peer)
+        if blocking:
+            for peer in sorted(blocking, key=tid_sort_key):
+                blocked_conflicts.append((tid, peer))
+            continue
+        ready.append(tid)
+
+    # 下一批：ready 中互相冲突的择优（保留原 next-batch 选择逻辑）
+    selected = []
+    for tid in ready:
+        if any(peer in conflicts[tid] for peer in selected):
+            continue
+        selected.append(tid)
+
+    return {
+        "tasks": tasks,
+        "dependencies": dependencies,
+        "conflicts": conflicts,
+        "main_done_set": main_done_set,
+        "effective_done_set": effective_done_set,
+        "unmerged_done": unmerged_done,
+        "dropped_set": dropped_set,
+        "active_list": active_list,
+        "active_set": active_set,
+        "backlog_tasks": backlog_tasks,
+        "ready": ready,
+        "waiting_deps": waiting_deps,
+        "blocked_conflicts": blocked_conflicts,
+        "pending_clarify": pending_clarify,
+        "unscheduled": unscheduled,
+        "selected": selected,
+    }
+
+
+def cmd_view(args):
+    try:
+        schedule = compute_schedule()
+        tasks = schedule["tasks"]
+        conflicts = schedule["conflicts"]
+        main_done_set = schedule["main_done_set"]
+        unmerged_done = schedule["unmerged_done"]
+        dropped_set = schedule["dropped_set"]
+        active_list = schedule["active_list"]
+        active_set = schedule["active_set"]
+        backlog_tasks = schedule["backlog_tasks"]
+        selected = schedule["selected"]
+        waiting_deps = schedule["waiting_deps"]
+        blocked_conflicts = schedule["blocked_conflicts"]
+        pending_clarify = schedule["pending_clarify"]
+        unscheduled = schedule["unscheduled"]
 
         # 输出全景
         lines: list[str] = ["== task 全景 =="]
@@ -1212,6 +1393,600 @@ def cmd_view(args):
         if not message.startswith(("invalid_graph:", "invalid_done:")):
             message = f"invalid_graph: {message}"
         sys.exit(f"view=FAIL：{message}")
+
+
+# --------------------------------------------------------------------------
+# 调度控制面：ledger record/tail、ps 活表、reconcile 行动计划
+# --------------------------------------------------------------------------
+
+def cmd_ledger_record(args):
+    event = {"event": args.event}
+    if args.event in ("dispatch", "report", "failed", "escalated"):
+        if not args.tid:
+            sys.exit(f"ledger record --event {args.event} 必须给 --tid")
+        event["tid"] = args.tid
+    elif args.tid:
+        event["tid"] = args.tid
+    if args.event == "report" and not args.status:
+        sys.exit("ledger record --event report 必须给 --status")
+    if args.event == "failed" and not args.fail_class:
+        sys.exit("ledger record --event failed 必须给 --class")
+    if args.event == "breaker" and not args.model:
+        sys.exit("ledger record --event breaker 必须给 --model")
+    if args.event == "dispatch" and args.attempt is None:
+        args.attempt = ledger_next_attempt(args.tid, ledger_read())
+    elif args.event in ("report", "failed", "escalated") and args.attempt is None:
+        latest = ledger_next_attempt(args.tid, ledger_read()) - 1
+        if latest >= 1:
+            args.attempt = latest  # 默认归属该 tid 当前 attempt，避免与在飞 attempt 脱钩
+    if args.event == "breaker" and args.state is None:
+        args.state = "open"  # 熔断事件默认 open
+    for key, value in (
+        ("attempt", args.attempt),
+        ("model", args.model),
+        ("status", args.status),
+        ("sha", args.sha),
+        ("class", args.fail_class),
+        ("state", args.state),
+    ):
+        if value is not None:
+            event[key] = value
+    if args.reason is not None:
+        event["text" if args.event == "note" else "reason"] = args.reason
+    final = ledger_append(event)
+    parts = [f"recorded: {final['event']}"]
+    if final.get("tid"):
+        label = final["tid"]
+        if final.get("attempt") is not None:
+            label += f"#{final['attempt']}"
+        parts.append(label)
+    for key in ("model", "status", "class", "state"):
+        if final.get(key):
+            parts.append(f"{key}={final[key]}")
+    print(" ".join(parts))
+
+
+def cmd_ledger_tail(args):
+    events = ledger_read()
+    if args.tid:
+        events = [e for e in events if e.get("tid") == args.tid]
+    if not events:
+        print("（账本无匹配记录）")
+        return
+    for e in events[-args.n:][::-1]:
+        parts = [e.get("ts", "-"), e.get("event", "?")]
+        if e.get("tid"):
+            label = e["tid"]
+            if e.get("attempt") is not None:
+                label += f"#{e['attempt']}"
+            parts.append(label)
+        for key in ("model", "status", "class", "state", "reason", "text", "merge_sha"):
+            if e.get(key):
+                parts.append(f"{key}={e[key]}")
+        print(" ".join(parts))
+
+
+def verify_integrate_ready(tid: str) -> tuple[str, str]:
+    """refs 机器验证，返回 (verdict, detail)：
+
+    - ready：分支存在、有未合并 commit、tip 终态、tip handoff.json 有效 → 可合并；
+    - contract：refs 已终态但交接契约不满足（handoff.json 缺失/无法解析/非终态）；
+    - incomplete：refs 未完成（无分支/无未合并 commit/tip 非终态）。
+    """
+    branches = _task_branch_names(tid)
+    if not branches:
+        return "incomplete", "无本地 task 分支"
+    branch = branches[0]
+    if not has_unmerged_commits(branch):
+        return "incomplete", f"分支 {branch!r} 无未合并 commit"
+    try:
+        task, fm, _ = load_task_at_ref(tid, branch)
+    except TaskDataError as error:
+        return "incomplete", str(error)
+    if fm.get("status") not in ARCHIVED_STATUSES:
+        return "incomplete", f"分支 {branch!r} tip status={fm.get('status')!r} 非终态"
+    try:
+        handoff_text = git_text_at_ref(branch, f"{task['dir']}/handoff.json")
+    except TaskDataError:
+        return "contract", f"分支 {branch!r} tip 缺 {task['dir']}/handoff.json"
+    try:
+        handoff = json.loads(handoff_text)
+    except json.JSONDecodeError:
+        return "contract", f"分支 {branch!r} tip {task['dir']}/handoff.json 无法解析"
+    handoff_path = f"{task['dir']}/handoff.json"
+    if not isinstance(handoff, dict):
+        return "contract", f"{handoff_path} 非 JSON 对象"
+    if handoff.get("status") not in ARCHIVED_STATUSES:
+        return "contract", f"{handoff_path} status={handoff.get('status')!r} 缺失或非终态"
+    if handoff.get("tid") != tid:
+        return "contract", f"{handoff_path} tid={handoff.get('tid')!r} 与 {tid} 不符"
+    if handoff.get("branch") != branch:
+        return "contract", f"{handoff_path} branch={handoff.get('branch')!r} 与分支 {branch!r} 不符"
+    return "ready", "分支 tip done + handoff 齐备"
+
+
+def compute_ps_rows(
+    events: list[dict],
+    effective: dict[str, dict],
+    main_statuses: dict[str, str],
+    *,
+    stall_minutes: int,
+    now: datetime,
+    observer=observe_last_activity,
+    verifier=verify_integrate_ready,
+) -> list[dict]:
+    """活表行：对每个非终态 tid 判定状态；终态行保留（调用方按 --all 过滤）。"""
+    ledger_tids = {e["tid"] for e in events if e.get("tid")}
+    active_tids = {
+        tid for tid, task in effective.items()
+        if task["status"] in ("active", "blocked", "backlog")
+    }
+    rows = []
+    for tid in sorted(ledger_tids | active_tids, key=_ledger_tid_sort_key):
+        tev = [e for e in events if e.get("tid") == tid]
+        dispatches = [e for e in tev if e.get("event") == "dispatch"]
+        attempts = [
+            e["attempt"] for e in tev if isinstance(e.get("attempt"), int)
+        ]
+        attempt = max(attempts) if attempts else None
+        model = dispatches[-1].get("model", "") if dispatches else ""
+        last_activity = "-"
+        note = ""
+        if main_statuses.get(tid) in ARCHIVED_STATUSES:
+            rows.append({
+                "tid": tid, "attempt": attempt, "model": model,
+                "state": main_statuses[tid], "last_activity": last_activity,
+                "note": note,
+            })
+            continue
+        attempt_events = [
+            e for e in tev if attempt is not None and e.get("attempt") == attempt
+        ]
+        latest_attempt_event = attempt_events[-1] if attempt_events else None
+        reports = [
+            e for e in tev
+            if e.get("event") == "report" and e.get("attempt") == attempt
+        ]
+        latest_report = reports[-1] if reports else None
+        integrated = any(e.get("event") == "integrated" for e in tev)
+        effective_status = effective.get(tid, {}).get("status", "")
+        if dispatches:
+            verdict, detail = verifier(tid)
+        else:
+            verdict, detail = "incomplete", ""
+        if verdict == "ready":
+            state = "done待合并"
+            note = detail
+        elif latest_attempt_event and latest_attempt_event.get("event") == "failed":
+            state = f"failed:{latest_attempt_event.get('class', '')}"
+            note = latest_attempt_event.get("reason", "")
+        elif (
+            latest_report and latest_report.get("status") == "blocked"
+        ) or effective_status == "blocked":
+            state = "blocked"
+            note = (latest_report or {}).get("reason", "")
+        elif (
+            latest_report and latest_report.get("status") == "done"
+            and not integrated
+        ):
+            state = "reported(未验证)"  # refs 未 ready 的 report done：线索而非真相
+            note = latest_report.get("sha", "")
+        elif dispatches:
+            observed = observer(tid, tev)
+            if observed is None:
+                state = "dispatched(无观察点)"
+            else:
+                last_activity = observed
+                state = (
+                    "stalled?" if is_stalled(observed, stall_minutes, now)
+                    else "progressing"
+                )
+        elif effective_status == "backlog":
+            state = "pending"
+        else:
+            state = effective_status or "?"
+        rows.append({
+            "tid": tid, "attempt": attempt, "model": model,
+            "state": state, "last_activity": last_activity, "note": note,
+        })
+    return rows
+
+
+def cmd_ps(args):
+    require_primary_worktree()
+    events = ledger_read()
+    if not events:
+        print("调度账本为空：尚无记录（docs/runtime/dispatch_ledger.jsonl）")
+        return
+    effective = discover_effective_tasks()
+    main_statuses = {task["tid"]: task["status"] for task in scan_tasks()}
+    rows = compute_ps_rows(
+        events,
+        effective,
+        main_statuses,
+        stall_minutes=args.stall_minutes,
+        now=datetime.now().astimezone(),
+    )
+    if not args.all:
+        rows = [row for row in rows if row["state"] not in ARCHIVED_STATUSES]
+    if not rows:
+        print("（无在飞 task；--all 显示已结束）")
+        return
+    cells = [
+        [
+            row["tid"],
+            str(row["attempt"]) if row["attempt"] is not None else "-",
+            row["model"] or "-",
+            row["state"],
+            row["last_activity"],
+            row["note"],
+        ]
+        for row in rows
+    ]
+    headers = ["tid", "attempt", "model", "state", "last_activity", "note"]
+    widths = [
+        max(len(headers[i]), *(len(cell[i]) for cell in cells))
+        for i in range(len(headers))
+    ]
+    print("  ".join(headers[i].ljust(widths[i]) for i in range(len(headers))))
+    for cell in cells:
+        print("  ".join(cell[i].ljust(widths[i]) for i in range(len(headers))))
+
+
+def _in_flight_attempts(events: list[dict]) -> list[tuple[str, int, dict]]:
+    """在飞 attempt：dispatch 之后无 integrated/escalated/更高 attempt dispatch 的 (tid, attempt)。
+
+    failed 不终结在飞——失败 attempt 由 reconcile 的重试策略处置（redispatch/escalate）；
+    更高 attempt 的 dispatch 出现后旧 attempt 即被取代，不再计入。
+    """
+    tids = sorted(
+        {e["tid"] for e in events if e.get("tid")}, key=_ledger_tid_sort_key
+    )
+    in_flight = []
+    for tid in tids:
+        tev = [e for e in events if e.get("tid") == tid]
+        # 同 (tid, attempt) 重复 dispatch 只保留后一条，防动作与占槽双算
+        latest_dispatch: dict[int, tuple[int, dict]] = {}
+        for i, e in enumerate(tev):
+            if e.get("event") == "dispatch" and isinstance(e.get("attempt"), int):
+                latest_dispatch[e["attempt"]] = (i, e)
+        for attempt, (i, e) in latest_dispatch.items():
+            ended = any(
+                later.get("event") in ("integrated", "escalated")
+                or (
+                    later.get("event") == "dispatch"
+                    and isinstance(later.get("attempt"), int)
+                    and later["attempt"] > attempt
+                )
+                for later in tev[i + 1:]
+            )
+            if not ended:
+                in_flight.append((tid, attempt, e))
+    return in_flight
+
+
+def breaker_states(events: list[dict]) -> dict[str, str]:
+    """session 级模型熔断状态：每模型取最新 breaker 事件，state=open 即熔断中。"""
+    states: dict[str, str] = {}
+    for e in events:
+        if e.get("event") == "breaker" and e.get("model"):
+            states[e["model"]] = e.get("state", "open")
+    return states
+
+
+def _pick_unbroken_model(
+    ladder: list[str], start: int, breakers: dict[str, str]
+) -> tuple[str | None, str]:
+    """从阶梯第 start 档起选第一个未熔断模型；返回 (model, 降档说明)，全熔断返回 (None, "")。"""
+    skipped = []
+    for i in range(start, len(ladder)):
+        model = ladder[i]
+        if breakers.get(model) == "open":
+            skipped.append(model)
+            continue
+        note = f"{'、'.join(skipped)} 熔断，降 {model}" if skipped else ""
+        return model, note
+    return None, ""
+
+
+def dispatch_mode(tid: str, events_for_tid: list[dict]) -> str:
+    """redispatch 模式：worktree 存在或分支有未合并 commit（有产出可续）→ resume；
+    无分支无 worktree → restart（可直接 start）。"""
+    start_events = [
+        e for e in events_for_tid
+        if e.get("event") == "start" and e.get("worktree")
+    ]
+    worktree_rel = start_events[-1]["worktree"] if start_events else worktree_rel_path(tid)
+    if (REPO_ROOT / worktree_rel).resolve().is_dir():
+        return "resume"
+    if any(has_unmerged_commits(b) for b in _task_branch_names(tid)):
+        return "resume"
+    return "restart"
+
+
+def _parent_dispatch_model(
+    tid: str, parent_attempt: int, events: list[dict]
+) -> str | None:
+    for e in reversed(events):
+        if (
+            e.get("tid") == tid
+            and e.get("event") == "dispatch"
+            and e.get("attempt") == parent_attempt
+        ):
+            return e.get("model")
+    return None
+
+
+def _retry_or_escalate_action(
+    tid: str,
+    parent_attempt: int,
+    *,
+    fail_class: str,
+    detail: str,
+    events: list[dict],
+    ladder: list[str] | None,
+    breakers: dict[str, str],
+    max_auto_retries: int,
+    mode_probe=dispatch_mode,
+) -> dict:
+    """失败重试策略：已用 attempt 数未超额度则 redispatch，否则 escalate。
+
+    - contract：不走路梯降档，同模型 resume（缺交接单换模型无效）；
+    - 其余类：模型按阶梯降档并跳过熔断档；阶梯钳回父 attempt 同模型时
+      （已无未尝试模型）escalate；
+    - mode 由 mode_probe 判定：resume（有产出续跑）/ restart（无产出从头）。
+    """
+    used = ledger_next_attempt(tid, events) - 1
+    reason = f"#{parent_attempt} {fail_class} 失败：{detail}"
+    if used > max_auto_retries:
+        return {
+            "action": "escalate", "tid": tid, "attempt": parent_attempt,
+            "model": None,
+            "reason": f"{reason}；自动重试额度（{max_auto_retries}）用尽",
+        }
+    tev = [e for e in events if e.get("tid") == tid]
+    mode = mode_probe(tid, tev)
+    parent_model = _parent_dispatch_model(tid, parent_attempt, events)
+    if fail_class == "contract":
+        return {
+            "action": "redispatch", "tid": tid, "attempt": used + 1,
+            "model": parent_model, "mode": "resume",
+            "reason": f"{reason}（同模型 resume：原 worktree 补交接单）",
+        }
+    if ladder:
+        model, note = _pick_unbroken_model(
+            ladder, min(used, len(ladder) - 1), breakers
+        )
+        if model is None:
+            return {
+                "action": "escalate", "tid": tid, "attempt": parent_attempt,
+                "model": None, "reason": f"{reason}；模型阶梯全部熔断",
+            }
+        if model == parent_model:
+            return {
+                "action": "escalate", "tid": tid, "attempt": parent_attempt,
+                "model": None,
+                "reason": f"{reason}；阶梯内已无未尝试模型（{model}）",
+            }
+        if note:
+            reason = f"{reason}（{note}）"
+    else:
+        model = parent_model
+        if model and breakers.get(model) == "open":
+            return {
+                "action": "escalate", "tid": tid, "attempt": parent_attempt,
+                "model": None,
+                "reason": f"{reason}；模型阶梯全部熔断（{model} 熔断，无阶梯可降）",
+            }
+    return {
+        "action": "redispatch", "tid": tid, "attempt": used + 1,
+        "model": model, "mode": mode, "reason": reason,
+    }
+
+
+def _escalate_latched_tids(events: list[dict]) -> set[str]:
+    """escalate 闩锁：最后一条 dispatch/escalated 类事件是 escalated 的 tid。
+
+    闩锁中的 tid 不被自动补位重派（防 escalate→dispatch→failed 无用户循环）；
+    用户裁决后 coordinator 手动 start+dispatch 落账新 dispatch，闩锁自然解除。
+    """
+    latched = set()
+    for tid in {e.get("tid") for e in events if e.get("tid")}:
+        relevant = [
+            e for e in events
+            if e.get("tid") == tid and e.get("event") in ("dispatch", "escalated")
+        ]
+        if relevant and relevant[-1].get("event") == "escalated":
+            latched.add(tid)
+    return latched
+
+
+def compute_reconcile_plan(
+    events: list[dict],
+    schedule: dict,
+    *,
+    limit: int,
+    scope: set[str] | None,
+    ladder: list[str] | None,
+    stall_minutes: int,
+    max_auto_retries: int,
+    now: datetime,
+    observer=observe_last_activity,
+    verifier=verify_integrate_ready,
+    mode_probe=dispatch_mode,
+) -> dict:
+    """只读行动计划：dispatch / redispatch / integrate / escalate + 占槽统计。"""
+    main_done_set = schedule.get("main_done_set", set())
+    dropped_set = schedule.get("dropped_set", set())
+    effective_tasks = schedule.get("tasks", {})
+    breakers = breaker_states(events)
+
+    def allowed(tid: str) -> bool:
+        return scope is None or tid in scope
+
+    actions: list[dict] = []
+    occupancy = 0
+    in_flight = _in_flight_attempts(events)
+    in_flight_tids = {tid for tid, _, _ in in_flight}
+    for tid, attempt, _dispatch in in_flight:
+        if tid in main_done_set or tid in dropped_set:
+            continue  # 主干已终态但账本缺 integrated：不再产生动作
+        tev = [e for e in events if e.get("tid") == tid]
+        reports = [
+            e for e in tev
+            if e.get("event") == "report" and e.get("attempt") == attempt
+        ]
+        report = reports[-1] if reports else None
+        # 处置事件 = 该 attempt 的 failed/report 最后一条；note 等其他事件不掩盖 failed
+        disposition = None
+        for e in tev:
+            if e.get("attempt") == attempt and e.get("event") in ("failed", "report"):
+                disposition = e
+        # refs 先行：report 只是加速线索，分支 tip + handoff 才是完成真相
+        verdict, detail = verifier(tid)
+        if verdict == "ready":
+            if allowed(tid):
+                if report and report.get("status") == "done":
+                    reason = f"report done + refs 验证通过（{detail}）"
+                else:
+                    reason = f"refs 派生：{detail}"
+                actions.append({
+                    "action": "integrate", "tid": tid, "attempt": attempt,
+                    "model": None, "reason": reason,
+                })
+            occupancy += 1
+            continue
+        if verdict == "contract":
+            if allowed(tid):
+                action = _retry_or_escalate_action(
+                    tid, attempt,
+                    fail_class="contract", detail=detail,
+                    events=events, ladder=ladder, breakers=breakers,
+                    max_auto_retries=max_auto_retries, mode_probe=mode_probe,
+                )
+                actions.append(action)
+                if action["action"] == "redispatch":
+                    occupancy += 1  # redispatch 原位补槽，escalate 释放槽
+            continue
+        if (
+            disposition
+            and disposition.get("event") == "report"
+            and disposition.get("status") == "blocked"
+        ):
+            if allowed(tid):
+                actions.append({
+                    "action": "escalate", "tid": tid, "attempt": attempt,
+                    "model": None,
+                    "reason": "task blocked：review/黑盒满轮，须用户裁决",
+                })
+            continue
+        if effective_tasks.get(tid, {}).get("status") == "blocked":
+            if allowed(tid):
+                actions.append({
+                    "action": "escalate", "tid": tid, "attempt": attempt,
+                    "model": None,
+                    "reason": "分支已 blocked（worker 已 block、report 未落账）；须用户裁决",
+                })
+            continue
+        failed = None
+        if disposition:
+            if disposition.get("event") == "failed":
+                failed = disposition
+            elif disposition.get("status") == "failed":  # report status=failed 等价失败
+                failed = disposition
+        observed = observer(tid, tev)
+        stalled = observed is not None and is_stalled(observed, stall_minutes, now)
+        if failed or stalled:
+            if allowed(tid):
+                fail_class = (failed.get("class") or "task") if failed else "resource"
+                detail = (
+                    failed.get("reason", "") if failed
+                    else f"超 {stall_minutes} 分钟无推进（stalled）"
+                )
+                action = _retry_or_escalate_action(
+                    tid, attempt,
+                    fail_class=fail_class, detail=detail,
+                    events=events, ladder=ladder, breakers=breakers,
+                    max_auto_retries=max_auto_retries, mode_probe=mode_probe,
+                )
+                actions.append(action)
+                if action["action"] == "redispatch":
+                    occupancy += 1  # redispatch 原位补槽，escalate 释放槽
+            continue
+        occupancy += 1  # progressing：占槽，无动作
+
+    latched = _escalate_latched_tids(events)
+    free = limit - occupancy
+    if free > 0:
+        conflicts = schedule.get("conflicts", {})
+        for tid in schedule.get("selected", []):
+            if free <= 0:
+                break
+            if tid in in_flight_tids or tid in latched or not allowed(tid):
+                continue
+            if conflicts.get(tid, set()) & in_flight_tids:
+                continue
+            reason = "空槽补位：下一批可跑"
+            model = None
+            if ladder:
+                model, note = _pick_unbroken_model(ladder, 0, breakers)
+                if model is None:
+                    actions.append({
+                        "action": "escalate", "tid": tid, "attempt": None,
+                        "model": None, "reason": "模型阶梯全部熔断",
+                    })
+                    in_flight_tids.add(tid)
+                    free -= 1
+                    continue
+                if note:
+                    reason = f"{reason}（{note}）"
+            actions.append({
+                "action": "dispatch", "tid": tid,
+                "attempt": ledger_next_attempt(tid, events),
+                "model": model, "reason": reason,
+            })
+            in_flight_tids.add(tid)
+            free -= 1
+    return {"actions": actions, "occupancy": {"used": occupancy, "limit": limit}}
+
+
+def cmd_reconcile(args):
+    require_primary_worktree()
+    events = ledger_read()
+    schedule = compute_schedule()
+    scope = (
+        set(parse_tid_list(args.tids, field="--tids")) if args.tids else None
+    )
+    ladder = (
+        [m.strip() for m in args.model_ladder.split(">") if m.strip()]
+        if args.model_ladder else []
+    ) or None
+    plan = compute_reconcile_plan(
+        events,
+        schedule,
+        limit=args.limit,
+        scope=scope,
+        ladder=ladder,
+        stall_minutes=args.stall_minutes,
+        max_auto_retries=args.max_auto_retries,
+        now=datetime.now().astimezone(),
+    )
+    if args.json:
+        print(json.dumps(plan, ensure_ascii=False))
+        return
+    for action in plan["actions"]:
+        parts = [action["action"].upper(), action["tid"]]
+        if action.get("attempt") is not None:
+            parts.append(f"attempt={action['attempt']}")
+        if action.get("model"):
+            parts.append(f"model={action['model']}")
+        if action.get("mode"):
+            parts.append(f"mode={action['mode']}")
+        print(" ".join(parts) + f" — {action['reason']}")
+    if not plan["actions"]:
+        print("plan 为空：无待执行动作（可安全空闲）")
+    occupancy = plan["occupancy"]
+    print(f"占槽 {occupancy['used']}/{occupancy['limit']}")
 
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
@@ -1767,6 +2542,12 @@ def cmd_start(args):
     if linked:
         print(f"已软链本地配置：{', '.join(linked)}")
     print(f"下一步：cd {worktree_rel} 后在该工作区执行 preflight 与后续所有步骤")
+    _ledger_append_safely({
+        "event": "start",
+        "tid": args.tid,
+        "branch": branch,
+        "worktree": worktree_rel,
+    })
 
 
 def cmd_preflight(args):
@@ -2103,6 +2884,7 @@ def cmd_integrate(args):
     if not TID_RE.fullmatch(args.tid):
         sys.exit(f"tid 非法：{args.tid!r}")
     base = default_branch()
+    merge_sha = ""
 
     if args.continue_merge:
         if not _merge_in_progress():
@@ -2113,10 +2895,6 @@ def cmd_integrate(args):
                 f"仍有 {len(conflicted)} 个文件未解决冲突："
                 f"{', '.join(conflicted[:5])}；解决并 git add 后重试"
             )
-        r = _git(["commit", "--no-edit"])
-        if r.returncode != 0:
-            sys.exit(f"merge commit 失败：{r.stderr.strip()}")
-        print(f"merge 已完成：{_get_head_short()}")
     else:
         if _merge_in_progress():
             sys.exit("存在进行中的 merge；先用 --continue 完成或 git merge --abort")
@@ -2131,6 +2909,18 @@ def cmd_integrate(args):
         branch, sha = _resolve_integrate_branch(args.tid)
     except TaskDataError as e:
         sys.exit(str(e))
+
+    if args.continue_merge:
+        # 先解析再提交：MERGE_HEAD 必须等于本 tid 分支 tip，
+        # 防把别的 tid 的 merge 提交掉并记错账、删错分支
+        r = _git(["rev-parse", "MERGE_HEAD"])
+        merge_head = r.stdout.strip() if r.returncode == 0 else ""
+        if merge_head != sha:
+            sys.exit(
+                f"进行中的 merge（MERGE_HEAD {merge_head[:12] or 'unknown'}）与 "
+                f"{args.tid} 分支 {branch!r} tip {sha[:12]} 不符；"
+                "拒绝 --continue，避免提交并记账到错误的 task"
+            )
 
     registered = [path for path, name in worktree_paths().items() if name == branch]
     if registered:
@@ -2150,9 +2940,17 @@ def cmd_integrate(args):
             for b, _ in chain:
                 print(f"  {b}")
 
-    if not args.continue_merge:
+    if args.continue_merge:
+        r = _git(["commit", "--no-edit"])
+        if r.returncode != 0:
+            sys.exit(f"merge commit 失败：{r.stderr.strip()}")
+        print(f"merge 已完成：{_get_head_short()}")
+        merge_sha = _get_head()
+    else:
         if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
             print(f"{branch} 已合入 {base}，跳过 merge")
+            # 跳过也补记 integrated：防「分支已删/已合但账本永久在飞」
+            merge_sha = _get_head()
         else:
             r = _git(["merge", "--no-ff", "-m", f"merge({args.tid}): {branch}", branch])
             if r.returncode != 0:
@@ -2167,6 +2965,16 @@ def cmd_integrate(args):
                     )
                 sys.exit(f"merge 失败：{r.stderr.strip()}")
             print(f"merge 完成：{_get_head_short()}")
+            merge_sha = _get_head()
+
+    if merge_sha:
+        chain_tids = [TASK_BRANCH_RE.fullmatch(b).group(1) for b, _ in chain]
+        for integrated_tid in chain_tids + [args.tid]:
+            _ledger_append_safely({
+                "event": "integrated",
+                "tid": integrated_tid,
+                "merge_sha": merge_sha,
+            })
 
     try:
         _commit_index()
@@ -2510,6 +3318,52 @@ def main():
 
     nb = sub.add_parser("view", help="task 全景：运行中 / 待运行分组 / 已结束")
     nb.set_defaults(func=cmd_view)
+
+    ps_p = sub.add_parser(
+        "ps",
+        help="调度活表：tid / attempt / model / state / last_activity / note",
+    )
+    ps_p.add_argument("--all", action="store_true", help="包含主干已 done/dropped 的终态行")
+    ps_p.add_argument("--stall-minutes", type=int, default=20,
+                      help="无推进超过该分钟数判 stalled?（默认 20）")
+    ps_p.set_defaults(func=cmd_ps)
+
+    rc = sub.add_parser(
+        "reconcile",
+        help="只读计算调度行动计划（dispatch/redispatch/integrate/escalate），零副作用",
+    )
+    rc.add_argument("--limit", type=int, default=3, help="并发上限（默认 3）")
+    rc.add_argument("--tids", help="逗号分隔 tid；授权范围，省略=全部")
+    rc.add_argument("--model-ladder", default="",
+                    help="模型阶梯，如 'opus>haiku'；infra 失败自动降档")
+    rc.add_argument("--stall-minutes", type=int, default=20,
+                    help="无推进超过该分钟数判 stalled（默认 20）")
+    rc.add_argument("--max-auto-retries", type=int, default=1,
+                    help="每 tid 自动重派额度，用尽转 escalate（默认 1）")
+    rc.add_argument("--json", action="store_true", help="输出 JSON 计划")
+    rc.set_defaults(func=cmd_reconcile)
+
+    lg = sub.add_parser("ledger", help="调度账本：record 追加事件 / tail 读末 N 条")
+    lg_sub = lg.add_subparsers(dest="ledger_cmd", required=True)
+
+    lr = lg_sub.add_parser("record", help="追加一条账本事件")
+    lr.add_argument("--event", required=True, choices=LEDGER_EVENTS)
+    lr.add_argument("--tid")
+    lr.add_argument("--attempt", type=int,
+                    help="dispatch 省略时自动 = 该 tid max(attempt)+1")
+    lr.add_argument("--model")
+    lr.add_argument("--status", choices=LEDGER_REPORT_STATUSES)
+    lr.add_argument("--sha")
+    lr.add_argument("--class", dest="fail_class", choices=LEDGER_FAIL_CLASSES)
+    lr.add_argument("--state", choices=LEDGER_BREAKER_STATES,
+                    help="breaker 事件用；省略时默认 open")
+    lr.add_argument("--reason")
+    lr.set_defaults(func=cmd_ledger_record)
+
+    lt = lg_sub.add_parser("tail", help="倒序读账本末 N 条")
+    lt.add_argument("--tid", help="只看该 tid")
+    lt.add_argument("-n", type=int, default=20, help="条数（默认 20）")
+    lt.set_defaults(func=cmd_ledger_tail)
 
 
     args = p.parse_args()
