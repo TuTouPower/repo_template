@@ -1172,7 +1172,7 @@ def cmd_view(args):
                 lines.append(f"    {dep} → {tid}")
         if blocked_conflicts:
             lines.append("")
-            lines.append("  ▸ 被 active 冲突阻塞")
+            lines.append("  ▸ 被冲突阻塞")
             for tid, peer in blocked_conflicts:
                 lines.append(
                     f"    {tid} ↔ {peer}  — {tid}: {tasks[tid]['title']}"
@@ -1839,6 +1839,21 @@ def cmd_preflight(args):
         if foreign:
             warnings.append(
                 f"工作区有 {len(foreign)} 项与本 task 无关的改动：{', '.join(foreign[:5])}"
+            )
+
+    # 5. testing.md 占位符 warn（不阻塞）
+    testing_md = REPO_ROOT / "docs" / "blueprint" / "testing.md"
+    if testing_md.is_file():
+        testing_text = testing_md.read_text(encoding="utf-8")
+        missing = [
+            ph for ph in ("{doctor_cmd}", "{test_cmd}", "{blackbox_verify}")
+            if ph in testing_text
+        ]
+        if missing:
+            warnings.append(
+                f"testing.md 仍有未填占位符 {' / '.join(missing)}；"
+                "门禁命令未定义，task-work Step 1/3/4 与合并后验证无机械锚点。"
+                "项目复制后须在 testing.md 填写实际命令"
             )
 
     print(f"# preflight {args.tid}")

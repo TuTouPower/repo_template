@@ -1240,7 +1240,7 @@ def test_drop_rejects_referenced_task(git_repo):
 
 
 def test_view_dag_conflicts_and_groups(git_repo):
-    """view 输出全景：下一批、被依赖阻塞、被 active 冲突阻塞分组展示。"""
+    """view 输出全景：下一批、被依赖阻塞、被冲突阻塞分组展示。"""
     commands = (
         ("t001", "--schedule-status", "scheduled"),
         ("t002", "--depends-on", "t001", "--schedule-status", "scheduled"),
@@ -1276,7 +1276,7 @@ def test_view_shows_active_conflict_block(git_repo):
     _start(git_repo, "t001")
     active = _task_cli(git_repo, "view")
     assert active.returncode == 0, active.stderr
-    assert "▸ 被 active 冲突阻塞" in active.stdout
+    assert "▸ 被冲突阻塞" in active.stdout
     assert "t002 ↔ t001" in active.stdout
     assert "t002 ↔ t001  — t002: beta" in active.stdout
 
@@ -1284,7 +1284,7 @@ def test_view_shows_active_conflict_block(git_repo):
     # t001 done 但未合入 main：t002 仍被冲突阻塞
     unmerged = _task_cli(git_repo, "view")
     assert unmerged.returncode == 0, unmerged.stderr
-    assert "▸ 被 active 冲突阻塞" in unmerged.stdout
+    assert "▸ 被冲突阻塞" in unmerged.stdout
     assert "t002 ↔ t001" in unmerged.stdout
     assert "未入 main" in unmerged.stdout
 
@@ -1465,7 +1465,7 @@ def test_view_reads_historical_conflict_as_undirected(git_repo):
     # 无向冲突：t001 声明 t002，t002 反向继承；序号小者优先可跑，大者被阻塞
     assert "▸ 下一批可跑" in result.stdout
     assert "t001" in result.stdout
-    assert "▸ 被 active 冲突阻塞" in result.stdout
+    assert "▸ 被冲突阻塞" in result.stdout
     assert "t002 ↔ t001" in result.stdout
 
 
@@ -1484,8 +1484,8 @@ def test_view_picks_lower_tid_for_symmetric_backlog_conflict(git_repo):
     assert result.returncode == 0, result.stderr
     assert "▸ 下一批可跑" in result.stdout
     assert "t001" in result.stdout
-    assert "t002" not in result.stdout.split("▸ 被 active 冲突阻塞")[0]
-    assert "▸ 被 active 冲突阻塞" in result.stdout
+    assert "t002" not in result.stdout.split("▸ 被冲突阻塞")[0]
+    assert "▸ 被冲突阻塞" in result.stdout
     assert "t002 ↔ t001" in result.stdout
     assert "t002 ↔ t001  — t002: beta" in result.stdout
 
