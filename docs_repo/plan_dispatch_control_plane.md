@@ -116,11 +116,11 @@ task.py ledger tail [--tid TID] [-n N]     # 读账本
 - attempt 号 = 该 tid 账本中 max(attempt)+1，`ledger record --event dispatch` 省略 `--attempt` 时自动分配；report/failed/escalated 省略时归属当前 attempt。
 - 失败判定按 attempt 取末条处置事件（failed 与 report 参与）；`report status=failed` 等价 failed 事件。分支已生效 blocked 直接 escalate，不走 stalled 重试。
 - **escalate 闩锁**：escalated 之后无新 dispatch 的 tid 不被自动派发；用户裁决后 coordinator 手动 dispatch 落账解除。
-- **占槽**：progressing、待合并（integrate）、redispatch 占槽；escalate 释放槽——重派 + 补位不会突破并发上限。
-- **redispatch mode**：`resume`（原 worktree/分支有产出，直接派 worker 续跑，不跑 start）/ `restart`（无残留，start 重来）。contract 类恒同模型 resume。
-- 阶梯内无未尝试模型（钳回父 attempt 同档）时输出 escalate，不做同参数重试。
+- **占槽**：progressing、待合并（integrate）、redispatch 占槽；escalate 释放槽——重派 + 补位不会突破并发上限。占槽按全局在飞计，与 `--tids` 授权范围无关（动作输出仍受范围约束）；主干已终态的 tid 不参与冲突互斥判定。
+- **redispatch mode**：`resume`（原 worktree/分支有产出，直接派 worker 续跑，不跑 start）/ `restart`（无残留，start 重来）。contract 类同模型 resume，无现场可续时 escalate。
+- 阶梯内无未尝试模型（钳回父 attempt 同档）时，仅 infra 换模类输出 escalate；resource/task/contract 允许同模型续跑吃满重试额度，不做无意义换模。
 - stalled 判定：worktree HEAD commit 时间与最近 dispatch 时间的较大者，距今超 `--stall-minutes`（默认 20）无推进。观察优于心跳——不要求 worker 配合。
-- 账本自愈：坏行（截断写）warn + skip，不使整个控制面不可用。
+- 账本：append 持跨平台文件锁防交错写；坏行（截断写）warn + skip 自愈，不使整个控制面不可用。
 
 ## skill 改造
 
