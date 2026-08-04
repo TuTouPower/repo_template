@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-run
 
-串行执行固定队列：task 一个串一个成链，**全部完成后一次性把链尾合并回主干**。并行执行用 `task-dispatch`（扇出，完成即合并）。串行与并行是两套不同拓扑。
+串行执行固定队列（链式拓扑）。两套拓扑的合并时机与分支形态见 `AGENTS.md`「执行角色与合并时机」。
 
 角色边界见 `AGENTS.md`「执行角色与合并时机」；单 task 执行流程见 `task-work`；合并流程见 `task-integrate`。
 
