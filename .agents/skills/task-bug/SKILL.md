@@ -38,7 +38,7 @@ Bug 分析与修复立项入口。复现、定位根因、做补测分析，登�
    - 环境或配置问题无需改仓库时，不建修复 task，保留 `pNNN` 并汇报所需外部动作。
 
 8. **询问提交 bug 总账**。列出本次新增或更新的 `docs/pending/todo/{pNNN}_{slug}.md`：
-   - 已批准立项：`task-create` 已批量提交 task 目录与派生 index；这里一并列出，用户同意后提交 bug 登记。
+   - 已批准立项：**task 目录与 index 由 `task-create` 第 6 步独立 commit；bug 条目文件单独 commit，不与 task 目录合并**。本步只提交 bug 条目文件。
    - 拒绝/暂缓：无 task；只提交 bug 条目文件。
    `.scratch/` 已 ignore，不入 commit。
 

@@ -49,12 +49,12 @@ task 按执行顺序成链：
 
 ## 队列循环
 
-每个 tid 依次走 worker 段，全部完成后走一次 coordinator 段：
+每个 tid 依次走 worker 段，全部完成后走一次 coordinator 段。**coordinator 先 `start --base` 建 worktree，再调 `task-work`**——task-work 发现现成 worktree 时直接进入，不重新 start：
 
 ```text
-t001: task-work → cleanup-worktree（分支保留）
-t002: task-work（--base t001）→ cleanup-worktree
-t003: task-work（--base t002）→ cleanup-worktree
+t001: coordinator `start t001`（首 task 无 --base）→ task-work → cleanup-worktree（分支保留）
+t002: coordinator `start t002 --base t001_分支` → task-work → cleanup-worktree
+t003: coordinator `start t003 --base t002_分支` → task-work → cleanup-worktree
    ↓ 全部完成
 task-integrate --chain {链尾}   → merge 链尾 → 重建 index → 验证 → 删整条链分支
 ```
@@ -74,6 +74,8 @@ task-integrate --chain {链尾}   → merge 链尾 → 重建 index → 验证 �
 3. 主干：尚未进入执行的 backlog task 从队列头重新开始。
 
 已合并的 task 在主干中即 `done`，不重复执行。
+
+**view 的主干视角限制**：`task.py view` 的 `done_set` 用 `main_done_set`（已合入主干才算 done）。链上已完成但未合 main 的前置在 view 中显示为「依赖阻塞」，对链式恢复无意义——链式恢复时按**分支 tip** 判依赖（前置分支 done 即可作 `--base`），不依赖 view 的解锁判断。
 
 ## 停止条件
 

@@ -15,7 +15,7 @@
 | `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/repo_template/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 仅主仓 coordinator 由 `scripts/repo_template/task.py integrate` 在合并后重建并单独 commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
@@ -38,7 +38,7 @@
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/repo_template/` | 模板自带 task 工具链（task.py/pending.py/findings.py/spikes.py 等） | 仅模板演进时修改；随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动），恒基于当前主干 HEAD；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；执行 commit 后由 coordinator 清理 worktree 并合并分支；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：并行=主干 HEAD，串行=`--base` 上一已完成 task 分支（须先 cleanup-worktree）；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；执行 commit 后由 coordinator 清理 worktree 并合并分支；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -83,6 +83,8 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 
 合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后按拓扑自动合并，不再逐 task 询问。合并环节只有四种情况停下来问用户：merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大。执行环节的停止条件另见各 skill。
 
+`.claude/hooks/merge_guard.py` 拦截 Bash 工具里的 `git merge`（含 `--abort`，要求一次性 token）；`task.py integrate` 内部 merge 经 subprocess 不经 Bash 工具，由会话级授权覆盖，hook 不拦。两层职责分离：脚本通道 = 已授权入口，hook = 防 agent 在脚本外手动 merge。
+
 ### skill 调用
 
 用户入口——由用户斜杠触发：
@@ -92,7 +94,7 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
 | 并行跑多个 task | `task-dispatch` | coordinator：派发 worker、收汇报、完成即合并、解锁补位 |
-| 串行跑完待做 task | `task-run` | 并发度 1 的调度：逐个执行并合并 |
+| 串行跑完待做 task | `task-run` | 链式串行：逐个执行+cleanup；链尾一次 merge |
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
@@ -142,9 +144,10 @@ scripts/repo_template/spikes.py new --slug uv_lock_platform_marker              
 
 ## 文档规范
 
-- 结构或语义变化时，先确定最终表述，修改最小完整语义块，禁止逐句打补丁。
-- 同一事实、规则或结论只保留一个权威定义；其他位置使用稳定标题或标识引用，避免复制正文和可能失效的编号引用。
-- 文档正文直接陈述事实，禁止元引用：不嵌入决策/spike/ticket/task 编号（`(D24-N3)` `(S15)` `(t012)`）；不嵌入来源或实现位置标注（`(根据 D24 决定)` `(D25 wrapper)` `(impl at ts/X.ts)`）；不嵌入「本节根据 X 决定 Y」式叙述。结构化字段（表格列、`fix_ref`、spec 上下文区的 `来源`、commit subject、测试文件名）按各文件格式约定使用，不受此限。
-- 存在多种合理理解时，先澄清再做跨文档修改。
-- 优先使用正向描述；仅安全、不可逆操作、明确禁区三类场景使用否定句。
-- 完成后检查：旧表述、重复内容、矛盾结论、失效引用、遗漏同步、元引用残留。
+- 本节主要约束长期真相文档。task、review、spike、finding、audit、archive 等过程或证据型文档按各自模板保留编号、来源、实现位置和验证记录。
+- 结构或语义变化时，先确定目标语义及权威落点，再替换最小自包含语义块。避免逐句追加造成新旧表述并存。
+- 同一事实、规则或结论只保留一处权威定义。其他位置可保留不引入新语义的简短摘要，并链接权威文档标题；避免复制完整正文或仅按章节编号引用。
+- 长期真相文档直接陈述当前事实，不使用过程编号、来源说明或实现位置作为正文依据，例如 `(D24-N3)`、`(S15)`、`(t012)`、`根据 D24 决定`、`impl at ts/X.ts`。结构化字段及过程、证据型文档不受此限。
+- 多种合理理解会影响行为、权威归属或跨文档同步范围时，先澄清再修改。
+- 优先先写目标状态、允许行为或执行动作等正向描述。仅安全边界、不可逆操作、写权边界及工作流禁区等使用明确否定句。
+- 完成后检查：旧表述残留、重复权威定义、矛盾结论、失效链接、索引或引用遗漏、过程来源表述残留。
