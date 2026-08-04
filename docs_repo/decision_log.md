@@ -43,7 +43,7 @@
 | L31 | 已验证的技术发现无处沉淀，spike 结论随报告归档失传 | 用户提出 | 新建 `docs/findings.md`（`dNNN`）记已验证事实；spike 收尾抽结论，报告全文归档 | `docs/findings.md`、`task-run` Step 7、AGENTS「spike」「findings」 | 已落地 |
 | L32 | `task-debt` 名字表达的是「捞技术债」，实际职责是「把总账条目转 task」 | 用户提出 | 改名 `task-from-pending`；入口收敛为 `docs/pending.md`「遗留待办」节，建完回写 `处理：{tid}` 并归档 | `.agents/skills/task-from-pending/` | 已落地 |
 | L33 | skill 被 agent 按语义自动触发，绕过用户批准 | 用户提出 | 全部 skill frontmatter 固定 `description: none` + `disable-model-invocation: true`；仅允许用户斜杠或已获合法调用的 skill 链式调用。新增 skill 同样照办 | 各 `SKILL.md` frontmatter、AGENTS「skill 触发」 | 已落地 |
-| L34 | 调度控制面边沿触发：worker 全灭无人察觉、integrate 后忘补位 | omni_media 两起事故（2026-08）、用户提出、多路 diff 审阅 | 边沿触发 → 水位触发：`task.py reconcile` 幂等 diff 唯一动作来源 + 空闲许可；调度账本（`docs/runtime/dispatch_ledger.jsonl`）记 attempt；worker 交接契约 handoff.json 机器验证；失败分类策略表 + 模型阶梯 + cron 兜底 | `plan_dispatch_control_plane.md`、`task.py`、task-dispatch/task-work/task-integrate skill | 开放（实现与审阅修复完成，待提交后回翻已落地） |
+| L34 | 调度控制面边沿触发：worker 全灭无人察觉、integrate 后忘补位 | omni_media 两起事故（2026-08）、用户提出、多路 diff 审阅 | 边沿触发 → 水位触发：`task.py reconcile` 幂等 diff 唯一动作来源 + 空闲许可；调度账本（`docs/runtime/dispatch_ledger.jsonl`）记 attempt；worker 交接契约 handoff.json 机器验证；失败分类策略表 + 模型阶梯 + cron 兜底 | `plan_dispatch_control_plane.md`、`task.py`、task-dispatch/task-work/task-integrate skill | 已落地 |
 
 ## 未闭环
 
