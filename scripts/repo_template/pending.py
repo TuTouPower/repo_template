@@ -13,9 +13,12 @@
   python3 scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 [--write]
   python3 scripts/repo_template/pending.py park p047 --reason "等外部依赖" [--write]
   python3 scripts/repo_template/pending.py revive p047 [--write]
+  python3 scripts/repo_template/pending.py rename p047 --slug new_slug [--write]
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
 `archive` 要求 --fix-ref TID 作为闭环标识；parked 条目须先 revive 才能闭环。
+`rename` 用 `git mv` 改条目文件名（保留编号，仅换 slug）；dry-run 默认，加 `--write` 落盘。
+rename 不自动改正文引用——slug 改动需人工核对 docs/ 与 src/ 内的 pNNN 引用。
 迁移用 git mv 保留历史；仓库无该文件记录时退化为普通移动。
 """
 
@@ -220,6 +223,43 @@ def cmd_revive(args: argparse.Namespace) -> None:
     _apply(args, actions)
 
 
+def cmd_rename(args: argparse.Namespace) -> None:
+    """rename：保留编号，仅换 slug。git mv 改文件名；dry-run 默认。
+
+    不改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 pNNN 引用。
+    """
+    if not re.fullmatch(r"[a-z0-9]+(_[a-z0-9]+)*", args.slug):
+        sys.exit(f"slug 非法（须 snake_case）：{args.slug!r}")
+    try:
+        numbers = parse_ids([args.entry_id])
+    except IdScanError as e:
+        sys.exit(str(e))
+    entry_id = f"p{numbers[0]:03d}"
+    # 找原文件：可能在 todo/parked/archived 任一目录；按状态目录顺序取首个。
+    old_path: Path | None = None
+    for directory in STATE_DIRS.values():
+        if directory.is_dir():
+            hits = sorted(directory.glob(f"{entry_id}_*.md"))
+            if hits:
+                old_path = hits[0]
+                break
+    if old_path is None:
+        sys.exit(f"未找到 {entry_id}")
+    new_path = old_path.with_name(f"{entry_id}_{args.slug}.md")
+    if new_path == old_path:
+        sys.exit(f"新 slug 与旧 slug 相同：{args.slug!r}")
+    if new_path.exists():
+        sys.exit(f"目标文件已存在：{_rel(new_path)}")
+    if not args.write:
+        print(f"dry-run：{_rel(old_path)} → {_rel(new_path)}")
+        print("（rename 不自动改正文 pNNN 引用；如需同步，请人工核对 docs/ 与 src/）")
+        return
+    result = _git(["mv", _rel(old_path), _rel(new_path)])
+    if result.returncode != 0:
+        sys.exit(f"git mv 失败：{result.stderr.strip()}")
+    print(f"已重命名：{_rel(new_path)}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="待办条目分配与状态迁移")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -255,6 +295,12 @@ def main(argv: list[str] | None = None) -> None:
     revive_parser.add_argument("ids", nargs="+", metavar="pNNN")
     revive_parser.add_argument("--write", action="store_true", help="落盘")
     revive_parser.set_defaults(func=cmd_revive)
+
+    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号，git mv）")
+    rename_parser.add_argument("entry_id", metavar="pNNN", help="要改的待办编号")
+    rename_parser.add_argument("--slug", required=True, help="新 snake_case slug")
+    rename_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
+    rename_parser.set_defaults(func=cmd_rename)
 
     args = parser.parse_args(argv)
     try:
