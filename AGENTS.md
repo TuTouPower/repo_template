@@ -105,7 +105,7 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 | skill | 调用方 | 职责 |
 |-------|--------|------|
 | `task-work` | `task-dispatch` 派发给 worker；`task-run` 自调 | worker：在自身 worktree 实施至执行 commit |
-| `task-integrate` | `task-dispatch` / `task-run` 收到完成汇报后 | coordinator：cleanup-worktree → merge → 重建 index → 验证 → 删分支 |
+| `task-integrate` | `task-dispatch` 收汇报后；`task-run` 链全部完成后 | coordinator：并行=cleanup-worktree → 合单分支 → 重建 index → 验证 → 删分支；串行 `--chain`=cleanup-worktree → 只合链尾 → 重建 index → 验证 → 删整条链 |
 
 典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（并行）或 `/task-run`（串行）。
 task 彼此冲突面大时并行无收益，看 `task-schedule` 输出的全景图决定。
