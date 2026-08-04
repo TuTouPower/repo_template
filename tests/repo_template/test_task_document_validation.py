@@ -29,6 +29,7 @@ def _filled_spec() -> str:
         "- 回退：{失败后如何恢复}": "- 回退：无",
         "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
         "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
+        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
     }
     text = SPEC_TEMPLATE
     for old, new in replacements.items():

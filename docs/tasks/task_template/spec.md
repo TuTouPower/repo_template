@@ -36,6 +36,8 @@ reviewer 判 AC 时只看本区。
 
 reviewer 判测试覆盖时核对本区；实施期可补。
 
+- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）
+
 ### 有意不测
 
 已判定不写测试的分支与原因。reviewer 不得据此出 blocking finding。无则写「无」。

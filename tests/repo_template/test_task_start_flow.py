@@ -1,13 +1,6 @@
-"""task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。
-
-omni_media 本地补丁：`_valid_spec()` 末尾的通用占位符消解，
-用于消化本仓库 spec 模板比模板仓多出的占位符（如 `- 来源：{pNNN / finding_id / 原 tid}`）。
-模板仓没有这些占位符；此处补丁让本仓库 fixture 与模板仓保持行为一致。
-后续若模板仓同步增加这些字段，可移除此补丁。
-"""
+"""task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。"""
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -44,11 +37,10 @@ def _valid_spec(unknown_contract_item="外部行为：已核实"):
         "- 回退：{失败后如何恢复}": "- 回退：无",
         "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
         "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
+        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
-    # omni_media 本地补丁：通用消解剩余中文占位符（含 {pNNN / finding_id / 原 tid} 等）。
-    text = re.sub(r"\{[^{}\n]*\}", "占位", text)
     return text
 
 
