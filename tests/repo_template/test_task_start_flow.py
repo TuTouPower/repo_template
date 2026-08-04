@@ -25,7 +25,7 @@ from task import parse_front_matter, write_front_matter
 
 def _git(repo, *args, check=True):
     return subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=check
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=check
     )
 
 
@@ -118,6 +118,7 @@ def _task_cli(repo, *args):
         cwd=repo,
         capture_output=True,
         text=True,
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -626,6 +627,7 @@ def test_integrate_detects_merge_state_from_any_cwd(git_repo, tmp_path):
         cwd=outside,
         capture_output=True,
         text=True,
+        encoding="utf-8", errors="replace",
     )
 
     assert result.returncode != 0

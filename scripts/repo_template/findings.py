@@ -49,11 +49,11 @@ def cmd_new(args: argparse.Namespace) -> None:
         slug=args.slug,
         body=TEMPLATE,
     )
-    print(str(path.relative_to(REPO_ROOT)))
+    print(path.relative_to(REPO_ROOT).as_posix())
 
 
 def _run_git(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True)
+    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def cmd_rename(args: argparse.Namespace) -> None:
@@ -74,15 +74,15 @@ def cmd_rename(args: argparse.Namespace) -> None:
     if new_path == old_path:
         sys.exit(f"新 slug 与旧 slug 相同：{args.slug!r}")
     if new_path.exists():
-        sys.exit(f"目标文件已存在：{new_path.relative_to(REPO_ROOT)}")
+        sys.exit(f"目标文件已存在：{new_path.relative_to(REPO_ROOT).as_posix()}")
     if not args.write:
-        print(f"dry-run：{old_path.relative_to(REPO_ROOT)} → {new_path.relative_to(REPO_ROOT)}")
+        print(f"dry-run：{old_path.relative_to(REPO_ROOT).as_posix()} → {new_path.relative_to(REPO_ROOT).as_posix()}")
         print("（rename 不自动改正文 dNNN 引用；如需同步，请人工核对 docs/ 与 src/）")
         return
     r = _run_git(["mv", str(old_path.relative_to(REPO_ROOT)), str(new_path.relative_to(REPO_ROOT))])
     if r.returncode != 0:
         sys.exit(f"git mv 失败：{r.stderr.strip()}")
-    print(f"已重命名：{new_path.relative_to(REPO_ROOT)}")
+    print(f"已重命名：{new_path.relative_to(REPO_ROOT).as_posix()}")
 
 
 def cmd_list(_args: argparse.Namespace) -> None:
@@ -130,4 +130,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()

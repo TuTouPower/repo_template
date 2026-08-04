@@ -274,7 +274,7 @@ def test_render_includes_share_section(tmp_path, monkeypatch):
 
 def _git(repo, *args):
     return subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
     )
 
 

@@ -17,11 +17,17 @@ pending.py / findings.py 共用。条目以「一条目一文件」形式存放�
 释放锁时新条目已落盘，后续扫描必然可见，不存在两个进程取到同号的窗口。
 """
 
-import fcntl
+import os
 import re
 import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 LOCK_NAME = "repo_template_id.lock"
 
@@ -37,6 +43,8 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
             ["git", "-C", str(repo_root), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
     except subprocess.CalledProcessError as e:
@@ -56,17 +64,33 @@ def git_common_dir(repo_root: Path) -> Path:
     return path if path.is_absolute() else (repo_root / path).resolve()
 
 
+def _lock_fh(fh) -> None:
+    """对文件句柄取排他锁。Windows 走 msvcrt，Unix 走 fcntl。"""
+    if os.name == "nt":
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+
+
+def _unlock_fh(fh) -> None:
+    """释放排他锁。"""
+    if os.name == "nt":
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 @contextmanager
 def id_lock(repo_root: Path):
     """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。"""
     lock_path = git_common_dir(repo_root) / LOCK_NAME
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        _lock_fh(fh)
         try:
             yield
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            _unlock_fh(fh)
 
 
 def local_branches(repo_root: Path) -> list[str]:

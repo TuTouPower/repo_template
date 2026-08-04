@@ -30,7 +30,7 @@ ENTRY_DIR_RE = re.compile(r"^s([0-9]{3,})_[a-z0-9_]+$")
 
 def cmd_new(args: argparse.Namespace) -> None:
     if not TEMPLATE_PATH.is_file():
-        raise IdScanError(f"缺模板 {TEMPLATE_PATH.relative_to(REPO_ROOT)}")
+        raise IdScanError(f"缺模板 {TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}")
     path = allocate_dir(
         REPO_ROOT,
         prefix=PREFIX,
@@ -39,7 +39,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         slug=args.slug,
         files={"report.md": TEMPLATE_PATH.read_text(encoding="utf-8")},
     )
-    print(str(path.relative_to(REPO_ROOT)))
+    print(path.relative_to(REPO_ROOT).as_posix())
 
 
 def cmd_list(_args: argparse.Namespace) -> None:
@@ -76,4 +76,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()

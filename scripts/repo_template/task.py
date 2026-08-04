@@ -150,9 +150,9 @@ class TaskDataError(Exception):
 
 def _rel(path: Path) -> str:
     try:
-        return str(path.relative_to(REPO_ROOT))
+        return path.relative_to(REPO_ROOT).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 # --------------------------------------------------------------------------
@@ -163,6 +163,7 @@ def _git(args: list, *, root: Path | None = None) -> subprocess.CompletedProcess
     return subprocess.run(
         ["git", "-C", str(root or REPO_ROOT), *args],
         capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -271,15 +272,21 @@ def tracked_dirty_entries(root: Path | None = None) -> list[str]:
 
 
 def worktree_paths() -> dict[str, str]:
-    """`git worktree list --porcelain` → {绝对路径: 分支名}。"""
+    """`git worktree list --porcelain` → {绝对路径: 分支名}。
+
+    键统一为 Path.resolve() 后的字符串，与所有调用方 str(path) 比较对齐。
+    git 输出正斜杠路径，Path.resolve() 在 Windows 给反斜杠——规范化消除差异。
+    """
     result, current = {}, None
     r = _git(["worktree", "list", "--porcelain"])
     if r.returncode != 0:
         return result
     for line in r.stdout.splitlines():
         if line.startswith("worktree "):
-            current = line[len("worktree "):].strip()
-            result[current] = ""
+            raw = line[len("worktree "):].strip()
+            current = str(Path(raw).resolve()) if raw else None
+            if current:
+                result[current] = ""
         elif line.startswith("branch ") and current:
             result[current] = line[len("branch "):].strip().removeprefix("refs/heads/")
     return result
@@ -2513,4 +2520,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()

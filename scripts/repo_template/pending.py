@@ -63,12 +63,13 @@ BUG_TEMPLATE = """# {id} {一句话简述}
 
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True
+        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
 
 
 def _rel(path: Path) -> str:
-    return str(path.relative_to(REPO_ROOT))
+    return path.relative_to(REPO_ROOT).as_posix()
 
 
 def parse_ids(specs: list[str]) -> list[int]:
@@ -310,4 +311,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()

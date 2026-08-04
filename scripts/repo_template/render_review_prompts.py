@@ -114,6 +114,7 @@ def validate_diff_anchor(diff_anchor: str) -> str:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as e:
@@ -137,7 +138,7 @@ def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str
     try:
         r = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "show", f"{diff_anchor}:{spec_rel}"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as e:
         print(f"WARNING: 契约区 drift 检查跳过（{e}）", file=sys.stderr)
@@ -302,4 +303,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()
