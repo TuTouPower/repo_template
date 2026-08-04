@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """task.py - task 状态唯一操作入口。
 
-状态权威 = 每个 task 目录下 `task.md` 的 YAML front matter。每个 task 从主干 HEAD 扇出
-一条分支，只写自己那份状态与实现，完成后单独合并回主干。
+状态权威 = 每个 task 目录下 `task.md` 的 YAML front matter。两套拓扑：
+
+- 串行（task-run）：task 一个串一个成链，每个从上一个已完成 task 分支创建（`--base`），
+  全部完成后一次性把链尾合并回主干（`integrate --chain`），主干只进一次 merge commit。
+- 并行（task-dispatch）：每个 task 从主干 HEAD 扇出，完成即合并回主干（`integrate`）。
 
 **角色语义**：主仓是唯一协调点，负责 task 创建、启动 worktree、合并、派生 index 重建、
 worktree 与分支清理；`start` / `integrate` / `cleanup-worktree` / `list --rebuild` 只在主仓
 默认分支执行。task 实施、review、block、resume、finish 与 active/blocked 的 drop 必须在自身
-worktree 进行，且不触碰主仓。`start` 不要求主仓干净，基于当前主干 HEAD 建 worktree，不修改
-主仓；激活状态先写入新 worktree，随该 task 唯一执行 commit 入库。
+worktree 进行，且不触碰主仓。`start` 不要求主仓干净；激活状态先写入新 worktree，随该 task
+唯一执行 commit 入库。
 
-task 完成即合并：执行 commit 后 `cleanup-worktree` 清理工作副本，`integrate` 合并分支并删除
-它。并行 task 各自独立完成、独立合并，慢 task 不阻塞快 task。合并前主仓 `list` 只反映主干，
-分支中的状态用 `list/show --ref` 读取。
+合并前主仓 `list` 只反映主干，分支中的状态用 `list/show --ref` 读取。
 
 docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
 只由 `integrate` 在合并后重建并入库；task worktree 的执行 commit 不更新它们。
@@ -31,15 +32,18 @@ docs/tasks_index.json 与 docs/archive/tasks_index.json 是**派生缓存**：
                    [--depends-on TIDS | --depends-append TID | --depends-remove TID]
                    [--conflicts-with TIDS | --conflicts-append TID | --conflicts-remove TID]
                    [--schedule-status scheduled|pending_clarification]
-  task.py start TID               # 从主干 HEAD 建 worktree；主仓不变
+  task.py start TID [--base TASK_BRANCH]
+                                   # 并行扇出（无 --base）从主干 HEAD 建 worktree；
+                                   # 串行链式从上一已完成 task 分支建
   task.py preflight TID [--allow-backlog] [--ref BRANCH] [--require-verified]
                                    # 开干/进实现前门禁；可只读检查 backlog/ref 快照
   task.py block TID --reason blackbox|review|infra
   task.py resume TID
   task.py finish TID              # done + 目录归档；执行 commit 后 cleanup-worktree
   task.py cleanup-worktree TID    # 主仓清理已提交 worktree，保留分支
-  task.py integrate TID [--continue] [--keep-branch]
-                                   # 合并分支进主干 + 重建 index + 删分支
+  task.py integrate TID [--continue] [--keep-branch] [--chain]
+                                   # 并行：合单个分支进主干 + 重建 index + 删分支
+                                   # 串行 --chain：只合链尾 + 删整条链分支
   task.py drop TID --reason TEXT  # dropped + 目录归档
   task.py rewind TID [--to backlog|active] --reason TEXT
   task.py purge TID --reason TEXT
@@ -1314,12 +1318,43 @@ def unlink_managed_env_links(worktree: Path) -> None:
             link.unlink()
 
 
-def resolve_start_base() -> tuple[str, str]:
-    """start base 恒为主干当前 HEAD：每个 task 从 main 扇出，完成即合并回 main。"""
+def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
+    """解析 start base。
+
+    串行（task-run）链式：后一个 task 从上一个已完成 task 分支创建，传 `--base`。
+    并行（task-dispatch）扇出：每个 task 从主干 HEAD 创建，不传。
+    """
     primary = default_branch()
-    base_branch, base_sha = resolve_local_branch(primary)
-    if current_branch() != primary or _get_head() != base_sha:
-        raise TaskDataError(f"主工作区 HEAD 与本地 {primary!r} 不一致")
+    base_branch, base_sha = resolve_local_branch(base_arg or primary)
+    if base_branch == primary:
+        if current_branch() != primary or _get_head() != base_sha:
+            raise TaskDataError(f"主工作区 HEAD 与本地 {primary!r} 不一致")
+        return base_branch, base_sha
+
+    match = TASK_BRANCH_RE.fullmatch(base_branch)
+    if not match:
+        raise TaskDataError(
+            f"--base 只接受默认分支或本地 task 分支（收到 {base_branch!r}）"
+        )
+    previous_tid = match.group(1)
+    _, previous_fm, _ = load_task_at_ref(previous_tid, base_sha)
+    expected_branch = f"{previous_tid}_{previous_fm.get('slug', '')}"
+    if base_branch != expected_branch:
+        raise TaskDataError(
+            f"--base 分支名 {base_branch!r} 与 {previous_tid} slug 不符"
+            f"（应为 {expected_branch!r}）；拒绝伪装成 task 分支的普通分支"
+        )
+    if previous_fm.get("status") not in ARCHIVED_STATUSES:
+        raise TaskDataError(
+            f"--base {base_branch!r} 对应 {previous_tid} status="
+            f"{previous_fm.get('status')!r}，须先完成或 drop"
+        )
+    registered = [path for path, branch in worktree_paths().items() if branch == base_branch]
+    if registered:
+        raise TaskDataError(
+            f"--base {base_branch!r} 仍登记 worktree：{', '.join(registered)}；"
+            "先 cleanup-worktree"
+        )
     return base_branch, base_sha
 
 
@@ -1669,7 +1704,7 @@ def cmd_edit(args):
 
 def cmd_start(args):
     require_primary_worktree()
-    base_branch, base_sha = resolve_start_base()
+    base_branch, base_sha = resolve_start_base(getattr(args, "base", None))
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")
 
@@ -2004,8 +2039,44 @@ def _commit_index() -> None:
     print(f"index 维护 commit：{_get_head_short()}")
 
 
+def _resolve_chain(tail_branch: str, tail_sha: str) -> list[tuple[str, str]]:
+    """收集链尾分支的祖先链中全部未合并 task 分支，按祖先顺序返回 [(branch, sha)]。
+
+    用于串行链式（task-run）的 integrate --chain：只合链尾一次，祖先自动跟随。
+    要求每个分支 tip 中对应 task 均为 done/dropped，且无 worktree 登记。
+    """
+    chain: list[tuple[str, str]] = []
+    for branch in _local_task_branches():
+        if branch == tail_branch:
+            continue
+        # 候选分支是链尾祖先，且未合入主干
+        if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", tail_sha]).returncode != 0:
+            continue
+        if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"]).returncode == 0:
+            continue
+        _, sha = resolve_local_branch(branch)
+        tid = TASK_BRANCH_RE.fullmatch(branch).group(1)
+        _, ref_fm, _ = load_task_at_ref(tid, sha)
+        status = ref_fm.get("status", "")
+        if status not in ARCHIVED_STATUSES:
+            raise TaskDataError(
+                f"链上分支 {branch!r} 中 {tid} status={status!r}，须全部 done/dropped"
+            )
+        registered = [path for path, name in worktree_paths().items() if name == branch]
+        if registered:
+            raise TaskDataError(
+                f"链上分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；"
+                "先 cleanup-worktree"
+            )
+        chain.append((branch, sha))
+    return chain
+
+
 def cmd_integrate(args):
-    """把已完成 task 分支合并进主干，重建 index，删除分支。"""
+    """把已完成 task 分支合并进主干，重建 index，删除分支。
+
+    扇出（默认）：合单个分支。链式（--chain）：只合链尾，祖先自动跟随，删整条链分支。
+    """
     require_primary_worktree()
     if not TID_RE.fullmatch(args.tid):
         sys.exit(f"tid 非法：{args.tid!r}")
@@ -2046,6 +2117,17 @@ def cmd_integrate(args):
             f"先 cleanup-worktree {args.tid}"
         )
 
+    chain: list[tuple[str, str]] = []
+    if args.chain:
+        try:
+            chain = _resolve_chain(branch, sha)
+        except TaskDataError as e:
+            sys.exit(str(e))
+        if chain:
+            print(f"链上共 {len(chain) + 1} 个分支（含链尾 {branch}）：")
+            for b, _ in chain:
+                print(f"  {b}")
+
     if not args.continue_merge:
         if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
             print(f"{branch} 已合入 {base}，跳过 merge")
@@ -2072,12 +2154,15 @@ def cmd_integrate(args):
     if args.keep_branch:
         print(f"分支 {branch!r} 按要求保留")
         return
-    if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"]).returncode != 0:
-        sys.exit(f"分支 {branch!r} 未完全合入 {base}；保留分支")
-    r = _git(["branch", "-d", "--", branch])
-    if r.returncode != 0:
-        sys.exit(f"删除分支 {branch!r} 失败：{r.stderr.strip()}；已保留")
-    print(f"分支已删除：{branch}")
+    to_delete = chain + [(branch, sha)]
+    for b, _ in to_delete:
+        if _git(["merge-base", "--is-ancestor", f"refs/heads/{b}", "HEAD"]).returncode != 0:
+            sys.exit(f"分支 {b!r} 未完全合入 {base}；保留分支")
+    for b, _ in to_delete:
+        r = _git(["branch", "-d", "--", b])
+        if r.returncode != 0:
+            sys.exit(f"删除分支 {b!r} 失败：{r.stderr.strip()}；已保留")
+        print(f"分支已删除：{b}")
 
 
 def cmd_drop(args):
@@ -2302,9 +2387,13 @@ def main():
 
     s = sub.add_parser(
         "start",
-        help="backlog -> active：从主干 HEAD 建 worktree，不修改主仓",
+        help="backlog -> active：从主干或上一 task 分支建 worktree，不修改主仓",
     )
     s.add_argument("tid")
+    s.add_argument(
+        "--base",
+        help="上一已完成 task 的本地分支（串行链式）；省略时从主干 HEAD 扇出（并行）",
+    )
     s.set_defaults(func=cmd_start)
 
     pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/spec/索引交叉校验")
@@ -2360,6 +2449,11 @@ def main():
         "--keep-branch",
         action="store_true",
         help="合并后保留 task 分支",
+    )
+    ig.add_argument(
+        "--chain",
+        action="store_true",
+        help="串行链式：只合链尾，祖先自动跟随，删除整条链的 task 分支",
     )
     ig.set_defaults(func=cmd_integrate)
 

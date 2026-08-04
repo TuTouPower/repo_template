@@ -54,26 +54,34 @@
 
 ### 执行角色与合并时机
 
-每个 task 从主干 HEAD 扇出一条分支，完成后单独合并回主干——**完成即合并**，不设批次栅栏。快 task 先合并、先释放并发位、先解锁下游；慢 task 不阻塞任何人。
+串行（`task-run`）与并行（`task-dispatch`）是**两套不同拓扑**，合并时机与分支形态不同：
+
+**串行 = 链式**。task 按执行顺序一个串一个成链，每个从上一个已完成 task 的分支创建（`--base`）。全部完成后一次性把链尾合并回主干，主干只进一次 merge commit。
 
 ```text
-        主干 ──┬── t260 ──► 完成即 merge
-               ├── t264 ──► 完成即 merge
-               └── t268 ──► 完成即 merge
+主干 ── t001 ── t002 ── t003 ──► 全部完成后 merge 链尾
 ```
 
-两个角色，写域互不重叠：
+**并行 = 扇出**。每个 task 从主干 HEAD 独立扇出，完成即合并回主干——快 task 先合并、先释放并发位、先解锁下游；慢 task 不阻塞任何人。
+
+```text
+        主干 ──┬── t001 ──► 完成即 merge
+               ├── t002 ──► 完成即 merge
+               └── t003 ──► 完成即 merge
+```
+
+两角色写域互不重叠：
 
 | 角色 | 唯一写域 | 职责 | skill |
 |------|---------|------|-------|
 | worker | 自己的 task worktree | 实施、测试、黑盒、review、finish、执行 commit；交出 `{tid}: {branch} @ {sha}` | `task-work` |
-| coordinator | 主仓 | task 创建、`start`、`cleanup-worktree`、合并、派生 index 重建、分支清理、合并后验证 | `task-integrate` / `task-dispatch` |
+| coordinator | 主仓 | task 创建、`start`、`cleanup-worktree`、合并、派生 index 重建、分支清理、合并后验证 | `task-integrate` / `task-dispatch` / `task-run` |
 
 worker 不合并任何分支、不重建 index、不 push、不删分支、不清理自己的 worktree、不询问是否合并主干。主干只有 coordinator 一个写者且串行处理，因此不需要额外的锁。
 
-串行（`task-run`）是并发度为 1 的调度，当前会话同时担任两个角色；并行（`task-dispatch`）由 coordinator 派发多个 worker，自身不执行 task。两种模式的合并动作相同，都由 `scripts/repo_template/task.py integrate` 承担。
+串行当前会话同时担任两个角色（task 逐个跑、逐个 cleanup-worktree、最后一次性合链尾）；并行由 coordinator 派发多个 worker，自身不执行 task。合并动作都由 `scripts/repo_template/task.py integrate` 承担（串行带 `--chain`）。
 
-合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后逐个 task 自动合并，不再逐个询问。合并环节只有四种情况停下来问用户：merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大。执行环节的停止条件另见各 skill。
+合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后按拓扑自动合并，不再逐 task 询问。合并环节只有四种情况停下来问用户：merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大。执行环节的停止条件另见各 skill。
 
 ### skill 调用
 
@@ -111,9 +119,11 @@ python3 scripts/repo_template/task.py list --status backlog   # 按状态过滤
 python3 scripts/repo_template/task.py show t001               # 当前工作区某 task 详情
 python3 scripts/repo_template/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
 python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查分支中 backlog
-python3 scripts/repo_template/task.py start t002               # 从主干 HEAD 扇出 worktree
+python3 scripts/repo_template/task.py start t002               # 并行扇出：从主干 HEAD 建 worktree
+python3 scripts/repo_template/task.py start t003 --base t002_x # 串行链式：从上一 task 分支建 worktree
 python3 scripts/repo_template/task.py cleanup-worktree t001    # 执行 commit 后清理 worktree，保留分支
-python3 scripts/repo_template/task.py integrate t001           # 合并分支进主干 + 重建 index + 删分支
+python3 scripts/repo_template/task.py integrate t001           # 并行：合单个分支进主干 + 重建 index + 删分支
+python3 scripts/repo_template/task.py integrate t001 --chain   # 串行：只合链尾 + 删整条链分支
 python3 scripts/repo_template/task.py integrate t001 --continue # 冲突解决并 git add 后继续
 python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled

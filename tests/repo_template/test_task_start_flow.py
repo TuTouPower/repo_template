@@ -1,6 +1,13 @@
-"""task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。"""
+"""task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。
+
+omni_media 本地补丁：`_valid_spec()` 末尾的通用占位符消解，
+用于消化本仓库 spec 模板比模板仓多出的占位符（如 `- 来源：{pNNN / finding_id / 原 tid}`）。
+模板仓没有这些占位符；此处补丁让本仓库 fixture 与模板仓保持行为一致。
+后续若模板仓同步增加这些字段，可移除此补丁。
+"""
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +47,8 @@ def _valid_spec(unknown_contract_item="外部行为：已核实"):
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
+    # omni_media 本地补丁：通用消解剩余中文占位符（含 {pNNN / finding_id / 原 tid} 等）。
+    text = re.sub(r"\{[^{}\n]*\}", "占位", text)
     return text
 
 
@@ -99,8 +108,8 @@ def git_repo(tmp_path, monkeypatch):
     return repo
 
 
-def _start(repo, tid="t001"):
-    task_mod.cmd_start(argparse.Namespace(tid=tid))
+def _start(repo, tid="t001", base=None):
+    task_mod.cmd_start(argparse.Namespace(tid=tid, base=base))
 
 
 def _task_cli(repo, *args):
@@ -666,6 +675,101 @@ def test_integrate_is_idempotent_after_merge(git_repo):
     assert result.returncode == 0, result.stderr
     assert "跳过 merge" in result.stdout
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
+
+
+# --------------------------------------------------------------------------
+# integrate --chain：串行链式，只合链尾
+# --------------------------------------------------------------------------
+
+
+def test_chain_start_from_previous_completed_branch(git_repo):
+    """串行：t002 从 t001 已完成分支创建，继承其成果。"""
+    _start(git_repo, "t001")
+    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+
+    _start(git_repo, "t002", base=first_branch)
+
+    second = _worktree_path(git_repo, "t002")
+    assert second.is_dir()
+    fm, _ = parse_front_matter(second / "docs/tasks/t002_beta/task.md")
+    assert fm["status"] == "active"
+    # t002 分支从 t001 分支创建，包含其 commit
+    assert _git(
+        second, "merge-base", "--is-ancestor", first_branch, "HEAD", check=False
+    ).returncode == 0
+
+
+def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
+    """三 task 成链，只合链尾，祖先自动跟随，删整条链分支。"""
+    main_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    branches = []
+    heads = []
+    previous = None
+    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
+        _start(git_repo, tid, base=previous)
+        previous, head = _finish_commit_cleanup(git_repo, tid, slug)
+        branches.append(previous)
+        heads.append(head)
+
+    # 链结构确认：t001 ⊂ t002 ⊂ t003，main 未前进
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == main_head
+    assert _git(
+        git_repo, "merge-base", "--is-ancestor", branches[0], branches[1], check=False
+    ).returncode == 0
+    assert _git(
+        git_repo, "merge-base", "--is-ancestor", branches[1], branches[2], check=False
+    ).returncode == 0
+
+    result = _task_cli(git_repo, "integrate", "t003", "--chain")
+
+    assert result.returncode == 0, result.stderr
+    # 只合链尾，但三个 head 全部在 main 历史里（祖先跟随）
+    for head in heads:
+        assert _git(
+            git_repo, "merge-base", "--is-ancestor", head, "main", check=False
+        ).returncode == 0
+    # 三个分支全删
+    for b in branches:
+        assert _git(git_repo, "branch", "--list", b).stdout.strip() == ""
+    # 只进一次 merge commit
+    subjects = _git(git_repo, "log", "--format=%s", "-3").stdout.split("\n")
+    assert subjects[0] == "chore(task): rebuild task indexes"
+    assert subjects[1].startswith("merge(t003)")
+    # 全部 done
+    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
+        fm, _ = parse_front_matter(
+            git_repo / f"docs/archive/tasks/{tid}_{slug}/task.md"
+        )
+        assert fm["status"] == "done"
+
+
+def test_chain_integrate_rejects_mid_chain_undone(git_repo):
+    """链上有未完成的 task 时拒绝合并。"""
+    _start(git_repo, "t001")
+    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _start(git_repo, "t002", base=first_branch)  # t002 active 未 finish
+
+    result = _task_cli(git_repo, "integrate", "t001", "--chain")
+
+    assert result.returncode != 0
+    assert "须全部 done/dropped" in result.stderr
+
+
+def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
+    """链上有 task 仍挂 worktree 时拒绝合并。"""
+    _start(git_repo, "t001")
+    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _start(git_repo, "t002", base=first_branch)
+    # t002 finish + commit 但不 cleanup-worktree
+    worktree = _worktree_path(git_repo, "t002")
+    assert _task_cli(worktree, "finish", "t002").returncode == 0
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t002): beta")
+
+    result = _task_cli(git_repo, "integrate", "t002", "--chain")
+
+    assert result.returncode != 0
+    assert "仍登记 worktree" in result.stderr
 
 
 def test_integrate_requires_primary_worktree(git_repo):
