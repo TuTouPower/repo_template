@@ -393,19 +393,9 @@ def test_pending_rename_rejects_same_slug(tmp_path, monkeypatch):
         pending_mod.main(["rename", "p001", "--slug", "demo", "--write"])
 
 
-def test_pending_rename_rejects_existing_target(tmp_path, monkeypatch):
-    """目标文件名已被其他条目占用时拒绝。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    # 两个不同编号条目，rename 后 p001 会撞上 p002 的目标名
-    pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["new", "--slug", "occupied"])
-    # 把 p002 改名为 p001_occupied 制造目标名冲突
-    src = repo / "docs/pending/todo/p002_occupied.md"
-    src.rename(repo / "docs/pending/todo/p001_occupied.md")
-
-    with pytest.raises(SystemExit, match="已存在"):
-        pending_mod.main(["rename", "p001", "--slug", "occupied", "--write"])
+# 旧用例 test_pending_rename_rejects_existing_target 已删除：目标名 p001_occupied.md
+# 被占用必然意味着同号多文件，rename 现在由 find_entry 的歧义检测前置拦截
+# （见 test_pending_rename_rejects_duplicated_id），「目标文件已存在」分支不再可达。
 
 
 def test_findings_rename_dry_run_prints_target(tmp_path, monkeypatch, capsys):
@@ -458,6 +448,46 @@ def test_findings_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch
 
     assert (repo / "docs/findings/d001_renamed.md").is_file()
     assert not (repo / "docs/findings/d001_demo.md").exists()
+
+
+def test_pending_rename_rejects_duplicated_id(tmp_path, monkeypatch):
+    """同号存在于 todo 与 parked 两处时 rename 拒绝并列出全部候选路径。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "demo"])
+    parked = repo / "docs/pending/parked"
+    parked.mkdir(parents=True, exist_ok=True)
+    (parked / "p001_demo.md").write_text("# p001 副本\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        pending_mod.main(["rename", "p001", "--slug", "final", "--write"])
+
+    message = str(exc.value)
+    assert "同时存在于多处" in message
+    assert "docs/pending/todo/p001_demo.md" in message
+    assert "docs/pending/parked/p001_demo.md" in message
+    # 两侧文件均保持原样，歧义不被静默固化
+    assert (repo / "docs/pending/todo/p001_demo.md").is_file()
+    assert (parked / "p001_demo.md").is_file()
+    assert not (repo / "docs/pending/todo/p001_final.md").exists()
+
+
+def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
+    """同号多文件时 findings rename 拒绝并列出全部候选路径。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    findings_mod.main(["new", "--slug", "demo"])
+    (repo / "docs/findings/d001_copy.md").write_text("# d001 副本\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        findings_mod.main(["rename", "d001", "--slug", "final", "--write"])
+
+    message = str(exc.value)
+    assert "同时存在于多处" in message
+    assert "docs/findings/d001_demo.md" in message
+    assert "docs/findings/d001_copy.md" in message
+    assert (repo / "docs/findings/d001_demo.md").is_file()
+    assert not (repo / "docs/findings/d001_final.md").exists()
 
 
 # ---------- 目录型条目（spike） ----------

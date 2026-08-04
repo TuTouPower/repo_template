@@ -96,7 +96,7 @@ def find_entry(number: int) -> tuple[str, Path]:
         raise IdScanError(f"未找到 p{number:03d}")
     if len(hits) > 1:
         joined = ", ".join(_rel(path) for _, path in hits)
-        raise IdScanError(f"p{number:03d} 同时存在于多处：{joined}")
+        raise IdScanError(f"p{number:03d} 同时存在于多处：{joined}；请先解决同号多处")
     return hits[0]
 
 
@@ -234,19 +234,11 @@ def cmd_rename(args: argparse.Namespace) -> None:
         sys.exit(f"slug 非法（须 snake_case）：{args.slug!r}")
     try:
         numbers = parse_ids([args.entry_id])
+        # find_entry 复用状态迁移的同号多处歧义检测：多处命中时报错并列出全部候选。
+        _, old_path = find_entry(numbers[0])
     except IdScanError as e:
         sys.exit(str(e))
     entry_id = f"p{numbers[0]:03d}"
-    # 找原文件：可能在 todo/parked/archived 任一目录；按状态目录顺序取首个。
-    old_path: Path | None = None
-    for directory in STATE_DIRS.values():
-        if directory.is_dir():
-            hits = sorted(directory.glob(f"{entry_id}_*.md"))
-            if hits:
-                old_path = hits[0]
-                break
-    if old_path is None:
-        sys.exit(f"未找到 {entry_id}")
     new_path = old_path.with_name(f"{entry_id}_{args.slug}.md")
     if new_path == old_path:
         sys.exit(f"新 slug 与旧 slug 相同：{args.slug!r}")

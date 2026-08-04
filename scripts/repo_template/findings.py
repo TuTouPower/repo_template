@@ -66,10 +66,13 @@ def cmd_rename(args: argparse.Namespace) -> None:
         sys.exit(f"slug 非法（须 snake_case）：{args.slug!r}")
     if not re.fullmatch(r"d\d{3,}", args.entry_id):
         sys.exit(f"entry_id 非法（须 dNNN）：{args.entry_id!r}")
-    # 找原文件；目标文件名冲突时只命中目标检查，不被 glob 多重检测截断
+    # 找原文件；同号多处命中时拒绝并列出全部候选，避免只改其一固化歧义。
     hits = sorted(FINDINGS_DIR.glob(f"{args.entry_id}_*.md"))
     if not hits:
         sys.exit(f"未找到 {args.entry_id}")
+    if len(hits) > 1:
+        joined = ", ".join(path.relative_to(REPO_ROOT).as_posix() for path in hits)
+        sys.exit(f"{args.entry_id} 同时存在于多处：{joined}；请先解决同号多处")
     old_path = hits[0]
     new_path = old_path.with_name(f"{args.entry_id}_{args.slug}.md")
     if new_path == old_path:
