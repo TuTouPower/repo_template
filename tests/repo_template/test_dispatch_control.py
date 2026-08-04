@@ -489,6 +489,7 @@ def test_reconcile_refs_done_but_handoff_missing_is_contract_retry():
         events,
         verify=("contract", "分支 tip 缺 docs/archive/tasks/t001_x/handoff.json"),
         ladder=["opus", "haiku"],
+        mode="resume",  # 有现场：同模型 resume
     )
 
     action, = plan["actions"]
@@ -797,3 +798,118 @@ def test_is_stalled_naive_timestamp_tolerated():
 
     assert is_stalled(naive_old.isoformat(timespec="seconds"), 20, NOW)
     assert not is_stalled(naive_new.isoformat(timespec="seconds"), 20, NOW)
+
+
+# --------------------------------------------------------------------------
+# 第三轮审阅修复回归：全局占槽、终态不阻塞、钳制范围、contract 现场、
+# 多分支、record attempt 守卫、账本追加锁
+# --------------------------------------------------------------------------
+
+
+def test_reconcile_occupancy_counts_out_of_scope_in_flight():
+    """占槽按全局在飞计：3 个 scope 外 stalled 占满 limit，scope 内 t004 不补位。"""
+    events = [
+        {"event": "dispatch", "tid": tid, "attempt": 1, "model": "opus", "ts": _ts(30)}
+        for tid in ("t001", "t002", "t003")
+    ]
+    schedule = _schedule(selected=["t004"])
+    plan = _plan(
+        events, schedule,
+        activities={tid: _ts(30) for tid in ("t001", "t002", "t003")},
+        scope={"t004"}, limit=3,
+    )
+
+    assert plan["actions"] == []  # stalled 三个不在授权范围，无动作
+    assert plan["occupancy"] == {"used": 3, "limit": 3}  # 但槽被占满，t004 无法补位
+
+
+def test_reconcile_terminal_on_main_does_not_block_conflict_peer():
+    """主干已 done（手工合入、账本缺 integrated）的 tid 不阻塞冲突对端补位。"""
+    events = [
+        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(30)},
+    ]
+    schedule = _schedule(
+        selected=["t002"],
+        conflicts={"t001": {"t002"}, "t002": {"t001"}},
+    )
+    schedule["main_done_set"] = {"t001"}
+    plan = _plan(events, schedule, activities={"t001": _ts(30)})
+
+    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("dispatch", "t002")]
+
+
+def test_reconcile_single_rung_stalled_redispatches_same_model():
+    """单档阶梯 + stalled（resource）：允许同模型 redispatch，吃满重试额度。"""
+    events = [
+        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(30)},
+    ]
+    plan = _plan(events, activities={"t001": _ts(30)}, ladder=["opus"], mode="resume")
+
+    action, = plan["actions"]
+    assert action["action"] == "redispatch"
+    assert action["model"] == "opus"
+    assert action["mode"] == "resume"
+
+
+def test_reconcile_single_rung_infra_escalates():
+    """单档阶梯 + infra：钳回同模型 → escalate（无未尝试模型），不同参重试。"""
+    events = [
+        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
+        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+    ]
+    plan = _plan(events, ladder=["opus"])
+
+    action, = plan["actions"]
+    assert action["action"] == "escalate"
+    assert "阶梯内已无未尝试模型" in action["reason"]
+
+
+def test_reconcile_contract_without_site_escalates():
+    """contract 且无现场（无 worktree、分支无未合并 commit）→ escalate。"""
+    events = [
+        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
+    ]
+    plan = _plan(
+        events,
+        verify=("contract", "分支 tip 缺 handoff.json"),
+        ladder=["opus", "haiku"],
+        mode="restart",  # mode_probe 判定无现场
+    )
+
+    action, = plan["actions"]
+    assert action["action"] == "escalate"
+    assert "无现场可续" in action["reason"]
+
+
+def test_record_report_without_any_dispatch_rejected(ledger):
+    """report/failed/escalated 无法解析归属 attempt（从未 dispatch）→ 拒绝落账。"""
+    for event in ("report", "failed", "escalated"):
+        kwargs = dict(event=event, tid="t001")
+        if event == "report":
+            kwargs["status"] = "done"
+        if event == "failed":
+            kwargs["fail_class"] = "infra"
+        with pytest.raises(SystemExit, match="从未 dispatch"):
+            _record(**kwargs)
+    assert ledger_read() == []
+
+
+def test_ledger_append_concurrent_writes_no_torn_lines(ledger):
+    """并发追加：两个线程各写 50 条，无交错坏行、无丢失。"""
+    import threading
+
+    def writer(tag):
+        for i in range(50):
+            ledger_append({"event": "note", "text": f"{tag}-{i}"})
+
+    threads = [threading.Thread(target=writer, args=(tag,)) for tag in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    raw = ledger.read_text(encoding="utf-8").splitlines()
+    assert len(raw) == 100
+    events = ledger_read()  # 每行都可解析（无坏行警告）
+    assert len(events) == 100
+    assert {e["text"].split("-")[0] for e in events} == {"a", "b"}

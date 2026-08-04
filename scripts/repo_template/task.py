@@ -74,6 +74,11 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
@@ -1024,16 +1029,45 @@ def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
 # 调度账本（dispatch ledger，append-only JSONL，gitignore）
 # --------------------------------------------------------------------------
 
+def _ledger_lock_fh(fh) -> None:
+    """对文件句柄取排他锁。Windows 走 msvcrt，Unix 走 fcntl（与 _id_scan 同机制，
+    task.py 保持单文件可复制故内联实现）。"""
+    fh.seek(0)
+    if os.name == "nt":
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+
+
+def _ledger_unlock_fh(fh) -> None:
+    """释放排他锁。"""
+    fh.seek(0)
+    if os.name == "nt":
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def ledger_append(event: dict) -> dict:
-    """补 ts 后 append 一行 JSON；字符串值内换行替换为空格，保证行格式可解析。"""
+    """补 ts 后持排他锁 append 一行 JSON；字符串值内换行替换为空格。
+
+    锁文件 = 账本旁 dispatch_ledger.lock（跟随 LEDGER_PATH 派生），
+    防并发追加交错产生坏行；ledger_read 只读不加锁。
+    """
     final = {
         key: (value.replace("\n", " ").replace("\r", " ") if isinstance(value, str) else value)
         for key, value in event.items()
     }
     final["ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
     LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(final, ensure_ascii=False) + "\n")
+    lock_path = LEDGER_PATH.with_suffix(".lock")
+    with lock_path.open("w", encoding="utf-8") as lock_fh:
+        _ledger_lock_fh(lock_fh)
+        try:
+            with LEDGER_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(final, ensure_ascii=False) + "\n")
+        finally:
+            _ledger_unlock_fh(lock_fh)
     return final
 
 
@@ -1417,8 +1451,12 @@ def cmd_ledger_record(args):
         args.attempt = ledger_next_attempt(args.tid, ledger_read())
     elif args.event in ("report", "failed", "escalated") and args.attempt is None:
         latest = ledger_next_attempt(args.tid, ledger_read()) - 1
-        if latest >= 1:
-            args.attempt = latest  # 默认归属该 tid 当前 attempt，避免与在飞 attempt 脱钩
+        if latest < 1:
+            sys.exit(
+                f"ledger record --event {args.event} 无法确定归属 attempt："
+                f"账本中 {args.tid} 从未 dispatch；请先 dispatch 或显式给 --attempt"
+            )
+        args.attempt = latest  # 默认归属该 tid 当前 attempt，避免与在飞 attempt 脱钩
     if args.event == "breaker" and args.state is None:
         args.state = "open"  # 熔断事件默认 open
     for key, value in (
@@ -1470,12 +1508,15 @@ def verify_integrate_ready(tid: str) -> tuple[str, str]:
     """refs 机器验证，返回 (verdict, detail)：
 
     - ready：分支存在、有未合并 commit、tip 终态、tip handoff.json 有效 → 可合并；
-    - contract：refs 已终态但交接契约不满足（handoff.json 缺失/无法解析/非终态）；
+    - contract：交接契约不满足（存在多个分支；handoff.json 缺失/无法解析/非终态/tid/branch 不符）；
     - incomplete：refs 未完成（无分支/无未合并 commit/tip 非终态）。
     """
     branches = _task_branch_names(tid)
     if not branches:
         return "incomplete", "无本地 task 分支"
+    if len(branches) > 1:
+        # integrate 会拒绝多分支，判 contract 走重试预算后自然 escalate
+        return "contract", f"存在多个分支：{', '.join(branches)}"
     branch = branches[0]
     if not has_unmerged_commits(branch):
         return "incomplete", f"分支 {branch!r} 无未合并 commit"
@@ -1732,8 +1773,9 @@ def _retry_or_escalate_action(
     """失败重试策略：已用 attempt 数未超额度则 redispatch，否则 escalate。
 
     - contract：不走路梯降档，同模型 resume（缺交接单换模型无效）；
+      无现场（worktree/分支均无产出）时 escalate；
     - 其余类：模型按阶梯降档并跳过熔断档；阶梯钳回父 attempt 同模型时
-      （已无未尝试模型）escalate；
+      仅 infra escalate（已无未尝试模型），resource/task 允许同模型 resume；
     - mode 由 mode_probe 判定：resume（有产出续跑）/ restart（无产出从头）。
     """
     used = ledger_next_attempt(tid, events) - 1
@@ -1748,6 +1790,12 @@ def _retry_or_escalate_action(
     mode = mode_probe(tid, tev)
     parent_model = _parent_dispatch_model(tid, parent_attempt, events)
     if fail_class == "contract":
+        if mode == "restart":
+            return {
+                "action": "escalate", "tid": tid, "attempt": parent_attempt,
+                "model": None,
+                "reason": f"{reason}；无现场可续：worktree/分支缺失",
+            }
         return {
             "action": "redispatch", "tid": tid, "attempt": used + 1,
             "model": parent_model, "mode": "resume",
@@ -1762,7 +1810,7 @@ def _retry_or_escalate_action(
                 "action": "escalate", "tid": tid, "attempt": parent_attempt,
                 "model": None, "reason": f"{reason}；模型阶梯全部熔断",
             }
-        if model == parent_model:
+        if model == parent_model and fail_class == "infra":
             return {
                 "action": "escalate", "tid": tid, "attempt": parent_attempt,
                 "model": None,
@@ -1827,7 +1875,12 @@ def compute_reconcile_plan(
     actions: list[dict] = []
     occupancy = 0
     in_flight = _in_flight_attempts(events)
-    in_flight_tids = {tid for tid, _, _ in in_flight}
+    # 主干已终态（含手工 merge、账本缺 integrated）的 tid 事实上已结束，
+    # 不占槽也不阻塞 conflicts_with 对端
+    in_flight_tids = {
+        tid for tid, _, _ in in_flight
+        if tid not in main_done_set and tid not in dropped_set
+    }
     for tid, attempt, _dispatch in in_flight:
         if tid in main_done_set or tid in dropped_set:
             continue  # 主干已终态但账本缺 integrated：不再产生动作
@@ -1857,16 +1910,16 @@ def compute_reconcile_plan(
             occupancy += 1
             continue
         if verdict == "contract":
+            action = _retry_or_escalate_action(
+                tid, attempt,
+                fail_class="contract", detail=detail,
+                events=events, ladder=ladder, breakers=breakers,
+                max_auto_retries=max_auto_retries, mode_probe=mode_probe,
+            )
             if allowed(tid):
-                action = _retry_or_escalate_action(
-                    tid, attempt,
-                    fail_class="contract", detail=detail,
-                    events=events, ladder=ladder, breakers=breakers,
-                    max_auto_retries=max_auto_retries, mode_probe=mode_probe,
-                )
                 actions.append(action)
-                if action["action"] == "redispatch":
-                    occupancy += 1  # redispatch 原位补槽，escalate 释放槽
+            if action["action"] == "redispatch":
+                occupancy += 1  # 占槽按全局在飞计，与 scope 无关；escalate 释放
             continue
         if (
             disposition
@@ -1897,21 +1950,21 @@ def compute_reconcile_plan(
         observed = observer(tid, tev)
         stalled = observed is not None and is_stalled(observed, stall_minutes, now)
         if failed or stalled:
+            fail_class = (failed.get("class") or "task") if failed else "resource"
+            detail = (
+                failed.get("reason", "") if failed
+                else f"超 {stall_minutes} 分钟无推进（stalled）"
+            )
+            action = _retry_or_escalate_action(
+                tid, attempt,
+                fail_class=fail_class, detail=detail,
+                events=events, ladder=ladder, breakers=breakers,
+                max_auto_retries=max_auto_retries, mode_probe=mode_probe,
+            )
             if allowed(tid):
-                fail_class = (failed.get("class") or "task") if failed else "resource"
-                detail = (
-                    failed.get("reason", "") if failed
-                    else f"超 {stall_minutes} 分钟无推进（stalled）"
-                )
-                action = _retry_or_escalate_action(
-                    tid, attempt,
-                    fail_class=fail_class, detail=detail,
-                    events=events, ladder=ladder, breakers=breakers,
-                    max_auto_retries=max_auto_retries, mode_probe=mode_probe,
-                )
                 actions.append(action)
-                if action["action"] == "redispatch":
-                    occupancy += 1  # redispatch 原位补槽，escalate 释放槽
+            if action["action"] == "redispatch":
+                occupancy += 1  # 占槽按全局在飞计，与 scope 无关；escalate 释放
             continue
         occupancy += 1  # progressing：占槽，无动作
 

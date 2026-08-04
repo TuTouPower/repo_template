@@ -309,3 +309,15 @@ def test_integrate_continue_rejects_foreign_merge_head(git_repo):
         e["event"] != "integrated" for e in _read_ledger(git_repo)
     )
     _git(git_repo, "merge", "--abort")
+
+
+def test_verify_contract_when_multiple_branches(git_repo):
+    """同 tid 多个本地分支：integrate 会拒绝，verify 判 contract 而非静默选一。"""
+    handoff = json.dumps({"tid": "t001", "status": "done", "branch": "t001_alpha"})
+    _make_done_branch(git_repo, handoff=handoff)
+    _git(git_repo, "branch", "t001_beta")
+
+    verdict, detail = task_mod.verify_integrate_ready("t001")
+
+    assert verdict == "contract"
+    assert "多个分支" in detail
