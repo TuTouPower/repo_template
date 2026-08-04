@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 ## 会话级前置授权
 
-启动前**一次性**向用户说明并取得授权，之后不再逐 task 询问：
+启动前**一次性**向用户说明并取得授权（含 worker 模型选择），之后不再逐 task 询问：
 
 ```text
 准备调度：{tid 列表}（并发上限 N）
@@ -20,8 +20,10 @@ disable-model-invocation: true
 {依赖 task 列表} 会在其前置合并后自动解锁补位。
 不 push，不动远程。
 
-授权本次会话按此执行？
+Worker 用什么模型？（默认继承当前会话模型；输入模型名指定）
 ```
+
+用户指定模型后，coordinator 在派发 worker 时带 `model: <指定>` + `model_override_authorized: <用户指定，session 授权>`；不指定则省略 model，worker 继承主会话模型。
 
 授权后只在「停止条件」列举的情况停下来问用户。
 
@@ -58,7 +60,7 @@ view → 取可跑 task → start（并发上限内）→ 交 worker
 
    逐个 start，记录每个 tid 的 worktree 路径。`start` 恒从当前主干 HEAD 扇出。
 
-3. **派发**。每个 task 交一个 worker agent，只传：tid、worktree 绝对路径、调用 `task-work`。worker 边界由 `task-work` 自身声明，派发消息不复述。
+3. **派发**。每个 task 交一个 worker agent，只传：tid、worktree 绝对路径、调用 `task-work`。worker 边界由 `task-work` 自身声明，派发消息不复述。用户指定了模型时，Agent 调用带 `model: <指定>` 且 prompt 含 `model_override_authorized: 用户指定，session 授权`（过 Agent Model Guard hook）；未指定则两者都省略。
 
 4. **收汇报**。worker 交回 `{tid}: {branch} @ {sha}` 后立即进入第 5 步；不等其他 worker。
 
