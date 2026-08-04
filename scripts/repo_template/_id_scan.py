@@ -66,6 +66,7 @@ def git_common_dir(repo_root: Path) -> Path:
 
 def _lock_fh(fh) -> None:
     """对文件句柄取排他锁。Windows 走 msvcrt，Unix 走 fcntl。"""
+    fh.seek(0)
     if os.name == "nt":
         msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
     else:
@@ -74,6 +75,7 @@ def _lock_fh(fh) -> None:
 
 def _unlock_fh(fh) -> None:
     """释放排他锁。"""
+    fh.seek(0)
     if os.name == "nt":
         msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
     else:
