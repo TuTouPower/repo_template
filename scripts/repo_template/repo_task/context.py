@@ -37,11 +37,17 @@ DEFAULT_REWIND = {"active": "backlog", "blocked": "active"}  # 撤一步映射
 BLOCK_REASONS = ("blackbox", "review", "infra")
 REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
-LEDGER_EVENTS = ("dispatch", "report", "failed", "escalated", "worker_terminal", "note", "breaker", "observation", "silent_alerted")
+ATTEMPT_LIFECYCLE_EVENTS = (
+    "attempt_reserved", "attempt_bound", "attempt_terminal", "integrated", "escalated",
+)
+ATTEMPT_ATTACHMENT_EVENTS = ("report", "observation", "silent_alerted")
+LEDGER_RECORDABLE_EVENTS = ("note", "breaker")
+LEDGER_EVENTS = LEDGER_RECORDABLE_EVENTS
 LEDGER_REPORT_STATUSES = ("done", "blocked", "failed")
 LEDGER_TERMINAL_STATUSES = ("completed", "failed", "stopped")
 LEDGER_FAIL_CLASSES = ("infra", "task", "resource", "contract")
 LEDGER_BREAKER_STATES = ("open", "closed")
+ATTEMPT_EXECUTORS = ("inline", "agent")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TASK_BRANCH_RE = re.compile(r"^(t[0-9]+)_[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")

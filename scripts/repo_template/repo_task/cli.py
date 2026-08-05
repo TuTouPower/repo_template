@@ -1,234 +1,224 @@
 """Argument parser and command routing for task.py."""
 
 import argparse
-import json
-import os
-import re
-import shutil
-import subprocess
 import sys
-from collections import Counter
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import repo_task.context as ctx
 
-from .control import cmd_ledger_record, cmd_ledger_tail, cmd_observe, cmd_ps, cmd_reconcile, cmd_view
-from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_start
+from .control import (
+    cmd_attempt_bind,
+    cmd_attempt_escalate,
+    cmd_attempt_report,
+    cmd_attempt_reserve,
+    cmd_attempt_silent_alert,
+    cmd_attempt_terminal,
+    cmd_ledger_record,
+    cmd_ledger_tail,
+    cmd_observe,
+    cmd_ps,
+    cmd_reconcile,
+    cmd_view,
+)
+from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
-    cmd_add, cmd_block, cmd_drop, cmd_edit, cmd_finish, cmd_list, cmd_preflight,
-    cmd_purge, cmd_resume, cmd_rewind, cmd_show,
+    cmd_add,
+    cmd_block,
+    cmd_drop,
+    cmd_edit,
+    cmd_finish,
+    cmd_list,
+    cmd_preflight,
+    cmd_purge,
+    cmd_resume,
+    cmd_rewind,
+    cmd_show,
 )
 
+
+def _add_identity(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--attempt", type=int, required=True)
+    parser.add_argument("--execution-id", required=True)
+
+
 def main():
-    p = argparse.ArgumentParser(
-        description="task 状态入口（状态权威 = task.md front matter；JSON 为派生缓存）",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+    parser = argparse.ArgumentParser(
+        description="task 状态入口（状态权威 = task.md；执行权威 = exact attempt identity）"
     )
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=True)
 
-    a = sub.add_parser("add", help="新增 backlog task：分配 tid、从模板建目录、写 front matter")
-    a.add_argument("--title", required=True)
-    a.add_argument("--slug", required=True)
-    a.add_argument("--note", default="")
-    a.add_argument("--review-level", choices=ctx.REVIEW_LEVELS, default=ctx.DEFAULT_REVIEW_LEVEL)
-    a.set_defaults(func=cmd_add)
+    add = sub.add_parser("add", help="新增 backlog task")
+    add.add_argument("--title", required=True)
+    add.add_argument("--slug", required=True)
+    add.add_argument("--note", default="")
+    add.add_argument("--review-level", choices=ctx.REVIEW_LEVELS, default=ctx.DEFAULT_REVIEW_LEVEL)
+    add.set_defaults(func=cmd_add)
 
-    e = sub.add_parser("edit", help="改 main 中未进入链的 backlog task")
-    e.add_argument("tid")
-    e.add_argument("--title")
-    e.add_argument("--note", help="覆盖 note（传空串则清空）")
-    e.add_argument("--note-append", help="在现有 note 后追加")
-    e.add_argument("--review-level", choices=ctx.REVIEW_LEVELS)
-    e.add_argument("--depends-on", help="逗号分隔 tid；传空串清空")
-    e.add_argument("--depends-append", help="追加一个依赖 tid")
-    e.add_argument("--depends-remove", help="移除一个依赖 tid")
-    e.add_argument("--conflicts-with", help="逗号分隔 tid；传空串清空并同步反向边")
-    e.add_argument("--conflicts-append", help="追加一个冲突 tid 并同步反向边")
-    e.add_argument("--conflicts-remove", help="移除一个冲突 tid 并同步反向边")
-    e.add_argument("--schedule-status", choices=ctx.SCHEDULE_STATUSES)
-    e.set_defaults(func=cmd_edit)
+    edit = sub.add_parser("edit", help="修改 backlog task")
+    edit.add_argument("tid")
+    edit.add_argument("--title")
+    edit.add_argument("--note")
+    edit.add_argument("--note-append")
+    edit.add_argument("--review-level", choices=ctx.REVIEW_LEVELS)
+    edit.add_argument("--depends-on")
+    edit.add_argument("--depends-append")
+    edit.add_argument("--depends-remove")
+    edit.add_argument("--conflicts-with")
+    edit.add_argument("--conflicts-append")
+    edit.add_argument("--conflicts-remove")
+    edit.add_argument("--schedule-status", choices=ctx.SCHEDULE_STATUSES)
+    edit.set_defaults(func=cmd_edit)
 
-    s = sub.add_parser(
-        "start",
-        help="backlog -> active：从主干或上一 task 分支建 worktree，不修改主仓",
-    )
-    s.add_argument("tid")
-    s.add_argument(
-        "--base",
-        help="上一已完成 task 的本地分支（串行链式）；省略时从主干 HEAD 扇出（并行）",
-    )
-    s.set_defaults(func=cmd_start)
+    start = sub.add_parser("start", help="backlog -> active：创建 task branch/worktree")
+    start.add_argument("tid")
+    start.add_argument("--base", help="可选上一已完成 task 分支")
+    start.set_defaults(func=cmd_start)
 
-    pf = sub.add_parser("preflight", help="开干前门禁：分支/worktree/工作区/spec/索引交叉校验")
-    pf.add_argument("tid")
-    pf.add_argument(
-        "--allow-backlog",
-        action="store_true",
-        help="只读检查尚未 start 的 backlog 是否具备开干条件",
-    )
-    pf.add_argument(
-        "--ref",
-        help="只读检查指定本地分支快照；不检查 worktree 与当前脏改动",
-    )
-    pf.add_argument(
-        "--require-verified",
-        action="store_true",
-        help="要求未知契约清单不再含 UNVERIFIED-SPIKE（进入实现前使用）",
-    )
-    pf.set_defaults(func=cmd_preflight)
+    preflight = sub.add_parser("preflight", help="开干前门禁")
+    preflight.add_argument("tid")
+    preflight.add_argument("--allow-backlog", action="store_true")
+    preflight.add_argument("--ref")
+    preflight.add_argument("--require-verified", action="store_true")
+    preflight.set_defaults(func=cmd_preflight)
 
-    b = sub.add_parser("block", help="active -> blocked")
-    b.add_argument("tid")
-    b.add_argument("--reason", required=True, choices=ctx.BLOCK_REASONS)
-    b.set_defaults(func=cmd_block)
+    block = sub.add_parser("block", help="active -> blocked")
+    block.add_argument("tid")
+    block.add_argument("--reason", required=True, choices=ctx.BLOCK_REASONS)
+    block.set_defaults(func=cmd_block)
 
-    r = sub.add_parser("resume", help="blocked -> active（用户加轮或排除阻塞后）")
-    r.add_argument("tid")
-    r.set_defaults(func=cmd_resume)
+    resume = sub.add_parser("resume", help="blocked -> active")
+    resume.add_argument("tid")
+    resume.set_defaults(func=cmd_resume)
 
-    f = sub.add_parser("finish", help="active -> done；目录归档，提交后从主仓清理 worktree")
-    f.add_argument("tid")
-    f.set_defaults(func=cmd_finish)
+    finish = sub.add_parser("finish", help="active -> done")
+    finish.add_argument("tid")
+    finish.set_defaults(func=cmd_finish)
 
-    cw = sub.add_parser(
-        "cleanup-worktree",
-        help="从主仓清理已提交的 task worktree，保留 task 分支",
-    )
-    cw.add_argument("tid")
-    cw.add_argument(
-        "--attempt", type=int,
-        help="并行 dispatch 的当前 attempt；串行链式路径可省略",
-    )
-    cw.set_defaults(func=cmd_cleanup_worktree)
+    drop = sub.add_parser("drop", help="活跃状态 -> dropped")
+    drop.add_argument("tid")
+    drop.add_argument("--reason", required=True)
+    drop.set_defaults(func=cmd_drop)
 
-    ig = sub.add_parser(
-        "integrate",
-        help="把已完成 task 分支合并进主干、重建 index、删除分支",
-    )
-    ig.add_argument("tid")
-    ig.add_argument(
-        "--attempt", type=int,
-        help="并行 dispatch 的当前 attempt；串行链式路径可省略",
-    )
-    ig.add_argument(
-        "--continue",
-        dest="continue_merge",
-        action="store_true",
-        help="冲突解决并 git add 后继续未完成的 merge",
-    )
-    ig.add_argument(
-        "--keep-branch",
-        action="store_true",
-        help="合并后保留 task 分支",
-    )
-    ig.add_argument(
-        "--chain",
-        action="store_true",
-        help="串行链式：只合链尾，祖先自动跟随，删除整条链的 task 分支",
-    )
-    ig.set_defaults(func=cmd_integrate)
+    rewind = sub.add_parser("rewind", help="状态撤回")
+    rewind.add_argument("tid")
+    rewind.add_argument("--to", choices=("backlog", "active"))
+    rewind.add_argument("--yes", action="store_true")
+    rewind.add_argument("--reason", required=True)
+    rewind.set_defaults(func=cmd_rewind)
 
-    d = sub.add_parser("drop", help="任意活跃状态 -> dropped；目录归档")
-    d.add_argument("tid")
-    d.add_argument("--reason", required=True)
-    d.set_defaults(func=cmd_drop)
+    purge = sub.add_parser("purge", help="删除误建 backlog task")
+    purge.add_argument("tid")
+    purge.add_argument("--reason", required=True)
+    purge.set_defaults(func=cmd_purge)
 
-    rw = sub.add_parser("rewind", help="状态撤回（active->backlog / blocked->active；默认撤一步）")
-    rw.add_argument("tid")
-    rw.add_argument("--to", choices=("backlog", "active"))
-    rw.add_argument("--yes", action="store_true",
-                    help="跳过「分支有未合并 commit」的交互确认（agent/脚本场景用）")
-    rw.add_argument("--reason", required=True)
-    rw.set_defaults(func=cmd_rewind)
+    listing = sub.add_parser("list", help="列出 task")
+    listing.add_argument("--status", choices=ctx.VALID_STATUSES)
+    listing.add_argument("--ref")
+    listing.add_argument("--rebuild", action="store_true")
+    listing.set_defaults(func=cmd_list)
 
-    pg = sub.add_parser("purge", help="误建彻底删除（仅 backlog 且任一分支都未跟踪；审计留快照）")
-    pg.add_argument("tid")
-    pg.add_argument("--reason", required=True)
-    pg.set_defaults(func=cmd_purge)
+    show = sub.add_parser("show", help="显示 task front matter")
+    show.add_argument("tid")
+    show.add_argument("--ref")
+    show.set_defaults(func=cmd_show)
 
-    ls = sub.add_parser("list", help="列出当前工作区或本地分支快照的 task")
-    ls.add_argument("--status", choices=ctx.VALID_STATUSES)
-    ls.add_argument("--ref", help="只读查看指定本地分支中的 task 状态")
-    ls.add_argument("--rebuild", action="store_true", help="重建派生索引 JSON（默认只读不写）")
-    ls.set_defaults(func=cmd_list)
+    view = sub.add_parser("view", help="task 调度全景")
+    view.set_defaults(func=cmd_view)
 
-    sh = sub.add_parser("show", help="显示当前工作区或本地分支中的 task front matter")
-    sh.add_argument("tid")
-    sh.add_argument("--ref", help="只读查看指定本地分支中的 task 状态")
-    sh.set_defaults(func=cmd_show)
+    attempt = sub.add_parser("attempt", help="统一 exact attempt 生命周期")
+    attempt_sub = attempt.add_subparsers(dest="attempt_cmd", required=True)
 
-    nb = sub.add_parser("view", help="task 全景：运行中 / 待运行分组 / 已结束")
-    nb.set_defaults(func=cmd_view)
+    reserve = attempt_sub.add_parser("reserve", help="原子分配 attempt/execution_id")
+    reserve.add_argument("tid")
+    reserve.add_argument("--executor", required=True, choices=ctx.ATTEMPT_EXECUTORS)
+    reserve.add_argument("--model")
+    reserve.set_defaults(func=cmd_attempt_reserve)
 
-    ob = sub.add_parser("observe", help="观察在飞 attempt 的仓库状态指纹")
-    ob.add_argument("tid")
-    ob.add_argument("--attempt", type=int, required=True)
-    ob.add_argument("--json", action="store_true", help="输出 JSON")
-    ob.set_defaults(func=cmd_observe)
+    bind = attempt_sub.add_parser("bind", help="绑定 agent execution 与宿主 worker")
+    bind.add_argument("tid")
+    _add_identity(bind)
+    bind.add_argument("--host-worker-id")
+    bind.set_defaults(func=cmd_attempt_bind)
 
-    ps_p = sub.add_parser(
-        "ps",
-        help="调度活表：tid / attempt / model / worker_id / state / last_activity / note",
-    )
-    ps_p.add_argument("--all", action="store_true", help="包含主干已 done/dropped 的终态行")
-    ps_p.add_argument("--silent-minutes", type=int, default=30,
-                      help="fingerprint 连续不变超过该分钟数判 silent?（默认 30）")
-    ps_p.set_defaults(func=cmd_ps)
+    terminal = attempt_sub.add_parser("terminal", help="标记 exact attempt 宿主终态")
+    terminal.add_argument("tid")
+    _add_identity(terminal)
+    terminal.add_argument("--status", required=True, choices=ctx.LEDGER_TERMINAL_STATUSES)
+    terminal.set_defaults(func=cmd_attempt_terminal)
 
-    rc = sub.add_parser(
-        "reconcile",
-        help="只读计算调度行动计划（含 alert-silent），零副作用",
-    )
-    rc.add_argument("--limit", type=int, default=3, help="并发上限（默认 3）")
-    rc.add_argument("--tids", help="逗号分隔 tid；授权范围，省略=全部")
-    rc.add_argument("--model-ladder", default="",
-                    help="模型阶梯，如 'opus>haiku'；显式 infra 失败自动降档")
-    rc.add_argument("--silent-minutes", type=int, default=30,
-                    help="fingerprint 连续不变超过该分钟数告警（默认 30）")
-    rc.add_argument("--max-auto-retries", type=int, default=1,
-                    help="每 tid 显式失败自动重派额度，用尽转 escalate（默认 1）")
-    rc.add_argument("--json", action="store_true", help="输出 JSON 计划")
-    rc.set_defaults(func=cmd_reconcile)
+    report = attempt_sub.add_parser("report", help="记录 exact attempt 业务报告")
+    report.add_argument("tid")
+    _add_identity(report)
+    report.add_argument("--status", required=True, choices=ctx.LEDGER_REPORT_STATUSES)
+    report.add_argument("--sha")
+    report.add_argument("--class", dest="fail_class", choices=ctx.LEDGER_FAIL_CLASSES)
+    report.add_argument("--reason")
+    report.set_defaults(func=cmd_attempt_report)
 
-    lg = sub.add_parser("ledger", help="调度账本：record 追加事件 / tail 读末 N 条")
-    lg_sub = lg.add_subparsers(dest="ledger_cmd", required=True)
+    escalate = attempt_sub.add_parser("escalate", help="terminal attempt 转人工处置")
+    escalate.add_argument("tid")
+    _add_identity(escalate)
+    escalate.add_argument("--reason", required=True)
+    escalate.set_defaults(func=cmd_attempt_escalate)
 
-    lr = lg_sub.add_parser("record", help="追加一条账本事件")
-    lr.add_argument("--event", required=True, choices=ctx.LEDGER_EVENTS)
-    lr.add_argument("--tid")
-    lr.add_argument(
-        "--attempt",
-        type=int,
-        help=(
-            "dispatch 可省略并自动取该 tid 的下一 attempt；"
-            "report/failed/escalated/silent_alerted 必须显式提供"
-        ),
-    )
-    lr.add_argument("--model")
-    lr.add_argument("--worker-id", help="dispatch 对应的宿主后台任务 ID")
-    lr.add_argument(
-        "--status",
-        choices=tuple(dict.fromkeys(ctx.LEDGER_REPORT_STATUSES + ctx.LEDGER_TERMINAL_STATUSES)),
-        help="report 使用 done/blocked/failed；worker_terminal 使用 completed/failed/stopped",
-    )
-    lr.add_argument("--sha")
-    lr.add_argument("--class", dest="fail_class", choices=ctx.LEDGER_FAIL_CLASSES)
-    lr.add_argument("--state", choices=ctx.LEDGER_BREAKER_STATES,
-                    help="breaker 事件用；省略时默认 open")
-    lr.add_argument("--fingerprint", help="silent_alerted 对应的仓库状态指纹")
-    lr.add_argument("--reason")
-    lr.set_defaults(func=cmd_ledger_record)
+    silent = attempt_sub.add_parser("silent-alert", help="记录 exact fingerprint 静默告警")
+    silent.add_argument("tid")
+    _add_identity(silent)
+    silent.add_argument("--fingerprint", required=True)
+    silent.set_defaults(func=cmd_attempt_silent_alert)
 
-    lt = lg_sub.add_parser("tail", help="倒序读账本末 N 条")
-    lt.add_argument("--tid", help="只看该 tid")
-    lt.add_argument("-n", type=int, default=20, help="条数（默认 20）")
-    lt.set_defaults(func=cmd_ledger_tail)
+    cleanup = sub.add_parser("cleanup-worktree", help="清理 exact terminal attempt worktree")
+    cleanup.add_argument("tid")
+    _add_identity(cleanup)
+    cleanup.set_defaults(func=cmd_cleanup_worktree)
 
+    integrate = sub.add_parser("integrate", help="合并单个 exact terminal attempt")
+    integrate.add_argument("tid")
+    _add_identity(integrate)
+    integrate.add_argument("--continue", dest="continue_merge", action="store_true")
+    integrate.add_argument("--keep-branch", action="store_true")
+    integrate.set_defaults(func=cmd_integrate)
 
-    args = p.parse_args()
+    chain = sub.add_parser("integrate-chain", help="聚合校验后一次合并线性 task 链尾")
+    chain.add_argument("tail_tid")
+    chain.add_argument("--continue", dest="continue_merge", action="store_true")
+    chain.set_defaults(func=cmd_integrate_chain)
+
+    observe = sub.add_parser("observe", help="观察 exact running attempt")
+    observe.add_argument("tid")
+    _add_identity(observe)
+    observe.add_argument("--json", action="store_true")
+    observe.set_defaults(func=cmd_observe)
+
+    ps_parser = sub.add_parser("ps", help="attempt 活表")
+    ps_parser.add_argument("--all", action="store_true")
+    ps_parser.add_argument("--silent-minutes", type=int, default=30)
+    ps_parser.set_defaults(func=cmd_ps)
+
+    reconcile = sub.add_parser("reconcile", help="只读生成 attempt 调度建议")
+    reconcile.add_argument("--limit", type=int, default=3)
+    reconcile.add_argument("--tids")
+    reconcile.add_argument("--model-ladder", default="")
+    reconcile.add_argument("--silent-minutes", type=int, default=30)
+    reconcile.add_argument("--max-auto-retries", type=int, default=1)
+    reconcile.add_argument("--json", action="store_true")
+    reconcile.set_defaults(func=cmd_reconcile)
+
+    ledger = sub.add_parser("ledger", help="非生命周期账本记录与读取")
+    ledger_sub = ledger.add_subparsers(dest="ledger_cmd", required=True)
+    record = ledger_sub.add_parser("record", help="仅 note/breaker")
+    record.add_argument("--event", required=True, choices=ctx.LEDGER_RECORDABLE_EVENTS)
+    record.add_argument("--tid")
+    record.add_argument("--model")
+    record.add_argument("--state", choices=ctx.LEDGER_BREAKER_STATES)
+    record.add_argument("--reason")
+    record.set_defaults(func=cmd_ledger_record)
+    tail = ledger_sub.add_parser("tail", help="倒序读取账本")
+    tail.add_argument("--tid")
+    tail.add_argument("-n", type=int, default=20)
+    tail.set_defaults(func=cmd_ledger_tail)
+
+    args = parser.parse_args()
     try:
         args.func(args)
-    except ctx.TaskDataError as e:
-        sys.exit(f"{e}\n数据不一致；请提示用户处理。")
+    except ctx.TaskDataError as error:
+        sys.exit(f"{error}\n数据不一致；请提示用户处理。")

@@ -123,6 +123,59 @@ def _worktree_path(repo, tid="t001"):
     return repo.parent / f"{repo.name}_{tid}"
 
 
+def _reserve(repo, tid, executor="inline", model=None):
+    args = ["attempt", "reserve", tid, "--executor", executor]
+    if model:
+        args += ["--model", model]
+    result = _task_cli(repo, *args)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _identity_args(identity):
+    return [
+        "--attempt", str(identity["attempt"]),
+        "--execution-id", identity["execution_id"],
+    ]
+
+
+def _handoff(tid, branch, identity, base_sha, *, status="done"):
+    return {
+        "tid": tid,
+        "attempt": identity["attempt"],
+        "execution_id": identity["execution_id"],
+        "status": status,
+        "branch": branch,
+        "base_sha": base_sha,
+        "tests": "pytest -q",
+        "blackbox": "pass",
+        "review": "pass",
+        "pending": [],
+        "findings": [],
+    }
+
+
+def _terminal(repo, tid, identity, status="completed"):
+    result = _task_cli(
+        repo, "attempt", "terminal", tid, *_identity_args(identity),
+        "--status", status,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def _write_handoff(worktree, tid, slug, identity, base_sha, *, status="done"):
+    branch = f"{tid}_{slug}"
+    archive = worktree / "docs" / "archive" / "tasks" / branch
+    (archive / "handoff.json").write_text(
+        json.dumps(
+            _handoff(tid, branch, identity, base_sha, status=status),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _set_spec(repo, tid, slug, unknown_contract_item):
     spec = repo / f"docs/tasks/{tid}_{slug}/spec.md"
     spec.write_text(_valid_spec(unknown_contract_item), encoding="utf-8")
@@ -132,18 +185,24 @@ def _set_spec(repo, tid, slug, unknown_contract_item):
 
 
 def _finish_commit_cleanup(repo, tid, slug):
+    identity = _reserve(repo, tid)
     worktree = _worktree_path(repo, tid)
     finished = _task_cli(worktree, "finish", tid)
     assert finished.returncode == 0, finished.stderr
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, tid, slug, identity, base_sha)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", f"feat({tid}): complete {slug}")
     branch = f"{tid}_{slug}"
     branch_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    cleaned = _task_cli(repo, "cleanup-worktree", tid)
+    _terminal(repo, tid, identity)
+    cleaned = _task_cli(
+        repo, "cleanup-worktree", tid, *_identity_args(identity)
+    )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not worktree.exists()
     assert _git(repo, "branch", "--list", branch).stdout.strip() == branch
-    return branch, branch_head
+    return identity, branch, branch_head
 
 
 def test_add_copies_validated_template(git_repo):
@@ -296,51 +355,78 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
 
 
 def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
+    identity = _reserve(git_repo, "t001")
     _start(git_repo)
-    # 未 finish 的 active worktree：终态校验先于 dirty 校验拒绝
-    not_done = _task_cli(git_repo, "cleanup-worktree", "t001")
+    _terminal(git_repo, "t001", identity)
+    # 未 finish 的 active worktree：task 终态校验先于 dirty 校验拒绝
+    not_done = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
     assert not_done.returncode != 0
     assert "须为 done/dropped" in not_done.stderr
 
     # 已 finish 且提交（分支 ref=done），但 worktree 新增脏改动：拒绝
     worktree = _worktree_path(git_repo)
     assert _task_cli(worktree, "finish", "t001").returncode == 0
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t001): complete alpha")
     (worktree / "dirty.txt").write_text("x", encoding="utf-8")
-    dirty = _task_cli(git_repo, "cleanup-worktree", "t001")
+    dirty = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
     assert dirty.returncode != 0
     assert "未提交改动" in dirty.stderr
 
     # 清掉脏改动后 cleanup 成功且幂等
     (worktree / "dirty.txt").unlink()
     branch = "t001_alpha"
-    cleaned = _task_cli(git_repo, "cleanup-worktree", "t001")
+    cleaned = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not worktree.exists()
-    repeated = _task_cli(git_repo, "cleanup-worktree", "t001")
+    repeated = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
     assert repeated.returncode == 0
     assert "幂等" in repeated.stdout
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
 
 
 def test_cleanup_worktree_rejects_wrong_registered_branch(git_repo):
-    wrong = _worktree_path(git_repo)
-    _git(git_repo, "worktree", "add", "-b", "t999_other", str(wrong))
+    identity = _reserve(git_repo, "t001")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, "t001", "alpha", identity, base_sha)
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+    _terminal(git_repo, "t001", identity)
+    _git(worktree, "switch", "-c", "t999_other")
 
-    result = _task_cli(git_repo, "cleanup-worktree", "t001")
+    result = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
-    assert "不属于 t001" in result.stderr
+    assert "登记分支" in result.stderr
+    assert "预期 't001_alpha'" in result.stderr
 
 
 def test_cleanup_worktree_rejects_unregistered_directory(git_repo):
+    _start(git_repo)
+    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     unknown = _worktree_path(git_repo)
     unknown.mkdir()
     marker = unknown / "keep.txt"
     marker.write_text("user data\n", encoding="utf-8")
 
-    result = _task_cli(git_repo, "cleanup-worktree", "t001")
+    result = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "未登记为 git worktree" in result.stderr
@@ -420,6 +506,7 @@ def test_block_resume_preserves_worktree_notes_and_chain_can_continue(git_repo):
 
 
 def test_blocked_task_can_be_dropped_committed_and_cleaned(git_repo):
+    identity = _reserve(git_repo, "t001")
     _start(git_repo)
     worktree = _worktree_path(git_repo)
     blocked = _task_cli(worktree, "block", "t001", "--reason", "infra")
@@ -432,9 +519,16 @@ def test_blocked_task_can_be_dropped_committed_and_cleaned(git_repo):
     assert fm["status"] == "dropped"
     assert fm["worktree"] == ""
 
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(
+        worktree, "t001", "alpha", identity, base_sha, status="dropped"
+    )
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "chore(t001): drop task")
-    cleaned = _task_cli(git_repo, "cleanup-worktree", "t001")
+    _terminal(git_repo, "t001", identity)
+    cleaned = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not worktree.exists()
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
@@ -477,7 +571,7 @@ def test_start_rejects_when_primary_head_differs_from_main(git_repo):
 
 def test_list_and_show_read_completed_state_from_branch(git_repo):
     _start(git_repo, "t001")
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
     main_show = _task_cli(git_repo, "show", "t001")
     ref_show = _task_cli(git_repo, "show", "t001", "--ref", branch)
@@ -498,9 +592,11 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
 
 def test_integrate_merges_rebuilds_index_and_deletes_branch(git_repo):
     _start(git_repo, "t001")
-    branch, head = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, branch, head = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode == 0, result.stderr
     assert _git(
@@ -519,9 +615,11 @@ def test_integrate_merges_rebuilds_index_and_deletes_branch(git_repo):
 
 def test_integrate_keeps_branch_when_requested(git_repo):
     _start(git_repo, "t001")
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
-    result = _task_cli(git_repo, "integrate", "t001", "--keep-branch")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity), "--keep-branch"
+    )
 
     assert result.returncode == 0, result.stderr
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
@@ -531,11 +629,19 @@ def test_parallel_tasks_integrate_independently_in_completion_order(git_repo):
     _start(git_repo, "t001")
     _start(git_repo, "t002")
     # t002 先完成先合并；t001 后完成，合并时 main 已推进 → 三方 merge
-    _, second_head = _finish_commit_cleanup(git_repo, "t002", "beta")
-    assert _task_cli(git_repo, "integrate", "t002").returncode == 0
+    second_identity, _, second_head = _finish_commit_cleanup(
+        git_repo, "t002", "beta"
+    )
+    assert _task_cli(
+        git_repo, "integrate", "t002", *_identity_args(second_identity)
+    ).returncode == 0
 
-    _, first_head = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    result = _task_cli(git_repo, "integrate", "t001")
+    first_identity, _, first_head = _finish_commit_cleanup(
+        git_repo, "t001", "alpha"
+    )
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(first_identity)
+    )
 
     assert result.returncode == 0, result.stderr
     for head in (first_head, second_head):
@@ -550,22 +656,32 @@ def test_parallel_tasks_integrate_independently_in_completion_order(git_repo):
 
 
 def test_integrate_rejects_unfinished_task(git_repo):
+    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
+    _terminal(git_repo, "t001", identity)
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "须为 done/dropped" in result.stderr
 
 
 def test_integrate_rejects_registered_worktree(git_repo):
+    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     assert _task_cli(worktree, "finish", "t001").returncode == 0
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+    _terminal(git_repo, "t001", identity)
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "cleanup-worktree" in result.stderr
@@ -577,10 +693,12 @@ def test_integrate_rejects_tracked_dirty_primary_worktree(git_repo):
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-m", "chore: add tracked file")
     _start(git_repo, "t001")
-    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     tracked.write_text("modified", encoding="utf-8")
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "已跟踪文件未提交" in result.stderr
@@ -588,10 +706,12 @@ def test_integrate_rejects_tracked_dirty_primary_worktree(git_repo):
 
 def test_integrate_ignores_untracked_files(git_repo):
     _start(git_repo, "t001")
-    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     (git_repo / "scratch_note.txt").write_text("untracked", encoding="utf-8")
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode == 0, result.stderr
     assert (git_repo / "scratch_note.txt").is_file()
@@ -606,11 +726,13 @@ def test_integrate_detects_merge_state_from_any_cwd(git_repo, tmp_path):
     _start(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     (worktree / "shared.txt").write_text("from task\n", encoding="utf-8")
-    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     shared.write_text("from main\n", encoding="utf-8")
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-m", "chore: edit shared on main")
-    assert _task_cli(git_repo, "integrate", "t001").returncode != 0
+    assert _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    ).returncode != 0
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -620,6 +742,7 @@ def test_integrate_detects_merge_state_from_any_cwd(git_repo, tmp_path):
             str(git_repo / "scripts" / "repo_template" / "task.py"),
             "integrate",
             "t001",
+            *_identity_args(identity),
         ],
         cwd=outside,
         capture_output=True,
@@ -640,24 +763,30 @@ def test_integrate_reports_conflict_and_continues_after_resolution(git_repo):
     _start(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     (worktree / "shared.txt").write_text("from task\n", encoding="utf-8")
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
     shared.write_text("from main\n", encoding="utf-8")
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-m", "chore: edit shared on main")
 
-    conflicted = _task_cli(git_repo, "integrate", "t001")
+    conflicted = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
     assert conflicted.returncode != 0
     assert "shared.txt" in conflicted.stderr
     assert "--continue" in conflicted.stderr
 
-    premature = _task_cli(git_repo, "integrate", "t001", "--continue")
+    premature = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity), "--continue"
+    )
     assert premature.returncode != 0
     assert "未解决冲突" in premature.stderr
 
     shared.write_text("resolved\n", encoding="utf-8")
     _git(git_repo, "add", "shared.txt")
-    resumed = _task_cli(git_repo, "integrate", "t001", "--continue")
+    resumed = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity), "--continue"
+    )
 
     assert resumed.returncode == 0, resumed.stderr
     assert shared.read_text(encoding="utf-8") == "resolved\n"
@@ -666,10 +795,15 @@ def test_integrate_reports_conflict_and_continues_after_resolution(git_repo):
 
 def test_integrate_is_idempotent_after_merge(git_repo):
     _start(git_repo, "t001")
-    _finish_commit_cleanup(git_repo, "t001", "alpha")
-    assert _task_cli(git_repo, "integrate", "t001", "--keep-branch").returncode == 0
+    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    first = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity), "--keep-branch"
+    )
+    assert first.returncode == 0, first.stderr
 
-    result = _task_cli(git_repo, "integrate", "t001")
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode == 0, result.stderr
     assert "跳过 merge" in result.stdout
@@ -677,14 +811,14 @@ def test_integrate_is_idempotent_after_merge(git_repo):
 
 
 # --------------------------------------------------------------------------
-# integrate --chain：串行链式，只合链尾
+# integrate-chain：串行链式，只合链尾
 # --------------------------------------------------------------------------
 
 
 def test_chain_start_from_previous_completed_branch(git_repo):
     """串行：t002 从 t001 已完成分支创建，继承其成果。"""
     _start(git_repo, "t001")
-    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
     _start(git_repo, "t002", base=first_branch)
 
@@ -706,7 +840,7 @@ def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
     previous = None
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         _start(git_repo, tid, base=previous)
-        previous, head = _finish_commit_cleanup(git_repo, tid, slug)
+        _, previous, head = _finish_commit_cleanup(git_repo, tid, slug)
         branches.append(previous)
         heads.append(head)
 
@@ -719,7 +853,7 @@ def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
         git_repo, "merge-base", "--is-ancestor", branches[1], branches[2], check=False
     ).returncode == 0
 
-    result = _task_cli(git_repo, "integrate", "t003", "--chain")
+    result = _task_cli(git_repo, "integrate-chain", "t003")
 
     assert result.returncode == 0, result.stderr
     # 只合链尾，但三个 head 全部在 main 历史里（祖先跟随）
@@ -727,13 +861,17 @@ def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
         assert _git(
             git_repo, "merge-base", "--is-ancestor", head, "main", check=False
         ).returncode == 0
-    # 三个分支全删
-    for b in branches:
-        assert _git(git_repo, "branch", "--list", b).stdout.strip() == ""
+    # 验证前保留分支与 transaction；显式 continue 表示合并后验证已通过。
+    for branch in branches:
+        assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
+    finalized = _task_cli(git_repo, "integrate-chain", "t003", "--continue")
+    assert finalized.returncode == 0, finalized.stderr
+    for branch in branches:
+        assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
     # 只进一次 merge commit
     subjects = _git(git_repo, "log", "--format=%s", "-3").stdout.split("\n")
     assert subjects[0] == "chore(task): rebuild task indexes"
-    assert subjects[1].startswith("merge(t003)")
+    assert subjects[1].startswith("merge-chain(t003)")
     # 全部 done
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         fm, _ = parse_front_matter(
@@ -745,37 +883,45 @@ def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
 def test_chain_integrate_rejects_mid_chain_undone(git_repo):
     """链上有未完成的 task 时拒绝合并。"""
     _start(git_repo, "t001")
-    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _reserve(git_repo, "t002")
     _start(git_repo, "t002", base=first_branch)  # t002 active 未 finish
 
-    result = _task_cli(git_repo, "integrate", "t001", "--chain")
+    result = _task_cli(git_repo, "integrate-chain", "t002")
 
     assert result.returncode != 0
-    assert "须全部 done/dropped" in result.stderr
+    assert "须为 done/dropped" in result.stderr
 
 
 def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
     """链上有 task 仍挂 worktree 时拒绝合并。"""
     _start(git_repo, "t001")
-    first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    identity = _reserve(git_repo, "t002")
     _start(git_repo, "t002", base=first_branch)
-    # t002 finish + commit 但不 cleanup-worktree
+    # t002 finish + handoff + commit + terminal，但不 cleanup-worktree
     worktree = _worktree_path(git_repo, "t002")
     assert _task_cli(worktree, "finish", "t002").returncode == 0
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, "t002", "beta", identity, base_sha)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t002): beta")
+    _terminal(git_repo, "t002", identity)
 
-    result = _task_cli(git_repo, "integrate", "t002", "--chain")
+    result = _task_cli(git_repo, "integrate-chain", "t002")
 
     assert result.returncode != 0
     assert "仍登记 worktree" in result.stderr
 
 
 def test_integrate_requires_primary_worktree(git_repo):
+    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
     worktree = _worktree_path(git_repo)
 
-    result = _task_cli(worktree, "integrate", "t001")
+    result = _task_cli(
+        worktree, "integrate", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "主工作区" in result.stderr
@@ -802,7 +948,7 @@ def test_preflight_can_check_backlog_from_main_and_chain_ref(git_repo):
     assert "preflight=PASS" in main_backlog.stdout
 
     _start(git_repo)
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     chain_backlog = _task_cli(
         git_repo,
         "preflight",
@@ -996,13 +1142,17 @@ def test_rewind_rejects_foreign_registered_branch(git_repo):
 
 def test_cleanup_worktree_rejects_active_even_when_clean(git_repo):
     """T2：active task 有 checkpoint commit 使 worktree clean 时，cleanup 仍拒绝。"""
+    identity = _reserve(git_repo, "t001")
     _start(git_repo)
     worktree = _worktree_path(git_repo)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "checkpoint")
     assert _git(worktree, "status", "--porcelain").stdout.strip() == ""
+    _terminal(git_repo, "t001", identity)
 
-    result = _task_cli(git_repo, "cleanup-worktree", "t001")
+    result = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
     assert "须为 done/dropped" in result.stderr
@@ -1011,13 +1161,25 @@ def test_cleanup_worktree_rejects_active_even_when_clean(git_repo):
 
 def test_cleanup_worktree_rejects_prefix_collision_branch(git_repo):
     """cleanup 拒绝 t001_scratch 这类仅共享前缀的非 task 分支。"""
-    wrong = _worktree_path(git_repo)
-    _git(git_repo, "worktree", "add", "-b", "t001_scratch", str(wrong))
+    identity = _reserve(git_repo, "t001")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _write_handoff(worktree, "t001", "alpha", identity, base_sha)
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+    _terminal(git_repo, "t001", identity)
+    _git(worktree, "switch", "-c", "t001_scratch")
 
-    result = _task_cli(git_repo, "cleanup-worktree", "t001")
+    result = _task_cli(
+        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
+    )
 
     assert result.returncode != 0
-    assert wrong.exists()
+    assert "存在多个本地 task 分支" in result.stderr
+    assert "t001_scratch" in result.stderr
+    assert worktree.exists()
 
 
 def test_preflight_warns_when_backlog_covered_by_registered_worktree(git_repo):
@@ -1190,7 +1352,7 @@ def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
     """done target 已合 main、归档不可写：owner 单边增删 conflicts，
     不再因 peer.status=done 而卡死。"""
     _start(git_repo, "t001")
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     _git(git_repo, "merge", "--no-ff", branch, "-m", "merge t001")
     _task_cli(git_repo, "list", "--rebuild")
     _git(git_repo, "add", "docs/tasks_index.json", "docs/archive/tasks_index.json")
@@ -1279,7 +1441,7 @@ def test_view_shows_active_conflict_block(git_repo):
     assert "t002 ↔ t001" in active.stdout
     assert "t002 ↔ t001  — t002: beta" in active.stdout
 
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     # t001 done 但未合入 main：t002 仍被冲突阻塞
     unmerged = _task_cli(git_repo, "view")
     assert unmerged.returncode == 0, unmerged.stderr
@@ -1338,7 +1500,7 @@ def test_view_reads_done_from_main_archive(git_repo):
     _git(git_repo, "commit", "-m", "schedule dependency")
 
     _start(git_repo, "t001")
-    branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     _git(git_repo, "merge", "--ff-only", branch)
 
     result = _task_cli(git_repo, "view")
@@ -1599,3 +1761,95 @@ def test_edit_supports_append_remove_and_clear_for_schedule_edges(git_repo):
     assert first["conflicts_with"] == ""
     assert second["conflicts_with"] == ""
     assert third["conflicts_with"] == ""
+
+
+def _ledger(repo):
+    path = repo / "docs" / "runtime" / "dispatch_ledger.jsonl"
+    if not path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text("utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_start_only_writes_topology_event_and_does_not_create_attempt(git_repo):
+    initial = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    result = _task_cli(git_repo, "start", "t001")
+    assert result.returncode == 0, result.stderr
+    worktree = git_repo.parent / "repo_t001"
+    fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/task.md")
+    assert fm["status"] == "active"
+    assert fm["diff_anchor"] == initial
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial
+    events = _ledger(git_repo)
+    assert [event["event"] for event in events] == ["start"]
+    assert "attempt" not in events[0]
+    assert "execution_id" not in events[0]
+
+
+def test_attempt_reserve_and_start_are_separate_events(git_repo):
+    reserved = _task_cli(
+        git_repo, "attempt", "reserve", "t001", "--executor", "inline", "--model", "opus"
+    )
+    assert reserved.returncode == 0, reserved.stderr
+    identity = json.loads(reserved.stdout)
+    started = _task_cli(git_repo, "start", "t001")
+    assert started.returncode == 0, started.stderr
+    events = _ledger(git_repo)
+    assert [event["event"] for event in events] == ["attempt_reserved", "start"]
+    assert events[0]["execution_id"] == identity["execution_id"]
+    assert "execution_id" not in events[1]
+
+
+def test_agent_cli_reserve_bind_terminal_keeps_execution_and_host_separate(git_repo):
+    reserved = _task_cli(
+        git_repo, "attempt", "reserve", "t001", "--executor", "agent"
+    )
+    identity = json.loads(reserved.stdout)
+    common = [
+        "--attempt", str(identity["attempt"]),
+        "--execution-id", identity["execution_id"],
+    ]
+    bound = _task_cli(
+        git_repo, "attempt", "bind", "t001", *common,
+        "--host-worker-id", "host-task-123",
+    )
+    assert bound.returncode == 0, bound.stderr
+    terminal = _task_cli(
+        git_repo, "attempt", "terminal", "t001", *common, "--status", "completed"
+    )
+    assert terminal.returncode == 0, terminal.stderr
+    events = _ledger(git_repo)
+    assert events[0]["execution_id"] == identity["execution_id"]
+    assert "host_worker_id" not in events[0]
+    assert events[1]["host_worker_id"] == "host-task-123"
+    assert events[1]["execution_id"] == identity["execution_id"]
+    assert events[2]["execution_id"] == identity["execution_id"]
+
+
+def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):
+    first = _task_cli(git_repo, "start", "t001")
+    assert first.returncode == 0, first.stderr
+    worktree = git_repo.parent / "repo_t001"
+    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t001): done")
+    _git(git_repo, "worktree", "remove", str(worktree))
+
+    second = _task_cli(git_repo, "start", "t002", "--base", "t001_alpha")
+    assert second.returncode == 0, second.stderr
+    second_worktree = git_repo.parent / "repo_t002"
+    assert _git(
+        second_worktree, "merge-base", "--is-ancestor", "t001_alpha", "HEAD", check=False
+    ).returncode == 0
+
+
+def test_cleanup_and_integrate_require_identity_at_parse_time(git_repo):
+    cleanup = _task_cli(git_repo, "cleanup-worktree", "t001")
+    integrate = _task_cli(git_repo, "integrate", "t001")
+    assert cleanup.returncode != 0
+    assert integrate.returncode != 0
+    assert "--attempt" in cleanup.stderr and "--execution-id" in cleanup.stderr
+    assert "--attempt" in integrate.stderr and "--execution-id" in integrate.stderr

@@ -12,7 +12,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import task
-from repo_task import monitoring, scheduling
+from repo_task import attempts, monitoring, scheduling
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -39,9 +39,17 @@ def _fingerprint_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_facade_reexports_canonical_functions():
+def test_facade_reexports_canonical_functions_without_legacy_attempt_api():
     assert task.compute_schedule is scheduling.compute_schedule
     assert task.repository_fingerprint is monitoring.repository_fingerprint
+    assert task.project_attempts is attempts.project_attempts
+    assert task.current_attempt_record is attempts.current_attempt_record
+    assert task.in_flight_attempts is attempts.in_flight_attempts
+    assert task.append_integrated_batch is attempts.append_integrated_batch
+    for legacy in (
+        "dispatch_events", "dispatch_for_attempt", "_resolve_chain", "_in_flight_attempts",
+    ):
+        assert not hasattr(task, legacy)
     assert 100 <= len((SCRIPTS_DIR / "task.py").read_text(encoding="utf-8").splitlines()) <= 250
 
 
@@ -55,7 +63,34 @@ def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):
         errors="replace",
     )
     assert external.returncode == 0, external.stderr
+    assert "attempt" in external.stdout
+    assert "integrate-chain" in external.stdout
     assert "observe" in external.stdout and "reconcile" in external.stdout
+
+    for command in ("cleanup-worktree", "integrate"):
+        command_help = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "task.py"), command, "--help"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert command_help.returncode == 0, command_help.stderr
+        assert "--attempt" in command_help.stdout
+        assert "--execution-id" in command_help.stdout
+    assert "--chain" not in command_help.stdout
+
+    chain_help = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "task.py"), "integrate-chain", "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert chain_help.returncode == 0, chain_help.stderr
+    assert "tail_tid" in chain_help.stdout
 
     copied = tmp_path / "copied" / "scripts" / "repo_template"
     copied.mkdir(parents=True)

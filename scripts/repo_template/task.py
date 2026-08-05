@@ -15,6 +15,12 @@ from repo_task.context import (
     worktree_rel_path,
 )
 from repo_task.control import (
+    cmd_attempt_bind,
+    cmd_attempt_escalate,
+    cmd_attempt_report,
+    cmd_attempt_reserve,
+    cmd_attempt_silent_alert,
+    cmd_attempt_terminal,
     cmd_ledger_record,
     cmd_ledger_tail,
     cmd_observe,
@@ -66,22 +72,33 @@ from repo_task.integration import (
     _commit_index,
     _conflicted_paths,
     _merge_in_progress,
-    _resolve_chain,
     _resolve_integrate_branch,
     cmd_cleanup_worktree,
     cmd_integrate,
+    cmd_integrate_chain,
     cmd_start,
+)
+from repo_task.attempts import (
+    append_integrated_batch,
+    attempt_for_identity,
+    attempts_for_tid,
+    current_attempt,
+    current_attempt_record,
+    current_identity,
+    in_flight_attempts,
+    invalid_overlapping_attempts,
+    overlapping_attempts,
+    project_attempts,
+    require_exact_terminal,
 )
 from repo_task.ledger import (
     _ledger_append_safely,
     _ledger_lock_fh,
     _ledger_unlock_fh,
-    current_attempt,
-    dispatch_events,
-    dispatch_for_attempt,
-    invalid_overlapping_attempts,
-    latest_worker_terminal as ledger_latest_worker_terminal,
+    ledger_allocate_attempt,
     ledger_append,
+    ledger_locked_append,
+    ledger_locked_append_many,
     ledger_next_attempt,
     ledger_read,
 )
@@ -101,7 +118,6 @@ from repo_task.lifecycle import (
 )
 from repo_task.monitoring import (
     _escalate_latched_attempts,
-    _in_flight_attempts,
     _ledger_tid_sort_key,
     _parent_dispatch_model,
     _parse_instant,
@@ -113,7 +129,6 @@ from repo_task.monitoring import (
     dispatch_mode,
     is_silent,
     latest_observation,
-    latest_worker_terminal,
     observe_attempt,
     repository_fingerprint,
     verify_integrate_ready,

@@ -6,77 +6,165 @@ disable-model-invocation: true
 
 # task-integrate
 
-把已完成 task 的分支合并进本地主干。本 skill 是 **coordinator 角色**：主仓唯一写者。角色边界见 `AGENTS.md`「执行角色与合并时机」。
+把已完成 task 分支合并进本地主干。本 skill 是 **coordinator 角色**：主仓唯一写者。角色边界见 `AGENTS.md`「执行角色与合并时机」。
+
+单 task 与链式聚合是两个独立入口：
+
+- `integrate TID --attempt N --execution-id ID [--continue]`：只合一个 task。
+- `integrate-chain TAIL_TID [--continue]`：链式 aggregate transaction，只合链尾一次。
+
+链式聚合不复用单 task 子命令；单 task cleanup 与 integrate 始终要求完整 identity。
 
 ## 前提
 
-- 用户已给出会话级合并授权（`task-run` / `task-dispatch` 在启动时取得；单独调用本 skill 时视为用户当次授权）。
-- task 在自身分支 tip 中为 `done` 或 `dropped`。
-- 该 task 的执行 commit 已完成，worktree 干净。
+- 已取得会话级合并授权。`task-dispatch` 因完成即合并而在启动时取得；`task-run` 可在启动时取得，也可在整链完成后、首次 `integrate-chain` 前只询问一次；单独调用本 skill 视为用户当次授权。
+- worker 已在自身分支完成一个执行 commit，并写入完整 `handoff.json`。
+- coordinator 已按 exact identity `(tid, attempt, execution_id)` 写入 terminal 与 report。
+- 只在主仓主干调用本 skill；不 push、不动远程。
 
-## 输入
+## Handoff 契约
 
-一个或多个 `tNNN`。多个时按给定顺序逐个处理，前一个失败即停，不继续后续。
+每个成员的 `handoff.json` 必须包含且只按以下类型验证：
 
-## 步骤
+```json
+{
+  "tid": "t001",
+  "attempt": 1,
+  "execution_id": "0123456789abcdef0123456789abcdef",
+  "status": "done",
+  "branch": "t001_example",
+  "base_sha": "0123456789abcdef0123456789abcdef01234567",
+  "tests": "pytest -q：120 passed",
+  "blackbox": "黑盒命令通过",
+  "review": "第 2 轮 PASS",
+  "pending": ["p047"],
+  "findings": ["d012"]
+}
+```
 
-1. **清理 worktree**（尚未清理时）：
+`tests`、`blackbox`、`review` 都是非空字符串；`pending`、`findings` 都是字符串数组，可为空数组；全部字段必填。`attempt` 必须是非 bool 的正整数。`base_sha` 是执行 commit 前的 HEAD，必须同时等于 task front matter 的 `diff_anchor` 与 branch tip 的 first parent 完整 SHA；该机械等式保证一个 task 恰有一个执行 commit。链上后继成员的 `base_sha` 还必须等于紧邻前一成员 branch tip。
 
-   并行 dispatch 必须使用 reconcile 当前 attempt，并先确认宿主终态已记账：
+## 单 task：cleanup + integrate
 
-   ```bash
-   scripts/repo_template/task.py cleanup-worktree {tid} --attempt {N}
-   ```
+### 1. Exact cleanup
 
-   串行 `task-run` 无 dispatch 账本时保持旧命令：
+```bash
+scripts/repo_template/task.py cleanup-worktree {tid} \
+  --attempt {N} --execution-id {EXECUTION_ID}
+```
 
-   ```bash
-   scripts/repo_template/task.py cleanup-worktree {tid}
-   ```
+cleanup 永远要求 `--attempt` 与 `--execution-id`，并在删除 worktree 前同时通过：
 
-2. **合并**：
+1. identity 精确等于该 tid 的 current attempt；
+2. executor terminal 为 `completed`；
+3. 不存在未闭环或非法重叠 attempt；
+4. branch tip 与 task 终态一致；
+5. `handoff.json` identity、status、branch、字段类型与 `base_sha == branch tip first parent` 全部成立；
+6. 登记 worktree、当前分支、路径和 tid ownership 一致，worktree clean；
+7. 分支 tip 确实包含本 task 的一个执行 commit，且未混入不属于本 task 的所有权异常。
 
-   并行路径：
+任一门禁失败即保留 worktree、分支和控制面原状，停止并报告；不得换 identity 或降级为无参数命令。
 
-   ```bash
-   scripts/repo_template/task.py integrate {tid} --attempt {N}
-   ```
+### 2. Exact single integrate
 
-   串行链式路径使用 `integrate {tid} --chain`，不带 attempt。脚本按序执行：校验分支 tip 终态、handoff attempt（并行）与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。合并成功自动向调度账本（`docs/runtime/dispatch_ledger.jsonl`）append 带 attempt 的 `integrated` 事件；串行无 dispatch 时保持历史无 attempt 兼容路径。
+cleanup 成功后执行：
 
-   并行 cleanup/integrate 的共同门禁是：必须显式给当前最高 attempt，dispatch 存在匹配 `worker_terminal` 且 worker-id 一致，且不存在未先 terminal 的非法重叠 attempt。worker 仍 running 或 attempt 不匹配时停止并报告，不绕过门禁。
+```bash
+scripts/repo_template/task.py integrate {tid} \
+  --attempt {N} --execution-id {EXECUTION_ID}
+```
 
-3. **冲突处置**。脚本停在冲突处并列出文件时，按语义解决——不是取一侧了事：
+`integrate` 只处理这个 exact identity，重新验证 current、completed terminal、无 overlap、handoff、branch tip 与 worktree 已清理，再执行 `merge --no-ff`。成功后重建派生 index 并单独 commit，再写该 identity 的 `integrated`，删除已完全合入的 task 分支，最后执行合并后验证。已 exact integrated 的重入按幂等结果处理，不得把其他 attempt 视为已合入。
 
-   | 冲突位置 | 处置 |
-   |----------|------|
-   | `docs/blueprint/` | 真语义冲突。读双方意图后合成一致表述，不叠加两段 |
-   | `docs/specs_index.md` | 两侧各加一行；保留双方，按 slug 排序 |
-   | `docs/tasks_index.json` | 派生缓存。取任一侧解决冲突即可，第 2 步会重建覆盖 |
-   | `docs/tasks/{tid}/` 与 `docs/archive/tasks/{tid}/` | task 归档是 rename，相似度不足时表现为 delete/add 冲突。保留 archive 侧、删除 active 侧，即归档后的正确形态 |
-   | 源码 / 测试 | 读双方改动意图；无法确定时停止，报告给用户 |
+### 3. 单 task 冲突续跑
 
-   条目化账本（`docs/pending/`、`docs/findings/`）为一条目一文件，正常不冲突；若出现同号不同文件，说明取号锁被绕过，停止并报告。
+脚本停在冲突态并列出文件时，按双方语义解决并 `git add`，随后用原 identity 继续：
 
-   解决并 `git add` 后：
+```bash
+scripts/repo_template/task.py integrate {tid} \
+  --attempt {N} --execution-id {EXECUTION_ID} --continue
+```
 
-   ```bash
-   scripts/repo_template/task.py integrate {tid} --continue
-   ```
+`--continue` 重新验证同一 exact identity 与当前冲突事务；不得改用新 attempt/execution_id。
 
-   放弃合并用 `git merge --abort`，分支与主干均不变，报告给用户裁决。
+## 链式：integrate-chain aggregate transaction
 
-4. **合并后验证**。执行 `docs/blueprint/testing.md` 声明的合并后动作与验证。失败则停止后续全部 integrate，报告主干实际状态（已含 merge commit 与 index commit）交用户裁决，不盲目重试或回退。
+`task-run` 对每个成员完成 exact cleanup 后，只调用一次：
 
-5. **处置 worker 上报的跨 task 影响**。worker 汇报中列出的「其他 task 需改 spec」条目，在合并后的主干上逐条落实：目标 task 仍为 backlog 则直接改其 `spec.md`，已在执行中则登记 `pending.py new` 并通知用户。改动单独成 commit，不混入 merge 或 index commit。
+```bash
+scripts/repo_template/task.py integrate-chain {TAIL_TID}
+```
 
-## 边界
+`integrate-chain` 根据 Git ancestry 与 attempt 控制面识别从主干基点到链尾的线性成员，建立聚合事务。调用方不传单个 identity；脚本对每个成员读取并锁定其 exact `(tid, attempt, execution_id)`。
 
-- 只写主仓，只在主干分支执行。
-- 不修改 task 内容、spec、代码或测试；发现需改动时停止并报告。
-- 不 `git push`、不动远程分支。
-- 不启动 task、不执行 task。
+### Aggregate gate
+
+任何 merge 前，所有成员必须整体通过：
+
+1. **线性 ancestry**：各成员分支沿 first-parent 形成无分叉、无跳跃的链；后继确实以紧邻前一成员分支为 base，链尾包含全部前置执行 commit。
+2. **exact attempt**：每个成员 identity 都是该 tid 的 current attempt，不存在未闭环或非法重叠 attempt。
+3. **terminal**：每个成员 terminal=`completed`。
+4. **handoff**：每个成员 handoff 的 tid/attempt/execution_id/status/branch 与控制面、refs 完全一致；三项结果为非空字符串，两项条目为字符串数组。
+5. **commit/base**：每个成员 branch tip 是其执行 commit，`base_sha` 是该 tip 的 first parent 完整 SHA；相邻成员的 ancestry 与记录 base 一致。
+6. **task status**：每个成员在自身 tip 中为 `done`，active/archive 形态正确。
+7. **worktree**：每个成员已用其 exact identity cleanup，无残留登记或 ownership/dirty 异常。
+8. **主干与分支**：主干、链成员集合和各 tip 与事务预期一致，待删分支都可由链尾覆盖。
+
+预检任一失败时，事务 **零 merge、零 integrated**；不写部分成员 integrated，不重建 index，不删任何链分支。
+
+### 可恢复 transaction phases
+
+aggregate gate 全通过后，脚本在 Git dir 下写 `repo-task/integrate-chain.json`。snapshot 固定主干基点、链尾、成员顺序、每成员 exact identity 与 branch tip，并以阶段推进：
+
+```text
+prepared -> merged(merge_sha) -> indexed(index_sha)
+         -> awaiting_verification -> complete(transaction 删除)
+```
+
+- `prepared` 在 merge 前落盘；冲突时保留该阶段和 Git merge state。
+- merge commit 一旦成功立即记录 `phase=merged` 与 `merge_sha`。即使进程在 phase 写入前中断，`--continue` 也只能在 `HEAD^1=base_head`、`HEAD^2=tail_sha` 时认领该 merge commit。
+- `indexed` 记录 index 维护后的 `index_sha`；若进程在 index commit 后、phase 写入前中断，只接受 `HEAD` 为 `merge_sha` 或其紧邻 index 维护 commit。
+- 成员 `integrated` 在一次 ledger 锁内完成**全量预检 + 幂等批量追加**。任一成员 identity、terminal 或既有 merge_sha 不符时整批拒绝；恢复重放不会重复事件，也不会留下成员级部分写入。
+- 写完 integrated 后进入 `awaiting_verification`。此时 merge/index 已发生，但 transaction 与全部链分支必须保留。
+
+### 合并后验证与最终 finalize
+
+首次 `integrate-chain {TAIL_TID}` 或冲突恢复的第一次 `--continue` 最多推进到 `awaiting_verification`，不会删除分支或 transaction。coordinator 随后执行 `docs/blueprint/testing.md` 声明的合并后验证：
+
+- 验证失败：停止，保留 transaction、exact integrated 与所有链分支；不得调用最终 continue。
+- 验证通过：再次执行同一命令，作为显式 finalize 确认：
+
+```bash
+scripts/repo_template/task.py integrate-chain {TAIL_TID} --continue
+```
+
+命令重验 `tail_tid`、`index_sha == HEAD`、成员 branch SHA、exact identity、handoff、worktree 与 integrated batch 后，幂等删除整条链分支并清除 transaction。分支删除中断时保留 transaction；再次执行会跳过已删分支并继续剩余成员。
+
+### 链式冲突与收尾恢复
+
+发生冲突时按双方语义解决并 `git add`，再以原 tail 执行 `--continue`。命令必须读取 transaction，确认 `MERGE_HEAD`、成员 snapshot 与 exact identity 均未漂移，然后完成原 merge并推进到 `awaiting_verification`。`merged`、`indexed` 阶段的基础设施失败也使用同一命令恢复；不得创建新事务掩盖旧事务。
+
+## 冲突处置
+
+| 冲突位置 | 处置 |
+|----------|------|
+| `docs/blueprint/` | 真语义冲突。读双方意图后合成一致表述，不叠加两段 |
+| `docs/specs_index.md` | 两侧各加一行；保留双方，按 slug 排序 |
+| `docs/tasks_index.json` | 派生缓存。先解决为可继续状态，成功后由脚本重建覆盖 |
+| `docs/tasks/{tid}/` 与 `docs/archive/tasks/{tid}/` | task 归档是 rename；保留 archive 侧、删除 active 侧 |
+| 源码 / 测试 | 读双方改动意图；无法确定时停止，报告给用户 |
+
+条目化账本（`docs/pending/`、`docs/findings/`）为一条目一文件，正常不冲突；若出现同号不同文件，说明取号锁被绕过，停止并报告。
+
+## 合并后验证与边界
+
+- 执行 `docs/blueprint/testing.md` 声明的合并后动作与验证。失败时停止后续 integrate，准确报告主干已发生的 merge/index 状态，交用户裁决，不盲目重试或回退。
+- worker 上报的跨 task 影响，在合并后主干另行处置；不得混入 merge、integrated 或 index commit。
+- 本 skill 不修改 task 内容、spec、代码或测试；发现门禁外内容需改动时停止并报告。
+- 不启动 task、不执行 task、不写 worker handoff。
 
 ## 完成
 
-逐个报告：`{tid}` → merge commit、index commit、分支删除或保留、合并后验证结果。有冲突时报告冲突文件与处置方式。
+单 task 报告：`{tid}` 的 exact identity、cleanup 结果、merge commit、integrated、index commit、分支删除或保留、合并后验证结果。
+
+链式报告：链尾、snapshot 成员顺序与各 exact identity、aggregate gate、transaction phase、唯一 merge commit、原子批量 integrated、index commit、合并后验证、最终 continue、删除的链分支与 transaction 清理结果。未到 `complete` 时报告保留的 phase、分支与正确恢复命令。

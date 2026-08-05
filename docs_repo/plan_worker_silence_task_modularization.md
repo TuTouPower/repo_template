@@ -1,5 +1,7 @@
 # Worker 静默监控 + `task.py` 模块化实施计划
 
+> 本文保留当时的模块化实施背景，不作为当前 attempt 命令权威。当前入口统一为 exact identity `(tid, attempt, execution_id)`：生命周期使用 `task.py attempt ...`，观察使用带 `--execution-id` 的 `observe`，单 task 合并使用 exact `integrate`，链式合并使用 `integrate-chain`。当前设计见 `plan_attempt_lifecycle_closure.md`、`plan_dispatch_control_plane.md` 与 `plan_worker_silence_monitoring.md`。
+
 目标：直接在当前 `main` 工作区完成两项工作：
 
 1. 将“20 分钟无 commit 自动重派”替换为“每 5 分钟观察仓库状态指纹，连续 30 分钟无变化只告警用户”；worker 不主动写 heartbeat/progress，告警后不取消、不重派。
@@ -84,11 +86,18 @@ context
 - 主干 → 未合并 branch → 已登记 worktree 的有效状态覆盖。
 - `load_task`、`load_task_at_ref`、状态检查、note 更新。
 
+### `attempts.py`
+
+- exact `(tid, attempt, execution_id)` 投影、current/exact 查询、状态转换与 overlap 检测的唯一领域层。
+- reserve/bind/terminal/report/escalate/observation/silent/integrated 门禁；report 必须 terminal 后，completed identity 不可被新 reserve 顶掉。
+- `in_flight_attempts()` 是 ps/reconcile 共用的唯一执行占槽投影；不存在 monitoring 内第二套实现。
+- integrated batch 在一次 ledger 锁内整体预检并幂等追加。
+
 ### `ledger.py`
 
-- JSONL 文件锁、append/read、坏行跳过、attempt 编号。
-- dispatch/report/failed/escalated/breaker/integrated/start 以及新 observation 事件的基础持久化。
-- 删除原来“为了单文件复制而内联锁实现”的说明；工具链以后按目录整体复制。
+- 只负责 JSONL 文件锁、append/read、原子 attempt 序号分配、批量 append 与坏行跳过。
+- 不承载 attempt 状态判断；`ledger record` 只暴露 note/breaker，`ledger tail` 只读。
+- 工具链按目录整体复制。
 
 ### `scheduling.py`
 
@@ -97,10 +106,10 @@ context
 
 ### `monitoring.py`
 
-- 仓库状态指纹、`observe`、silence 判定。
-- in-flight attempt、refs/handoff 完成验证。
-- `ps` 行计算、retry/breaker/escalate 规则和 reconcile 纯算法。
-- 这是 worker 静默监控唯一实现落点；不在 skill、ledger、CLI 中复制算法。
+- 仓库状态指纹、已 bind agent 的 exact `observe`、silence 判定。
+- refs/handoff 完成验证；`execution_id` 是 provenance，`host_worker_id` 只用于查询 agent 宿主。
+- `ps` 行计算、retry/breaker/escalate 规则和 reconcile 纯算法；attempt 投影只消费 `attempts.py`。
+- 这是 worker 静默监控唯一实现落点；inline 不 observe、不触发 silent hold。
 
 ### `worktrees.py`
 
@@ -114,23 +123,24 @@ context
 
 ### `integration.py`
 
-- `start`、`cleanup-worktree`、`integrate`、chain merge、index commit、分支删除。
-- 这是组合 Git/worktree/task store/ledger 的唯一工作流层。
+- `start`、exact `cleanup-worktree`、单 task exact `integrate`、分阶段可恢复的 `integrate-chain` aggregate transaction、index commit 与验证后分支删除。
+- chain transaction 固定 `merge_sha/index_sha`，merge 后失败可用同一 `--continue` 恢复；分支保留到外部验证通过。
+- 这是组合 Git/worktree/task store/attempts/ledger 的唯一工作流层。
 
 ### `control.py`
 
-- `view`、`observe`、`ledger record/tail`、`ps`、`reconcile` 的命令适配和输出格式。
+- `view`、`attempt`、exact `observe`、受限 `ledger record/tail`、`ps`、`reconcile` 的命令适配和输出格式。
 - 核心算法留在 scheduling/monitoring/ledger，不放在 command adapter。
 
 ### `cli.py`
 
 - argparse parser 和 command 路由。
-- 保持当前命令路径和参数兼容；新增 `observe`，将 `--stall-minutes` 替换为 `--silent-minutes`。
+- 只暴露当前 exact identity 命令面；旧 lifecycle `ledger record`、nullable identity 与 `integrate --chain` 明确失败，不保留参数兼容。
 
 ### `task.py`
 
 - 导入 `repo_task.cli.main`。
-- 为兼容现有测试/脚本 re-export 当前被外部使用的解析、扫描、调度和 command 函数；canonical owner 仍是包内模块。
+- 只 re-export canonical owner 中仍有效的解析、扫描、调度和 command 函数；删除 `dispatch_events`、`dispatch_for_attempt`、`_resolve_chain`、`_in_flight_attempts` 等旧兼容 API。
 - 不保留任何业务逻辑副本。
 
 ## 4. 实现仓库状态指纹
@@ -153,26 +163,27 @@ HEAD commit
 - 符号链接只哈希 link target，不跟随到仓库外。
 - 账本只保存 fingerprint，不保存文件内容。
 
-新增命令：
+当前观察命令：
 
 ```bash
-python3 scripts/repo_template/task.py observe TID --attempt N [--json]
+python3 scripts/repo_template/task.py observe TID --attempt N --execution-id ID [--json]
 ```
 
 行为：
 
 - coordinator 调用，worker 不调用。
-- 校验 attempt 已 dispatch、worktree 存在且归属该 tid。
-- 首次观察或 fingerprint 变化时追加 `observation`；未变化不追加。
+- 校验 exact identity 是 current running agent attempt，worktree 存在且归属该 tid。
+- 首次观察或 fingerprint 变化时追加精确绑定 identity 的 `observation`；未变化不追加。
 - 输出 fingerprint、最后变化时间和静默时长。
 
-扩展 dispatch：
+当前 agent 派发入口：
 
 ```bash
-ledger record --event dispatch ... --worker-id <宿主后台任务 ID>
+python3 scripts/repo_template/task.py attempt reserve TID --executor agent [--model MODEL]
+python3 scripts/repo_template/task.py attempt bind TID --attempt N --execution-id ID --host-worker-id HOST_ID
 ```
 
-worker-id 只供 coordinator 查询宿主运行状态；`task.py` 不猜测 agent 是否存活。
+`execution_id` 是执行 provenance；`host_worker_id` 只供 coordinator 查询宿主运行状态。生命周期不再通过 `ledger record` 写入；该命令只允许 note/breaker。
 
 ## 5. 将 stalled 自动重派改为 silent 告警
 
@@ -190,14 +201,14 @@ worker-id 只供 coordinator 查询宿主运行状态；`task.py` 不猜测 agen
 `reconcile`：
 
 - refs ready、contract、blocked、显式 failed 仍按原顺序处理。
-- 当前 in-flight attempt 的 observation 超过 `--silent-minutes`（默认 30）时输出：
+- current running identity 的 observation 超过 `--silent-minutes`（默认 30）时输出：
 
 ```text
-ALERT-SILENT t272 attempt=1 — 连续 34 分钟无仓库可见变化，worker 可能出现问题
+ALERT-SILENT t272 attempt=1 execution_id=0123456789abcdef0123456789abcdef host_worker_id=task-abc — 连续 34 分钟无仓库可见变化，Agent 可能出现问题
 ```
 
-- `alert-silent` 不转换成 failed/escalated，不生成 redispatch，attempt 继续占槽。
-- 同 fingerprint 已记录 `silent_alerted` 后不重复告警；出现新 observation 后重新计时。
+- `alert-silent` 不转换成 terminal/report failed/escalated，不生成 redispatch，attempt 继续占槽。
+- 同 identity、同 fingerprint 已执行 `attempt silent-alert` 后不重复告警；出现新 observation 后重新计时。
 - 一旦本轮存在 `alert-silent`，不再补位新的 dispatch，coordinator 报告用户并停止自动调度。
 
 CLI：
@@ -211,13 +222,14 @@ CLI：
 
 - cron 从每 10 分钟改为每 5 分钟。
 - 每次唤醒：
-  1. 根据 dispatch 保存的 worker-id 查询宿主后台任务状态；
-  2. 对仍为 running 的 attempt 执行 `observe`；
-  3. 再运行 reconcile。
-- worker 不写 heartbeat/progress。
-- `alert-silent` 时报告：tid、attempt、静默时长、worker 状态、最后变化时间、HEAD、worktree、dirty 摘要。
-- 报告后暂停/注销 cron，不取消、不重派、不启动同 tid 新 attempt，等待用户。
-- report/failed/escalated/silent 事件全部显式携带 attempt，避免迟到通知默认绑定最新 attempt。
+  1. 根据 current agent attempt 的 `host_worker_id` 查询宿主后台任务状态；
+  2. 对仍为 running 的 exact identity 执行带 `--execution-id` 的 `observe`；
+  3. 宿主终态后先执行 exact `attempt terminal`，再执行 exact `attempt report`；
+  4. 再运行 reconcile。
+- worker 不写 heartbeat/progress，也不写 attempt 控制面，只写 handoff。
+- `alert-silent` 时报告：tid、attempt、execution_id、静默时长、`host_worker_id` 与宿主状态、最后变化时间、HEAD、worktree、dirty 摘要。
+- 报告后暂停/注销 cron，不取消、不重派、不 reserve 同 tid 新 attempt，等待用户。
+- terminal/report/escalate/silent-alert 都通过 `task.py attempt` 以完整 identity 写入；`ledger record` 不再承担生命周期事件。
 
 ## 7. 文档同步
 
@@ -250,17 +262,17 @@ repo_task/**
 
 - clean commit、staged、unstaged、删除、untracked、二进制、符号链接都会在应变化时改变 fingerprint。
 - ignored 文件和仅 mtime 变化不改变 fingerprint。
-- `observe` 首次/变化时记账，未变化不追加。
-- attempt 不存在、worktree 缺失/不匹配时拒绝。
+- `observe` 首次/变化时按 exact identity 记账，未变化不追加。
+- attempt/execution_id 不存在或不匹配、worktree 缺失/ownership 不匹配时拒绝。
 
 ### silent/reconcile
 
 - 30 分钟内 progressing，超过阈值 silent。
 - silent 输出 `alert-silent`、继续占槽、不 redispatch。
 - alert 时不补位新 dispatch。
-- 同 fingerprint 已 alerted 后不重复；新 fingerprint 重新计时。
-- 显式 resource failed 仍按原策略。
-- worker-id 正确记录和展示。
+- 同 identity、同 fingerprint 已 alerted 后不重复；新 fingerprint 重新计时。
+- 显式 resource report failed 仍按原策略。
+- `execution_id` provenance 与 `host_worker_id` 宿主句柄分别正确记录和展示。
 
 ## 9. 实施顺序
 

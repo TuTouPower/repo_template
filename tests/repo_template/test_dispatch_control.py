@@ -1,17 +1,30 @@
-"""调度控制面：账本读写、attempt 编号、record 校验、ps 状态判定、reconcile 行动计划。"""
+"""调度控制面：统一 attempt 生命周期、账本、ps、reconcile 与 breaker 测试。"""
+
 import argparse
-import json
-import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+import sys
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task import context as ctx
 from repo_task import control
+from repo_task.attempts import (
+    append_integrated_batch,
+    bind_attempt,
+    current_attempt_record,
+    escalate_attempt,
+    project_attempts,
+    report_attempt,
+    reserve_attempt,
+    silent_alert_attempt,
+    terminal_attempt,
+)
 from repo_task.ledger import ledger_append, ledger_next_attempt, ledger_read
 from repo_task.monitoring import (
     breaker_states,
@@ -36,11 +49,167 @@ def ledger(tmp_path, monkeypatch):
     return runtime / "dispatch_ledger.jsonl"
 
 
-def _record(**kwargs):
-    defaults = dict(
-        event=None, tid=None, attempt=None, model=None, worker_id=None,
-        status=None, sha=None, fail_class=None, state=None, fingerprint=None, reason=None,
+def _identity(event):
+    return event["attempt"], event["execution_id"]
+
+
+def _eid(tid: str, attempt: int) -> str:
+    return f"exec-{tid}-{attempt}"
+
+
+def _reserved(
+    tid: str,
+    attempt: int = 1,
+    *,
+    executor: str = "inline",
+    model: str | None = None,
+    execution_id: str | None = None,
+    ts: str | None = None,
+) -> dict:
+    event = {
+        "event": "attempt_reserved",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id or _eid(tid, attempt),
+        "executor": executor,
+        "state": "running" if executor == "inline" else "reserved",
+    }
+    if model:
+        event["model"] = model
+    if ts:
+        event["ts"] = ts
+    return event
+
+
+def _bound(
+    tid: str,
+    attempt: int = 1,
+    *,
+    execution_id: str | None = None,
+    host_worker_id: str = "worker-1",
+    ts: str | None = None,
+) -> dict:
+    event = {
+        "event": "attempt_bound",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id or _eid(tid, attempt),
+        "host_worker_id": host_worker_id,
+    }
+    if ts:
+        event["ts"] = ts
+    return event
+
+
+def _running(
+    tid: str,
+    attempt: int = 1,
+    *,
+    model: str | None = None,
+    host_worker_id: str | None = None,
+    execution_id: str | None = None,
+    ts: str | None = None,
+) -> list[dict]:
+    execution_id = execution_id or _eid(tid, attempt)
+    if host_worker_id is None:
+        return [_reserved(
+            tid, attempt, executor="inline", model=model,
+            execution_id=execution_id, ts=ts,
+        )]
+    return [
+        _reserved(
+            tid, attempt, executor="agent", model=model,
+            execution_id=execution_id, ts=ts,
+        ),
+        _bound(
+            tid, attempt, execution_id=execution_id,
+            host_worker_id=host_worker_id, ts=ts,
+        ),
+    ]
+
+
+def _terminal(
+    tid: str,
+    attempt: int = 1,
+    *,
+    status: str = "completed",
+    model: str | None = None,
+    host_worker_id: str | None = None,
+    execution_id: str | None = None,
+    reserved_ts: str | None = None,
+    terminal_ts: str | None = None,
+) -> list[dict]:
+    execution_id = execution_id or _eid(tid, attempt)
+    events = _running(
+        tid, attempt, model=model, host_worker_id=host_worker_id,
+        execution_id=execution_id, ts=reserved_ts,
     )
+    event = {
+        "event": "attempt_terminal",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id,
+        "status": status,
+    }
+    if terminal_ts:
+        event["ts"] = terminal_ts
+    events.append(event)
+    return events
+
+
+def _report(
+    tid: str,
+    attempt: int = 1,
+    *,
+    status: str,
+    execution_id: str | None = None,
+    sha: str | None = None,
+    fail_class: str | None = None,
+    reason: str | None = None,
+    ts: str | None = None,
+) -> dict:
+    event = {
+        "event": "report",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id or _eid(tid, attempt),
+        "status": status,
+    }
+    if sha:
+        event["sha"] = sha
+    if fail_class:
+        event["class"] = fail_class
+    if reason:
+        event["reason"] = reason
+    if ts:
+        event["ts"] = ts
+    return event
+
+
+def _integrated(tid: str, attempt: int = 1, *, execution_id: str | None = None) -> dict:
+    return {
+        "event": "integrated",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id or _eid(tid, attempt),
+        "merge_sha": f"merge-{tid}-{attempt}",
+        "ts": _ts(1),
+    }
+
+
+def _escalated(tid: str, attempt: int = 1, *, execution_id: str | None = None) -> dict:
+    return {
+        "event": "escalated",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id or _eid(tid, attempt),
+        "reason": "用户处理",
+        "ts": _ts(1),
+    }
+
+
+def _record(**kwargs):
+    defaults = dict(event=None, tid=None, model=None, state=None, reason=None)
     defaults.update(kwargs)
     control.cmd_ledger_record(argparse.Namespace(**defaults))
 
@@ -51,25 +220,25 @@ def _record(**kwargs):
 
 
 def test_ledger_append_read_roundtrip(ledger):
-    first = ledger_append({"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus"})
+    first = ledger_append(_reserved("t001", model="opus"))
     ledger_append({"event": "note", "text": "中文备注"})
 
     events = ledger_read()
 
-    assert [e["event"] for e in events] == ["dispatch", "note"]
+    assert [event["event"] for event in events] == ["attempt_reserved", "note"]
     assert first["tid"] == "t001" and first["attempt"] == 1
+    assert first["execution_id"] == _eid("t001", 1)
     assert "ts" in first
     assert events[1]["text"] == "中文备注"
 
 
 def test_ledger_append_sanitizes_newlines(ledger):
-    ledger_append({"event": "failed", "tid": "t001", "attempt": 1,
-                   "class": "infra", "reason": "第一行\n第二行\r第三行"})
+    ledger_append({"event": "note", "text": "第一行\n第二行\r第三行"})
 
     raw_lines = ledger.read_text(encoding="utf-8").splitlines()
 
     assert len(raw_lines) == 1
-    assert ledger_read()[0]["reason"] == "第一行 第二行 第三行"
+    assert ledger_read()[0]["text"] == "第一行 第二行 第三行"
 
 
 def test_ledger_read_missing_file_returns_empty(ledger):
@@ -77,26 +246,25 @@ def test_ledger_read_missing_file_returns_empty(ledger):
 
 
 def test_ledger_read_corrupted_line_self_heals(ledger, capsys):
-    """截断/损坏行：stderr 警告（含行号）并跳过，返回有效事件，不抛错。"""
     ledger.parent.mkdir(parents=True, exist_ok=True)
     ledger.write_text(
-        '{"event": "note", "text": "好行1"}\n{"event": "disp\ntruncated\n',
+        '{"event": "note", "text": "好行1"}\n{"event": "note"\ntruncated\n',
         encoding="utf-8",
     )
 
     events = ledger_read()
 
-    assert [e["text"] for e in events] == ["好行1"]
+    assert [event["text"] for event in events] == ["好行1"]
     err = capsys.readouterr().err
     assert "第 2 行" in err and "已跳过" in err
 
 
 def test_ledger_next_attempt_increments_per_tid():
     events = [
-        {"tid": "t001", "attempt": 1},
-        {"tid": "t002", "attempt": 1},
-        {"tid": "t001", "attempt": 3},
-        {"tid": "t001"},  # 无 attempt 字段不计
+        _reserved("t001", 1),
+        _reserved("t002", 1),
+        _reserved("t001", 3),
+        {"event": "note", "tid": "t001"},
     ]
 
     assert ledger_next_attempt("t001", events) == 4
@@ -105,49 +273,44 @@ def test_ledger_next_attempt_increments_per_tid():
 
 
 # --------------------------------------------------------------------------
-# ledger record / tail 命令
+# ledger record / tail 与 attempt 命令边界
 # --------------------------------------------------------------------------
 
 
-def test_record_dispatch_auto_assigns_attempt_and_worker_id(ledger, capsys):
-    _record(event="dispatch", tid="t001", model="opus", worker_id="task-123")
-    _record(
-        event="worker_terminal", tid="t001", attempt=1,
-        worker_id="task-123", status="completed",
-    )
-    _record(event="dispatch", tid="t001", model="haiku", worker_id="task-456")
+def test_reserve_assigns_next_attempt_only_after_retryable_terminal(ledger):
+    first = reserve_attempt("t001", "agent", "opus")
+    bind_attempt("t001", *_identity(first), "task-123")
+    terminal_attempt("t001", *_identity(first), "failed")
+    report_attempt("t001", *_identity(first), "failed", fail_class="infra")
+    second = reserve_attempt("t001", "agent", "haiku")
+    bind_attempt("t001", *_identity(second), "task-456")
 
-    events = [event for event in ledger_read() if event["event"] == "dispatch"]
-    assert [event["attempt"] for event in events] == [1, 2]
-    assert [event["worker_id"] for event in events] == ["task-123", "task-456"]
-    out = capsys.readouterr().out
-    assert "recorded: dispatch t001#1 model=opus worker_id=task-123" in out
-    assert "recorded: dispatch t001#2 model=haiku worker_id=task-456" in out
+    records = project_attempts(ledger_read())
+    assert [first["attempt"], second["attempt"]] == [1, 2]
+    assert records[("t001", 1, first["execution_id"])]["host_worker_id"] == "task-123"
+    assert records[("t001", 2, second["execution_id"])]["host_worker_id"] == "task-456"
 
 
 def test_parallel_dispatch_and_escalate_require_prior_terminal(ledger):
-    _record(event="dispatch", tid="t001", model="opus", worker_id="worker-1")
+    first = reserve_attempt("t001", "inline", "opus")
 
-    with pytest.raises(SystemExit, match="禁止派发新的并行 attempt"):
-        _record(event="dispatch", tid="t001", model="haiku", worker_id="worker-2")
-    with pytest.raises(SystemExit, match="禁止结束仍运行的并行 worker"):
-        _record(event="escalated", tid="t001", attempt=1, reason="still running")
+    with pytest.raises(ctx.TaskDataError, match="尚未 terminal"):
+        reserve_attempt("t001", "inline", "haiku")
+    with pytest.raises(ctx.TaskDataError, match="须先 terminal"):
+        escalate_attempt("t001", *_identity(first), "still running")
 
-    _record(event="worker_terminal", tid="t001", attempt=1,
-            worker_id="worker-1", status="stopped")
-    _record(event="dispatch", tid="t001", model="haiku", worker_id="worker-2")
-    assert [event["attempt"] for event in ledger_read() if event["event"] == "dispatch"] == [1, 2]
+    terminal_attempt("t001", *_identity(first), "stopped")
+    second = reserve_attempt("t001", "inline", "haiku")
+    assert second["attempt"] == 2
 
 
 def test_record_validation(ledger):
-    with pytest.raises(SystemExit, match="必须给 --status"):
-        _record(event="report", tid="t001", attempt=1)
-    with pytest.raises(SystemExit, match="必须给 --class"):
-        _record(event="failed", tid="t001", attempt=1)
-    for event in ("dispatch", "report", "failed", "escalated"):
-        with pytest.raises(SystemExit, match="必须给 --tid"):
-            _record(event=event, status="done" if event == "report" else None,
-                    fail_class="infra" if event == "failed" else None)
+    for event in (
+        "attempt_reserved", "attempt_bound", "attempt_terminal", "report",
+        "escalated", "integrated", "silent_alerted",
+    ):
+        with pytest.raises(SystemExit, match="不允许生命周期事件"):
+            _record(event=event, tid="t001")
     assert ledger_read() == []
 
 
@@ -157,40 +320,35 @@ def test_record_note_uses_text_field(ledger):
     assert ledger_read()[0]["text"] == "自由备注"
 
 
-@pytest.mark.parametrize("event", ("report", "failed", "escalated", "silent_alerted"))
+@pytest.mark.parametrize("event", ("report", "escalated", "silent_alerted", "attempt_terminal"))
 def test_record_attempt_events_require_explicit_attempt_even_after_dispatch(ledger, event):
-    _record(event="dispatch", tid="t001", model="opus")
-    kwargs = dict(event=event, tid="t001")
-    if event == "report":
-        kwargs["status"] = "done"
-    elif event == "failed":
-        kwargs["fail_class"] = "infra"
-    elif event == "silent_alerted":
-        kwargs["fingerprint"] = "abc123"
+    reserved = reserve_attempt("t001", "inline", "opus")
 
-    with pytest.raises(SystemExit, match=rf"--event {event} 必须显式给 --attempt"):
-        _record(**kwargs)
+    with pytest.raises(SystemExit, match="不允许生命周期事件"):
+        _record(event=event, tid="t001")
 
-    assert [item["event"] for item in ledger_read()] == ["dispatch"]
+    assert [item["event"] for item in ledger_read()] == ["attempt_reserved"]
+    assert reserved["execution_id"]
 
 
 def test_ledger_tail_filters_tid_and_reverses(ledger, capsys):
-    _record(event="dispatch", tid="t001", attempt=1, model="opus")
-    _record(event="failed", tid="t001", attempt=1, fail_class="infra", reason="boom")
-    _record(event="dispatch", tid="t002", attempt=1, model="haiku")
-    capsys.readouterr()  # 排空 record 的打印
+    ledger_append(_reserved("t001", model="opus"))
+    ledger_append(_report(
+        "t001", status="failed", fail_class="infra", reason="boom",
+    ))
+    ledger_append(_reserved("t002", model="haiku"))
 
     control.cmd_ledger_tail(argparse.Namespace(tid="t001", n=20))
 
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
-    assert "failed t001#1" in lines[0] and "class=infra" in lines[0]
-    assert "dispatch t001#1" in lines[1] and "model=opus" in lines[1]
+    assert "report t001#1" in lines[0] and "class=infra" in lines[0]
+    assert "attempt_reserved t001#1" in lines[1] and "model=opus" in lines[1]
     assert all("t002" not in line for line in lines)
 
 
 # --------------------------------------------------------------------------
-# silent 判定（纯函数）
+# silent 判定与 ps 活表
 # --------------------------------------------------------------------------
 
 
@@ -200,24 +358,29 @@ def test_is_silent_threshold():
     assert not is_silent("无法解析", 20, NOW)
 
 
-# --------------------------------------------------------------------------
-# ps 活表状态判定（合成账本 + 注入 observer）
-# --------------------------------------------------------------------------
-
-
-def _observation(activities, events, attempt):
+def _observation(activities, events, attempt, execution_id):
     tid = next((event.get("tid") for event in events if event.get("tid")), None)
     observed_at = activities.get(tid)
     if observed_at is None:
         return None
     return {
-        "event": "observation", "tid": tid, "attempt": attempt,
-        "ts": observed_at, "fingerprint": f"fp-{tid}", "dirty": "clean",
+        "event": "observation",
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id,
+        "ts": observed_at,
+        "fingerprint": f"fp-{tid}",
+        "dirty": "clean",
     }
 
 
-def _ps_rows(events, effective=None, main_statuses=None, activities=None,
-             verify=("incomplete", "refs 未完成")):
+def _ps_rows(
+    events,
+    effective=None,
+    main_statuses=None,
+    activities=None,
+    verify=("incomplete", "refs 未完成"),
+):
     activities = activities or {}
     return compute_ps_rows(
         events,
@@ -225,8 +388,10 @@ def _ps_rows(events, effective=None, main_statuses=None, activities=None,
         main_statuses or {},
         silent_minutes=20,
         now=NOW,
-        observer=lambda tev, attempt: _observation(activities, tev, attempt),
-        verifier=lambda tid: verify,
+        observer=lambda tev, attempt, execution_id: _observation(
+            activities, tev, attempt, execution_id
+        ),
+        verifier=lambda *_: verify,
     )
 
 
@@ -237,49 +402,42 @@ def test_ps_pending_backlog_never_dispatched():
         main_statuses={"t001": "backlog"},
     )
 
-    by_tid = {row["tid"]: row for row in rows}
-    assert by_tid["t001"]["state"] == "pending"
+    assert rows == []
 
 
-def test_ps_progressing_and_silent_from_observation():
+def test_ps_progressing_and_silent_from_agent_observation():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "worker_id": "w1", "ts": _ts(5)},
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "model": "opus", "ts": _ts(30)},
+        *_running("t001", model="opus", host_worker_id="w1", ts=_ts(5)),
+        *_running("t002", model="opus", host_worker_id="w2", ts=_ts(30)),
     ]
-    rows = _ps_rows(
-        events,
-        activities={"t001": _ts(5), "t002": _ts(30)},
-    )
+    rows = _ps_rows(events, activities={"t001": _ts(5), "t002": _ts(30)})
 
     by_tid = {row["tid"]: row for row in rows}
     assert by_tid["t001"]["state"] == "progressing"
     assert by_tid["t001"]["model"] == "opus"
-    assert by_tid["t001"]["worker_id"] == "w1"
+    assert by_tid["t001"]["host_worker_id"] == "w1"
     assert by_tid["t002"]["state"] == "silent?"
 
 
-def test_ps_dispatched_without_observation():
-    rows = _ps_rows(
-        [{"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(5)}],
-        activities={"t001": None},
-    )
+def test_ps_inline_running_never_uses_silence_observer():
+    rows = _ps_rows(_running("t001", ts=_ts(5)), activities={"t001": _ts(30)})
 
-    assert rows[0]["state"] == "dispatched(未观察)"
+    assert rows[0]["state"] == "running(inline)"
 
 
 def test_ps_failed_blocked_reported_terminal_states():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra",
-         "reason": "provider 不兼容", "ts": _ts(9)},
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t002", "attempt": 1, "status": "blocked",
-         "reason": "review 满轮", "ts": _ts(8)},
-        {"event": "dispatch", "tid": "t003", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t003", "attempt": 1, "status": "done",
-         "sha": "abc123", "ts": _ts(8)},
-        {"event": "dispatch", "tid": "t004", "attempt": 1, "ts": _ts(10)},
-        {"event": "integrated", "tid": "t004", "merge_sha": "def456", "ts": _ts(7)},
+        *_terminal("t001", status="failed", reserved_ts=_ts(10), terminal_ts=_ts(9)),
+        _report(
+            "t001", status="failed", fail_class="infra",
+            reason="provider 不兼容", ts=_ts(8),
+        ),
+        *_terminal("t002", reserved_ts=_ts(10), terminal_ts=_ts(9)),
+        _report("t002", status="blocked", reason="review 满轮", ts=_ts(8)),
+        *_terminal("t003", reserved_ts=_ts(10), terminal_ts=_ts(9)),
+        _report("t003", status="done", sha="abc123", ts=_ts(8)),
+        *_terminal("t004", reserved_ts=_ts(10), terminal_ts=_ts(9)),
+        _integrated("t004"),
     ]
     rows = _ps_rows(events, main_statuses={"t004": "done"})
 
@@ -287,13 +445,12 @@ def test_ps_failed_blocked_reported_terminal_states():
     assert by_tid["t001"]["state"] == "failed:infra"
     assert by_tid["t001"]["note"] == "provider 不兼容"
     assert by_tid["t002"]["state"] == "blocked"
-    assert by_tid["t003"]["state"] == "reported(未验证)"
-    assert by_tid["t003"]["note"] == "abc123"
+    assert by_tid["t003"]["state"] == "terminal:completed"
     assert by_tid["t004"]["state"] == "done"
 
 
 # --------------------------------------------------------------------------
-# reconcile 行动计划（合成账本 + 合成调度图 + 注入 observer/verifier）
+# reconcile 行动计划
 # --------------------------------------------------------------------------
 
 
@@ -303,18 +460,31 @@ def _schedule(selected=(), conflicts=None):
         "conflicts": conflicts or {},
         "main_done_set": set(),
         "dropped_set": set(),
+        "tasks": {},
     }
 
 
-def _plan(events, schedule=None, activities=None, verify=("incomplete", "refs 未完成"),
-          mode="restart", **overrides):
+def _plan(
+    events,
+    schedule=None,
+    activities=None,
+    verify=("incomplete", "refs 未完成"),
+    mode="restart",
+    **overrides,
+):
     activities = activities or {}
     options = dict(
-        limit=3, scope=None, ladder=None, silent_minutes=20,
-        max_auto_retries=1, now=NOW,
-        observer=lambda tev, attempt: _observation(activities, tev, attempt),
-        verifier=lambda tid: verify,
-        mode_probe=lambda tid, tev: mode,
+        limit=3,
+        scope=None,
+        ladder=None,
+        silent_minutes=20,
+        max_auto_retries=1,
+        now=NOW,
+        observer=lambda tev, attempt, execution_id: _observation(
+            activities, tev, attempt, execution_id
+        ),
+        verifier=lambda *_: verify,
+        mode_probe=lambda *_: mode,
     )
     options.update(overrides)
     return compute_reconcile_plan(events, schedule or _schedule(), **options)
@@ -328,97 +498,93 @@ def test_reconcile_empty_plan_when_nothing_in_flight():
 
 
 def test_reconcile_progressing_occupies_slot_and_fills_from_selected():
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(5)},
-    ]
+    events = _running("t001", model="opus", ts=_ts(5))
     schedule = _schedule(selected=["t002", "t003"])
     plan = _plan(
-        events, schedule,
-        activities={"t001": _ts(5)},
-        ladder=["opus", "haiku"],
+        events, schedule, activities={"t001": _ts(5)}, ladder=["opus", "haiku"],
     )
 
     assert plan["occupancy"]["used"] == 1
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
+    assert [(action["action"], action["tid"]) for action in plan["actions"]] == [
         ("dispatch", "t002"), ("dispatch", "t003"),
     ]
-    assert all(a["model"] == "opus" for a in plan["actions"])
-    assert all(a["attempt"] == 1 for a in plan["actions"])
+    assert all(action["model"] == "opus" for action in plan["actions"])
+    assert all(action["attempt"] == 1 for action in plan["actions"])
+    assert all("execution_id" not in action for action in plan["actions"])
 
 
 def test_reconcile_dispatch_skips_conflicts_with_in_flight():
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(5)},
-    ]
+    events = _running("t001", ts=_ts(5))
     schedule = _schedule(
         selected=["t002", "t003"],
         conflicts={"t001": {"t002"}, "t002": {"t001"}, "t003": set()},
     )
     plan = _plan(events, schedule, activities={"t001": _ts(5)})
 
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("dispatch", "t003")]
+    assert [(action["action"], action["tid"]) for action in plan["actions"]] == [
+        ("dispatch", "t003")
+    ]
 
 
 def test_reconcile_report_done_verified_is_integrate():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "done", "ts": _ts(2)},
+        *_terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(3)),
+        _report("t001", status="done", ts=_ts(2)),
     ]
-    plan = _plan(events, verify=("ready", "分支 tip done + handoff 齐备"))
+    plan = _plan(events, verify=("ready", "分支 tip terminal + exact handoff"))
 
     assert [(a["action"], a["tid"], a["attempt"]) for a in plan["actions"]] == [
         ("integrate", "t001", 1),
     ]
+    assert plan["actions"][0]["execution_id"] == _eid("t001", 1)
     assert plan["occupancy"]["used"] == 1
 
 
-def test_reconcile_report_done_unverified_is_contract_retry():
+def test_reconcile_completed_contract_escalates_without_retry():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "done", "ts": _ts(2)},
+        *_terminal("t001", model="opus", reserved_ts=_ts(10), terminal_ts=_ts(3)),
+        _report("t001", status="done", ts=_ts(2)),
     ]
     plan = _plan(
-        events, verify=("contract", "分支 tip 缺 handoff.json"),
-        ladder=["opus", "haiku"], mode="resume",
+        events,
+        verify=("contract", "分支 tip 缺 handoff.json"),
+        ladder=["opus", "haiku"],
+        mode="resume",
     )
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
-    assert action["attempt"] == 2
-    # contract 不走阶梯降档：同模型 resume，补交接单
-    assert action["model"] == "opus"
-    assert action["mode"] == "resume"
-    assert "contract" in action["reason"] and "补交接单" in action["reason"]
+    assert action["action"] == "escalate"
+    assert action["attempt"] == 1
+    assert action["execution_id"] == _eid("t001", 1)
+    assert "completed attempt" in action["reason"]
+    assert "禁止自动 retry" in action["reason"]
 
 
 def test_reconcile_report_blocked_escalates():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "blocked", "ts": _ts(2)},
+        *_terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(3)),
+        _report("t001", status="blocked", reason="review 满轮", ts=_ts(2)),
     ]
     plan = _plan(events)
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
+    assert action["execution_id"] == _eid("t001", 1)
     assert "blocked" in action["reason"]
 
 
 def test_reconcile_silent_alerts_without_redispatch():
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-7", "ts": _ts(30)},
-    ]
-    plan = _plan(
-        events,
-        activities={"t001": _ts(30)},
-        ladder=["opus", "haiku"],
+    events = _running(
+        "t001", model="opus", host_worker_id="worker-7", ts=_ts(30),
     )
+    plan = _plan(events, activities={"t001": _ts(30)}, ladder=["opus", "haiku"])
 
     action, = plan["actions"]
     assert action["action"] == "alert-silent"
     assert action["attempt"] == 1
+    assert action["execution_id"] == _eid("t001", 1)
     assert action["model"] == "opus"
-    assert action["worker_id"] == "worker-7"
+    assert action["host_worker_id"] == "worker-7"
     assert action["fingerprint"] == "fp-t001"
     assert "30 分钟" in action["reason"]
     assert plan["occupancy"]["used"] == 1
@@ -427,14 +593,19 @@ def test_reconcile_silent_alerts_without_redispatch():
 
 def test_reconcile_failed_without_ladder_keeps_last_model():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra",
-         "reason": "API 错误", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report(
+            "t001", status="failed", fail_class="infra",
+            reason="API 错误", ts=_ts(8),
+        ),
     ]
     plan = _plan(events)
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
+    assert action["action"] == "dispatch"
     assert action["attempt"] == 2
     assert action["model"] == "opus"
     assert "infra" in action["reason"]
@@ -442,43 +613,52 @@ def test_reconcile_failed_without_ladder_keeps_last_model():
 
 def test_reconcile_escalates_when_retry_budget_exhausted():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(60)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(50)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "ts": _ts(40)},
-        {"event": "failed", "tid": "t001", "attempt": 2, "class": "infra", "ts": _ts(30)},
+        *_terminal(
+            "t001", 1, status="failed", model="opus",
+            reserved_ts=_ts(60), terminal_ts=_ts(50),
+        ),
+        _report("t001", 1, status="failed", fail_class="infra", ts=_ts(49)),
+        *_terminal(
+            "t001", 2, status="failed", model="haiku",
+            reserved_ts=_ts(40), terminal_ts=_ts(30),
+        ),
+        _report("t001", 2, status="failed", fail_class="infra", ts=_ts(29)),
     ]
     plan = _plan(events, max_auto_retries=1)
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
     assert action["attempt"] == 2
+    assert action["execution_id"] == _eid("t001", 2)
     assert "额度" in action["reason"]
 
 
 def test_reconcile_scope_limits_actions_but_not_occupancy():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(5)},
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "ts": _ts(30)},
+        *_running("t001", host_worker_id="w1", ts=_ts(5)),
+        *_running("t002", host_worker_id="w2", ts=_ts(30)),
     ]
     schedule = _schedule(selected=["t003"])
     plan = _plan(
-        events, schedule,
+        events,
+        schedule,
         activities={"t001": _ts(5), "t002": _ts(30)},
         scope={"t002"},
     )
 
-    # t001 progressing 占槽但不在授权范围；t002 silent 只告警并继续占槽。
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("alert-silent", "t002")]
+    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
+        ("alert-silent", "t002")
+    ]
     assert plan["occupancy"] == {"used": 2, "limit": 3}
     assert plan["silent_hold"] is True
 
 
 def test_reconcile_integrated_and_escalated_end_flight():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "integrated", "tid": "t001", "merge_sha": "abc", "ts": _ts(8)},
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "ts": _ts(10)},
-        {"event": "escalated", "tid": "t002", "attempt": 1, "reason": "用户处理", "ts": _ts(8)},
+        *_terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(8)),
+        _integrated("t001"),
+        *_terminal("t002", reserved_ts=_ts(10), terminal_ts=_ts(8)),
+        _escalated("t002"),
     ]
     plan = _plan(events)
 
@@ -487,70 +667,60 @@ def test_reconcile_integrated_and_escalated_end_flight():
 
 
 # --------------------------------------------------------------------------
-# refs 派生 READY_MERGE（report 从必要条件降为加速线索）
+# refs 派生 READY_MERGE
 # --------------------------------------------------------------------------
 
 
 def test_reconcile_refs_derived_integrate_without_report():
-    """无 report 事件但 refs done + handoff 齐备 → integrate（refs 派生）。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-    ]
-    plan = _plan(
-        events,
-        activities={"t001": _ts(5)},
-        verify=("ready", "分支 tip done + handoff 齐备"),
+    events = _terminal(
+        "t001", model="opus", reserved_ts=_ts(10), terminal_ts=_ts(2),
     )
+    plan = _plan(events, verify=("ready", "terminal + exact handoff 齐备"))
 
     action, = plan["actions"]
     assert action["action"] == "integrate"
     assert action["tid"] == "t001" and action["attempt"] == 1
-    assert "refs 派生" in action["reason"]
+    assert action["execution_id"] == _eid("t001", 1)
+    assert "terminal completed + refs 验证通过" in action["reason"]
     assert plan["occupancy"]["used"] == 1
 
 
 def test_reconcile_report_done_reason_differs_from_refs_derived():
-    """有 report 时 integrate 的 reason 标注 report + refs 双来源。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "done", "ts": _ts(2)},
+        *_terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(3)),
+        _report("t001", status="done", ts=_ts(2)),
     ]
-    plan = _plan(events, verify=("ready", "分支 tip done + handoff 齐备"))
+    plan = _plan(events, verify=("ready", "terminal + exact handoff 齐备"))
 
     action, = plan["actions"]
     assert action["action"] == "integrate"
-    assert "report done + refs 验证通过" in action["reason"]
+    assert "terminal completed + refs 验证通过" in action["reason"]
 
 
-def test_reconcile_refs_done_but_handoff_missing_is_contract_retry():
-    """refs 终态但 handoff.json 缺失 → contract 重试（与 report 验证不过同处理）。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-    ]
+def test_reconcile_completed_missing_handoff_escalates_without_retry():
+    events = _terminal(
+        "t001", model="opus", reserved_ts=_ts(10), terminal_ts=_ts(2),
+    )
     plan = _plan(
         events,
         verify=("contract", "分支 tip 缺 docs/archive/tasks/t001_x/handoff.json"),
         ladder=["opus", "haiku"],
-        mode="resume",  # 有现场：同模型 resume
+        mode="resume",
     )
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
-    assert action["attempt"] == 2 and action["model"] == "opus"  # contract 同模型 resume
-    assert action["mode"] == "resume"
-    assert "contract" in action["reason"] and "补交接单" in action["reason"]
+    assert action["action"] == "escalate"
+    assert action["attempt"] == 1
+    assert action["execution_id"] == _eid("t001", 1)
+    assert "completed attempt" in action["reason"]
 
 
 def test_reconcile_report_blocked_wins_over_incomplete_refs():
-    """refs 非终态时 report blocked 仍走 escalate，不被 refs 逻辑干扰（回归）。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "blocked", "ts": _ts(2)},
+        *_terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(3)),
+        _report("t001", status="blocked", ts=_ts(2)),
     ]
-    plan = _plan(
-        events,
-        verify=("incomplete", "分支 tip status='active' 非终态"),
-    )
+    plan = _plan(events, verify=("incomplete", "分支 tip status='active' 非终态"))
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
@@ -559,16 +729,16 @@ def test_reconcile_report_blocked_wins_over_incomplete_refs():
 
 def test_ps_refs_ready_shows_done_pending_merge():
     rows = _ps_rows(
-        [{"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(10)}],
-        verify=("ready", "分支 tip done + handoff 齐备"),
+        _terminal("t001", reserved_ts=_ts(10), terminal_ts=_ts(2)),
+        verify=("ready", "terminal + exact handoff 齐备"),
     )
 
     assert rows[0]["state"] == "done待合并"
-    assert rows[0]["note"] == "分支 tip done + handoff 齐备"
+    assert rows[0]["note"] == "terminal + exact handoff 齐备"
 
 
 # --------------------------------------------------------------------------
-# 模型熔断器（session 级）
+# 模型熔断器
 # --------------------------------------------------------------------------
 
 
@@ -590,7 +760,7 @@ def test_record_breaker_defaults_open_and_accepts_closed(ledger):
 def test_breaker_states_latest_event_wins():
     events = [
         {"event": "breaker", "model": "opus", "state": "open"},
-        {"event": "breaker", "model": "haiku"},  # state 省略按 open
+        {"event": "breaker", "model": "haiku"},
         {"event": "breaker", "model": "opus", "state": "closed"},
     ]
 
@@ -610,16 +780,19 @@ def test_reconcile_dispatch_skips_broken_model_with_note():
 
 def test_reconcile_redispatch_uses_next_unbroken_rung():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
         {"event": "breaker", "model": "haiku", "state": "open"},
     ]
     plan = _plan(events, ladder=["opus", "haiku", "sonnet"])
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
+    assert action["action"] == "dispatch"
     assert action["attempt"] == 2
-    assert action["model"] == "sonnet"  # 第 1 档 haiku 熔断，降到 sonnet
+    assert action["model"] == "sonnet"
     assert "haiku 熔断" in action["reason"]
 
 
@@ -647,13 +820,17 @@ def test_reconcile_all_models_broken_dispatch_escalates():
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
-    assert action["reason"] == "模型阶梯全部熔断"
+    assert "execution_id" not in action
+    assert action["reason"] == "模型阶梯全部熔断；尚未 reserve execution_id"
 
 
 def test_reconcile_all_models_broken_redispatch_escalates():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
         {"event": "breaker", "model": "opus", "state": "open"},
         {"event": "breaker", "model": "haiku", "state": "open"},
     ]
@@ -661,13 +838,17 @@ def test_reconcile_all_models_broken_redispatch_escalates():
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
+    assert action["execution_id"] == _eid("t001", 1)
     assert "模型阶梯全部熔断" in action["reason"]
 
 
 def test_reconcile_no_ladder_last_model_broken_escalates():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
         {"event": "breaker", "model": "opus", "state": "open"},
     ]
     plan = _plan(events)
@@ -678,126 +859,140 @@ def test_reconcile_no_ladder_last_model_broken_escalates():
 
 
 # --------------------------------------------------------------------------
-# 审阅修复回归：处置事件、effective blocked、闩锁、占槽、阶梯钳制、mode、去重
+# 处置、闩锁、占槽、阶梯、mode 与去重回归
 # --------------------------------------------------------------------------
 
 
 def test_reconcile_note_does_not_mask_failed():
-    """failed 之后的 note 不掩盖失败：处置事件取该 attempt 最后一条 failed/report。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra",
-         "reason": "provider 不兼容", "ts": _ts(8)},
-        {"event": "note", "tid": "t001", "text": "随便一句", "ts": _ts(7)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report(
+            "t001", status="failed", fail_class="infra",
+            reason="provider 不兼容", ts=_ts(8),
+        ),
+        {"event": "note", "tid": "t001", "text": "随便一句", "ts": _ts(6)},
     ]
     plan = _plan(events, ladder=["opus", "haiku"], mode="restart")
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
+    assert action["action"] == "dispatch"
     assert action["model"] == "haiku"
     assert "infra" in action["reason"]
 
 
 def test_reconcile_report_status_failed_is_failure_path():
-    """report status=failed 等价失败路径；class 取自 report，缺省 task。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "failed",
-         "reason": "黑盒满轮", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", reason="黑盒满轮", ts=_ts(8)),
     ]
     plan = _plan(events, ladder=["opus", "haiku"], mode="resume")
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
+    assert action["action"] == "dispatch"
     assert action["model"] == "haiku"
     assert action["mode"] == "resume"
     assert "task 失败" in action["reason"] and "黑盒满轮" in action["reason"]
 
 
 def test_ps_old_attempt_blocked_report_does_not_pollute_new_attempt():
-    """reports 按当前 attempt 过滤：#1 的 blocked 报告不影响 #2 的显示。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(30)},
-        {"event": "report", "tid": "t001", "attempt": 1, "status": "blocked", "ts": _ts(25)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "model": "haiku", "ts": _ts(5)},
+        *_terminal("t001", 1, reserved_ts=_ts(30), terminal_ts=_ts(26)),
+        _report("t001", 1, status="blocked", ts=_ts(25)),
+        *_running("t001", 2, model="haiku", ts=_ts(5)),
     ]
     rows = _ps_rows(events, activities={"t001": _ts(5)})
 
     assert rows[0]["attempt"] == 2
-    assert rows[0]["state"] == "progressing"
+    assert rows[0]["execution_id"] == _eid("t001", 2)
+    assert rows[0]["state"] == "running(inline)"
 
 
 def test_reconcile_effective_blocked_escalates_without_retry_budget():
-    """worker 已在分支 block 但 report 未落账时直接 escalate，不走静默判断。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(60)},
-    ]
+    events = _terminal(
+        "t001", model="opus", reserved_ts=_ts(60), terminal_ts=_ts(2),
+    )
     schedule = _schedule()
     schedule["tasks"] = {"t001": {"status": "blocked"}}
-    plan = _plan(
-        events, schedule,
-        activities={"t001": _ts(60)},
-    )
+    plan = _plan(events, schedule)
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
-    assert "分支已 blocked" in action["reason"]
-    assert plan["occupancy"]["used"] == 0  # escalate 释放槽
+    assert action["execution_id"] == _eid("t001", 1)
+    assert "blocked" in action["reason"]
+    assert plan["occupancy"]["used"] == 0
 
 
 def test_reconcile_escalate_latch_blocks_auto_redispatch():
-    """闩锁：escalated 之后无新 dispatch 的 tid 不被补位重派。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(30)},
-        {"event": "escalated", "tid": "t001", "attempt": 1, "reason": "用户处理", "ts": _ts(20)},
+        *_terminal("t001", reserved_ts=_ts(30), terminal_ts=_ts(21)),
+        _escalated("t001"),
     ]
     schedule = _schedule(selected=["t001", "t002"])
     plan = _plan(events, schedule)
 
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("dispatch", "t002")]
+    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
+        ("dispatch", "t002")
+    ]
 
 
 def test_reconcile_escalate_latch_released_by_new_dispatch():
-    """闩锁解除：coordinator 手动重派并落账新 dispatch 后，该 tid 回到在飞管理。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "ts": _ts(30)},
-        {"event": "escalated", "tid": "t001", "attempt": 1, "reason": "用户处理", "ts": _ts(20)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "model": "haiku", "ts": _ts(5)},
+        *_terminal("t001", 1, reserved_ts=_ts(30), terminal_ts=_ts(21)),
+        _escalated("t001", 1),
+        *_running("t001", 2, model="haiku", ts=_ts(5)),
     ]
     schedule = _schedule(selected=["t001", "t002"])
     plan = _plan(events, schedule, activities={"t001": _ts(5)})
 
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("dispatch", "t002")]
-    assert plan["occupancy"]["used"] == 1  # t001#2 progressing 占槽
+    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
+        ("dispatch", "t002")
+    ]
+    assert plan["occupancy"]["used"] == 1
 
 
 def test_reconcile_silent_attempts_hold_all_slots_without_dispatch():
-    """三个 silent attempt 各告警并继续占槽，不补位新 dispatch。"""
     events = [
-        {"event": "dispatch", "tid": tid, "attempt": 1, "model": "opus", "ts": _ts(30)}
+        event
         for tid in ("t001", "t002", "t003")
+        for event in _running(
+            tid, model="opus", host_worker_id=f"worker-{tid}", ts=_ts(30)
+        )
     ]
     schedule = _schedule(selected=["t004", "t005"])
     plan = _plan(
-        events, schedule,
+        events,
+        schedule,
         activities={tid: _ts(30) for tid in ("t001", "t002", "t003")},
         limit=3,
     )
 
     assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
-        ("alert-silent", "t001"), ("alert-silent", "t002"), ("alert-silent", "t003"),
+        ("alert-silent", "t001"),
+        ("alert-silent", "t002"),
+        ("alert-silent", "t003"),
     ]
     assert plan["occupancy"] == {"used": 3, "limit": 3}
     assert plan["silent_hold"] is True
 
 
 def test_reconcile_ladder_clamp_same_model_escalates():
-    """2 档阶梯 attempt 3 钳回父 attempt 同模型 → escalate（无未尝试模型），不同参重试。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(60)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(50)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "model": "haiku", "ts": _ts(40)},
-        {"event": "failed", "tid": "t001", "attempt": 2, "class": "infra", "ts": _ts(30)},
+        *_terminal(
+            "t001", 1, status="failed", model="opus",
+            reserved_ts=_ts(60), terminal_ts=_ts(50),
+        ),
+        _report("t001", 1, status="failed", fail_class="infra", ts=_ts(49)),
+        *_terminal(
+            "t001", 2, status="failed", model="haiku",
+            reserved_ts=_ts(40), terminal_ts=_ts(30),
+        ),
+        _report("t001", 2, status="failed", fail_class="infra", ts=_ts(29)),
     ]
     plan = _plan(events, ladder=["opus", "haiku"], max_auto_retries=3)
 
@@ -807,10 +1002,12 @@ def test_reconcile_ladder_clamp_same_model_escalates():
 
 
 def test_reconcile_redispatch_mode_restart_vs_resume():
-    """mode：无产出 restart（可直接 start）；有产出 resume（续跑）。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
     ]
     restart = _plan(events, ladder=["opus", "haiku"], mode="restart")
     resume = _plan(events, ladder=["opus", "haiku"], mode="resume")
@@ -820,19 +1017,18 @@ def test_reconcile_redispatch_mode_restart_vs_resume():
 
 
 def test_reconcile_duplicate_dispatch_deduped():
-    """同 (tid, attempt) 两条 dispatch → 只在飞一次，动作与占槽不双算。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(9)},
-    ]
+    duplicate = _reserved("t001", model="opus", ts=_ts(10))
+    events = [duplicate, {**duplicate, "ts": _ts(9)}]
     plan = _plan(events, activities={"t001": _ts(5)})
 
-    assert plan["actions"] == []
+    action, = plan["actions"]
+    assert action["action"] == "await-terminal"
+    assert action["attempt"] == 1
+    assert action["execution_id"] == _eid("t001", 1)
     assert plan["occupancy"]["used"] == 1
 
 
 def test_is_silent_naive_timestamp_tolerated():
-    """naive（无 offset）时间戳按本地时区解释，不与 aware 比较 TypeError。"""
     naive_old = (NOW - timedelta(minutes=30)).astimezone().replace(tzinfo=None)
     naive_new = (NOW - timedelta(minutes=10)).astimezone().replace(tzinfo=None)
 
@@ -840,23 +1036,21 @@ def test_is_silent_naive_timestamp_tolerated():
     assert not is_silent(naive_new.isoformat(timespec="seconds"), 20, NOW)
 
 
-# --------------------------------------------------------------------------
-# 第三轮审阅修复回归：全局占槽、终态不阻塞、钳制范围、contract 现场、
-# 多分支、record attempt 守卫、账本追加锁
-# --------------------------------------------------------------------------
-
-
 def test_reconcile_occupancy_counts_out_of_scope_in_flight():
-    """scope 外 silent attempt 仍全局占槽并阻止 scope 内补位。"""
     events = [
-        {"event": "dispatch", "tid": tid, "attempt": 1, "model": "opus", "ts": _ts(30)}
+        event
         for tid in ("t001", "t002", "t003")
+        for event in _running(
+            tid, model="opus", host_worker_id=f"worker-{tid}", ts=_ts(30)
+        )
     ]
     schedule = _schedule(selected=["t004"])
     plan = _plan(
-        events, schedule,
+        events,
+        schedule,
         activities={tid: _ts(30) for tid in ("t001", "t002", "t003")},
-        scope={"t004"}, limit=3,
+        scope={"t004"},
+        limit=3,
     )
 
     assert plan["actions"] == []
@@ -865,10 +1059,7 @@ def test_reconcile_occupancy_counts_out_of_scope_in_flight():
 
 
 def test_reconcile_terminal_on_main_does_not_block_conflict_peer():
-    """主干已 done（手工合入、账本缺 integrated）的 tid 不阻塞冲突对端补位。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(30)},
-    ]
+    events = _running("t001", model="opus", ts=_ts(30))
     schedule = _schedule(
         selected=["t002"],
         conflicts={"t001": {"t002"}, "t002": {"t001"}},
@@ -876,28 +1067,41 @@ def test_reconcile_terminal_on_main_does_not_block_conflict_peer():
     schedule["main_done_set"] = {"t001"}
     plan = _plan(events, schedule, activities={"t001": _ts(30)})
 
-    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [("dispatch", "t002")]
+    assert [(a["action"], a["tid"]) for a in plan["actions"]] == [
+        ("dispatch", "t002")
+    ]
 
 
 def test_reconcile_explicit_resource_failure_still_redispatches():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(30)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "resource",
-         "reason": "context exhausted", "ts": _ts(25)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(30), terminal_ts=_ts(24),
+        ),
+        _report(
+            "t001", status="failed", fail_class="resource",
+            reason="context exhausted", ts=_ts(25),
+        ),
     ]
     plan = _plan(events, ladder=["opus"], mode="resume")
 
     action, = plan["actions"]
-    assert action["action"] == "redispatch"
+    assert action["action"] == "dispatch"
     assert action["model"] == "opus"
     assert action["mode"] == "resume"
 
 
 def test_reconcile_same_fingerprint_silent_alert_not_repeated():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(40)},
-        {"event": "silent_alerted", "tid": "t001", "attempt": 1,
-         "fingerprint": "fp-t001", "ts": _ts(5)},
+        *_running("t001", model="opus", host_worker_id="worker-1", ts=_ts(40)),
+        {
+            "event": "silent_alerted",
+            "tid": "t001",
+            "attempt": 1,
+            "execution_id": _eid("t001", 1),
+            "fingerprint": "fp-t001",
+            "ts": _ts(5),
+        },
     ]
     schedule = _schedule(selected=["t002"])
     plan = _plan(events, schedule, activities={"t001": _ts(40)})
@@ -909,22 +1113,31 @@ def test_reconcile_same_fingerprint_silent_alert_not_repeated():
 
 def test_reconcile_new_fingerprint_restarts_silence_alert_cycle():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(60)},
-        {"event": "silent_alerted", "tid": "t001", "attempt": 1,
-         "fingerprint": "fp-old", "ts": _ts(20)},
+        *_running("t001", model="opus", host_worker_id="worker-1", ts=_ts(60)),
+        {
+            "event": "silent_alerted",
+            "tid": "t001",
+            "attempt": 1,
+            "execution_id": _eid("t001", 1),
+            "fingerprint": "fp-old",
+            "ts": _ts(20),
+        },
     ]
     plan = _plan(events, activities={"t001": _ts(30)})
 
     action, = plan["actions"]
     assert action["action"] == "alert-silent"
     assert action["fingerprint"] == "fp-t001"
+    assert action["execution_id"] == _eid("t001", 1)
 
 
 def test_reconcile_single_rung_infra_escalates():
-    """单档阶梯 + infra：钳回同模型 → escalate（无未尝试模型），不同参重试。"""
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(8)},
+        *_terminal(
+            "t001", status="failed", model="opus",
+            reserved_ts=_ts(10), terminal_ts=_ts(7),
+        ),
+        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
     ]
     plan = _plan(events, ladder=["opus"])
 
@@ -934,167 +1147,487 @@ def test_reconcile_single_rung_infra_escalates():
 
 
 def test_reconcile_contract_without_site_escalates():
-    """contract 且无现场（无 worktree、分支无未合并 commit）→ escalate。"""
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus", "ts": _ts(10)},
-    ]
+    events = _terminal(
+        "t001", model="opus", reserved_ts=_ts(10), terminal_ts=_ts(2),
+    )
     plan = _plan(
         events,
         verify=("contract", "分支 tip 缺 handoff.json"),
         ladder=["opus", "haiku"],
-        mode="restart",  # mode_probe 判定无现场
+        mode="restart",
     )
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
-    assert "无现场可续" in action["reason"]
+    assert action["execution_id"] == _eid("t001", 1)
+    assert "completed attempt" in action["reason"]
+    assert "禁止自动 retry" in action["reason"]
 
 
 def test_record_attempt_events_without_dispatch_still_require_explicit_attempt(ledger):
-    """report/failed/escalated/silent_alerted 均不得推断或默认绑定 attempt。"""
-    for event in ("report", "failed", "escalated", "silent_alerted"):
-        kwargs = dict(event=event, tid="t001")
-        if event == "report":
-            kwargs["status"] = "done"
-        elif event == "failed":
-            kwargs["fail_class"] = "infra"
-        elif event == "silent_alerted":
-            kwargs["fingerprint"] = "abc123"
-        with pytest.raises(SystemExit, match=rf"--event {event} 必须显式给 --attempt"):
-            _record(**kwargs)
+    for event in ("report", "escalated", "silent_alerted", "attempt_terminal"):
+        with pytest.raises(SystemExit, match="不允许生命周期事件"):
+            _record(event=event, tid="t001")
     assert ledger_read() == []
 
 
 def test_ledger_append_concurrent_writes_no_torn_lines(ledger):
-    """并发追加：两个线程各写 50 条，无交错坏行、无丢失。"""
-    import threading
-
     def writer(tag):
-        for i in range(50):
-            ledger_append({"event": "note", "text": f"{tag}-{i}"})
+        for index in range(50):
+            ledger_append({"event": "note", "text": f"{tag}-{index}"})
 
     threads = [threading.Thread(target=writer, args=(tag,)) for tag in ("a", "b")]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
     raw = ledger.read_text(encoding="utf-8").splitlines()
     assert len(raw) == 100
-    events = ledger_read()  # 每行都可解析（无坏行警告）
+    events = ledger_read()
     assert len(events) == 100
-    assert {e["text"].split("-")[0] for e in events} == {"a", "b"}
+    assert {event["text"].split("-")[0] for event in events} == {"a", "b"}
 
 
 # --------------------------------------------------------------------------
-# attempt 生命周期闭环：worker terminal gate 与迟到事件隔离
+# attempt 生命周期闭环与迟到事件隔离
 # --------------------------------------------------------------------------
 
 
-def test_worker_terminal_requires_explicit_attempt_owner_and_status(ledger):
-    _record(event="dispatch", tid="t001", attempt=1, model="opus", worker_id="worker-1")
+def test_attempt_terminal_requires_explicit_identity_and_status(ledger):
+    reserved = reserve_attempt("t001", "agent", "opus")
+    attempt, execution_id = _identity(reserved)
 
-    with pytest.raises(SystemExit, match="必须显式给 --attempt"):
-        _record(event="worker_terminal", tid="t001", worker_id="worker-1", status="completed")
-    with pytest.raises(SystemExit, match="必须给 --worker-id"):
-        _record(event="worker_terminal", tid="t001", attempt=1, status="completed")
-    with pytest.raises(SystemExit, match="不匹配"):
-        _record(event="worker_terminal", tid="t001", attempt=1, worker_id="worker-2", status="completed")
-    with pytest.raises(SystemExit, match="必须是"):
-        _record(event="worker_terminal", tid="t001", attempt=1, worker_id="worker-1", status="done")
+    with pytest.raises(ctx.TaskDataError, match="尚未 bind"):
+        terminal_attempt("t001", attempt, execution_id, "completed")
+    with pytest.raises(ctx.TaskDataError, match="旧或不匹配"):
+        bind_attempt("t001", attempt, "wrong", "worker-1")
+    with pytest.raises(ctx.TaskDataError, match="必须是 completed/failed/stopped"):
+        terminal_attempt("t001", attempt, execution_id, "done")
 
-    _record(event="worker_terminal", tid="t001", attempt=1, worker_id="worker-1", status="completed")
-    terminal = ledger_read()[-1]
-    assert terminal["event"] == "worker_terminal"
+    bind_attempt("t001", attempt, execution_id, "worker-1")
+    terminal = terminal_attempt("t001", attempt, execution_id, "completed")
+    assert terminal["event"] == "attempt_terminal"
     assert terminal["attempt"] == 1
-    assert terminal["worker_id"] == "worker-1"
+    assert terminal["execution_id"] == execution_id
 
 
-def test_reconcile_ready_waits_for_running_worker_terminal():
-    events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-1", "ts": _ts(5)},
-    ]
-    plan = _plan(events, verify=("ready", "分支 tip done + handoff 齐备"))
+def test_reconcile_ready_waits_for_running_attempt_terminal():
+    events = _running(
+        "t001", model="opus", host_worker_id="worker-1", ts=_ts(5),
+    )
+    plan = _plan(events, verify=("ready", "分支 tip terminal + exact handoff"))
 
-    assert plan["actions"][0]["action"] == "await-worker-terminal"
+    assert plan["actions"][0]["action"] == "await-terminal"
     assert plan["actions"][0]["attempt"] == 1
+    assert plan["actions"][0]["execution_id"] == _eid("t001", 1)
     assert plan["occupancy"] == {"used": 1, "limit": 3}
 
 
-def test_reconcile_failed_and_contract_wait_for_running_worker_terminal():
-    failed = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-1", "ts": _ts(5)},
-        {"event": "failed", "tid": "t001", "attempt": 1, "class": "infra", "ts": _ts(2)},
-    ]
-    failed_plan = _plan(failed, ladder=["opus", "haiku"])
-    assert failed_plan["actions"][0]["action"] == "await-worker-terminal"
-    assert failed_plan["occupancy"]["used"] == 1
-
-    contract = [
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "model": "opus",
-         "worker_id": "worker-2", "ts": _ts(5)},
-    ]
-    contract_plan = _plan(
-        contract, verify=("contract", "handoff 缺失"), ladder=["opus", "haiku"],
+def test_reconcile_running_contract_waits_for_terminal():
+    contract = _running(
+        "t002", model="opus", host_worker_id="worker-2", ts=_ts(5),
     )
-    assert contract_plan["actions"][0]["action"] == "await-worker-terminal"
+    contract_plan = _plan(
+        contract,
+        verify=("contract", "handoff 缺失"),
+        ladder=["opus", "haiku"],
+    )
+    assert contract_plan["actions"][0]["action"] == "await-terminal"
     assert contract_plan["occupancy"]["used"] == 1
 
 
 def test_reconcile_terminal_unlocks_ready_and_failed_paths():
-    ready = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-1", "ts": _ts(5)},
-        {"event": "worker_terminal", "tid": "t001", "attempt": 1,
-         "worker_id": "worker-1", "status": "completed", "ts": _ts(2)},
-    ]
-    ready_plan = _plan(ready, verify=("ready", "分支 tip done + handoff 齐备"))
+    ready = _terminal(
+        "t001", model="opus", host_worker_id="worker-1",
+        reserved_ts=_ts(5), terminal_ts=_ts(2),
+    )
+    ready_plan = _plan(ready, verify=("ready", "分支 tip terminal + exact handoff"))
     assert ready_plan["actions"][0]["action"] == "integrate"
+    assert ready_plan["actions"][0]["execution_id"] == _eid("t001", 1)
 
     failed = [
-        {"event": "dispatch", "tid": "t002", "attempt": 1, "model": "opus",
-         "worker_id": "worker-2", "ts": _ts(5)},
-        {"event": "failed", "tid": "t002", "attempt": 1, "class": "infra", "ts": _ts(3)},
-        {"event": "worker_terminal", "tid": "t002", "attempt": 1,
-         "worker_id": "worker-2", "status": "failed", "ts": _ts(2)},
+        *_terminal(
+            "t002", status="failed", model="opus", host_worker_id="worker-2",
+            reserved_ts=_ts(5), terminal_ts=_ts(2),
+        ),
+        _report("t002", status="failed", fail_class="infra", ts=_ts(3)),
     ]
     failed_plan = _plan(failed, ladder=["opus", "haiku"])
-    assert failed_plan["actions"][0]["action"] == "redispatch"
+    assert failed_plan["actions"][0]["action"] == "dispatch"
     assert failed_plan["actions"][0]["attempt"] == 2
+    assert "execution_id" not in failed_plan["actions"][0]
 
 
 def test_late_attempt_one_events_do_not_end_or_latch_attempt_two():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-1", "ts": _ts(30)},
-        {"event": "worker_terminal", "tid": "t001", "attempt": 1,
-         "worker_id": "worker-1", "status": "failed", "ts": _ts(20)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "model": "haiku",
-         "worker_id": "worker-2", "ts": _ts(10)},
-        {"event": "worker_terminal", "tid": "t001", "attempt": 2,
-         "worker_id": "worker-2", "status": "completed", "ts": _ts(8)},
-        {"event": "integrated", "tid": "t001", "attempt": 1, "merge_sha": "late", "ts": _ts(7)},
-        {"event": "escalated", "tid": "t001", "attempt": 1, "reason": "late", "ts": _ts(6)},
+        *_terminal(
+            "t001", 1, status="failed", model="opus", host_worker_id="worker-1",
+            reserved_ts=_ts(30), terminal_ts=_ts(20),
+        ),
+        *_terminal(
+            "t001", 2, model="haiku", host_worker_id="worker-2",
+            reserved_ts=_ts(10), terminal_ts=_ts(8),
+        ),
+        _integrated("t001", 1),
+        _escalated("t001", 1),
     ]
-    plan = _plan(events, activities={"t001": _ts(5)}, schedule=_schedule(selected=["t001", "t002"]))
+    plan = _plan(
+        events,
+        activities={"t001": _ts(5)},
+        schedule=_schedule(selected=["t001", "t002"]),
+    )
 
-    assert plan["occupancy"]["used"] == 1
+    assert plan["occupancy"]["used"] == 0
     assert [(action["action"], action["tid"]) for action in plan["actions"]] == [
+        ("escalate", "t001"),
         ("dispatch", "t002"),
     ]
 
 
 def test_dispatch_without_prior_terminal_is_illegal_overlap():
     events = [
-        {"event": "dispatch", "tid": "t001", "attempt": 1, "model": "opus",
-         "worker_id": "worker-1", "ts": _ts(20)},
-        {"event": "dispatch", "tid": "t001", "attempt": 2, "model": "haiku",
-         "worker_id": "worker-2", "ts": _ts(10)},
+        *_running(
+            "t001", 1, model="opus", host_worker_id="worker-1", ts=_ts(20),
+        ),
+        *_running(
+            "t001", 2, model="haiku", host_worker_id="worker-2", ts=_ts(10),
+        ),
     ]
     plan = _plan(events, activities={"t001": _ts(5)})
 
-    assert {action["action"] for action in plan["actions"]} == {"await-worker-terminal"}
+    assert {action["action"] for action in plan["actions"]} == {"await-terminal"}
     assert {action["attempt"] for action in plan["actions"]} == {1, 2}
+    assert {action["execution_id"] for action in plan["actions"]} == {
+        _eid("t001", 1), _eid("t001", 2),
+    }
     assert plan["occupancy"] == {"used": 2, "limit": 3}
+
+
+# --------------------------------------------------------------------------
+# 当前新增：原子 reserve、inline/agent、exact identity、silent exact
+# --------------------------------------------------------------------------
+
+
+def test_ledger_roundtrip_and_newline_sanitization(ledger):
+    ledger_append({"event": "note", "text": "第一行\n第二行\r第三行"})
+    assert ledger_read()[0]["text"] == "第一行 第二行 第三行"
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_inline_reserve_is_running_and_blocks_second_reserve_until_terminal(ledger):
+    first = reserve_attempt("t001", "inline", "opus")
+    record = current_attempt_record("t001", ledger_read())
+    assert record["state"] == "running"
+    assert record["executor"] == "inline"
+    assert record["model"] == "opus"
+
+    with pytest.raises(ctx.TaskDataError, match="尚未 terminal"):
+        reserve_attempt("t001", "inline")
+
+    terminal_attempt("t001", *_identity(first), "completed")
+    with pytest.raises(ctx.TaskDataError, match="不可被新 reserve 顶掉"):
+        reserve_attempt("t001", "inline")
+    escalate_attempt("t001", *_identity(first), "用户决定重试")
+    second = reserve_attempt("t001", "inline")
+    assert second["attempt"] == 2
+    assert second["execution_id"] != first["execution_id"]
+
+
+def test_agent_reserve_waits_bind_and_separates_host_worker_id(ledger):
+    reserved = reserve_attempt("t001", "agent", "opus")
+    attempt, execution_id = _identity(reserved)
+    record = current_attempt_record("t001", ledger_read())
+    assert record["state"] == "reserved"
+    assert record["execution_id"] == execution_id
+    assert record["host_worker_id"] == ""
+
+    with pytest.raises(ctx.TaskDataError, match="尚未 bind"):
+        terminal_attempt("t001", attempt, execution_id, "completed")
+
+    bound = bind_attempt("t001", attempt, execution_id, "host-task-7")
+    assert bound["host_worker_id"] == "host-task-7"
+    record = current_attempt_record("t001", ledger_read())
+    assert record["state"] == "running"
+    assert record["host_worker_id"] == "host-task-7"
+    assert record["execution_id"] == execution_id
+
+    terminal_attempt("t001", attempt, execution_id, "completed")
+    assert current_attempt_record("t001", ledger_read())["state"] == "terminal"
+
+
+def test_bind_and_terminal_reject_wrong_or_old_identity(ledger):
+    first = reserve_attempt("t001", "agent")
+    attempt, execution_id = _identity(first)
+    with pytest.raises(ctx.TaskDataError, match="不匹配 identity"):
+        bind_attempt("t001", attempt, "wrong")
+    bind_attempt("t001", attempt, execution_id)
+    terminal_attempt("t001", attempt, execution_id, "failed")
+    second = reserve_attempt("t001", "inline")
+    with pytest.raises(ctx.TaskDataError, match="旧或不匹配"):
+        report_attempt("t001", attempt, execution_id, "failed")
+    assert current_attempt_record("t001", ledger_read())["execution_id"] == second["execution_id"]
+
+
+@pytest.mark.parametrize("bad_attempt", [True, False, 0, -1])
+def test_attempt_identity_rejects_bool_zero_and_negative(ledger, bad_attempt):
+    reserved = reserve_attempt("t001", "agent")
+    with pytest.raises(ctx.TaskDataError, match="正整数"):
+        bind_attempt("t001", bad_attempt, reserved["execution_id"], "host-1")
+
+
+def test_completed_attempt_requires_integrate_or_escalate_before_reserve(ledger):
+    reserved = reserve_attempt("t001", "inline")
+    terminal_attempt("t001", *_identity(reserved), "completed")
+    report_attempt("t001", *_identity(reserved), "done")
+    with pytest.raises(ctx.TaskDataError, match="不可被新 reserve 顶掉"):
+        reserve_attempt("t001", "inline")
+    escalate_attempt("t001", *_identity(reserved), "用户批准重新执行")
+    assert reserve_attempt("t001", "inline")["attempt"] == 2
+
+
+def test_report_requires_terminal_and_completed_must_close_before_retry(ledger):
+    reserved = reserve_attempt("t001", "inline")
+    attempt, execution_id = _identity(reserved)
+    with pytest.raises(ctx.TaskDataError, match="report 必须在 terminal 后"):
+        report_attempt(
+            "t001", attempt, execution_id, "failed",
+            fail_class="infra", reason="provider unavailable",
+        )
+    with pytest.raises(ctx.TaskDataError, match="须先 terminal"):
+        escalate_attempt("t001", attempt, execution_id, "manual")
+
+    terminal_attempt("t001", attempt, execution_id, "completed")
+    report = report_attempt(
+        "t001", attempt, execution_id, "failed",
+        fail_class="infra", reason="provider unavailable",
+    )
+    assert report["class"] == "infra"
+    retried = reserve_attempt("t001", "inline")
+    assert retried["attempt"] == 2
+
+
+def test_silent_alert_requires_bound_agent_and_exact_fingerprint(ledger):
+    inline = reserve_attempt("t001", "inline")
+    with pytest.raises(ctx.TaskDataError, match="已 bind 的 agent"):
+        silent_alert_attempt("t001", *_identity(inline), "fp-inline")
+    terminal_attempt("t001", *_identity(inline), "stopped")
+
+    reserved = reserve_attempt("t001", "agent")
+    attempt, execution_id = _identity(reserved)
+    bind_attempt("t001", attempt, execution_id, "host-1")
+    ledger_append({
+        "event": "observation",
+        "tid": "t001",
+        "attempt": attempt,
+        "execution_id": execution_id,
+        "fingerprint": "fp-current",
+    })
+    with pytest.raises(ctx.TaskDataError, match="fingerprint"):
+        silent_alert_attempt("t001", attempt, execution_id, "unknown")
+    alerted = silent_alert_attempt("t001", attempt, execution_id, "fp-current")
+    assert alerted["fingerprint"] == "fp-current"
+
+
+def test_atomic_reserve_race_allows_only_one_open_attempt(ledger):
+    successes = []
+    failures = []
+
+    def worker():
+        try:
+            successes.append(reserve_attempt("t001", "inline"))
+        except ctx.TaskDataError as error:
+            failures.append(str(error))
+
+    threads = [threading.Thread(target=worker) for _ in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(successes) == 1
+    assert len(failures) == 11
+    assert successes[0]["attempt"] == 1
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_projection_ignores_late_old_attempt_events_for_current_attempt(ledger):
+    first = reserve_attempt("t001", "inline")
+    terminal_attempt("t001", *_identity(first), "failed")
+    second = reserve_attempt("t001", "inline")
+    ledger_append({
+        "event": "report",
+        "tid": "t001",
+        "attempt": first["attempt"],
+        "execution_id": first["execution_id"],
+        "status": "blocked",
+        "reason": "late",
+    })
+    ledger_append({
+        "event": "integrated",
+        "tid": "t001",
+        "attempt": first["attempt"],
+        "execution_id": first["execution_id"],
+        "merge_sha": "late",
+    })
+    records = project_attempts(ledger_read())
+    current = current_attempt_record("t001", ledger_read())
+    assert current["attempt"] == second["attempt"]
+    assert current["state"] == "running"
+    assert current["report"] is None
+    assert records[("t001", 1, first["execution_id"])]["state"] == "integrated"
+
+
+def test_integrated_batch_preflights_all_members_before_append(ledger):
+    first = reserve_attempt("t001", "inline")
+    terminal_attempt("t001", *_identity(first), "completed")
+    second = reserve_attempt("t002", "inline")
+    terminal_attempt("t002", *_identity(second), "failed")
+    members = [
+        {"tid": "t001", "attempt": first["attempt"], "execution_id": first["execution_id"]},
+        {"tid": "t002", "attempt": second["attempt"], "execution_id": second["execution_id"]},
+    ]
+
+    with pytest.raises(ctx.TaskDataError, match="不能 integrated"):
+        append_integrated_batch(members, "merge-1")
+    assert not [event for event in ledger_read() if event["event"] == "integrated"]
+
+
+def test_integrated_batch_is_idempotent_under_one_lock(ledger):
+    members = []
+    for tid in ("t001", "t002"):
+        reserved = reserve_attempt(tid, "inline")
+        terminal_attempt(tid, *_identity(reserved), "completed")
+        members.append({
+            "tid": tid,
+            "attempt": reserved["attempt"],
+            "execution_id": reserved["execution_id"],
+        })
+
+    appended = append_integrated_batch(members, "merge-1")
+    repeated = append_integrated_batch(members, "merge-1")
+    assert len(appended) == 2
+    assert repeated == []
+    assert len([event for event in ledger_read() if event["event"] == "integrated"]) == 2
+
+
+def test_reconcile_silent_alert_contains_exact_identity_and_never_redispatches(ledger):
+    reserved = reserve_attempt("t001", "agent", "opus")
+    attempt, execution_id = _identity(reserved)
+    bind_attempt("t001", attempt, execution_id, "host-9")
+    old = (NOW - timedelta(minutes=45)).isoformat(timespec="seconds")
+    events = ledger_read()
+
+    def observer(_events, _attempt, _execution_id):
+        return {
+            "event": "observation",
+            "tid": "t001",
+            "attempt": attempt,
+            "execution_id": execution_id,
+            "fingerprint": "fp-1",
+            "ts": old,
+            "head": "abc",
+            "worktree": "../repo_t001",
+            "dirty": "clean",
+        }
+
+    plan = compute_reconcile_plan(
+        events,
+        _schedule(selected=("t002",)),
+        limit=3,
+        scope=None,
+        ladder=["opus", "haiku"],
+        silent_minutes=20,
+        max_auto_retries=1,
+        now=NOW,
+        observer=observer,
+        verifier=lambda *_: ("incomplete", "active"),
+    )
+    assert [(action["action"], action["tid"]) for action in plan["actions"]] == [
+        ("alert-silent", "t001")
+    ]
+    action = plan["actions"][0]
+    assert action["execution_id"] == execution_id
+    assert action["host_worker_id"] == "host-9"
+    assert action["fingerprint"] == "fp-1"
+    assert plan["silent_hold"] is True
+    assert plan["occupancy"] == {"used": 1, "limit": 3}
+
+
+def test_reconcile_same_silent_fingerprint_dedupes_without_dispatch(ledger):
+    reserved = reserve_attempt("t001", "agent")
+    attempt, execution_id = _identity(reserved)
+    bind_attempt("t001", attempt, execution_id, "host-1")
+    old = (NOW - timedelta(minutes=45)).isoformat(timespec="seconds")
+    ledger_append({
+        "event": "silent_alerted",
+        "tid": "t001",
+        "attempt": attempt,
+        "execution_id": execution_id,
+        "fingerprint": "fp-1",
+    })
+    plan = compute_reconcile_plan(
+        ledger_read(),
+        _schedule(selected=("t002",)),
+        limit=3,
+        scope=None,
+        ladder=None,
+        silent_minutes=20,
+        max_auto_retries=1,
+        now=NOW,
+        observer=lambda *_: {
+            "event": "observation",
+            "tid": "t001",
+            "attempt": attempt,
+            "execution_id": execution_id,
+            "fingerprint": "fp-1",
+            "ts": old,
+        },
+        verifier=lambda *_: ("incomplete", "active"),
+    )
+    assert plan["actions"] == []
+    assert plan["silent_hold"] is True
+
+
+def test_reconcile_unreserved_dispatch_is_suggestion_without_execution_id(ledger):
+    plan = compute_reconcile_plan(
+        ledger_read(),
+        _schedule(selected=("t001",)),
+        limit=1,
+        scope=None,
+        ladder=["opus"],
+        silent_minutes=20,
+        max_auto_retries=1,
+        now=NOW,
+        verifier=lambda *_: ("incomplete", ""),
+    )
+    action, = plan["actions"]
+    assert action["action"] == "dispatch"
+    assert action["attempt"] == 1
+    assert "execution_id" not in action
+
+
+def test_ps_uses_attempt_projection_and_exposes_executor_and_host(ledger):
+    reserved = reserve_attempt("t001", "agent", "opus")
+    bind_attempt("t001", *_identity(reserved), "host-1")
+    rows = compute_ps_rows(
+        ledger_read(),
+        {},
+        {},
+        silent_minutes=20,
+        now=NOW,
+        observer=lambda *_: None,
+        verifier=lambda *_: ("incomplete", "active"),
+    )
+    assert rows[0]["execution_id"] == reserved["execution_id"]
+    assert rows[0]["executor"] == "agent"
+    assert rows[0]["host_worker_id"] == "host-1"
+    assert rows[0]["state"] == "running(未观察)"
+
+
+def test_ledger_record_rejects_lifecycle_event_even_when_called_directly(ledger):
+    with pytest.raises(SystemExit, match="不允许生命周期事件"):
+        control.cmd_ledger_record(argparse.Namespace(
+            event="attempt_reserved", tid="t001", reason=None, model=None, state=None,
+        ))
+    assert ledger_read() == []

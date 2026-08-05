@@ -15,9 +15,9 @@
 | `docs/tasks/{tid}_{slug}/` | task 工作区兼**状态权威**（backlog 起即存在） | `spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/repo_template/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive |
 | `docs/tasks/task_template/` | task 文件模板（非工作项） | 只改模板本身 |
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
+| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` / `integrate-chain` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
-| `docs/runtime/dispatch_ledger.jsonl` | 并行调度账本（attempt 事件，append-only；已 gitignore，仅主仓） | `start`/`integrate` 自动 append；coordinator 经 `task.py ledger record` 写 dispatch、worker_terminal、report、failed、escalated 等调度事件，`task.py observe` 写 `observation`；静默告警写 `silent_alerted`；禁止手工编辑 |
+| `docs/runtime/dispatch_ledger.jsonl` | 全部执行拓扑共用的 attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/bind/terminal/report/escalate/silent-alert` 写入，`observe` 写精确绑定 identity 的 `observation`，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note` / `breaker`，`ledger tail` 只读；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -39,7 +39,7 @@
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/repo_template/` | 模板自带 task 工具链：`task.py` 是 CLI/兼容 façade，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等 | 仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：并行=主干 HEAD，串行=`--base` 上一已完成 task 分支（须先 cleanup-worktree）；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；执行 commit 后由 coordinator 清理 worktree 并合并分支；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：扇出拓扑从主干 HEAD 创建，链式拓扑以 `--base` 指向上一已完成 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个执行 commit，worker 写 exact identity 的 `handoff.json`，coordinator 以同一 identity 清理 worktree 并按拓扑合并；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -55,15 +55,15 @@
 
 ### 执行角色与合并时机
 
-串行（`task-run`）与并行（`task-dispatch`）是**两套不同拓扑**，合并时机与分支形态不同：
+串行（`task-run`）与并行（`task-dispatch`）只描述 **branch topology**；两者共用同一 attempt 控制面与 exact identity `(tid, attempt, execution_id)`。`execution_id` 是执行 provenance，`host_worker_id` 仅是 agent 宿主句柄；`executor` 为 `inline` 或 `agent`。
 
-**串行 = 链式**。task 按执行顺序一个串一个成链，每个从上一个已完成 task 的分支创建（`--base`）。全部完成后一次性把链尾合并回主干，主干只进一次 merge commit。
+**串行 = 链式**。task 按执行顺序一个串一个成链，每个从上一个已完成 task 的分支创建（`--base`）。每个 task 一个执行 commit，中间只清理 worktree；全部完成后由 `integrate-chain` 一次性把链尾合并回主干，主干只进一次 merge commit。
 
 ```text
 主干 ── t001 ── t002 ── t003 ──► 全部完成后 merge 链尾
 ```
 
-**并行 = 扇出**。每个 task 从主干 HEAD 独立扇出，完成即合并回主干——快 task 先合并、先释放并发位、先解锁下游；慢 task 不阻塞任何人。
+**并行 = 扇出**。每个 task 从主干 HEAD 独立扇出，完成即以 exact identity 清理并合并——快 task 先合并、先释放并发位、先解锁下游；慢 task 不阻塞任何人。
 
 ```text
         主干 ──┬── t001 ──► 完成即 merge
@@ -75,16 +75,16 @@
 
 | 角色 | 唯一写域 | 职责 | skill |
 |------|---------|------|-------|
-| worker | 自己的 task worktree | 实施、测试、黑盒、review、finish、执行 commit；交出 `{tid}: {branch} @ {sha}` | `task-work` |
-| coordinator | 主仓 | task 创建、`start`、查询宿主终态并写 `worker_terminal`、`cleanup-worktree --attempt`、合并、派生 index 重建、分支清理、合并后验证 | `task-integrate` / `task-dispatch` / `task-run` |
+| worker | 自己的 task worktree | 接收必填 `attempt` / `execution_id`，实施、测试、黑盒、review、finish、一个执行 commit；只写精确 identity 的 `handoff.json` 并交出 `{tid}: {branch} @ {sha}` | `task-work` |
+| coordinator | 主仓 | `start`；reserve/bind attempt；查询宿主终态后写 exact terminal/report；以 exact identity cleanup；单 task `integrate` 或链式 `integrate-chain`；派生 index、分支清理、合并后验证 | `task-integrate` / `task-dispatch` / `task-run` |
 
-worker 不合并任何分支、不重建 index、不 push、不删分支、不清理自己的 worktree、不询问是否合并主干；worker 也不写主仓调度账本，宿主终态由 coordinator 查询后写 `worker_terminal`。主干只有 coordinator 一个写者且串行处理，因此不需要额外的锁。
+worker 不合并任何分支、不重建 index、不 push、不删分支、不清理自己的 worktree、不询问是否合并主干，也不写 attempt 控制面；worker 唯一交接写入是本 task 分支中的 `handoff.json`。agent 宿主状态只由 coordinator 查询，`host_worker_id` 不承担 execution provenance。主干只有 coordinator 一个写者且串行处理，因此不需要额外的锁。
 
-串行当前会话同时担任两个角色（task 逐个跑、逐个 cleanup-worktree、最后一次性合链尾）；并行由 coordinator 派发多个 worker，自身不执行 task。合并动作都由 `scripts/repo_template/task.py integrate` 承担（串行带 `--chain`）。
+`task-run` 当前会话同时承担 coordinator 与 inline worker：每个 task 依次 `start → attempt reserve --executor inline → task-work → attempt terminal → attempt report → cleanup-worktree`，后继以当前分支作 `--base`，全链最终一次 `integrate-chain` merge；merge/index/integrated 后保留 transaction 与链分支，合并后验证通过再以同一命令 `--continue` 完成删除。`task-dispatch` 由 coordinator reserve agent attempt、派发带 identity 的 worker、启动后 bind `host_worker_id`，自身不执行 task；每个完成 task 用 exact identity 调用单 task `integrate`。
 
-合并主干需用户**会话级前置授权**：启动时一次性说明调度范围与合并动作，取得授权后按拓扑自动合并，不再逐 task 询问。合并环节只有四种情况停下来问用户：merge 冲突需裁决、合并后验证失败、task `blocked`、范围扩大。执行环节的停止条件另见各 skill。
+合并主干需用户**会话级授权**。`task-dispatch` 因 task 完成即合并，启动时一次性取得；`task-run` 可在启动时取得，也可先执行整条链，仅在最终首次 `integrate-chain` 前询问一次。已有授权不重复询问，未获授权不 merge。合并环节只有 merge 冲突需裁决、合并后验证失败、task `blocked` 或范围扩大时停下来问用户；执行环节停止条件见各 skill。
 
-`.claude/hooks/merge_guard.py` 拦截 Bash 工具里的 `git merge`（含 `--abort`，要求一次性 token）；`task.py integrate` 内部 merge 经 subprocess 不经 Bash 工具，由会话级授权覆盖，hook 不拦。两层职责分离：脚本通道 = 已授权入口，hook = 防 agent 在脚本外手动 merge。
+`.claude/hooks/merge_guard.py` 拦截 Bash 工具里的 `git merge`（含 `--abort`，要求一次性 token）；`task.py integrate` / `integrate-chain` 内部 merge 经 subprocess 不经 Bash 工具，由会话级授权覆盖，hook 不拦。两层职责分离：脚本通道 = 已授权入口，hook = 防 agent 在脚本外手动 merge。
 
 ### skill 调用
 
@@ -94,8 +94,8 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 |----------|-------|------|
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
-| 并行跑多个 task | `task-dispatch` | coordinator：每 5 分钟观察 running attempt 后 reconcile；派发、收汇报、完成即合并；静默告警后暂停调度，详见 `docs_repo/plan_worker_silence_monitoring.md` |
-| 串行跑完待做 task | `task-run` | 链式串行：逐个执行+cleanup；链尾一次 merge |
+| 并行跑多个 task | `task-dispatch` | coordinator：扇出 start，reserve/bind agent attempt，按 identity 观察与收终态，完成即 cleanup/integrate；静默只告警并暂停调度，详见 `docs_repo/plan_worker_silence_monitoring.md` |
+| 串行跑完待做 task | `task-run` | 链式串行：每 task reserve inline attempt、一个执行 commit、中间 exact cleanup、后继 `--base` 前分支；链尾一次 `integrate-chain` |
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
@@ -107,10 +107,10 @@ worker 不合并任何分支、不重建 index、不 push、不删分支、不�
 
 | skill | 调用方 | 职责 |
 |-------|--------|------|
-| `task-work` | `task-dispatch` 派发给 worker；`task-run` 自调 | worker：在自身 worktree 实施至执行 commit |
-| `task-integrate` | `task-dispatch` 收汇报后；`task-run` 链全部完成后 | coordinator：并行=cleanup-worktree → 合单分支 → 重建 index → 验证 → 删分支；串行 `--chain`=cleanup-worktree → 只合链尾 → 重建 index → 验证 → 删整条链 |
+| `task-work` | `task-dispatch` 派发给 agent worker；`task-run` 以内联 worker 调用 | worker：以必填 `(tid, attempt, execution_id)` 在自身 worktree 实施至一个执行 commit，并写完整 `handoff.json` |
+| `task-integrate` | `task-dispatch` 收汇报后；`task-run` 链全部完成后 | coordinator：单 task 使用 exact cleanup + `integrate`；链式先逐成员 exact cleanup，最终 `integrate-chain` 聚合校验后一次合链尾 |
 
-典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（并行）或 `/task-run`（串行）。
+典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（扇出）或 `/task-run`（链式）。
 task 彼此冲突面大时并行无收益，看 `task-schedule` 输出的全景图决定。
 
 ### `scripts/repo_template/task.py` 使用示例
@@ -122,22 +122,29 @@ python3 scripts/repo_template/task.py list --status backlog   # 按状态过滤
 python3 scripts/repo_template/task.py show t001               # 当前工作区某 task 详情
 python3 scripts/repo_template/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
 python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查分支中 backlog
-python3 scripts/repo_template/task.py start t002               # 并行扇出：从主干 HEAD 建 worktree
-python3 scripts/repo_template/task.py start t003 --base t002_x # 串行链式：从上一 task 分支建 worktree
-python3 scripts/repo_template/task.py cleanup-worktree t001 --attempt 1 # 并行：worker terminal 后清理 worktree，保留分支
-python3 scripts/repo_template/task.py cleanup-worktree t001    # 串行无 dispatch：执行 commit 后清理 worktree
-python3 scripts/repo_template/task.py integrate t001 --attempt 1 # 并行：terminal 后合单个分支 + 重建 index + 删分支
-python3 scripts/repo_template/task.py integrate t001 --chain   # 串行：只合链尾 + 删整条链分支
-python3 scripts/repo_template/task.py integrate t001 --continue # 冲突解决并 git add 后继续
+python3 scripts/repo_template/task.py start t002               # 扇出：从主干 HEAD 建 worktree
+python3 scripts/repo_template/task.py start t003 --base t002_x # 链式：从上一 task 分支建 worktree
+python3 scripts/repo_template/task.py attempt reserve t002 --executor agent --model haiku # 原子分配 attempt/execution_id，初态 reserved
+python3 scripts/repo_template/task.py attempt reserve t003 --executor inline             # 原子分配并直接进入 running
+python3 scripts/repo_template/task.py attempt bind t002 --attempt 1 --execution-id EXECUTION_ID --host-worker-id HOST_WORKER_ID
+python3 scripts/repo_template/task.py attempt terminal t002 --attempt 1 --execution-id EXECUTION_ID --status completed
+python3 scripts/repo_template/task.py attempt report t002 --attempt 1 --execution-id EXECUTION_ID --status done --sha BRANCH_TIP
+python3 scripts/repo_template/task.py attempt escalate t002 --attempt 1 --execution-id EXECUTION_ID --reason "需用户裁决"
+python3 scripts/repo_template/task.py attempt silent-alert t002 --attempt 1 --execution-id EXECUTION_ID --fingerprint SHA256
+python3 scripts/repo_template/task.py cleanup-worktree t002 --attempt 1 --execution-id EXECUTION_ID # exact completed attempt 清理，保留分支
+python3 scripts/repo_template/task.py integrate t002 --attempt 1 --execution-id EXECUTION_ID         # 单 task 合并
+python3 scripts/repo_template/task.py integrate t002 --attempt 1 --execution-id EXECUTION_ID --continue # 单 task 冲突解决后续跑
+python3 scripts/repo_template/task.py integrate-chain t003                 # 聚合校验全链后一次合并链尾
+python3 scripts/repo_template/task.py integrate-chain t003 --continue      # 链式冲突解决后重验同一事务
 python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
 python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
 python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
-python3 scripts/repo_template/task.py observe t001 --attempt 1 [--json] # 观察仓库指纹；仅首次或变化时追加 observation
-python3 scripts/repo_template/task.py ps --silent-minutes 30 [--all]   # 在飞 attempt 活表（账本+refs+worktree 观察派生）
-python3 scripts/repo_template/task.py reconcile --limit 3 --silent-minutes 30 [--model-ladder "opus>haiku"] # 只读行动计划；静默只告警并占槽
-python3 scripts/repo_template/task.py ledger record --event dispatch --tid t001 --attempt 1 --model haiku --worker-id WORKER_ID  # coordinator 落账
-python3 scripts/repo_template/task.py ledger record --event worker_terminal --tid t001 --attempt 1 --worker-id WORKER_ID --status completed  # integrate/retry 前先记宿主终态
-python3 scripts/repo_template/task.py ledger tail --tid t001       # 读调度账本
+python3 scripts/repo_template/task.py observe t002 --attempt 1 --execution-id EXECUTION_ID --json # observation 精确绑定 identity
+python3 scripts/repo_template/task.py ps --silent-minutes 30 --all # 在飞 attempt 活表（账本+refs+worktree 观察派生）
+python3 scripts/repo_template/task.py reconcile --limit 3 --silent-minutes 30 --model-ladder "opus>haiku" # 只读行动计划
+python3 scripts/repo_template/task.py ledger record --event note --tid t002 --reason "人工备注"       # 生命周期外备注
+python3 scripts/repo_template/task.py ledger record --event breaker --model haiku --state open --reason "provider 故障"
+python3 scripts/repo_template/task.py ledger tail --tid t002       # 只读 attempt 控制面
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
 scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件
