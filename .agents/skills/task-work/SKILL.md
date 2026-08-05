@@ -20,7 +20,7 @@ disable-model-invocation: true
 
 ## 输入
 
-一个 `tNNN`。task 须为 `backlog` / `active`；`blocked` 须用户先放行或改判。
+一个 `tNNN`。task 须为 `backlog` / `active`；并行由 coordinator 传入当前 `attempt` 和宿主 `worker_id`，`blocked` 须用户先放行或改判。
 
 ## 单 task 流程
 
@@ -61,7 +61,7 @@ flowchart TD
 ### Step 1：开干与前置
 
 1. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停止，先解决环境或走 spike，不盲目 start。
-2. 没有现成 worktree 时，在主仓默认分支执行 `scripts/repo_template/task.py start <tid>`（不要求主仓干净）：并行（task-dispatch）从主干 HEAD 扇出；串行（task-run）由调用方先 `start --base <上一已完成 task 分支>` 建好 worktree，本 skill 发现现成 worktree 时直接 `cd` 进入，**不得**重新 start（避免断掉链式拓扑）。`start` 不修改主仓、不建 start commit；新 worktree 中 task.md 的 active 改动属于本 task 执行 commit。
+2. 没有现成 worktree 时，在主仓默认分支执行 `scripts/repo_template/task.py start <tid>`（不要求主仓干净）：并行（task-dispatch）从主干 HEAD 扇出；串行（task-run）由调用方先 `start --base <上一已完成 task 分支>` 建好 worktree，本 skill 发现现成 worktree 时直接 `cd` 进入，**不得**重新 start（避免断掉链式拓扑）。并行 worker 的 prompt 必须携带当前 `attempt`；`start` 不修改主仓、不建 start commit；新 worktree 中 task.md 的 active 改动属于本 task 执行 commit。
 3. 必须 `cd` 进 worktree；后续 Step 1–7 全部在其中进行。
 4. 执行 `scripts/repo_template/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
@@ -132,10 +132,11 @@ flowchart TD
 - 用 `scripts/repo_template/findings.py new` 抽取可跨 task 复用的已验证事实。
 - 写交接单 `docs/tasks/{tid}_{slug}/handoff.json`（机器可读契约，随执行 commit 入库；coordinator 的 reconcile 据此验证后才合并）：
   ```json
-  {"tid": "{tid}", "status": "done", "branch": "{task 分支}", "base_sha": "<执行 commit 前 HEAD>",
+  {"tid": "{tid}", "attempt": {N}, "status": "done", "branch": "{task 分支}", "base_sha": "<执行 commit 前 HEAD>",
    "tests": "<测试结果摘要>", "blackbox": "<黑盒结果>", "review": "<轮次与结论>",
    "pending": ["pNNN"], "findings": ["dNNN"]}
   ```
+  并行 dispatch 必须写当前整数 `attempt`；串行无 dispatch 的 task 可写 `null` 或省略该字段。worker 不写 `worker_terminal`，由 coordinator 查询宿主任务进入终态后在主仓记账。
 - 其他 task 若受本 task 影响需改 spec，不在此直接改——扇出模型下改动只存在于本分支，其他 worker 看不到且合并时制造冲突。列进交出汇报，由 coordinator 处置。
 
 **7b finish**：

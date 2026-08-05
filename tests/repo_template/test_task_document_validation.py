@@ -8,7 +8,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from task import parse_front_matter, validate_task_documents
+from repo_task.documents import parse_front_matter, validate_task_documents
 
 
 SPEC_TEMPLATE = (REPO_ROOT / "docs/tasks/task_template/spec.md").read_text(encoding="utf-8")

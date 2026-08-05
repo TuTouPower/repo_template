@@ -12,8 +12,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent.parent / "docs" / "tasks" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import task as task_mod
-from task import parse_front_matter, write_front_matter
+from repo_task import context as ctx
+from repo_task import integration, lifecycle, store
+from repo_task.documents import parse_front_matter, write_front_matter
 
 
 def _git(repo, *args, check=True):
@@ -61,6 +62,11 @@ def git_repo(tmp_path, monkeypatch):
     archive.mkdir(parents=True)
     (scripts / "repo_template").mkdir(parents=True)
     shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "repo_template" / "task.py")
+    shutil.copytree(
+        SCRIPTS_DIR / "repo_task",
+        scripts / "repo_template" / "repo_task",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     shutil.copytree(TASK_TEMPLATE_DIR, template)
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         task_dir = tasks / f"{tid}_{slug}"
@@ -81,17 +87,16 @@ def git_repo(tmp_path, monkeypatch):
             _valid_task_body(),
         )
         (task_dir / "spec.md").write_text(_valid_spec(), encoding="utf-8")
-    monkeypatch.setattr(task_mod, "TASKS_DIR", tasks)
-    monkeypatch.setattr(task_mod, "ARCHIVE_TASKS_DIR", archive)
-    monkeypatch.setattr(task_mod, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(task_mod, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
-    monkeypatch.setattr(
-        task_mod, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json"
-    )
-    monkeypatch.setattr(
-        task_mod, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log"
-    )
-    monkeypatch.setattr(task_mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
+    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
+    monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
+    monkeypatch.setattr(ctx, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
+    monkeypatch.setattr(ctx, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json")
+    monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
+    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
+    monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
+    monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
+    (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8")
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
@@ -101,7 +106,7 @@ def git_repo(tmp_path, monkeypatch):
 
 
 def _start(repo, tid="t001", base=None):
-    task_mod.cmd_start(argparse.Namespace(tid=tid, base=base))
+    integration.cmd_start(argparse.Namespace(tid=tid, base=base))
 
 
 def _task_cli(repo, *args):
@@ -346,9 +351,9 @@ def test_start_compensates_when_worktree_creation_fails(git_repo, monkeypatch):
     initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 
     def fail_create(*args, **kwargs):
-        raise task_mod.TaskDataError("模拟 worktree 创建失败")
+        raise ctx.TaskDataError("模拟 worktree 创建失败")
 
-    monkeypatch.setattr(task_mod, "create_worktree", fail_create)
+    monkeypatch.setattr(integration, "create_worktree", fail_create)
 
     with pytest.raises(SystemExit, match="主仓未修改"):
         _start(git_repo)
@@ -365,7 +370,7 @@ def test_start_compensates_when_local_config_link_fails(git_repo, monkeypatch):
     def fail_link(*args, **kwargs):
         raise OSError("模拟本地配置软链失败")
 
-    monkeypatch.setattr(task_mod, "link_local_env", fail_link)
+    monkeypatch.setattr(integration, "link_local_env", fail_link)
 
     with pytest.raises(SystemExit, match="主仓未修改"):
         _start(git_repo)
@@ -380,7 +385,7 @@ def test_rewind_discards_uncommitted_activation_and_removes_empty_branch(git_rep
     _start(git_repo)
     worktree = _worktree_path(git_repo)
 
-    task_mod.cmd_rewind(
+    lifecycle.cmd_rewind(
         argparse.Namespace(tid="t001", to="backlog", reason="撤回", yes=True)
     )
 
@@ -922,7 +927,7 @@ def test_preflight_rejects_blocking_marker_added_after_start(git_repo):
 # --------------------------------------------------------------------------
 
 def _rewind(repo, tid="t001", to="backlog", yes=True):
-    task_mod.cmd_rewind(argparse.Namespace(tid=tid, to=to, reason="撤回", yes=yes))
+    lifecycle.cmd_rewind(argparse.Namespace(tid=tid, to=to, reason="撤回", yes=yes))
 
 
 def test_rewind_keeps_branch_with_own_commits_and_guides(git_repo, capsys):
@@ -1098,7 +1103,7 @@ def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
     _git(worktree, "commit", "-m", "add nested attachment")
 
     # --ref 读 t002 分支：嵌套 task.md 不应被当成独立 task（否则 t999 目录名校验报错）
-    tasks = task_mod.scan_tasks_at_ref("t002_beta")
+    tasks = store.scan_tasks_at_ref("t002_beta")
     tids = [t["tid"] for t in tasks]
     assert "t999" not in tids
     assert "t002" in tids
@@ -1117,8 +1122,8 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "add broken dir")
 
-    with pytest.raises(task_mod.TaskDataError, match="缺 task.md"):
-        task_mod.scan_tasks_at_ref("t002_beta")
+    with pytest.raises(ctx.TaskDataError, match="缺 task.md"):
+        store.scan_tasks_at_ref("t002_beta")
 
 
 # --------------------------------------------------------------------------

@@ -59,6 +59,8 @@ t003: coordinator `start t003 --base t002_分支` → task-work → cleanup-work
 task-integrate --chain {链尾}   → merge 链尾 → 重建 index → 验证 → 删整条链分支
 ```
 
+串行 task-run 不创建 dispatch 账本 attempt，因此 cleanup 与最终 `integrate --chain` 保持无 `--attempt` 的兼容命令。若环境中意外存在该 tid 的 dispatch，必须按并行门禁先取得匹配 `worker_terminal`，不得把串行路径用来绕过 attempt 校验。
+
 1. 一次只跑一个 tid；禁止并行多 task（单 task 内可派 subagent）。
 2. 每个 task 执行 commit 完成后仅 cleanup-worktree，**不合并**——分支保留，成为下一个 task 的 `--base`。
 3. 队列全部完成后一次性合并链尾，主干只进一次 merge commit。

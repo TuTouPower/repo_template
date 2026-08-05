@@ -6,7 +6,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from task import parse_unverified_contracts, unverified_contract_gate
+from repo_task.documents import parse_unverified_contracts, unverified_contract_gate
 
 
 def test_parser_only_reads_direct_items_in_unknown_contract_section():

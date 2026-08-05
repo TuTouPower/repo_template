@@ -22,17 +22,29 @@ disable-model-invocation: true
 
 1. **清理 worktree**（尚未清理时）：
 
+   并行 dispatch 必须使用 reconcile 当前 attempt，并先确认宿主终态已记账：
+
+   ```bash
+   scripts/repo_template/task.py cleanup-worktree {tid} --attempt {N}
+   ```
+
+   串行 `task-run` 无 dispatch 账本时保持旧命令：
+
    ```bash
    scripts/repo_template/task.py cleanup-worktree {tid}
    ```
 
 2. **合并**：
 
+   并行路径：
+
    ```bash
-   scripts/repo_template/task.py integrate {tid}
+   scripts/repo_template/task.py integrate {tid} --attempt {N}
    ```
 
-   脚本按序执行：校验分支 tip 终态与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。合并成功自动向调度账本（`docs/runtime/dispatch_ledger.jsonl`）append `integrated` 事件。
+   串行链式路径使用 `integrate {tid} --chain`，不带 attempt。脚本按序执行：校验分支 tip 终态、handoff attempt（并行）与 worktree 已清理 → `merge --no-ff` → 内部重建派生 index 并单独 commit → 删除已完全合入的分支。已合入的分支跳过 merge，幂等。合并成功自动向调度账本（`docs/runtime/dispatch_ledger.jsonl`）append 带 attempt 的 `integrated` 事件；串行无 dispatch 时保持历史无 attempt 兼容路径。
+
+   并行 cleanup/integrate 的共同门禁是：必须显式给当前最高 attempt，dispatch 存在匹配 `worker_terminal` 且 worker-id 一致，且不存在未先 terminal 的非法重叠 attempt。worker 仍 running 或 attempt 不匹配时停止并报告，不绕过门禁。
 
 3. **冲突处置**。脚本停在冲突处并列出文件时，按语义解决——不是取一侧了事：
 

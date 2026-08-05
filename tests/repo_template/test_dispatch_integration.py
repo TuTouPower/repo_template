@@ -1,5 +1,4 @@
-"""调度控制面真实 git 集成：verify_integrate_ready 各分支、observe_last_activity
-双观察点、cmd_start/cmd_integrate 自动落账、MERGE_HEAD 校验。"""
+"""调度控制面真实 git 集成：refs 验证、observe 指纹去重、自动记账和 MERGE_HEAD 校验。"""
 import argparse
 import json
 import shutil
@@ -13,8 +12,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent.parent / "docs" / "tasks" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import task as task_mod
-from task import parse_front_matter, write_front_matter
+from repo_task import context as ctx
+from repo_task import integration, monitoring
+from repo_task.documents import parse_front_matter, write_front_matter
 
 
 def _git(repo, *args, check=True):
@@ -57,6 +57,11 @@ def git_repo(tmp_path, monkeypatch):
     archive.mkdir(parents=True)
     (repo / "scripts" / "repo_template").mkdir(parents=True)
     shutil.copy2(SCRIPTS_DIR / "task.py", repo / "scripts" / "repo_template" / "task.py")
+    shutil.copytree(
+        SCRIPTS_DIR / "repo_task",
+        repo / "scripts" / "repo_template" / "repo_task",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     shutil.copytree(TASK_TEMPLATE_DIR, template)
     task_dir = tasks / "t001_alpha"
     shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
@@ -71,21 +76,16 @@ def git_repo(tmp_path, monkeypatch):
         body,
     )
     (task_dir / "spec.md").write_text(_valid_spec(), encoding="utf-8")
-    monkeypatch.setattr(task_mod, "TASKS_DIR", tasks)
-    monkeypatch.setattr(task_mod, "ARCHIVE_TASKS_DIR", archive)
-    monkeypatch.setattr(task_mod, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(task_mod, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
-    monkeypatch.setattr(
-        task_mod, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json"
-    )
-    monkeypatch.setattr(
-        task_mod, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log"
-    )
-    monkeypatch.setattr(task_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(task_mod, "RUNTIME_DIR", repo / "docs" / "runtime")
-    monkeypatch.setattr(
-        task_mod, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl"
-    )
+    monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
+    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
+    monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
+    monkeypatch.setattr(ctx, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
+    monkeypatch.setattr(ctx, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json")
+    monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
+    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
+    monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
+    monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
+    (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8")
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
@@ -106,7 +106,7 @@ def _worktree_path(repo, tid="t001"):
 
 
 def _start(repo, tid="t001"):
-    task_mod.cmd_start(argparse.Namespace(tid=tid, base=None))
+    integration.cmd_start(argparse.Namespace(tid=tid, base=None))
 
 
 def _finish_commit_cleanup(repo, tid="t001", slug="alpha"):
@@ -158,7 +158,7 @@ def test_verify_ready_with_valid_handoff(git_repo):
     handoff = json.dumps({"tid": "t001", "status": "done", "branch": "t001_alpha"})
     _make_done_branch(git_repo, handoff=handoff)
 
-    verdict, detail = task_mod.verify_integrate_ready("t001")
+    verdict, detail = monitoring.verify_integrate_ready("t001")
 
     assert verdict == "ready", detail
 
@@ -166,14 +166,14 @@ def test_verify_ready_with_valid_handoff(git_repo):
 def test_verify_incomplete_when_tip_not_terminal(git_repo):
     _make_done_branch(git_repo, tip_status="active")
 
-    verdict, detail = task_mod.verify_integrate_ready("t001")
+    verdict, detail = monitoring.verify_integrate_ready("t001")
 
     assert verdict == "incomplete"
     assert "非终态" in detail
 
 
 def test_verify_incomplete_without_branch(git_repo):
-    verdict, detail = task_mod.verify_integrate_ready("t001")
+    verdict, detail = monitoring.verify_integrate_ready("t001")
 
     assert verdict == "incomplete"
     assert "无本地 task 分支" in detail
@@ -194,42 +194,64 @@ def test_verify_incomplete_without_branch(git_repo):
 def test_verify_contract_on_handoff_defects(git_repo, handoff, expected_detail):
     _make_done_branch(git_repo, handoff=handoff)
 
-    verdict, detail = task_mod.verify_integrate_ready("t001")
+    verdict, detail = monitoring.verify_integrate_ready("t001")
 
     assert verdict == "contract"
     assert expected_detail in detail
 
 
 # --------------------------------------------------------------------------
-# observe_last_activity：worktree / 分支双观察点
+# observe：attempt/worktree 校验与变化去重
 # --------------------------------------------------------------------------
 
 
-def test_observe_activity_from_branch_tip_when_no_worktree(git_repo):
-    branch = _make_done_branch(git_repo)
-    tip_ts = _git(git_repo, "log", "-1", "--format=%cI", branch).stdout.strip()
+def _dispatch(repo, attempt="1", worker_id="worker-1"):
+    result = _task_cli(
+        repo, "ledger", "record", "--event", "dispatch", "--tid", "t001",
+        "--attempt", attempt, "--model", "opus", "--worker-id", worker_id,
+    )
+    assert result.returncode == 0, result.stderr
 
-    observed = task_mod.observe_last_activity("t001", [])
 
-    assert observed == tip_ts
-
-
-def test_observe_activity_prefers_worktree_head_and_dispatch_ts(git_repo):
+def test_observe_appends_first_and_changed_only(git_repo):
     _start(git_repo)
-    head_ts = _git(
-        _worktree_path(git_repo), "log", "-1", "--format=%cI"
-    ).stdout.strip()
+    _dispatch(git_repo)
 
-    # 无 dispatch 事件：worktree HEAD commit 时间
-    assert task_mod.observe_last_activity("t001", []) == head_ts
-    # dispatch ts 更新：取较大者
-    future = "2099-01-01T00:00:00+00:00"
-    events = [{"event": "dispatch", "tid": "t001", "attempt": 1, "ts": future}]
-    assert task_mod.observe_last_activity("t001", events) == future
+    first = _task_cli(git_repo, "observe", "t001", "--attempt", "1", "--json")
+    second = _task_cli(git_repo, "observe", "t001", "--attempt", "1", "--json")
+    assert first.returncode == second.returncode == 0
+    assert json.loads(first.stdout)["changed"] is True
+    assert json.loads(second.stdout)["changed"] is False
+    assert json.loads(first.stdout)["worker_id"] == "worker-1"
+    assert len([event for event in _read_ledger(git_repo) if event["event"] == "observation"]) == 1
+
+    (_worktree_path(git_repo) / "new.bin").write_bytes(b"\x00\xffchanged")
+    changed = _task_cli(git_repo, "observe", "t001", "--attempt", "1", "--json")
+
+    assert changed.returncode == 0, changed.stderr
+    assert json.loads(changed.stdout)["changed"] is True
+    assert len([event for event in _read_ledger(git_repo) if event["event"] == "observation"]) == 2
 
 
-def test_observe_activity_none_without_any_observation_point(git_repo):
-    assert task_mod.observe_last_activity("t001", []) is None
+def test_observe_rejects_unknown_attempt_mismatched_owner_and_missing_worktree(git_repo):
+    _start(git_repo)
+    _dispatch(git_repo)
+
+    unknown = _task_cli(git_repo, "observe", "t001", "--attempt", "2")
+    assert unknown.returncode != 0
+    assert "未 dispatch" in unknown.stderr
+
+    worktree = _worktree_path(git_repo)
+    _git(worktree, "checkout", "-b", "t999_wrong")
+    mismatch = _task_cli(git_repo, "observe", "t001", "--attempt", "1")
+    assert mismatch.returncode != 0
+    assert "归属不符" in mismatch.stderr
+
+    _git(worktree, "checkout", "t001_alpha")
+    _git(git_repo, "worktree", "remove", "--force", str(worktree))
+    missing = _task_cli(git_repo, "observe", "t001", "--attempt", "1")
+    assert missing.returncode != 0
+    assert "worktree 不存在或未登记" in missing.stderr
 
 
 # --------------------------------------------------------------------------
@@ -317,7 +339,58 @@ def test_verify_contract_when_multiple_branches(git_repo):
     _make_done_branch(git_repo, handoff=handoff)
     _git(git_repo, "branch", "t001_beta")
 
-    verdict, detail = task_mod.verify_integrate_ready("t001")
+    verdict, detail = monitoring.verify_integrate_ready("t001")
 
     assert verdict == "contract"
     assert "多个分支" in detail
+
+
+def test_verify_handoff_attempt_must_match_parallel_attempt(git_repo):
+    handoff = json.dumps({
+        "tid": "t001", "status": "done", "branch": "t001_alpha", "attempt": 2,
+    })
+    _make_done_branch(git_repo, handoff=handoff)
+
+    mismatch, detail = monitoring.verify_integrate_ready("t001", attempt=1)
+    assert mismatch == "contract"
+    assert "attempt=2" in detail and "当前 attempt=1" in detail
+
+    ready, detail = monitoring.verify_integrate_ready("t001", attempt=2)
+    assert ready == "ready", detail
+
+
+def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
+    _start(git_repo)
+    _dispatch(git_repo)
+    worktree = _worktree_path(git_repo)
+    finished = _task_cli(worktree, "finish", "t001")
+    assert finished.returncode == 0, finished.stderr
+    (worktree / "docs" / "archive" / "tasks" / "t001_alpha" / "handoff.json").write_text(
+        json.dumps({
+            "tid": "t001", "attempt": 1, "status": "done", "branch": "t001_alpha",
+        }),
+        encoding="utf-8",
+    )
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+
+    missing_attempt = _task_cli(git_repo, "cleanup-worktree", "t001")
+    assert missing_attempt.returncode != 0
+    assert "必须显式给 --attempt" in missing_attempt.stderr
+
+    missing_terminal = _task_cli(git_repo, "cleanup-worktree", "t001", "--attempt", "1")
+    assert missing_terminal.returncode != 0
+    assert "尚无 worker_terminal" in missing_terminal.stderr
+
+    terminal = _task_cli(
+        git_repo, "ledger", "record", "--event", "worker_terminal", "--tid", "t001",
+        "--attempt", "1", "--worker-id", "worker-1", "--status", "completed",
+    )
+    assert terminal.returncode == 0, terminal.stderr
+    cleaned = _task_cli(git_repo, "cleanup-worktree", "t001", "--attempt", "1")
+    assert cleaned.returncode == 0, cleaned.stderr
+
+    integrated = _task_cli(git_repo, "integrate", "t001", "--attempt", "1")
+    assert integrated.returncode == 0, integrated.stderr
+    records = [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
+    assert records and records[-1]["attempt"] == 1
