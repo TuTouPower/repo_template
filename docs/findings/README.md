@@ -11,8 +11,8 @@
 ## 命令
 
 ```bash
-scripts/repo_template/findings.py new --slug uv_lock_platform_marker
-scripts/repo_template/findings.py list
+python3 scripts/repo_template/findings.py new --slug uv_lock_platform_marker
+python3 scripts/repo_template/findings.py list
 ```
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号；禁止手工创建条目文件。

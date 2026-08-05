@@ -146,14 +146,14 @@ python3 scripts/repo_template/task.py ledger record --event note --tid t002 --re
 python3 scripts/repo_template/task.py ledger tail --tid t002       # 只读 attempt 控制面
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
-scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件
-scripts/repo_template/pending.py list --state all                                     # 列举 todo/parked/archived
-scripts/repo_template/pending.py archive p047 p051 --fix-ref t012                     # dry-run：拟迁闭环条目
-scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 --write             # 落盘迁移（拒迁 parked）
-scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write               # todo → parked
-scripts/repo_template/pending.py revive p047 --write                                  # parked → todo
-scripts/repo_template/findings.py new --slug uv_lock_platform_marker                  # 锁内取号并建发现条目
-scripts/repo_template/spikes.py new --slug uv_lock_platform_marker                    # 锁内取号并建 spike 目录
+python3 scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件
+python3 scripts/repo_template/pending.py list --state all                                     # 列举 todo/parked/archived
+python3 scripts/repo_template/pending.py archive p047 p051 --fix-ref t012                     # dry-run：拟迁闭环条目
+python3 scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 --write             # 落盘迁移（拒迁 parked）
+python3 scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write               # todo → parked
+python3 scripts/repo_template/pending.py revive p047 --write                                  # parked → todo
+python3 scripts/repo_template/findings.py new --slug uv_lock_platform_marker                  # 锁内取号并建发现条目
+python3 scripts/repo_template/spikes.py new --slug uv_lock_platform_marker                    # 锁内取号并建 spike 目录
 ```
 
 ## 文档规范

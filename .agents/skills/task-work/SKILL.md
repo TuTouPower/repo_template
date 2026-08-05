@@ -91,7 +91,7 @@ flowchart TD
 - 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
 - 渲染 prompt：
   ```bash
-  scripts/repo_template/render_review_prompts.py \
+  python3 scripts/repo_template/render_review_prompts.py \
     --task-dir docs/tasks/{tid}_{slug} \
     --out-dir .scratch/review_prompts
   ```
@@ -105,7 +105,7 @@ flowchart TD
 - `status=遗留` 的内容不写 task.md：用 `scripts/repo_template/pending.py new --slug <主题>` 建条目并填写；`fix_ref` 填该 `pNNN` 或已有 follow-up tid。
 - 运行：
   ```bash
-  scripts/repo_template/check_review_status.py \
+  python3 scripts/repo_template/check_review_status.py \
     --task-dir docs/tasks/{tid}_{slug} \
     --max-review-round <N>
   ```

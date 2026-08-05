@@ -15,12 +15,12 @@
 ## 命令
 
 ```bash
-scripts/repo_template/pending.py new --slug cli_exit_code            # 建普通条目
-scripts/repo_template/pending.py new --slug crash_on_empty --kind bug # 建 bug 条目
-scripts/repo_template/pending.py list --state all                     # 列举
-scripts/repo_template/pending.py archive p047 --fix-ref t012 --write  # 闭环
-scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write
-scripts/repo_template/pending.py revive p047 --write                  # parked → todo
+python3 scripts/repo_template/pending.py new --slug cli_exit_code            # 建普通条目
+python3 scripts/repo_template/pending.py new --slug crash_on_empty --kind bug # 建 bug 条目
+python3 scripts/repo_template/pending.py list --state all                     # 列举
+python3 scripts/repo_template/pending.py archive p047 --fix-ref t012 --write  # 闭环
+python3 scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write
+python3 scripts/repo_template/pending.py revive p047 --write                  # parked → todo
 ```
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号；禁止手工创建条目文件。迁移一律走命令，命令默认 dry-run，加 `--write` 落盘。
