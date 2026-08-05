@@ -17,7 +17,7 @@ disable-model-invocation: true
 ```text
 准备调度：{tid 列表}（并发上限 N，默认 3）
 worker 模型：{首选}（默认继承当前会话模型；infra 失败同模型重试一次，再失败 escalate）
-观察/reconcile 节拍：每 5 分钟 cron 兜底，调度结束或静默告警时注销
+观察/reconcile 节拍：每 10 分钟 cron 兜底，调度结束或静默告警时注销
 每个 task：start → reserve agent attempt → 派发带 exact identity 的 Agent → bind host_worker_id；宿主终态后 terminal → report；done 后 exact cleanup-worktree → exact integrate → 重建 index → 合并后验证 → 删除该分支
 {依赖 task 列表} 会在其前置合并后由 reconcile 自动解锁补位。
 静默只告警，不取消、不重派。
@@ -38,16 +38,18 @@ exact identity 固定为 `(tid, attempt, execution_id)`：
 
 ## 唯一动作来源
 
-每次被唤醒——worker 通知、5 分钟 cron、integrate 完成、用户消息——严格执行：
+每次被唤醒——worker 通知、10 分钟 cron、integrate 完成、用户消息——严格按顺序：
 
-1. 用 `task.py ps` 与 attempt 控制面读取当前 exact identity、executor、状态和 `host_worker_id`。
-2. 根据 `host_worker_id` 查询宿主后台任务状态。
-3. 对宿主仍为 running 的 identity 执行：
+1. 用 `task.py ps` 读取当前所有 in-flight identity 的 `(tid, attempt, execution_id, executor, host_worker_id, state)`。后续步骤的身份参数均取自此处。
+
+2. 对 state 为 running 的 identity 逐一 **observe**——为静默监控写入新 fingerprint（reconcile 只回读已有 observation，不生成新的）：
 
    ```bash
    python3 scripts/repo_template/task.py observe {tid} \
      --attempt {N} --execution-id {EXECUTION_ID} --json
    ```
+
+3. **按 `host_worker_id` 查询宿主后台任务状态**——这是发现宿主已完成但通知丢失的唯一兜底手段。
 
 4. 对宿主已进入 `completed|failed|stopped` 的 identity，先记录 exact terminal：
 
@@ -66,7 +68,7 @@ exact identity 固定为 `(tid, attempt, execution_id)`：
      [--class infra|contract|task] [--reason {REASON}]
    ```
 
-6. 执行：
+6. 执行 reconcile——读取所有 identity 状态并生成唯一动作计划：
 
    ```bash
    python3 scripts/repo_template/task.py reconcile --limit N [--tids 授权范围] \
@@ -93,8 +95,8 @@ worker 不发送 heartbeat/progress，不调用 observe，不写 attempt 控制�
 ## 空闲许可与 cron
 
 - 只有 reconcile plan 为空且没有 silent hold，才允许结束回合。
-- 启动调度时注册一个每 5 分钟 cron；授权范围全部终态后注销。
-- cron 提示语必须包含：按 `host_worker_id` 查询宿主状态 → observe running exact identities → terminal → report → reconcile → 执行计划。
+- 启动调度时注册一个每 10 分钟 cron；授权范围全部终态后注销。
+- cron 提示语必须包含：ps 枚举 in-flight identity → observe running identity → 按 `host_worker_id` 查询宿主状态 → 对已完成的写 terminal/report → reconcile → 执行计划。
 - integrate 完成后不等待 cron 或通知，回合内立即再跑一轮。
 
 ## 收汇报与分诊
