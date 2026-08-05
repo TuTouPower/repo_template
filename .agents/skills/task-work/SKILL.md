@@ -6,21 +6,21 @@ disable-model-invocation: true
 
 # task-work
 
-在给定 worktree 内以 exact identity 执行单个 task，止于一个执行 commit。本 skill 是 **worker 角色**：只写自己的 worktree，不碰主仓，也不写 attempt 控制面。状态机、目录权责、角色边界见 `AGENTS.md`；门禁数字见本 skill。
+在给定 worktree 内以 exact identity 执行单个 task，止于一个执行 commit。本 skill 只覆盖 worktree 内实施：主仓 attempt 控制面命令（reserve/terminal/report/cleanup-worktree/integrate）与分支合并由 `task-run` 队列循环承担。状态机、目录权责见 `AGENTS.md`；门禁数字见本 skill。
 
 ## 执行已获批准
 
-用户或 coordinator 触发本 skill 表示批准把该 task 执行至执行 commit 完成。禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述计划征求同意，禁止把 spec 已写明内容再问一遍。直接从 Step 1 开始。
+触发本 skill 表示批准把该 task 执行至执行 commit 完成。禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述计划征求同意，禁止把 spec 已写明内容再问一遍。直接从 Step 1 开始。
 
-## worker 边界
+## 实施边界
 
-本 skill 全程只在调用方已经创建并登记的 task worktree 内进行。`start`、`attempt reserve/bind/terminal/report/escalate/silent-alert`、`observe`、`cleanup-worktree`、`integrate`、`integrate-chain` 都属于 coordinator，worker 不调用。
+本 skill 全程只在已创建并登记的 task worktree 内进行。`start`、`attempt reserve/terminal/report`、`cleanup-worktree`、`integrate`、`integrate-chain` 都属于 `task-run` 队列循环，本 skill 不调用。
 
-禁止：写主仓 attempt 控制面、合并任何分支、`task.py list --rebuild`、`git push`、删除分支、清理自己的 worktree、修改其他 task 的文件、询问是否合并主干。worker 的唯一机器交接是本 task 分支中的 `handoff.json`。
+禁止：写主仓 attempt 控制面、合并任何分支、`task.py list --rebuild`、`git push`、删除分支、清理自己的 worktree、修改其他 task 的文件、询问是否合并主干。本 skill 入库的机器执行证据是 task 分支中的 `handoff.json`。
 
 ## 输入
 
-三个值均必填：`tid=tNNN`、非 bool 的正整数 `attempt`、非空字符串 `execution_id`。task 须为 `backlog` / `active`；worktree 必须已由调用方创建，identity 必须来自 `task.py attempt reserve` 并与本次执行完全一致。`host_worker_id` 只是 coordinator 的 agent 宿主句柄，不是本 skill 输入，也不得代替 `execution_id`。`blocked` 须用户先放行或改判。
+三个值均必填：`tid=tNNN`、非 bool 的正整数 `attempt`、非空字符串 `execution_id`。task 须为 `backlog` / `active`；worktree 必须已由 `task-run` 创建，identity 必须来自 `task.py attempt reserve` 并与本次执行完全一致。`blocked` 须用户先放行或改判。
 
 ## 单 task 流程
 
@@ -49,19 +49,19 @@ flowchart TD
 
 | 状态 / 证据 | 从哪继续 |
 |-------------|---------|
-| 无 task worktree，或当前目录/分支不归属 tid | 停止，交 coordinator 修复 start/ownership；worker 不自行 start |
+| 无 task worktree，或当前目录/分支不归属 tid | 停止，回到 task-run 修复 start/ownership；本 skill 不自行 start |
 | `active`，无 preflight/红灯证据 | Step 1 |
 | 红已有、实现未完 | Step 3 |
 | 绿过、黑盒未过 | Step 4 |
 | 黑盒过、无审阅 | Step 5 |
 | 有 FAIL、未满轮 | Step 6 处置后按表回流 |
 | `blocked` | 停止，呈 blocked 选项 |
-| `done` / `dropped` | 不改动，交出 branch 与 HEAD；coordinator 仍以 exact handoff/attempt gate 判断 |
+| `done` / `dropped` | 不改动，交出 branch 与 HEAD；task-run 仍以 exact handoff/attempt gate 判断 |
 
 ### Step 1：开干与前置
 
-1. worktree 必须已由调用方创建并登记。扇出由 `task-dispatch` 先 `start <tid>`；链式由 `task-run` 先 `start <tid> [--base <前一分支>]`。本 skill 不进入主仓、不执行 start，也不 reserve/bind attempt。
-2. 记录本次必填 identity `(tid, attempt, execution_id)`；后续生成的 `handoff.json` 必须逐字段使用这组值，不得用 `host_worker_id`、旧 handoff 或“当前最新 attempt”替代。
+1. worktree 必须已由 task-run 创建并登记（`task-run` 先 `start <tid> [--base <前一分支>]`）。本 skill 不进入主仓、不执行 start，也不 reserve attempt。
+2. 记录本次必填 identity `(tid, attempt, execution_id)`；后续生成的 `handoff.json` 必须逐字段使用这组值，不得用旧 handoff 或“当前最新 attempt”替代。
 3. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停止，先解决环境或走 spike。
 4. 执行 `scripts/repo_template/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
@@ -148,8 +148,8 @@ flowchart TD
   }
   ```
   `tid`、非 bool 的正整数 `attempt`、非空字符串 `execution_id` 必须逐字等于本 skill 输入；`status` 与 task 终态一致；`branch` 是当前 task 分支；`base_sha` 是执行 commit 前 HEAD 的完整 SHA，且必须等于 task `diff_anchor`。`tests`、`blackbox`、`review` 都必须是非空字符串；`pending`、`findings` 必须是字符串数组，没有条目时写 `[]`。所有字段逐项必填。
-- worker 不写 attempt 控制面，也不记录 terminal/report/integrated；coordinator 读取已入库 handoff 后，以同一 exact identity 完成后续生命周期。
-- 其他 task 若受本 task 影响需改 spec，不在此直接改——扇出模型下改动只存在于本分支，其他 worker 看不到且合并时制造冲突。列进交出汇报，由 coordinator 处置。
+- 本 skill 不写 attempt 控制面，也不记录 terminal/report/integrated；task-run 读取已入库 handoff 后，以同一 exact identity 完成后续生命周期。
+- 其他 task 若受本 task 影响需改 spec，不在此直接改——手动并发下其他会话看不到本分支改动，且合并时制造冲突。列进交出汇报，由 task-run 处置。
 
 **7b finish**：
 
@@ -185,4 +185,4 @@ scripts/repo_template/task.py finish <tid>
 {tid} attempt={N} execution_id={ID}: {branch} @ {sha}
 ```
 
-交接本体是已入库的 `handoff.json`（7a），这行只是给 coordinator 的 exact identity 与 ref 线索。另附：测试与黑盒结果、review 轮次与结论、登记的 `pNNN` / `dNNN`、worktree 路径（待 coordinator cleanup）。worker 到此结束，不写 terminal/report、不 cleanup、不 integrate；停止时改为汇报当前阻塞与恢复入口。
+交接本体是已入库的 `handoff.json`（7a），这行只是给 task-run 的 exact identity 与 ref 线索。另附：测试与黑盒结果、review 轮次与结论、登记的 `pNNN` / `dNNN`、worktree 路径（待 task-run cleanup）。本 skill 到此结束，不写 terminal/report、不 cleanup、不 integrate；停止时改为汇报当前阻塞与恢复入口。

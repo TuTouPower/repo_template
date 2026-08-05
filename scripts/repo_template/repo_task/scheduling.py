@@ -97,8 +97,10 @@ def compute_schedule() -> dict:
 
     # done 分两种语义：
     # - main_done_set：已合入 main 的 done（scan_tasks 读当前工作区=main 视角），
-    #   用于解依赖/解冲突——只有前置真正入 main，下游才算可跑。
-    # - effective done（tasks 里 status=done）：含未合并分支的 done，仅计数展示。
+    #   仅用于 view 计数展示与冲突判定的「资源已释放」边界。
+    # - effective done（tasks 里 status=done）：含未合并分支的 done。
+    #   调度判断（解依赖、解冲突）用完成口径——done/dropped 即满足，
+    #   不要求已合并主干；与 cmd_start 调度门口径一致。
     main_tasks = {task["tid"]: task for task in scan_tasks()}
     main_done_set = {
         tid for tid, task in main_tasks.items() if task["status"] == "done"
@@ -109,10 +111,11 @@ def compute_schedule() -> dict:
     unmerged_done = sorted(
         effective_done_set - main_done_set, key=tid_sort_key
     )
-    done_set = main_done_set  # 调度判断用 main 视角
+    done_set = effective_done_set  # 解依赖用完成口径
     dropped_set = {
         tid for tid, task in tasks.items() if task["status"] == "dropped"
     }
+    satisfied_set = done_set | dropped_set  # dropped 也视为依赖满足
     active_list = sorted(
         (
             tid for tid, task in tasks.items()
@@ -142,25 +145,22 @@ def compute_schedule() -> dict:
         if not schedule:
             unscheduled.append(tid)
             continue
-        # scheduled：检查依赖
+        # scheduled：检查依赖（完成口径）
         missing_deps = [
-            dep for dep in dependencies.get(tid, []) if dep not in done_set
+            dep for dep in dependencies.get(tid, []) if dep not in satisfied_set
         ]
         if missing_deps:
             for dep in sorted(missing_deps, key=tid_sort_key):
                 waiting_deps.append((dep, tid))
             continue
-        # 检查冲突：peer 真正占资源（active/blocked/未合 main 的 done）才阻塞；
-        # peer 是 backlog 时，序号小者优先，序号大者被序号小者阻塞（强制择一）。
+        # 检查冲突：与 cmd_start 对齐——只看 active/blocked 占资源；
+        # done（无论是否合 main）与 dropped 都视为已释放，不阻塞。
         blocking = []
         for peer in conflicts[tid]:
-            if peer in main_done_set or peer in dropped_set:
+            if peer in satisfied_set:
                 continue
             peer_status = tasks[peer]["status"]
             if peer_status in ("active", "blocked"):
-                blocking.append(peer)
-            elif peer_status == "done":
-                # 未合 main 的 done：占住资源，阻塞
                 blocking.append(peer)
             elif peer_status == "backlog":
                 # backlog peer：序号小者优先，序号大者被阻塞

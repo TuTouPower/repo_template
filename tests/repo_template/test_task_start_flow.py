@@ -1425,7 +1425,7 @@ def test_view_dag_conflicts_and_groups(git_repo):
 
 
 def test_view_shows_active_conflict_block(git_repo):
-    """冲突 task 未合入 main 前一直阻塞；合入 main 后才解冲突进下一批。"""
+    """active task 占资源阻塞冲突方；done（不论是否合 main）即释放，冲突方解阻塞。"""
     for tid in ("t001", "t002"):
         result = _task_cli(
             git_repo, "edit", tid, "--schedule-status", "scheduled"
@@ -1443,21 +1443,13 @@ def test_view_shows_active_conflict_block(git_repo):
     assert "t002 ↔ t001" in active.stdout
     assert "t002 ↔ t001  — t002: beta" in active.stdout
 
-    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    # t001 done 但未合入 main：t002 仍被冲突阻塞
+    _finish_commit_cleanup(git_repo, "t001", "alpha")
+    # t001 done（完成口径）即释放资源；即使未合 main，t002 也解冲突进可跑。
     unmerged = _task_cli(git_repo, "view")
     assert unmerged.returncode == 0, unmerged.stderr
-    assert "▸ 被冲突阻塞" in unmerged.stdout
-    assert "t002 ↔ t001" in unmerged.stdout
+    assert "▸ 下一批可跑" in unmerged.stdout
+    assert "t002" in unmerged.stdout
     assert "未入 main" in unmerged.stdout
-
-    # 合入 main 后 t001 进 main_done_set，t002 解冲突进下一批
-    _git(git_repo, "merge", "--ff-only", branch)
-    completed = _task_cli(git_repo, "view")
-    assert completed.returncode == 0, completed.stderr
-    assert "▸ 下一批可跑" in completed.stdout
-    assert "t002" in completed.stdout
-    assert "未入 main" not in completed.stdout
 
 
 def test_view_handles_diamond_dependencies(git_repo):
@@ -1803,32 +1795,6 @@ def test_attempt_reserve_and_start_are_separate_events(git_repo):
     assert [event["event"] for event in events] == ["attempt_reserved", "start"]
     assert events[0]["execution_id"] == identity["execution_id"]
     assert "execution_id" not in events[1]
-
-
-def test_agent_cli_reserve_bind_terminal_keeps_execution_and_host_separate(git_repo):
-    reserved = _task_cli(
-        git_repo, "attempt", "reserve", "t001", "--executor", "agent"
-    )
-    identity = json.loads(reserved.stdout)
-    common = [
-        "--attempt", str(identity["attempt"]),
-        "--execution-id", identity["execution_id"],
-    ]
-    bound = _task_cli(
-        git_repo, "attempt", "bind", "t001", *common,
-        "--host-worker-id", "host-task-123",
-    )
-    assert bound.returncode == 0, bound.stderr
-    terminal = _task_cli(
-        git_repo, "attempt", "terminal", "t001", *common, "--status", "completed"
-    )
-    assert terminal.returncode == 0, terminal.stderr
-    events = _ledger(git_repo)
-    assert events[0]["execution_id"] == identity["execution_id"]
-    assert "host_worker_id" not in events[0]
-    assert events[1]["host_worker_id"] == "host-task-123"
-    assert events[1]["execution_id"] == identity["execution_id"]
-    assert events[2]["execution_id"] == identity["execution_id"]
 
 
 def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):

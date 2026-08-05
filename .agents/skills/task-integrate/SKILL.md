@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # task-integrate
 
-把已完成 task 分支合并进本地主干。本 skill 是 **coordinator 角色**：主仓唯一写者。角色边界见 `AGENTS.md`「执行角色与合并时机」。
+把已完成 task 分支合并进本地主干。本 skill 由 `task-run` 在队列链尾（或单 task 路径）调用，是主仓主干合并的唯一入口。合并时机与分支形态见 `AGENTS.md`「职责分工与合并时机」。
 
 单 task 与链式聚合是两个独立入口：
 
@@ -17,9 +17,9 @@ disable-model-invocation: true
 
 ## 前提
 
-- 已取得会话级合并授权。`task-dispatch` 因完成即合并而在启动时取得；`task-run` 可在启动时取得，也可在整链完成后、首次 `integrate-chain` 前只询问一次；单独调用本 skill 视为用户当次授权。
-- worker 已在自身分支完成一个执行 commit，并写入完整 `handoff.json`。
-- coordinator 已按 exact identity `(tid, attempt, execution_id)` 写入 terminal 与 report。
+- 已取得会话级合并授权。`task-run` 可在启动时取得，也可在整链完成后、首次 `integrate-chain` 前只询问一次；单独调用本 skill 视为用户当次授权。
+- 待合成员已在自身分支完成一个执行 commit，并写入完整 `handoff.json`。
+- 待合成员已按 exact identity `(tid, attempt, execution_id)` 写入 terminal 与 report。
 - 只在主仓主干调用本 skill；不 push、不动远程。
 
 ## Handoff 契约
@@ -56,7 +56,7 @@ scripts/repo_template/task.py cleanup-worktree {tid} \
 cleanup 永远要求 `--attempt` 与 `--execution-id`，并在删除 worktree 前同时通过：
 
 1. identity 精确等于该 tid 的 current attempt；
-2. executor terminal 为 `completed`（escalated 且 terminal=completed 的 identity 视作用户已裁决，放行——escalate 是「暂停自动处置」标记而非终态覆盖，reconcile 不自动输出 integrate，但手动 cleanup/integrate 可继续）；
+2. executor terminal 为 `completed`；
 3. 不存在未闭环或非法重叠 attempt；
 4. branch tip 与 task 终态一致；
 5. `handoff.json` identity、status、branch、字段类型与 `base_sha == branch tip first parent` 全部成立；
@@ -129,7 +129,7 @@ prepared -> merged(merge_sha) -> indexed(index_sha)
 
 ### 合并后验证与最终 finalize
 
-首次 `integrate-chain {TAIL_TID}` 或冲突恢复的第一次 `--continue` 最多推进到 `awaiting_verification`，不会删除分支或 transaction。coordinator 随后执行 `docs/blueprint/testing.md` 声明的合并后验证：
+首次 `integrate-chain {TAIL_TID}` 或冲突恢复的第一次 `--continue` 最多推进到 `awaiting_verification`，不会删除分支或 transaction。随后执行 `docs/blueprint/testing.md` 声明的合并后验证：
 
 - 验证失败：停止，保留 transaction、exact integrated 与所有链分支；不得调用最终 continue。
 - 验证通过：再次执行同一命令，作为显式 finalize 确认：
@@ -161,9 +161,9 @@ scripts/repo_template/task.py integrate-chain {TAIL_TID} --continue
 ## 合并后验证与边界
 
 - 执行 `docs/blueprint/testing.md` 声明的合并后动作与验证。失败时停止后续 integrate，准确报告主干已发生的 merge/index 状态，交用户裁决，不盲目重试或回退。
-- worker 上报的跨 task 影响，在合并后主干另行处置；不得混入 merge、integrated 或 index commit。
+- `task-work` 交出汇报中提到的跨 task 影响，在合并后主干另行处置；不得混入 merge、integrated 或 index commit。
 - 本 skill 不修改 task 内容、spec、代码或测试；发现门禁外内容需改动时停止并报告。
-- 不启动 task、不执行 task、不写 worker handoff。
+- 不启动 task、不执行 task、不写 handoff.json。
 
 ## 完成
 

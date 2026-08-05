@@ -80,8 +80,9 @@ def unlink_managed_env_links(worktree: Path) -> None:
 def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
     """解析 start base。
 
-    串行（task-run）链式：后一个 task 从上一个已完成 task 分支创建，传 `--base`。
-    并行（task-dispatch）扇出：每个 task 从主干 HEAD 创建，不传。
+    `task-run` 链式：后一个 task 从上一个已完成 task 分支创建，传 `--base`。
+    多会话手动并发：用户未传 `--base` 且最新前置未合并主干时，由 `cmd_start`
+    自动落到前置分支 tip（见 integration.py）；否则从主干 HEAD 创建。
     """
     primary = default_branch()
     base_branch, base_sha = resolve_local_branch(base_arg or primary)

@@ -85,15 +85,15 @@ disable-model-invocation: true
 
    结论：
    - 有阻塞：先补齐「是」的行，再执行
-   - 或：无阻塞；执行请 /task-run（串行）或 /task-dispatch（并行）
+   - 或：无阻塞；执行请 /task-run（可多会话手动并发各跑一段）
    ```
 
 ## 边界
 
 - 只读：不改代码、测试、task 状态、环境。`task.py preflight`、`list/show --ref` 只读不写。
 - 不把主干中被 worktree 或未合并分支覆盖的旧 backlog 当成待启动 task。
-- 不自动执行 task；无阻塞时只**提示**用户可自行 `/task-run` 或 `/task-dispatch`。
+- 不自动执行 task；无阻塞时只**提示**用户可自行 `/task-run`（多会话手动并发各跑一段）。
 
 ## 完成
 
-输出缺口表 + 结论。有阻塞→先补齐再执行；无→提示 `/task-run` 或 `/task-dispatch`。
+输出缺口表 + 结论。有阻塞→先补齐再执行；无→提示 `/task-run`（多会话手动并发各跑一段）。

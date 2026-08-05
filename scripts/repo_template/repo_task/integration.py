@@ -19,6 +19,7 @@ from .git_ops import (
     _get_head_short,
     _git,
     default_branch,
+    has_unmerged_commits,
     porcelain_entries,
     require_primary_worktree,
     resolve_local_branch,
@@ -30,6 +31,7 @@ from .monitoring import verify_integrate_ready
 from .store import (
     _local_task_branches,
     _task_branch_names,
+    discover_effective_tasks,
     git_text_at_ref,
     load_task_at_ref,
     rebuild_index,
@@ -44,9 +46,45 @@ from .worktrees import (
 )
 
 
+def _order_by_ancestry(branches: list[str]) -> list[str] | None:
+    """若 branches 构成单条祖先链（A→B→C，每个后继含前驱），返回有序列表；
+    否则返回 None。用 git merge-base --is-ancestor 判定。"""
+    if not branches:
+        return []
+    # 任一对 (a, b)：a 是 b 的祖先 ⟺ a 排在 b 前
+    pairs = {a: {b for b in branches if b != a and _is_ancestor(a, b)} for a in branches}
+    # 链头：不是任何其他分支的后继
+    heads = [a for a in branches if not any(a in pairs[b] for b in branches if b != a)]
+    tails = [a for a in branches if not pairs[a]]
+    if len(heads) != 1 or len(tails) != 1:
+        return None
+    # 从 head 起按祖先链顺出
+    ordered = [heads[0]]
+    remaining = set(branches) - {heads[0]}
+    while remaining:
+        # 找下一个：是当前链尾的后继，且其所有祖先已在链中
+        current_tip = ordered[-1]
+        candidates = [b for b in remaining if current_tip in pairs[b] or _is_ancestor(current_tip, b)]
+        # 严格单链：candidates 应恰好 1
+        direct = [b for b in remaining if _is_ancestor(current_tip, b) and all(
+            ancestor in ordered for ancestor in pairs[b]
+        )]
+        if len(direct) != 1:
+            return None
+        ordered.append(direct[0])
+        remaining.discard(direct[0])
+    return ordered
+
+
+def _is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
+    r = _git(["merge-base", "--is-ancestor", maybe_ancestor, descendant])
+    return r.returncode == 0
+
+
 def cmd_start(args):
     require_primary_worktree()
-    base_branch, base_sha = resolve_start_base(getattr(args, "base", None))
+    base_arg = getattr(args, "base", None)
+    base_branch, base_sha = resolve_start_base(base_arg)
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")
     spec_path = f"{task['dir']}/spec.md"
@@ -57,6 +95,66 @@ def cmd_start(args):
     problems, _ = validate_task_documents(spec_text, ref_task_body)
     if problems:
         sys.exit("start=FAIL：" + "；".join(problems))
+
+    effective = discover_effective_tasks()
+    depends_on = [t for t in str(ref_fm.get("depends_on", "")).split(",") if t.strip()]
+    conflicts_with = [t for t in str(ref_fm.get("conflicts_with", "")).split(",") if t.strip()]
+
+    # 依赖硬拒（完成口径：done/dropped 即满足，不要求已合并主干）。
+    unmet = []
+    for dep in depends_on:
+        dep_task = effective.get(dep)
+        dep_status = dep_task["status"] if dep_task else None
+        if dep_status not in ctx.ARCHIVED_STATUSES:
+            unmet.append(f"{dep}({dep_status or '缺失'})")
+    if unmet:
+        sys.exit(f"start=FAIL：{args.tid} 依赖未满足：{', '.join(unmet)}")
+
+    # 冲突只警告：「正在运行」= 登记 worktree 存在 且 status=active。
+    running_conflicts = []
+    for c in conflicts_with:
+        c_task = effective.get(c)
+        if not c_task:
+            continue
+        if c_task["status"] == "active":
+            c_wt = (ctx.REPO_ROOT / ctx.worktree_rel_path(c)).resolve()
+            if str(c_wt) in worktree_paths():
+                running_conflicts.append(c)
+
+    # 用户未显式指定 base 时，若前置未合并主干，自动落到其分支 tip。
+    # 多依赖时：所有未合并依赖必须位于同一祖先链（链式自然形态）；
+    # 否则拒绝 start——手动合并前置或先 integrate 主干后再跑。
+    if base_arg is None and depends_on:
+        unmerged_dep_branches = []
+        for dep in depends_on:
+            for branch in _task_branch_names(dep):
+                if has_unmerged_commits(branch):
+                    unmerged_dep_branches.append(branch)
+        if unmerged_dep_branches:
+            chosen_branch = None
+            if len(unmerged_dep_branches) == 1:
+                chosen_branch = unmerged_dep_branches[0]
+            else:
+                ordered = _order_by_ancestry(unmerged_dep_branches)
+                if ordered is None:
+                    sys.exit(
+                        f"start=FAIL：{args.tid} 多个未合并依赖分支不构成单条祖先链："
+                        f"{', '.join(unmerged_dep_branches)}；"
+                        "请先把这些前置 integrate 进主干，或显式指定 --base"
+                    )
+                chosen_branch = ordered[-1]
+            base_branch, base_sha = resolve_start_base(chosen_branch)
+            # 重读 task/spec 于新 base，确保文档校验针对实际起点。
+            task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
+            require_status(ref_fm, "backlog")
+            try:
+                spec_text = git_text_at_ref(base_sha, spec_path)
+            except ctx.TaskDataError:
+                sys.exit("start=FAIL：缺 spec.md")
+            problems, _ = validate_task_documents(spec_text, ref_task_body)
+            if problems:
+                sys.exit("start=FAIL：" + "；".join(problems))
+
     branch = f"{ref_fm['tid']}_{ref_fm['slug']}"
     worktree_rel = ctx.worktree_rel_path(ref_fm["tid"])
     worktree = (ctx.REPO_ROOT / worktree_rel).resolve()
@@ -94,6 +192,11 @@ def cmd_start(args):
     if linked:
         print(f"已软链本地配置：{', '.join(linked)}")
     print(f"下一步：cd {worktree_rel} 后在该工作区执行 preflight 与后续所有步骤")
+    if running_conflicts:
+        print(
+            f"警告：{args.tid} 与正在运行的 task 冲突：{', '.join(running_conflicts)}"
+            "（冲突为静态推导，已放行；合并撞车由 git 报错收场）"
+        )
     _ledger_append_safely({
         "event": "start", "tid": args.tid, "branch": branch, "worktree": worktree_rel,
     })
@@ -123,9 +226,9 @@ def _require_execution_gate(
     events = ledger_read()
     record = require_exact_terminal(
         tid, attempt, execution_id, events,
-        allow_integrated=allow_integrated, allow_escalated=True,
+        allow_integrated=allow_integrated,
     )
-    if record["state"] in ("terminal", "escalated") and record["terminal_status"] != "completed":
+    if record["state"] == "terminal" and record["terminal_status"] != "completed":
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} terminal status={record['terminal_status']!r}，"
             "只有 completed 可 cleanup/integrate"

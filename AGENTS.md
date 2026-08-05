@@ -17,7 +17,7 @@
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` / `integrate-chain` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
-| `docs/runtime/dispatch_ledger.jsonl` | 全部执行拓扑共用的 attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/bind/terminal/report/escalate/silent-alert` 写入，`observe` 写精确绑定 identity 的 `observation`，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note`，`ledger tail` 只读；禁止手工编辑 |
+| `docs/runtime/dispatch_ledger.jsonl` | attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/terminal/report` 写入，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note`，`ledger tail` 只读；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -39,7 +39,7 @@
 | `scripts/` | 用户项目脚本 | 仅在 task 执行期按 spec 修改；debug 复现不得写入 |
 | `scripts/repo_template/` | 模板自带 task 工具链：`task.py` 是 CLI/兼容 façade，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等 | 仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目 |
 | `artifacts/` `data/` `.scratch/` | 产物、运行数据、一次性草稿 | 运行与草稿；debug 复现和临时实验只写 `.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/` |
-| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：扇出拓扑从主干 HEAD 创建，链式拓扑以 `--base` 指向上一已完成 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个执行 commit，worker 写 exact identity 的 `handoff.json`，coordinator 以同一 identity 清理 worktree 并按拓扑合并；本地 `.env` 软链回主仓 |
+| `../{repo}_{tid}/`（仓库外） | task 工作副本（git worktree） | `start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：链式拓扑以 `--base` 指向上一已完成 task 分支；active/blocked task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个执行 commit，实施阶段写 exact identity 的 `handoff.json`，调度阶段以同一 identity 清理 worktree 并合并；本地 `.env` 软链回主仓 |
 
 ## 开发工作流
 
@@ -53,9 +53,9 @@
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
-### 执行角色与合并时机
+### 职责分工与合并时机
 
-worker 只写自己的 worktree，coordinator 是主仓唯一写者；执行拓扑（链式/扇出）、attempt 生命周期与合并授权细节见 `docs/blueprint/architecture_repo_template.md`。
+实施阶段只写 worktree，调度合并阶段写主仓；attempt 生命周期与合并授权细节见 `docs/blueprint/architecture_repo_template.md`。
 
 ### skill 调用
 
@@ -65,8 +65,8 @@ worker 只写自己的 worktree，coordinator 是主仓唯一写者；执行拓�
 |----------|-------|------|
 | 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
 | 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
-| 并行跑多个 task | `task-dispatch` | coordinator：扇出 start，reserve/bind agent attempt，按 identity 观察与收终态，完成即 cleanup/integrate；静默只告警并暂停调度，详见 `docs_repo/plan_worker_silence_monitoring.md` |
 | 串行跑完待做 task | `task-run` | 链式串行：每 task reserve inline attempt、一个执行 commit、中间 exact cleanup、后继 `--base` 前分支；链尾一次 `integrate-chain` |
+| 多会话手动并发 | 用户自决 | `task-schedule` 后用户在多个会话各跑 `task-run` 一段；`task.py view --serve` 起看板呈现依赖/冲突/运行中状态。无自动调度器，合并撞车由 git 报错收场 |
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
 | 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
@@ -78,10 +78,10 @@ worker 只写自己的 worktree，coordinator 是主仓唯一写者；执行拓�
 
 | skill | 调用方 | 职责 |
 |-------|--------|------|
-| `task-work` | `task-dispatch` 派发给 agent worker；`task-run` 以内联 worker 调用 | worker：以必填 `(tid, attempt, execution_id)` 在自身 worktree 实施至一个执行 commit，并写完整 `handoff.json` |
-| `task-integrate` | `task-dispatch` 收汇报后；`task-run` 链全部完成后 | coordinator：单 task 使用 exact cleanup + `integrate`；链式先逐成员 exact cleanup，最终 `integrate-chain` 聚合校验后一次合链尾 |
+| `task-work` | `task-run` 在队列循环中调用 | 在自身 worktree 实施至一个执行 commit，并写完整 `handoff.json`；不碰主仓控制面与分支合并 |
+| `task-integrate` | `task-run` 链全部完成后 | 主干合并入口：单 task 用 exact cleanup + `integrate`；链式先逐成员 exact cleanup，最终 `integrate-chain` 聚合校验后一次合链尾 |
 
-典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（扇出）或 `/task-run`（链式）。
+典型路径：`/task-create` → `/task-schedule` → `task.py view --serve` 起看板 → 一个或多个会话 `/task-run`（多会话手动并发各跑一段）。
 
 ### `scripts/repo_template/task.py` 使用示例
 

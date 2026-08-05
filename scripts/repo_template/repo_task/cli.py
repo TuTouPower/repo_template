@@ -6,17 +6,12 @@ import sys
 import repo_task.context as ctx
 
 from .control import (
-    cmd_attempt_bind,
-    cmd_attempt_escalate,
     cmd_attempt_report,
     cmd_attempt_reserve,
-    cmd_attempt_silent_alert,
     cmd_attempt_terminal,
     cmd_ledger_record,
     cmd_ledger_tail,
-    cmd_observe,
     cmd_ps,
-    cmd_reconcile,
     cmd_view,
 )
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
@@ -122,6 +117,9 @@ def main():
     show.set_defaults(func=cmd_show)
 
     view = sub.add_parser("view", help="task 调度全景")
+    view.add_argument("--serve", action="store_true", help="启动本地只读看板服务并打开浏览器")
+    view.add_argument("--host", default="127.0.0.1")
+    view.add_argument("--port", type=int, default=0)
     view.set_defaults(func=cmd_view)
 
     attempt = sub.add_parser("attempt", help="统一 exact attempt 生命周期")
@@ -132,12 +130,6 @@ def main():
     reserve.add_argument("--executor", required=True, choices=ctx.ATTEMPT_EXECUTORS)
     reserve.add_argument("--model")
     reserve.set_defaults(func=cmd_attempt_reserve)
-
-    bind = attempt_sub.add_parser("bind", help="绑定 agent execution 与宿主 worker")
-    bind.add_argument("tid")
-    _add_identity(bind)
-    bind.add_argument("--host-worker-id")
-    bind.set_defaults(func=cmd_attempt_bind)
 
     terminal = attempt_sub.add_parser("terminal", help="标记 exact attempt 宿主终态")
     terminal.add_argument("tid")
@@ -153,18 +145,6 @@ def main():
     report.add_argument("--class", dest="fail_class", choices=ctx.LEDGER_FAIL_CLASSES)
     report.add_argument("--reason")
     report.set_defaults(func=cmd_attempt_report)
-
-    escalate = attempt_sub.add_parser("escalate", help="terminal attempt 转人工处置")
-    escalate.add_argument("tid")
-    _add_identity(escalate)
-    escalate.add_argument("--reason", required=True)
-    escalate.set_defaults(func=cmd_attempt_escalate)
-
-    silent = attempt_sub.add_parser("silent-alert", help="记录 exact fingerprint 静默告警")
-    silent.add_argument("tid")
-    _add_identity(silent)
-    silent.add_argument("--fingerprint", required=True)
-    silent.set_defaults(func=cmd_attempt_silent_alert)
 
     cleanup = sub.add_parser("cleanup-worktree", help="清理 exact terminal attempt worktree")
     cleanup.add_argument("tid")
@@ -183,24 +163,9 @@ def main():
     chain.add_argument("--continue", dest="continue_merge", action="store_true")
     chain.set_defaults(func=cmd_integrate_chain)
 
-    observe = sub.add_parser("observe", help="观察 exact running attempt")
-    observe.add_argument("tid")
-    _add_identity(observe)
-    observe.add_argument("--json", action="store_true")
-    observe.set_defaults(func=cmd_observe)
-
     ps_parser = sub.add_parser("ps", help="attempt 活表")
     ps_parser.add_argument("--all", action="store_true")
-    ps_parser.add_argument("--silent-minutes", type=int, default=30)
     ps_parser.set_defaults(func=cmd_ps)
-
-    reconcile = sub.add_parser("reconcile", help="只读生成 attempt 调度建议")
-    reconcile.add_argument("--limit", type=int, default=3)
-    reconcile.add_argument("--tids")
-    reconcile.add_argument("--silent-minutes", type=int, default=30)
-    reconcile.add_argument("--max-auto-retries", type=int, default=1)
-    reconcile.add_argument("--json", action="store_true")
-    reconcile.set_defaults(func=cmd_reconcile)
 
     ledger = sub.add_parser("ledger", help="非生命周期账本记录与读取")
     ledger_sub = ledger.add_subparsers(dest="ledger_cmd", required=True)

@@ -65,7 +65,7 @@ def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):
     assert external.returncode == 0, external.stderr
     assert "attempt" in external.stdout
     assert "integrate-chain" in external.stdout
-    assert "observe" in external.stdout and "reconcile" in external.stdout
+    assert "ps" in external.stdout and "ledger" in external.stdout
 
     for command in ("cleanup-worktree", "integrate"):
         command_help = subprocess.run(
@@ -105,7 +105,7 @@ def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):
         errors="replace",
     )
     assert result.returncode == 0, result.stderr
-    assert "observe" in result.stdout
+    assert "ps" in result.stdout
 
 
 def test_submodules_do_not_import_facade():

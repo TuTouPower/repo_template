@@ -45,7 +45,7 @@ disable-model-invocation: true
 
 ## 边界
 
-- 新建时不写生产代码；编码与补测方向写进 spec 上下文区，等 `task-run` 或 `task-dispatch` 调度执行。
+- 新建时不写生产代码；编码与补测方向写进 spec 上下文区，等 `task-run` 调度执行。
 - 不把「已 done 且仅文档考古」无差别全建成 task。
 - 条目核实后判断不存在或已过时，不建 task；直接闭环归档即可。
 - 未修 bug 交给 `task-bug`；已验证的技术发现属 `docs/findings/`，不是待办，不转 task。

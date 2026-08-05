@@ -15,17 +15,12 @@ from repo_task.context import (
     worktree_rel_path,
 )
 from repo_task.control import (
-    cmd_attempt_bind,
-    cmd_attempt_escalate,
     cmd_attempt_report,
     cmd_attempt_reserve,
-    cmd_attempt_silent_alert,
     cmd_attempt_terminal,
     cmd_ledger_record,
     cmd_ledger_tail,
-    cmd_observe,
     cmd_ps,
-    cmd_reconcile,
     cmd_view,
 )
 from repo_task.documents import (
@@ -117,17 +112,8 @@ from repo_task.lifecycle import (
     cmd_show,
 )
 from repo_task.monitoring import (
-    _escalate_latched_attempts,
     _ledger_tid_sort_key,
-    _parent_dispatch_model,
-    _parse_instant,
-    _retry_or_escalate_action,
     compute_ps_rows,
-    compute_reconcile_plan,
-    dispatch_mode,
-    is_silent,
-    latest_observation,
-    observe_attempt,
     repository_fingerprint,
     verify_integrate_ready,
     worktree_dirty_summary,

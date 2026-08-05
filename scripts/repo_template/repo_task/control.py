@@ -1,28 +1,28 @@
-"""CLI control plane for attempts, ledger inspection, monitoring, and scheduling."""
+"""CLI control plane for attempts, ledger inspection, and monitoring."""
 
 import json
 import sys
-from datetime import datetime
 
 import repo_task.context as ctx
 
 from .attempts import (
-    bind_attempt,
-    escalate_attempt,
     report_attempt,
     reserve_attempt,
-    silent_alert_attempt,
     terminal_attempt,
 )
-from .documents import parse_tid_list, tid_sort_key
+from .documents import tid_sort_key
 from .git_ops import require_primary_worktree
 from .ledger import ledger_append, ledger_read
-from .monitoring import compute_ps_rows, compute_reconcile_plan, observe_attempt
+from .monitoring import compute_ps_rows
 from .scheduling import compute_schedule
 from .store import discover_effective_tasks, scan_tasks
 
 
 def cmd_view(args):
+    if getattr(args, "serve", False):
+        from .view_server import serve
+        serve(host=args.host, port=args.port)
+        return
     try:
         schedule = compute_schedule()
         tasks = schedule["tasks"]
@@ -95,13 +95,6 @@ def cmd_attempt_reserve(args):
     _print_json(reserve_attempt(args.tid, args.executor, args.model))
 
 
-def cmd_attempt_bind(args):
-    require_primary_worktree()
-    _print_json(bind_attempt(
-        args.tid, args.attempt, args.execution_id, args.host_worker_id
-    ))
-
-
 def cmd_attempt_terminal(args):
     require_primary_worktree()
     _print_json(terminal_attempt(
@@ -119,20 +112,6 @@ def cmd_attempt_report(args):
         sha=args.sha,
         fail_class=args.fail_class,
         reason=args.reason,
-    ))
-
-
-def cmd_attempt_escalate(args):
-    require_primary_worktree()
-    _print_json(escalate_attempt(
-        args.tid, args.attempt, args.execution_id, args.reason
-    ))
-
-
-def cmd_attempt_silent_alert(args):
-    require_primary_worktree()
-    _print_json(silent_alert_attempt(
-        args.tid, args.attempt, args.execution_id, args.fingerprint
     ))
 
 
@@ -178,35 +157,12 @@ def cmd_ledger_tail(args):
         print(" ".join(parts))
 
 
-def cmd_observe(args):
-    require_primary_worktree()
-    result = observe_attempt(
-        args.tid, args.attempt, args.execution_id, ledger_read()
-    )
-    if args.json:
-        print(json.dumps(result, ensure_ascii=False))
-        return
-    changed = "changed" if result["changed"] else "unchanged"
-    host = result["host_worker_id"] or "-"
-    print(
-        f"OBSERVE {result['tid']} attempt={result['attempt']} "
-        f"execution_id={result['execution_id']} {changed} "
-        f"fingerprint={result['fingerprint']} last_change={result['last_change']} "
-        f"silent={result['silent_minutes']}m host_worker_id={host} "
-        f"head={result['head']} worktree={result['worktree']} dirty={result['dirty']}"
-    )
-
-
 def cmd_ps(args):
     require_primary_worktree()
     events = ledger_read()
     effective = discover_effective_tasks()
     main_statuses = {task["tid"]: task["status"] for task in scan_tasks()}
-    rows = compute_ps_rows(
-        events, effective, main_statuses,
-        silent_minutes=args.silent_minutes,
-        now=datetime.now().astimezone(),
-    )
+    rows = compute_ps_rows(events, effective, main_statuses)
     if not args.all:
         rows = [row for row in rows if row["state"] not in ctx.ARCHIVED_STATUSES]
     if not rows:
@@ -214,7 +170,7 @@ def cmd_ps(args):
         return
     headers = [
         "tid", "attempt", "execution_id", "executor", "model",
-        "host_worker_id", "state", "last_activity", "note",
+        "state", "note",
     ]
     cells = [[str(row.get(key) or "-") for key in headers] for row in rows]
     # execution_id 32 位 hex 在 ps 表格中截断前 8 位展示；ledger tail 保留全量。
@@ -225,35 +181,3 @@ def cmd_ps(args):
     print("  ".join(headers[i].ljust(widths[i]) for i in range(len(headers))))
     for row in cells:
         print("  ".join(row[i].ljust(widths[i]) for i in range(len(headers))))
-
-
-def cmd_reconcile(args):
-    require_primary_worktree()
-    events = ledger_read()
-    schedule = compute_schedule()
-    scope = set(parse_tid_list(args.tids, field="--tids")) if args.tids else None
-    plan = compute_reconcile_plan(
-        events,
-        schedule,
-        limit=args.limit,
-        scope=scope,
-        silent_minutes=args.silent_minutes,
-        max_auto_retries=args.max_auto_retries,
-        now=datetime.now().astimezone(),
-    )
-    if args.json:
-        print(json.dumps(plan, ensure_ascii=False))
-        return
-    for action in plan["actions"]:
-        parts = [action["action"].upper(), action["tid"]]
-        for key in (
-            "attempt", "execution_id", "executor", "model", "host_worker_id", "mode"
-        ):
-            if action.get(key) is not None and action.get(key) != "":
-                parts.append(f"{key}={action[key]}")
-        print(" ".join(parts) + f" — {action['reason']}")
-    if not plan["actions"]:
-        print("plan 为空：静默告警保持暂停，不补 dispatch" if plan.get("silent_hold")
-              else "plan 为空：无待执行动作（可安全空闲）")
-    occupancy = plan["occupancy"]
-    print(f"占槽 {occupancy['used']}/{occupancy['limit']}")

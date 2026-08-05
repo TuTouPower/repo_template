@@ -49,45 +49,30 @@ def project_attempts(events: list[dict]) -> dict[tuple[str, int, str], dict]:
                 "execution_id": execution_id,
                 "executor": event.get("executor", ""),
                 "model": event.get("model", ""),
-                "host_worker_id": "",
-                "state": event.get("state", "reserved"),
+                "state": event.get("state", "running"),
                 "terminal_status": "",
                 "reserved": event,
-                "bound": None,
                 "terminal": None,
                 "report": None,
-                "observation": None,
-                "silent_alerted": [],
                 "integrated": None,
-                "escalated": None,
             }
             continue
         record = records.get(key)
         if record is None:
             continue
         if kind == "attempt_bound":
+            # 兼容旧 ledger：bind 已退役，但旧 agent attempt 的 reserved→bound
+            # 仍需转 running 才能继续 terminal/report/integrate。
             record["state"] = "running"
-            record["host_worker_id"] = event.get("host_worker_id", "")
-            record["bound"] = event
         elif kind == "attempt_terminal":
             record["state"] = "terminal"
             record["terminal_status"] = event.get("status", "")
             record["terminal"] = event
         elif kind == "report":
             record["report"] = event
-        elif kind == "observation":
-            record["observation"] = event
-        elif kind == "silent_alerted":
-            record["silent_alerted"].append(event)
         elif kind == "integrated":
-            # escalate 是「暂停自动处置」标记而非终态覆盖：integrated 到达后
-            # state 归 integrated，escalated 事件字段保留供追溯（escalated→
-            # integrate 的手动路径在 3fdd454 明确放行，reconcile 不自动输出）。
             record["state"] = "integrated"
             record["integrated"] = event
-        elif kind == "escalated":
-            record["state"] = "escalated"
-            record["escalated"] = event
     return records
 
 
@@ -187,14 +172,11 @@ def require_exact_terminal(
     events: list[dict],
     *,
     allow_integrated: bool = False,
-    allow_escalated: bool = False,
 ) -> dict:
     record = _require_exact_current(tid, attempt, execution_id, events)
     allowed = {"terminal"}
     if allow_integrated:
         allowed.add("integrated")
-    if allow_escalated:
-        allowed.add("escalated")
     if record["state"] not in allowed:
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} execution_id={execution_id!r} state={record['state']!r}，"
@@ -209,7 +191,7 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
     if not ctx.TID_RE.fullmatch(tid):
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
     if executor not in ctx.ATTEMPT_EXECUTORS:
-        raise ctx.TaskDataError("executor 必须是 inline/agent")
+        raise ctx.TaskDataError("executor 必须是 inline")
 
     # 领域层门禁：task 目录存在时校验 tid 存在且未归档（done/dropped 不可再执行）。
     # 目录不存在（库调用/测试场景）时跳过，CLI 层仍保留主仓限定。
@@ -236,14 +218,13 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
             if current["state"] == "integrated":
                 raise ctx.TaskDataError(f"{tid} 当前 attempt 已 integrated；拒绝 reserve 新 attempt")
             retryable = (
-                current["state"] == "escalated"
-                or current.get("terminal_status") in {"failed", "stopped"}
-                or report.get("status") == "failed"
+                current.get("terminal_status") in {"failed", "stopped"}
+                or report.get("status") in {"failed", "blocked"}
             )
             if not retryable:
                 raise ctx.TaskDataError(
                     f"{tid} 当前 attempt={current['attempt']} terminal="
-                    f"{current.get('terminal_status')!r} 尚待 integrate 或 escalate；"
+                    f"{current.get('terminal_status')!r} 尚待 integrate；"
                     "completed attempt 不可被新 reserve 顶掉"
                 )
         execution_id = uuid.uuid4().hex
@@ -251,43 +232,13 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
             "event": "attempt_reserved",
             "execution_id": execution_id,
             "executor": executor,
-            "state": "running" if executor == "inline" else "reserved",
+            "state": "running",
         }
         if model:
             event["model"] = model
         return event
 
     return ledger_allocate_attempt(tid, build)
-
-
-def bind_attempt(
-    tid: str,
-    attempt: int,
-    execution_id: str,
-    host_worker_id: str | None = None,
-) -> dict:
-    def build(events: list[dict]) -> dict:
-        record = _require_exact_current(tid, attempt, execution_id, events)
-        if record["executor"] != "agent":
-            raise ctx.TaskDataError("bind 仅适用于 executor=agent")
-        if record["state"] != "reserved":
-            raise ctx.TaskDataError(f"attempt state={record['state']!r}，不能 bind")
-        if not host_worker_id:
-            raise ctx.TaskDataError(
-                "agent attempt bind 必须提供非空 host_worker_id；"
-                "cron 按该句柄查询宿主终态"
-            )
-        event = {
-            "event": "attempt_bound",
-            "tid": tid,
-            "attempt": attempt,
-            "execution_id": execution_id,
-            "host_worker_id": host_worker_id,
-        }
-        return event
-
-    return ledger_locked_append(build)
-
 
 def terminal_attempt(
     tid: str, attempt: int, execution_id: str, status: str
@@ -297,8 +248,6 @@ def terminal_attempt(
 
     def build(events: list[dict]) -> dict:
         record = _require_exact_current(tid, attempt, execution_id, events)
-        if record["state"] == "reserved":
-            raise ctx.TaskDataError("agent attempt 尚未 bind，不能 terminal")
         if record["state"] != "running":
             raise ctx.TaskDataError(f"attempt state={record['state']!r}，不能 terminal")
         return {
@@ -359,73 +308,6 @@ def report_attempt(
     return ledger_locked_append(build)
 
 
-def escalate_attempt(tid: str, attempt: int, execution_id: str, reason: str) -> dict:
-    if not isinstance(reason, str) or not reason.strip():
-        raise ctx.TaskDataError("escalate 必须提供非空 reason")
-
-    def build(events: list[dict]) -> dict:
-        require_exact_terminal(tid, attempt, execution_id, events)
-        return {
-            "event": "escalated",
-            "tid": tid,
-            "attempt": attempt,
-            "execution_id": execution_id,
-            "reason": reason.strip(),
-        }
-
-    return ledger_locked_append(build)
-
-
-def silent_alert_attempt(
-    tid: str, attempt: int, execution_id: str, fingerprint: str
-) -> dict:
-    def build(events: list[dict]) -> dict:
-        record = _require_exact_current(tid, attempt, execution_id, events)
-        if (
-            record["state"] != "running"
-            or record["executor"] != "agent"
-            or record.get("bound") is None
-        ):
-            raise ctx.TaskDataError("silent-alert 仅适用于已 bind 的 agent running attempt")
-        observation = record.get("observation")
-        if observation is None or observation.get("fingerprint") != fingerprint:
-            raise ctx.TaskDataError("silent-alert fingerprint 与当前 exact observation 不匹配")
-        return {
-            "event": "silent_alerted",
-            "tid": tid,
-            "attempt": attempt,
-            "execution_id": execution_id,
-            "fingerprint": fingerprint,
-        }
-
-    return ledger_locked_append(build)
-
-
-def append_observation(
-    tid: str,
-    attempt: int,
-    execution_id: str,
-    payload: dict,
-) -> dict:
-    def build(events: list[dict]) -> dict:
-        record = _require_exact_current(tid, attempt, execution_id, events)
-        if (
-            record["state"] != "running"
-            or record["executor"] != "agent"
-            or record.get("bound") is None
-        ):
-            raise ctx.TaskDataError("observe 仅适用于已 bind 的 agent running attempt")
-        return {
-            "event": "observation",
-            "tid": tid,
-            "attempt": attempt,
-            "execution_id": execution_id,
-            **payload,
-        }
-
-    return ledger_locked_append(build)
-
-
 def append_integrated(
     tid: str,
     attempt: int,
@@ -474,7 +356,7 @@ def append_integrated_batch(members: list[dict], merge_sha: str) -> list[dict]:
                     )
                 continue
             record = require_exact_terminal(
-                tid, attempt, execution_id, events, allow_escalated=True
+                tid, attempt, execution_id, events
             )
             if record["terminal_status"] != "completed":
                 raise ctx.TaskDataError(

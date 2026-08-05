@@ -6,9 +6,9 @@ disable-model-invocation: true
 
 # task-run
 
-串行执行固定队列（链式拓扑）。两套拓扑的合并时机与分支形态见 `AGENTS.md`「执行角色与合并时机」。
+串行执行固定队列（链式拓扑）。合并时机与分支形态见 `AGENTS.md`「职责分工与合并时机」。
 
-角色边界见 `AGENTS.md`「执行角色与合并时机」；单 task 执行流程见 `task-work`；合并流程见 `task-integrate`。
+单 task 执行流程见 `task-work`；合并流程见 `task-integrate`。
 
 ## 会话级授权
 
@@ -48,11 +48,11 @@ task 按执行顺序成链：
 主干 ── t001 ── t002 ── t003 ──► 全部完成后 merge 链尾
 ```
 
-每个 task 从上一个已完成 task 的分支创建（`--base`），因此自动继承前一个 task 的成果。`depends_on` 边必须排在被依赖者之后。链式与扇出共用 attempt 控制面；差异只在 branch topology 和合并时机。
+每个 task 从上一个已完成 task 的分支创建（`--base`），因此自动继承前一个 task 的成果。`depends_on` 边要求被依赖者排在依赖者之前。多会话手动并发时各跑独立链，无自动调度器。
 
 ## 队列循环
 
-每个 tid 依次走一次 coordinator + inline worker 流程。`attempt reserve` 返回的整数 `attempt` 与字符串 `execution_id` 是本次执行的 exact identity，必须原样传给 `task-work`、terminal、report 与 cleanup：
+每个 tid 依次走一次队列循环。`attempt reserve` 返回的整数 `attempt` 与字符串 `execution_id` 是本次执行的 exact identity，必须原样传给 `task-work`、terminal、report 与 cleanup：
 
 ```text
 t001: start t001

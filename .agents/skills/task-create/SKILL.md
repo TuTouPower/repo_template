@@ -13,7 +13,7 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
 |------|-----|
 | 修 bug、复现、根因、补测分析 | `task-bug` |
 | 把待办转成 task | `task-from-pending` |
-| 执行实施 | `task-run`（串行）/ `task-dispatch`（并行） |
+| 执行实施 | `task-run`（多会话手动并发各跑一段） |
 | 只查缺什么资源 | `task-preflight` |
 
 ## 步骤
@@ -57,4 +57,4 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
 
 ## 完成
 
-backlog 已就绪，未 start。下一步 `task-run` / `task-dispatch`（或先 `task-preflight`）。
+backlog 已就绪，未 start。下一步 `task-run`（或先 `task-preflight`）。

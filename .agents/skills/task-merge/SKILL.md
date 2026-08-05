@@ -66,4 +66,4 @@ disable-model-invocation: true
 
 ## 完成
 
-汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `task-run` / `task-dispatch`（或先 `task-preflight`）。
+汇报：目标 tid、被合并 tid 列表、合并后 AC 条数、下一步 `task-run`（或先 `task-preflight`）。
