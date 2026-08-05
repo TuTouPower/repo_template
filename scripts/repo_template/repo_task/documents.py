@@ -268,6 +268,26 @@ def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
         return None
     return "\n".join(lines[start:])
 
+def _extract_guide_blocks(text: str) -> list[str]:
+    """提取 spec 中所有 `<!-- 规范（门禁必留，不得删除） -->...<!-- /规范 -->` 块。
+
+    返回按出现顺序排列的块列表，每块含标记行与正文（行级 strip）。
+    规范块是门禁必留的就近规范，agent 只能替换块外占位符。
+    """
+    blocks = []
+    current = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == ctx.SPEC_GUIDE_OPEN:
+            current = [stripped]
+        elif current is not None:
+            current.append(stripped)
+            if stripped == ctx.SPEC_GUIDE_CLOSE:
+                blocks.append("\n".join(current))
+                current = None
+    return blocks
+
+
 def validate_task_documents(
     spec_text: str,
     task_body: str,
@@ -285,13 +305,25 @@ def validate_task_documents(
             + "、".join(missing_spec_headings)
         )
 
-    visible_spec_lines = {line.strip() for line in _visible_markdown_lines(spec_text)}
-    missing_lines = [line for line in ctx.SPEC_REQUIRED_LINES if line not in visible_spec_lines]
-    if missing_lines:
-        problems.append(
-            "spec.md 缺模板固定声明或引导语（需原样复制自模板，勿手抄）：\n  - "
-            + "\n  - ".join(missing_lines)
+    # 规范块门禁：模板中带 `<!-- 规范 -->` 标记的就近规范逐字保留，
+    # agent 只能替换块外占位符，不得删除或改写规范块内容。
+    template_spec_path = ctx.TEMPLATE_DIR / "spec.md"
+    if template_spec_path.is_file():
+        template_blocks = _extract_guide_blocks(
+            template_spec_path.read_text(encoding="utf-8")
         )
+        if template_blocks:
+            spec_blocks = set(_extract_guide_blocks(spec_text))
+            missing_blocks = [b for b in template_blocks if b not in spec_blocks]
+            if missing_blocks:
+                problems.append(
+                    f"spec.md 缺或被改 {len(missing_blocks)} 个规范块"
+                    "（`<!-- 规范 -->` 标记内的内容不得删除或改写，"
+                    "只能替换块外占位符；改模板须同步修改本校验）：\n  - "
+                    + "\n  - ".join(
+                        block.replace("\n", " ")[:100] for block in missing_blocks
+                    )
+                )
 
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
     if not acceptance or not re.search(

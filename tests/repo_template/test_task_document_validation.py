@@ -87,11 +87,18 @@ def test_heading_order_change_fails():
 
 
 def test_missing_fixed_guidance_fails():
-    spec = _filled_spec().replace("reviewer 判 AC 时只看本区。\n", "", 1)
+    # 删掉带 `<!-- 规范 -->` 标记的就近规范块，门禁应失败
+    spec = _filled_spec().replace(
+        "<!-- 规范（门禁必留，不得删除） -->\n"
+        "只写用户或调用方可观察行为，每条可独立验证。普通版本号、底层库和目录结构不作为验收标准；需要长期约束后续工作的技术选择写入 `docs/blueprint/decisions.md`。\n"
+        "<!-- /规范 -->\n",
+        "",
+        1,
+    )
 
     problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
 
-    assert any("固定声明或引导语" in problem for problem in problems)
+    assert any("规范块" in problem for problem in problems)
 
 
 def test_template_placeholder_fails_after_creation():

@@ -968,7 +968,9 @@ def test_start_rejects_missing_scaffold_before_mutation(git_repo):
     spec = git_repo / "docs/tasks/t001_alpha/spec.md"
     spec.write_text(
         spec.read_text(encoding="utf-8").replace(
-            "reviewer 判 AC 时只看本区。\n",
+            "<!-- 规范（门禁必留，不得删除） -->\n"
+            "只写用户或调用方可观察行为，每条可独立验证。普通版本号、底层库和目录结构不作为验收标准；需要长期约束后续工作的技术选择写入 `docs/blueprint/decisions.md`。\n"
+            "<!-- /规范 -->\n",
             "",
             1,
         ),
@@ -978,7 +980,7 @@ def test_start_rejects_missing_scaffold_before_mutation(git_repo):
     _git(git_repo, "commit", "-m", "break task scaffold")
     initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 
-    with pytest.raises(SystemExit, match="固定声明或引导语"):
+    with pytest.raises(SystemExit, match="规范块"):
         _start(git_repo)
 
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
