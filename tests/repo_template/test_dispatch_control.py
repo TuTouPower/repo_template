@@ -1072,15 +1072,15 @@ def test_reconcile_terminal_on_main_does_not_block_conflict_peer():
     ]
 
 
-def test_reconcile_explicit_resource_failure_still_redispatches():
+def test_reconcile_explicit_task_failure_still_redispatches():
     events = [
         *_terminal(
             "t001", status="failed", model="opus",
             reserved_ts=_ts(30), terminal_ts=_ts(24),
         ),
         _report(
-            "t001", status="failed", fail_class="resource",
-            reason="context exhausted", ts=_ts(25),
+            "t001", status="failed", fail_class="task",
+            reason="blackbox timeout", ts=_ts(25),
         ),
     ]
     plan = _plan(events, ladder=["opus"], mode="resume")

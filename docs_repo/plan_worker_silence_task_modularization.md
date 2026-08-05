@@ -188,7 +188,7 @@ python3 scripts/repo_template/task.py attempt bind TID --attempt N --execution-i
 ## 5. 将 stalled 自动重派改为 silent 告警
 
 - 删除 `observe_last_activity()` 基于 dispatch/HEAD commit 时间自动判 stalled 的控制路径。
-- 删除“无仓库变化 → resource failure → redispatch”。显式 `failed --class resource` 仍保留原重试策略。
+- 删除“无仓库变化 → redispatch”。静默只告警不重派。
 - observation 作为当前 attempt 的唯一仓库活动基线。
 
 `ps`：
@@ -271,7 +271,6 @@ repo_task/**
 - silent 输出 `alert-silent`、继续占槽、不 redispatch。
 - alert 时不补位新 dispatch。
 - 同 identity、同 fingerprint 已 alerted 后不重复；新 fingerprint 重新计时。
-- 显式 resource report failed 仍按原策略。
 - `execution_id` provenance 与 `host_worker_id` 宿主句柄分别正确记录和展示。
 
 ## 9. 实施顺序

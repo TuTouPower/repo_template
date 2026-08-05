@@ -63,7 +63,7 @@ exact identity 固定为 `(tid, attempt, execution_id)`：
    python3 scripts/repo_template/task.py attempt report {tid} \
      --attempt {N} --execution-id {EXECUTION_ID} \
      --status done|blocked|failed [--sha {BRANCH_TIP}] \
-     [--class infra|resource|contract|task] [--reason {REASON}]
+     [--class infra|contract|task] [--reason {REASON}]
    ```
 
 6. 执行：
@@ -111,11 +111,10 @@ worker 通知到达时，通知只作为查询线索；coordinator 必须先用 
 | 类别 | 判定 | 自动策略 | 升级用户 |
 |---|---|---|---|
 | infra | API/provider/宿主错误的显式 failed | 按模型阶梯降档；有产出 resume、无产出 restart；同模型连续 2 次可记 breaker | 阶梯用尽或额度用尽 |
-| resource | 上下文耗尽等显式 failed | 原模型按现场 resume/restart | 同 tid 连续 2 次 |
 | contract | handoff/refs/identity 验证失败 | 同模型 resume 补交接契约 | 重犯或无现场 |
 | task | 黑盒/review 等失败或 blocked | 既有 blocked 流程 | blocked 总是 |
 
-仓库 fingerprint 长时间不变不是 resource failed，不自动重派。静默 running identity 继续占槽。
+仓库 fingerprint 长时间不变不产生 failed，不自动重派。静默 running identity 继续占槽。
 
 ## 静默告警
 

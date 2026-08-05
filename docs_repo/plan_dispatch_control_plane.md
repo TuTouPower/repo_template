@@ -95,13 +95,12 @@ python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 | 类别 | 来源 | 自动策略 | 升级条件 |
 |---|---|---|---|
 | infra | provider/API/宿主错误的 terminal/report failed | 模型阶梯降档；按现场 resume/restart；同模型连续失败可熔断 | 阶梯用尽或额度用尽 |
-| resource | 上下文耗尽等显式 failed | 原现场 resume 或 restart | 自动重试额度用尽 |
 | contract | failed/stopped identity 的 refs/handoff/identity 验证失败 | 同模型 resume 补契约 | completed identity、重犯或无安全现场 |
 | task | 黑盒/review 等显式失败或 blocked | 按既有额度处理 | blocked 总是升级 |
 
 重试前旧 identity 必须 terminal，且 terminal 为 `failed/stopped` 或 exact report 明确为 `failed`。completed identity 必须先 integrate 或显式 escalate，不能被新 reserve 顶掉；已 integrated identity 不可重跑。`attempt reserve` 在锁内机械执行这些规则。迟到旧 identity 的通知只能补其原记录，不影响 current attempt。
 
-仓库 fingerprint 长时间不变不是 failed，不进入 resource 自动重派，只产生 silent alert。
+仓库 fingerprint 长时间不变不是 failed，只产生 silent alert。
 
 ## 并发与闩锁
 

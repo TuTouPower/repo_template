@@ -24,7 +24,7 @@
 python3 scripts/repo_template/task.py attempt reserve TID --executor inline|agent [--model MODEL]
 python3 scripts/repo_template/task.py attempt bind TID --attempt N --execution-id ID [--host-worker-id HOST_ID]
 python3 scripts/repo_template/task.py attempt terminal TID --attempt N --execution-id ID --status completed|failed|stopped
-python3 scripts/repo_template/task.py attempt report TID --attempt N --execution-id ID --status done|blocked|failed [--sha SHA] [--class infra|task|resource|contract] [--reason REASON]
+python3 scripts/repo_template/task.py attempt report TID --attempt N --execution-id ID --status done|blocked|failed [--sha SHA] [--class infra|task|contract] [--reason REASON]
 python3 scripts/repo_template/task.py attempt escalate TID --attempt N --execution-id ID --reason REASON
 python3 scripts/repo_template/task.py attempt silent-alert TID --attempt N --execution-id ID --fingerprint SHA256
 ```

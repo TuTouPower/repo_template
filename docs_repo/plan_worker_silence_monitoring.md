@@ -6,8 +6,7 @@
 
 - coordinator 每 5 分钟观察 current running agent identity 的仓库可见状态。
 - worker 不发送 heartbeat/progress，不调用 observe，也不写 attempt 控制面。
-- fingerprint 连续 30 分钟无变化时只告警，不取消 Agent、不写 terminal/report failed、不重派。
-- 显式 terminal/report failed 的 resource 分类仍使用既有重试策略；静默本身不转换为 resource failure。
+- fingerprint 连续 30 分钟无变化时只告警，不取消 Agent、不写 terminal/report failed、不重派。静默本身不转换为 failure。
 - `task.py` 不推断宿主 Agent 是否存活。coordinator 根据 `host_worker_id` 查询宿主状态；该字段仅是宿主句柄，不是 execution provenance。
 
 ## 观察 identity
