@@ -602,6 +602,23 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
     assert records[-1]["execution_id"] == identity["execution_id"]
 
 
+def test_escalated_completed_allows_manual_integrate(git_repo):
+    """escalated 的 attempt 如果 terminal=completed，手动 cleanup/integrate 应放行。"""
+    identity, branch, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    _task_cli(git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
+              "--status", "completed")
+    _task_cli(git_repo, "attempt", "escalate", "t001", *_identity_args(identity),
+              "--reason", "用户处理")
+
+    cleaned = _cleanup(git_repo, "t001", identity)
+    assert "worktree 已移除" in cleaned.stdout
+
+    integrated = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+    assert integrated.returncode == 0, integrated.stderr
+    records = [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
+    assert records[-1]["execution_id"] == identity["execution_id"]
+
+
 # --------------------------------------------------------------------------
 # 新增计划覆盖：chain aggregate/transaction 与 legacy CLI 显式失败
 # --------------------------------------------------------------------------

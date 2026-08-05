@@ -37,12 +37,7 @@ DEFAULT_REWIND = {"active": "backlog", "blocked": "active"}  # 撤一步映射
 BLOCK_REASONS = ("blackbox", "review", "infra")
 REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
-ATTEMPT_LIFECYCLE_EVENTS = (
-    "attempt_reserved", "attempt_bound", "attempt_terminal", "integrated", "escalated",
-)
-ATTEMPT_ATTACHMENT_EVENTS = ("report", "observation", "silent_alerted")
 LEDGER_RECORDABLE_EVENTS = ("note", "breaker")
-LEDGER_EVENTS = LEDGER_RECORDABLE_EVENTS
 LEDGER_REPORT_STATUSES = ("done", "blocked", "failed")
 LEDGER_TERMINAL_STATUSES = ("completed", "failed", "stopped")
 LEDGER_FAIL_CLASSES = ("infra", "task", "resource", "contract")

@@ -91,22 +91,30 @@ def _print_json(event: dict) -> None:
 
 
 def cmd_attempt_reserve(args):
+    require_primary_worktree()
+    from .store import scan_tasks
+    known_tids = {task["tid"] for task in scan_tasks()}
+    if args.tid not in known_tids:
+        raise ctx.TaskDataError(f"{args.tid} 不存在于 task 目录；拒绝 reserve 孤立 attempt")
     _print_json(reserve_attempt(args.tid, args.executor, args.model))
 
 
 def cmd_attempt_bind(args):
+    require_primary_worktree()
     _print_json(bind_attempt(
         args.tid, args.attempt, args.execution_id, args.host_worker_id
     ))
 
 
 def cmd_attempt_terminal(args):
+    require_primary_worktree()
     _print_json(terminal_attempt(
         args.tid, args.attempt, args.execution_id, args.status
     ))
 
 
 def cmd_attempt_report(args):
+    require_primary_worktree()
     _print_json(report_attempt(
         args.tid,
         args.attempt,
@@ -119,12 +127,14 @@ def cmd_attempt_report(args):
 
 
 def cmd_attempt_escalate(args):
+    require_primary_worktree()
     _print_json(escalate_attempt(
         args.tid, args.attempt, args.execution_id, args.reason
     ))
 
 
 def cmd_attempt_silent_alert(args):
+    require_primary_worktree()
     _print_json(silent_alert_attempt(
         args.tid, args.attempt, args.execution_id, args.fingerprint
     ))

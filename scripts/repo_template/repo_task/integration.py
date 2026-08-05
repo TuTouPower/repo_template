@@ -122,9 +122,10 @@ def _require_execution_gate(
 ) -> tuple[dict, list[dict]]:
     events = ledger_read()
     record = require_exact_terminal(
-        tid, attempt, execution_id, events, allow_integrated=allow_integrated
+        tid, attempt, execution_id, events,
+        allow_integrated=allow_integrated, allow_escalated=True,
     )
-    if record["state"] == "terminal" and record["terminal_status"] != "completed":
+    if record["state"] in ("terminal", "escalated") and record["terminal_status"] != "completed":
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} terminal status={record['terminal_status']!r}，"
             "只有 completed 可 cleanup/integrate"

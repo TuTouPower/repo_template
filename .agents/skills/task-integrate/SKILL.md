@@ -144,6 +144,8 @@ scripts/repo_template/task.py integrate-chain {TAIL_TID} --continue
 
 发生冲突时按双方语义解决并 `git add`，再以原 tail 执行 `--continue`。命令必须读取 transaction，确认 `MERGE_HEAD`、成员 snapshot 与 exact identity 均未漂移，然后完成原 merge并推进到 `awaiting_verification`。`merged`、`indexed` 阶段的基础设施失败也使用同一命令恢复；不得创建新事务掩盖旧事务。
 
+若 transaction 文件（`.git/repo-task/integrate-chain.json`）损坏且 `--continue` 报错无法读取，且 Git 层已无活跃 merge state（`git rev-parse --verify MERGE_HEAD` 失败），可手动删除该文件以清除残留事务。删除前确认主干 HEAD 未停在未完成 merge——若有 `MERGE_HEAD`，先 `git merge --abort`。手动删除后再次从 `integrate-chain {TAIL_TID}` 开始全新事务。
+
 ## 冲突处置
 
 | 冲突位置 | 处置 |

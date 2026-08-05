@@ -168,11 +168,14 @@ def require_exact_terminal(
     events: list[dict],
     *,
     allow_integrated: bool = False,
+    allow_escalated: bool = False,
 ) -> dict:
     record = _require_exact_current(tid, attempt, execution_id, events)
     allowed = {"terminal"}
     if allow_integrated:
         allowed.add("integrated")
+    if allow_escalated:
+        allowed.add("escalated")
     if record["state"] not in allowed:
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} execution_id={execution_id!r} state={record['state']!r}，"
@@ -294,6 +297,12 @@ def report_attempt(
             raise ctx.TaskDataError(
                 f"attempt state={record['state']!r}，report 必须在 terminal 后写入"
             )
+        terminal_status = record.get("terminal_status", "")
+        if status == "done" and terminal_status not in ("completed", ""):
+            raise ctx.TaskDataError(
+                f"terminal_status={terminal_status!r} 不可写 report=done；"
+                "done 仅匹配 terminal completed"
+            )
         if record.get("report") is not None:
             raise ctx.TaskDataError("exact attempt 已存在 report；拒绝覆盖最终业务报告")
         event = {
@@ -391,14 +400,10 @@ def append_integrated(
     }], merge_sha)
     if events:
         return events[0]
-    record = attempt_for_identity(tid, attempt, execution_id, [])
-    return record or {
-        "event": "integrated",
-        "tid": tid,
-        "attempt": attempt,
-        "execution_id": execution_id,
-        "merge_sha": merge_sha,
-    }
+    raise ctx.TaskDataError(
+        f"{tid} attempt={attempt} execution_id={execution_id!r} "
+        "append_integrated_batch 返回空：所有 member 已 integrated 到同一 merge_sha"
+    )
 
 
 def append_integrated_batch(members: list[dict], merge_sha: str) -> list[dict]:
@@ -429,7 +434,9 @@ def append_integrated_batch(members: list[dict], merge_sha: str) -> list[dict]:
                         f"与 transaction merge_sha={merge_sha!r} 不符"
                     )
                 continue
-            record = require_exact_terminal(tid, attempt, execution_id, events)
+            record = require_exact_terminal(
+                tid, attempt, execution_id, events, allow_escalated=True
+            )
             if record["terminal_status"] != "completed":
                 raise ctx.TaskDataError(
                     f"{tid} terminal status={record['terminal_status']!r}，不能 integrated"
