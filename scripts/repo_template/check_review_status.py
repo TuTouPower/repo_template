@@ -206,8 +206,8 @@ def disposition_stats(task_md: Path) -> dict[str, int]:
             if not match:
                 raise ReviewDataError(
                     f"finding_id 非法：{finding_id!r}。"
-                    f"格式：full 级 {tid}_code_fNNN / {tid}_test_fNNN，"
-                    f"single 级 {tid}_gen_fNNN（不是 _general_）；参考 conventions.md"
+                    f"格式：full 级 {task_tid}_code_fNNN / {task_tid}_test_fNNN，"
+                    f"single 级 {task_tid}_gen_fNNN（不是 _general_）；参考 conventions.md"
                 )
             if finding_id.startswith("t000_"):
                 index += 1
