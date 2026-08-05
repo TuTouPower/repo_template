@@ -116,44 +116,7 @@ task 彼此冲突面大时并行无收益，看 `task-schedule` 输出的全景�
 ### `scripts/repo_template/task.py` 使用示例
 
 ```bash
-python3 scripts/repo_template/task.py --help                  # 显示完整子命令与参数
-python3 scripts/repo_template/task.py list                    # 当前工作区所有 task
-python3 scripts/repo_template/task.py list --status backlog   # 按状态过滤
-python3 scripts/repo_template/task.py show t001               # 当前工作区某 task 详情
-python3 scripts/repo_template/task.py show t001 --ref t003_x  # 某本地分支中的累计状态
-python3 scripts/repo_template/task.py preflight t002 --allow-backlog --ref t001_x # 只读检查分支中 backlog
-python3 scripts/repo_template/task.py start t002               # 扇出：从主干 HEAD 建 worktree
-python3 scripts/repo_template/task.py start t003 --base t002_x # 链式：从上一 task 分支建 worktree
-python3 scripts/repo_template/task.py attempt reserve t002 --executor agent --model haiku # 原子分配 attempt/execution_id，初态 reserved
-python3 scripts/repo_template/task.py attempt reserve t003 --executor inline             # 原子分配并直接进入 running
-python3 scripts/repo_template/task.py attempt bind t002 --attempt 1 --execution-id EXECUTION_ID --host-worker-id HOST_WORKER_ID
-python3 scripts/repo_template/task.py attempt terminal t002 --attempt 1 --execution-id EXECUTION_ID --status completed
-python3 scripts/repo_template/task.py attempt report t002 --attempt 1 --execution-id EXECUTION_ID --status done --sha BRANCH_TIP
-python3 scripts/repo_template/task.py attempt escalate t002 --attempt 1 --execution-id EXECUTION_ID --reason "需用户裁决"
-python3 scripts/repo_template/task.py attempt silent-alert t002 --attempt 1 --execution-id EXECUTION_ID --fingerprint SHA256
-python3 scripts/repo_template/task.py cleanup-worktree t002 --attempt 1 --execution-id EXECUTION_ID # exact completed attempt 清理，保留分支
-python3 scripts/repo_template/task.py integrate t002 --attempt 1 --execution-id EXECUTION_ID         # 单 task 合并
-python3 scripts/repo_template/task.py integrate t002 --attempt 1 --execution-id EXECUTION_ID --continue # 单 task 冲突解决后续跑
-python3 scripts/repo_template/task.py integrate-chain t003                 # 聚合校验全链后一次合并链尾
-python3 scripts/repo_template/task.py integrate-chain t003 --continue      # 链式冲突解决后重验同一事务
-python3 scripts/repo_template/task.py edit t001 --title "新标题" --review-level single
-python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --conflicts-with "t006" --schedule-status scheduled
-python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
-python3 scripts/repo_template/task.py observe t002 --attempt 1 --execution-id EXECUTION_ID --json # observation 精确绑定 identity
-python3 scripts/repo_template/task.py ps --silent-minutes 30 --all # 在飞 attempt 活表（账本+refs+worktree 观察派生）
-python3 scripts/repo_template/task.py reconcile --limit 3 --silent-minutes 30 # 只读行动计划
-python3 scripts/repo_template/task.py ledger record --event note --tid t002 --reason "人工备注"       # 生命周期外备注
-python3 scripts/repo_template/task.py ledger tail --tid t002       # 只读 attempt 控制面
-python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
-python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）
-python3 scripts/repo_template/pending.py new --slug cli_exit_code [--kind bug]                # 锁内取号并建条目文件
-python3 scripts/repo_template/pending.py list --state all                                     # 列举 todo/parked/archived
-python3 scripts/repo_template/pending.py archive p047 p051 --fix-ref t012                     # dry-run：拟迁闭环条目
-python3 scripts/repo_template/pending.py archive p047 p051 --fix-ref t012 --write             # 落盘迁移（拒迁 parked）
-python3 scripts/repo_template/pending.py park p047 --reason "等外部依赖" --write               # todo → parked
-python3 scripts/repo_template/pending.py revive p047 --write                                  # parked → todo
-python3 scripts/repo_template/findings.py new --slug uv_lock_platform_marker                  # 锁内取号并建发现条目
-python3 scripts/repo_template/spikes.py new --slug uv_lock_platform_marker                    # 锁内取号并建 spike 目录
+python3 scripts/repo_template/task.py --help    # 所有子命令、参数与用法以此为准
 ```
 
 ## 文档规范
