@@ -53,16 +53,6 @@
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
 
-### 架构决策原则
-
-- 代码与接口不留兼容层：破坏性升级优于兼容包袱，直接移除过时路径。
-- 数据必须做好备份与迁移：破坏性升级前验证备份可恢复、迁移路径可回退；生产数据未经批准，绝不准直接移除。
-- 选择能够完全满足当前需求的最简单实现。避免推测性的抽象、配置和间接层。
-- 分层扩展系统。从能够端到端运行的最小版本开始，再在一个已经可用的产品之上逐步增加新能力。绝不要为了尚未完成的复杂性，牺牲一个已经可用的产品。
-- 保持组件模块化，并清晰分离各项职责。
-- 优先复用：实现前先检查项目中已有依赖是否够用；成熟且维护良好的库优于自造，没有明确理由不重复实现常见功能。
-- 从长期出发做架构决策。不要接受只能暂时奏效、以后注定要被替换的权宜之计。
-
 ### 执行角色与合并时机
 
 worker 只写自己的 worktree，coordinator 是主仓唯一写者；执行拓扑（链式/扇出）、attempt 生命周期与合并授权细节见 `docs/blueprint/architecture_repo_template.md`。
@@ -92,7 +82,6 @@ worker 只写自己的 worktree，coordinator 是主仓唯一写者；执行拓�
 | `task-integrate` | `task-dispatch` 收汇报后；`task-run` 链全部完成后 | coordinator：单 task 使用 exact cleanup + `integrate`；链式先逐成员 exact cleanup，最终 `integrate-chain` 聚合校验后一次合链尾 |
 
 典型路径：`/task-create` → `/task-schedule` → `/task-dispatch`（扇出）或 `/task-run`（链式）。
-task 彼此冲突面大时并行无收益，看 `task-schedule` 输出的全景图决定。
 
 ### `scripts/repo_template/task.py` 使用示例
 
@@ -102,13 +91,3 @@ python3 scripts/repo_template/pending.py --help     # 待办总账
 python3 scripts/repo_template/findings.py --help    # 技术发现
 python3 scripts/repo_template/spikes.py --help      # 技术 spike
 ```
-
-## 文档规范
-
-- 本节主要约束长期真相文档。task、review、spike、finding、audit、archive 等过程或证据型文档按各自模板保留编号、来源、实现位置和验证记录。
-- 结构或语义变化时，先确定目标语义及权威落点，再替换最小自包含语义块。避免逐句追加造成新旧表述并存。
-- 同一事实、规则或结论只保留一处权威定义。其他位置可保留不引入新语义的简短摘要，并链接权威文档标题；避免复制完整正文或仅按章节编号引用。
-- 长期真相文档直接陈述当前事实，不使用过程编号、来源说明或实现位置作为正文依据，例如 `(D24-N3)`、`(S15)`、`(t012)`、`根据 D24 决定`、`impl at ts/X.ts`。结构化字段及过程、证据型文档不受此限。
-- 多种合理理解会影响行为、权威归属或跨文档同步范围时，先澄清再修改。
-- 优先先写目标状态、允许行为或执行动作等正向描述。仅安全边界、不可逆操作、写权边界及工作流禁区等使用明确否定句。
-- 完成后检查：旧表述残留、重复权威定义、矛盾结论、失效链接、索引或引用遗漏、过程来源表述残留。
