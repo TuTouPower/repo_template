@@ -82,13 +82,13 @@ worker 不发送 heartbeat/progress，不调用 observe，不写 attempt 控制�
 | 动作 | 执行 |
 |---|---|
 | `dispatch {tid}` | `task.py start {tid}` → `task.py attempt reserve {tid} --executor agent [--model M]`，保存返回的 `attempt` / `execution_id` → Agent prompt 必须携带 `tid`、`attempt`、`execution_id` → Agent 启动取得宿主 ID 后立即 `task.py attempt bind {tid} --attempt N --execution-id ID --host-worker-id HOST_ID`。bind 成功前该 attempt 仍为 reserved。 |
-| `redispatch ... mode=resume` | 旧 identity 已 terminal 且 report failed 后，不跑 start；`attempt reserve --executor agent` 创建新 identity，派 Agent 进入原 worktree续跑，再 bind 新 `host_worker_id`。 |
-| `redispatch ... mode=restart` | 旧 identity 已 terminal 且 report failed，且现场可安全重建时才重新 start；随后 reserve 新 agent identity、派发、bind。残留分支/worktree 无法安全处置时升级用户。 |
+| `dispatch {tid} mode=resume` | 旧 identity 已 terminal 且 report failed 后，不跑 start；`attempt reserve --executor agent` 创建新 identity，派 Agent 进入原 worktree续跑，再 bind 新 `host_worker_id`。 |
+| `dispatch {tid} mode=restart` | 旧 identity 已 terminal 且 report failed，且现场可安全重建时才重新 start；随后 reserve 新 agent identity、派发、bind。残留分支/worktree 无法安全处置时升级用户。 |
 | `integrate {tid}` | 只处理 terminal `completed` 且 refs/handoff 验证通过的 current exact identity：`cleanup-worktree {tid} --attempt N --execution-id ID` → `integrate {tid} --attempt N --execution-id ID`。report 是加速线索，非完成权威；reconcile 在 terminal + refs ready 时即输出 integrate。完成后立即再次 observe/reconcile。 |
 | `escalate {tid}` | `task.py attempt escalate {tid} --attempt N --execution-id ID --reason ...`，按停止条件请求用户裁决。 |
 | `alert-silent {tid}` | `task.py attempt silent-alert {tid} --attempt N --execution-id ID --fingerprint FP`，再按静默报告流程处理。 |
 
-所有 lifecycle、observation、cleanup 与 integrate 都必须显式携带同一 `(tid, attempt, execution_id)`。迟到通知只能作用于其原 identity；不得绑定 current attempt。
+所有 lifecycle、observation、cleanup 与 integrate 都必须显式携带同一 `(tid, attempt, execution_id)`。迟到通知只能作用于其原 identity；不得绑定 current attempt。reconcile 对 `terminal failed/stopped` 且尚无 report 的 identity 输出 `await-report`：先写 report，再进入 dispatch（mode=resume/restart）或 escalate，禁止在 report 落账前自动重派（否则新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失）。
 
 ## 空闲许可与 cron
 
@@ -102,8 +102,8 @@ worker 不发送 heartbeat/progress，不调用 observe，不写 attempt 控制�
 worker 通知到达时，通知只作为查询线索；coordinator 必须先用 identity 对应的 `host_worker_id` 确认宿主终态，再按顺序写 terminal、report 并 reconcile：
 
 1. 宿主 `completed` 且 handoff status=`done`：terminal completed → report done；exact gate（terminal completed + handoff/refs 验证通过）全通过后 cleanup/integrate。report 是加速线索，非门禁前提。
-2. 宿主 `completed` 且 handoff/status 表示 blocked：terminal completed → report blocked；随后 exact escalate，禁止派替代 worker。
-3. 宿主 `failed|stopped`：写同名 terminal；检查 worktree 的 `git log -3`、`git status --short` 与 handoff，写 report failed 及分类。reconcile 再决定 resume、restart 或 escalate。
+2. 宿主 `completed` 且 handoff/status 表示 blocked：terminal completed → report blocked；随后 exact escalate，禁止派替代 worker。**blocked 放行 = escalate → 用户裁决 → 新 reserve**：用户同意续跑后先 `attempt escalate`（使 retryable 成立）再 reserve 新 identity，不得在仅 `task.py resume` 改 front matter 后直接 reserve（会撞「尚待 integrate 或 escalate」门禁）。
+3. 宿主 `failed|stopped`：写同名 terminal；检查 worktree 的 `git log -3`、`git status --short` 与 handoff，写 report failed 及分类。reconcile 再决定 resume、restart 或 escalate。terminal failed/stopped 但尚无 report 时 reconcile 输出 `await-report`，先落 report 再自动处置。
 4. 宿主仍 running：不写 terminal/report，不 cleanup、不 integrate、不 reserve 新 attempt；继续占槽。
 
 ## 失败分类

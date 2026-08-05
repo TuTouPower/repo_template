@@ -1,14 +1,7 @@
 """Canonical worktrees implementation for the task toolchain."""
 
-import argparse
-import json
 import os
 import re
-import shutil
-import subprocess
-import sys
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import repo_task.context as ctx
@@ -17,12 +10,35 @@ from .git_ops import _get_head, _git, current_branch, default_branch, resolve_lo
 from .store import load_task_at_ref
 
 def link_local_env(worktree: Path) -> list[str]:
-    """把主仓未入库的 .env 软链进 worktree（同相对路径）。"""
+    """把主仓未入库的 .env 软链进 worktree（同相对路径）。
+
+    用 rglob 覆盖任意层级嵌套；跳过 .git、node_modules、.scratch 等
+    噪声目录，避免递归进依赖/缓存树。先物化源列表再建链，防止 rglob
+    在遍历中把刚创建的软链当新源导致级联嵌套。
+    """
     linked = []
-    for src in sorted(ctx.REPO_ROOT.glob(".env")) + sorted(ctx.REPO_ROOT.glob("*/.env")):
-        if not src.is_file():
+    skip_dirs = {".git", "node_modules", ".scratch", "__pycache__", "venv", ".venv", "target"}
+    try:
+        worktree_resolved = worktree.resolve()
+    except OSError:
+        worktree_resolved = None
+    sources = [
+        src for src in ctx.REPO_ROOT.rglob(".env")
+        if src.is_file()
+    ]
+    for src in sources:
+        try:
+            rel = src.relative_to(ctx.REPO_ROOT)
+        except ValueError:
             continue
-        rel = src.relative_to(ctx.REPO_ROOT)
+        if any(part in skip_dirs for part in rel.parts[:-1]):
+            continue
+        if worktree_resolved is not None:
+            try:
+                src.resolve().relative_to(worktree_resolved)
+                continue  # 跳过目标 worktree 自身内的 .env
+            except ValueError:
+                pass
         dst = worktree / rel
         if dst.exists() or dst.is_symlink():
             continue
@@ -39,7 +55,7 @@ def is_managed_env_link(worktree: Path, link: Path) -> bool:
         rel = link.relative_to(worktree)
     except ValueError:
         return False
-    if rel.name != ".env" or len(rel.parts) not in (1, 2):
+    if rel.name != ".env":
         return False
     source = ctx.REPO_ROOT / rel
     expected = os.path.relpath(source, link.parent)
@@ -53,9 +69,13 @@ def is_managed_env_link(worktree: Path, link: Path) -> bool:
     )
 
 def unlink_managed_env_links(worktree: Path) -> None:
-    for link in (worktree / ".env", *worktree.glob("*/.env")):
-        if is_managed_env_link(worktree, link):
-            link.unlink()
+    # 用 os.walk 而非 Path.rglob：rglob 在 Python 3.10+ 会跳过 dangling
+    # symlink（源已删的 .env 链接），清理时恰恰需要删除这类残留。
+    for root, dirs, files in os.walk(worktree, followlinks=False):
+        if ".env" in files:
+            link = Path(root) / ".env"
+            if is_managed_env_link(worktree, link):
+                link.unlink()
 
 def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
     """解析 start base。

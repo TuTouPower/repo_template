@@ -1,14 +1,8 @@
 """Canonical git_ops implementation for the task toolchain."""
 
-import argparse
-import json
-import os
 import re
-import shutil
 import subprocess
 import sys
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import repo_task.context as ctx

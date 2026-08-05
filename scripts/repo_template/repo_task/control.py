@@ -92,10 +92,6 @@ def _print_json(event: dict) -> None:
 
 def cmd_attempt_reserve(args):
     require_primary_worktree()
-    from .store import scan_tasks
-    known_tids = {task["tid"] for task in scan_tasks()}
-    if args.tid not in known_tids:
-        raise ctx.TaskDataError(f"{args.tid} 不存在于 task 目录；拒绝 reserve 孤立 attempt")
     _print_json(reserve_attempt(args.tid, args.executor, args.model))
 
 
@@ -221,6 +217,10 @@ def cmd_ps(args):
         "host_worker_id", "state", "last_activity", "note",
     ]
     cells = [[str(row.get(key) or "-") for key in headers] for row in rows]
+    # execution_id 32 位 hex 在 ps 表格中截断前 8 位展示；ledger tail 保留全量。
+    for row in cells:
+        if len(row[2]) > 8:
+            row[2] = row[2][:8]
     widths = [max(len(headers[i]), *(len(row[i]) for row in cells)) for i in range(len(headers))]
     print("  ".join(headers[i].ljust(widths[i]) for i in range(len(headers))))
     for row in cells:

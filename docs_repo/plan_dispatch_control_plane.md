@@ -28,13 +28,13 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 
 | action | coordinator 动作 |
 |---|---|
-| `dispatch` | `task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。 |
+| `dispatch` | `task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。失败重试也走本动作，带 `mode=resume|restart` 字段。 |
 | `observe` | 对宿主仍 running 的 current identity 执行 `observe TID --attempt N --execution-id ID`。 |
 | `terminal` | 宿主进入 `completed|failed|stopped` 后，以 exact identity 执行 `attempt terminal`。 |
 | `report` | terminal 后，根据 handoff 与宿主结果执行 `attempt report --status done|blocked|failed`。 |
-| `redispatch` | 仅在旧 identity 已 terminal 且 report failed 后 reserve 新 identity；resume 复用安全现场，restart 先安全重建 worktree。 |
+| `await-report` | `terminal failed/stopped` 且尚无 report 时输出：先写 report 再进入 dispatch/escalate，禁止 report 落账前自动重派（否则新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失）。 |
 | `integrate` | terminal completed 且 refs/handoff ready 后，exact cleanup，再 exact 单 task integrate；正常调度仍先按同一 identity 写 report；完成后同回合再次 reconcile。 |
-| `escalate` | 对已 terminal identity 执行 `attempt escalate` 并请求用户裁决。 |
+| `escalate` | 对已 terminal identity 执行 `attempt escalate` 并请求用户裁决。reconcile 输出 escalate 即释放该 tid 并发槽（等待用户期间不阻塞其他 task）；`reserved` 悬挂超过 silent 阈值同样输出 escalate。 |
 | `alert-silent` | 对 current running identity 的 fingerprint 执行 `attempt silent-alert`，报告用户并停止自动调度；不取消、不重派。 |
 
 ## 持久控制面

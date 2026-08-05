@@ -37,6 +37,7 @@
 - 删除、重命名、chmod 由 binary diff 或 untracked mode 表达。
 - 每段使用长度前缀分帧，避免不同字段拼接产生碰撞歧义。
 - 控制面不保存文件内容，只保存 fingerprint 及诊断元数据：HEAD、worktree、dirty 摘要。
+- 超过 1 MB 的 untracked regular file 不全量读入：只哈希 `size + mtime_ns + 前 8 KB 内容`，避免 observe 被大文件拖慢。静默检测对该类文件的精度降级——仅在大小/mtime/内容前缀变化时可感知，超大文件中部变化可能漏报。
 
 ## Observation 与 silent alert
 

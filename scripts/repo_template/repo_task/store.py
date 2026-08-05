@@ -1,14 +1,10 @@
 """Canonical store implementation for the task toolchain."""
 
-import argparse
 import json
-import os
 import re
-import shutil
-import subprocess
 import sys
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 import repo_task.context as ctx
@@ -268,10 +264,29 @@ def discover_effective_tasks() -> dict[str, dict]:
         if not match:
             continue
         owner_tid = match.group(1)
-        tasks = scan_tasks_in_worktree(path)
-        task = next((item for item in tasks if item["tid"] == owner_tid), None)
+        # 单个 worktree 的 task.md 损坏（agent 写一半崩溃）不得让整个
+        # ps/reconcile/view 失败：标记为脏状态并继续观察其余 task。
+        try:
+            tasks = scan_tasks_in_worktree(path)
+            task = next((item for item in tasks if item["tid"] == owner_tid), None)
+        except (OSError, ctx.TaskDataError):
+            effective[owner_tid] = {
+                "tid": owner_tid,
+                "slug": "",
+                "title": "(worktree task.md 损坏)",
+                "status": "blocked",
+                "note": f"登记 worktree {path} 的 task.md 无法解析",
+            }
+            continue
         if task is None:
-            raise ctx.TaskDataError(f"登记 worktree {path} 缺自身 task {owner_tid}")
+            effective[owner_tid] = {
+                "tid": owner_tid,
+                "slug": "",
+                "title": "(worktree 缺自身 task)",
+                "status": "blocked",
+                "note": f"登记 worktree {path} 缺自身 task {owner_tid}",
+            }
+            continue
         effective[owner_tid] = task
     return effective
 

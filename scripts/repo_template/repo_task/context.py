@@ -1,20 +1,9 @@
 """Repository paths, shared constants, and data errors."""
 
-import argparse
-import json
 import os
 import re
-import shutil
-import subprocess
-import sys
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from pathlib import Path
-
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = SCRIPT_DIR.parent.parent

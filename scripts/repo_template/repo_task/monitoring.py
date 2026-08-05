@@ -58,8 +58,17 @@ def _required_git_bytes(args: list[str], root: Path) -> bytes:
     return result.stdout
 
 
+_FINGERPRINT_LARGE_FILE_LIMIT = 1024 * 1024  # 1 MB
+_FINGERPRINT_LARGE_FILE_PREFIX = 8192  # 大文件只读前 8 KB
+
+
 def repository_fingerprint(root: Path) -> dict:
-    """Hash HEAD, binary diffs, and sorted non-ignored untracked entries."""
+    """Hash HEAD, binary diffs, and sorted non-ignored untracked entries.
+
+    超过 1 MB 的 untracked 常规文件不全量读入，只哈希 (size, mtime_ns,
+    前 8 KB 内容)，避免 observe 被大文件拖慢；静默检测对超大文件变化
+    的精度随之降级（仅内容前缀变化可感知）。
+    """
     root = root.resolve()
     head = _required_git_bytes(["rev-parse", "HEAD"], root).strip()
     staged = _required_git_bytes(
@@ -89,7 +98,15 @@ def repository_fingerprint(root: Path) -> dict:
             content = os.fsencode(os.readlink(path))
         elif stat.S_ISREG(info.st_mode):
             kind = b"file"
-            content = path.read_bytes()
+            if info.st_size > _FINGERPRINT_LARGE_FILE_LIMIT:
+                # 大文件：只记 size + mtime_ns + 前 8 KB，不读全量。
+                with path.open("rb") as fh:
+                    prefix = fh.read(_FINGERPRINT_LARGE_FILE_PREFIX)
+                content = (
+                    f"large:{info.st_size}:{info.st_mtime_ns}:".encode("ascii") + prefix
+                )
+            else:
+                content = path.read_bytes()
         else:
             kind = f"special:{file_type:o}".encode("ascii")
             content = b""
@@ -338,20 +355,31 @@ def compute_ps_rows(
 ) -> list[dict]:
     records = project_attempts(events)
     ledger_tids = {record["tid"] for record in records.values()}
+    # 合并 effective 中 active/blocked 的 tid：frontmatter 被手工改状态但未走
+    # reserve 的脏状态也要可见，避免状态不一致被掩盖（无 reserve 标注）。
+    active_tids = {
+        tid for tid, task in effective.items()
+        if task.get("status") in ("active", "blocked")
+    }
     rows = []
-    for tid in sorted(ledger_tids, key=_ledger_tid_sort_key):
+    for tid in sorted(ledger_tids | active_tids, key=_ledger_tid_sort_key):
         record = current_attempt_record(tid, events)
         effective_status = effective.get(tid, {}).get("status", "")
         base = {
             "tid": tid,
-            "attempt": record["attempt"],
-            "execution_id": record["execution_id"],
-            "executor": record["executor"],
-            "model": record["model"],
-            "host_worker_id": record["host_worker_id"],
+            "attempt": record["attempt"] if record else None,
+            "execution_id": record["execution_id"] if record else "",
+            "executor": record["executor"] if record else "",
+            "model": record["model"] if record else "",
+            "host_worker_id": record["host_worker_id"] if record else "",
             "last_activity": "-",
             "note": "",
         }
+        if record is None:
+            # frontmatter active/blocked 但无 attempt：脏状态，标注无 reserve。
+            base["state"] = f"{effective_status}(无 reserve)"
+            rows.append(base)
+            continue
         if main_statuses.get(tid) in ctx.ARCHIVED_STATUSES:
             base["state"] = main_statuses[tid]
             rows.append(base)
@@ -438,7 +466,20 @@ def _retry_or_escalate_action(
     mode_probe=dispatch_mode,
 ) -> dict:
     reason = f"#{parent_attempt} {fail_class} 失败：{detail}"
-    if parent_attempt - 1 >= max_auto_retries:
+    # 重试额度按该 tid 在 exact identity 之前发生的显式失败事件数计数，
+    # 而非 attempt 号差——escalate 轮次不计入重试额度。
+    prior_failures = 0
+    for record in attempts_for_tid(tid, events):
+        if record["attempt"] >= parent_attempt:
+            continue
+        terminal = record.get("terminal") or {}
+        report = record.get("report") or {}
+        if (
+            terminal.get("status") in ("failed", "stopped")
+            or report.get("status") == "failed"
+        ):
+            prior_failures += 1
+    if prior_failures >= max_auto_retries:
         record = current_attempt_record(tid, events)
         return {
             "action": "escalate", "tid": tid, "attempt": parent_attempt,
@@ -510,6 +551,23 @@ def compute_reconcile_plan(
         report = record.get("report")
         verdict, detail = verifier(tid, attempt, record["execution_id"])
         if record["state"] == "reserved":
+            reserved_ts = (record.get("reserved") or {}).get("ts", "")
+            reserved_at = _parse_instant(reserved_ts)
+            stale = (
+                reserved_at is not None
+                and now - reserved_at > timedelta(minutes=silent_minutes)
+            )
+            if stale:
+                # 悬挂超时：宿主可能从未启动，升级用户裁决，不无限 await-bind 占槽。
+                if allowed(tid):
+                    actions.append({
+                        "action": "escalate", "tid": tid, "attempt": attempt,
+                        "execution_id": record["execution_id"], "executor": record["executor"],
+                        "model": record["model"], "host_worker_id": record["host_worker_id"],
+                        "reason": f"reserved 悬挂超过 {silent_minutes} 分钟未 bind；"
+                                  "宿主可能未启动，须用户裁决",
+                    })
+                continue
             if allowed(tid):
                 actions.append({
                     "action": "await-bind", "tid": tid, "attempt": attempt,
@@ -521,6 +579,38 @@ def compute_reconcile_plan(
             continue
         if record["state"] == "running":
             if verdict in ("ready", "contract"):
+                # running 且 refs 已终态：仍做轻量观察，避免 worker 崩溃后
+                # 分支被外部推到终态的场景无告警永久占槽。
+                observation = None
+                if record["executor"] == "agent" and record.get("bound") is not None:
+                    tev = [event for event in events if event.get("tid") == tid]
+                    observation = observer(tev, attempt, record["execution_id"])
+                if (
+                    observation
+                    and is_silent(observation.get("ts", ""), silent_minutes, now)
+                ):
+                    fingerprint = observation.get("fingerprint", "")
+                    already = any(
+                        event.get("fingerprint") == fingerprint
+                        for event in record.get("silent_alerted", [])
+                    )
+                    if not already and allowed(tid):
+                        changed_at = _parse_instant(observation.get("ts", ""))
+                        elapsed = (
+                            max(0, int((now - changed_at).total_seconds() // 60))
+                            if changed_at else 0
+                        )
+                        actions.append({
+                            "action": "alert-silent", "tid": tid, "attempt": attempt,
+                            "execution_id": record["execution_id"],
+                            "executor": record["executor"], "model": record["model"],
+                            "host_worker_id": record["host_worker_id"],
+                            "fingerprint": fingerprint,
+                            "last_activity": observation.get("ts", ""),
+                            "silent_minutes": elapsed,
+                            "reason": f"running 且 refs {verdict}，但连续 {elapsed} 分钟"
+                                      "无仓库变化；worker 可能已崩溃，只告警不重派",
+                        })
                 if allowed(tid):
                     actions.append({
                         "action": "await-terminal", "tid": tid, "attempt": attempt,
@@ -567,7 +657,7 @@ def compute_reconcile_plan(
             occupancy += 1
             continue
         if (
-            report and report.get("status") == "blocked"
+            (report and report.get("status") == "blocked")
             or effective_tasks.get(tid, {}).get("status") == "blocked"
         ):
             action = {
@@ -579,6 +669,19 @@ def compute_reconcile_plan(
         elif record["terminal_status"] in ("failed", "stopped") or (
             report and report.get("status") == "failed"
         ):
+            if record["terminal_status"] in ("failed", "stopped") and not report:
+                # 裸 terminal failed/stopped：先等 report 落账，禁止自动 redispatch，
+                # 避免新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失。
+                if allowed(tid):
+                    actions.append({
+                        "action": "await-report", "tid": tid, "attempt": attempt,
+                        "execution_id": record["execution_id"], "executor": record["executor"],
+                        "model": record["model"], "host_worker_id": record["host_worker_id"],
+                        "reason": "terminal failed/stopped 但尚无 report；"
+                                  "coordinator 先写 report 再进入 retry/escalate",
+                    })
+                occupancy += 1
+                continue
             action = _retry_or_escalate_action(
                 tid, attempt,
                 fail_class=(report or {}).get("class") or "task",

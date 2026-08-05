@@ -80,6 +80,9 @@ def project_attempts(events: list[dict]) -> dict[tuple[str, int, str], dict]:
         elif kind == "silent_alerted":
             record["silent_alerted"].append(event)
         elif kind == "integrated":
+            # escalate 是「暂停自动处置」标记而非终态覆盖：integrated 到达后
+            # state 归 integrated，escalated 事件字段保留供追溯（escalated→
+            # integrate 的手动路径在 3fdd454 明确放行，reconcile 不自动输出）。
             record["state"] = "integrated"
             record["integrated"] = event
         elif kind == "escalated":
@@ -119,8 +122,17 @@ def attempt_for_identity(
 
 
 def overlapping_attempts(tid: str, events: list[dict]) -> set[int]:
+    """Return attempt numbers that were involved in an illegal overlap.
+
+    An overlap is recorded when an ``attempt_reserved`` arrives while another
+    identity is still open (reserved/running). The ``invalid`` set is
+    conservative: an attempt stays flagged until *every* identity it overlapped
+    with has reached ``attempt_terminal``. Once all partner identities are
+    closed, the flag is released so the tid can resume normal handling.
+    """
     open_identities: dict[tuple[int, str], None] = {}
     invalid: set[int] = set()
+    partners: dict[int, set[tuple[int, str]]] = {}
     for event in events:
         if event.get("tid") != tid:
             continue
@@ -132,10 +144,17 @@ def overlapping_attempts(tid: str, events: list[dict]) -> set[int]:
         if event.get("event") == "attempt_reserved":
             if open_identities:
                 invalid.add(attempt)
-                invalid.update(item[0] for item in open_identities)
+                partners.setdefault(attempt, set()).update(open_identities)
+                for partner in open_identities:
+                    invalid.add(partner[0])
+                    partners.setdefault(partner[0], set()).add(identity)
             open_identities[identity] = None
         elif event.get("event") == "attempt_terminal":
             open_identities.pop(identity, None)
+    for attempt_number in list(invalid):
+        partner_set = partners.get(attempt_number, set())
+        if partner_set and all(partner not in open_identities for partner in partner_set):
+            invalid.discard(attempt_number)
     return invalid
 
 
@@ -192,6 +211,19 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
     if executor not in ctx.ATTEMPT_EXECUTORS:
         raise ctx.TaskDataError("executor 必须是 inline/agent")
 
+    # 领域层门禁：task 目录存在时校验 tid 存在且未归档（done/dropped 不可再执行）。
+    # 目录不存在（库调用/测试场景）时跳过，CLI 层仍保留主仓限定。
+    if ctx.TASKS_DIR.is_dir():
+        from .store import scan_tasks
+        known = {task["tid"]: task["status"] for task in scan_tasks()}
+        if tid not in known:
+            raise ctx.TaskDataError(f"{tid} 不存在于 task 目录；拒绝 reserve 孤立 attempt")
+        if known[tid] in ctx.ARCHIVED_STATUSES:
+            raise ctx.TaskDataError(
+                f"{tid} 已归档（{known[tid]}）；拒绝 reserve 新 attempt，"
+                "需先 rewind 或显式恢复"
+            )
+
     def build(attempt: int, events: list[dict]) -> dict:
         current = current_attempt_record(tid, events)
         if current:
@@ -240,14 +272,18 @@ def bind_attempt(
             raise ctx.TaskDataError("bind 仅适用于 executor=agent")
         if record["state"] != "reserved":
             raise ctx.TaskDataError(f"attempt state={record['state']!r}，不能 bind")
+        if not host_worker_id:
+            raise ctx.TaskDataError(
+                "agent attempt bind 必须提供非空 host_worker_id；"
+                "cron 按该句柄查询宿主终态"
+            )
         event = {
             "event": "attempt_bound",
             "tid": tid,
             "attempt": attempt,
             "execution_id": execution_id,
+            "host_worker_id": host_worker_id,
         }
-        if host_worker_id:
-            event["host_worker_id"] = host_worker_id
         return event
 
     return ledger_locked_append(build)
@@ -298,7 +334,7 @@ def report_attempt(
                 f"attempt state={record['state']!r}，report 必须在 terminal 后写入"
             )
         terminal_status = record.get("terminal_status", "")
-        if status == "done" and terminal_status not in ("completed", ""):
+        if status == "done" and terminal_status != "completed":
             raise ctx.TaskDataError(
                 f"terminal_status={terminal_status!r} 不可写 report=done；"
                 "done 仅匹配 terminal completed"
@@ -324,6 +360,9 @@ def report_attempt(
 
 
 def escalate_attempt(tid: str, attempt: int, execution_id: str, reason: str) -> dict:
+    if not isinstance(reason, str) or not reason.strip():
+        raise ctx.TaskDataError("escalate 必须提供非空 reason")
+
     def build(events: list[dict]) -> dict:
         require_exact_terminal(tid, attempt, execution_id, events)
         return {
@@ -331,7 +370,7 @@ def escalate_attempt(tid: str, attempt: int, execution_id: str, reason: str) -> 
             "tid": tid,
             "attempt": attempt,
             "execution_id": execution_id,
-            "reason": reason,
+            "reason": reason.strip(),
         }
 
     return ledger_locked_append(build)

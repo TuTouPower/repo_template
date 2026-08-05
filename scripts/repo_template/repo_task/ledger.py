@@ -89,6 +89,11 @@ def _with_lock(callback):
     ctx.LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock_path = ctx.LEDGER_PATH.with_suffix(".lock")
     with lock_path.open("a+", encoding="utf-8") as lock_fh:
+        # 空 lock 文件上 Windows msvcrt.locking(1 字节) 会失败，先写入 1 字节。
+        # 注意：锁是 CLI 单进程独占使用，非线程安全（msvcrt 进程级、fcntl 描述符级）。
+        if lock_fh.tell() == 0:
+            lock_fh.write("\0")
+            lock_fh.flush()
         _ledger_lock_fh(lock_fh)
         try:
             return callback()

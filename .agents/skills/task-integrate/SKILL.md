@@ -56,7 +56,7 @@ scripts/repo_template/task.py cleanup-worktree {tid} \
 cleanup 永远要求 `--attempt` 与 `--execution-id`，并在删除 worktree 前同时通过：
 
 1. identity 精确等于该 tid 的 current attempt；
-2. executor terminal 为 `completed`；
+2. executor terminal 为 `completed`（escalated 且 terminal=completed 的 identity 视作用户已裁决，放行——escalate 是「暂停自动处置」标记而非终态覆盖，reconcile 不自动输出 integrate，但手动 cleanup/integrate 可继续）；
 3. 不存在未闭环或非法重叠 attempt；
 4. branch tip 与 task 终态一致；
 5. `handoff.json` identity、status、branch、字段类型与 `base_sha == branch tip first parent` 全部成立；

@@ -45,6 +45,10 @@ def ledger(tmp_path, monkeypatch):
     runtime = tmp_path / "docs" / "runtime"
     monkeypatch.setattr(ctx, "RUNTIME_DIR", runtime)
     monkeypatch.setattr(ctx, "LEDGER_PATH", runtime / "dispatch_ledger.jsonl")
+    # 裸账本单测：task 目录指向不存在的临时路径，跳过 reserve_attempt 的
+    # 领域层 tid 校验（生产环境该目录必存在，校验生效）。
+    monkeypatch.setattr(ctx, "TASKS_DIR", tmp_path / "tasks")
+    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", tmp_path / "archive_tasks")
     return runtime / "dispatch_ledger.jsonl"
 
 
@@ -1038,6 +1042,25 @@ def test_reconcile_contract_without_site_escalates():
     assert "禁止自动 retry" in action["reason"]
 
 
+def test_reconcile_terminal_failed_contract_resume_redispatches(ledger):
+    """terminal failed + class=contract + mode=resume：同模型 resume 补交接单。"""
+    events = [
+        *_terminal(
+            "t001", status="failed", model="opus", host_worker_id="worker-1",
+            reserved_ts=_ts(30), terminal_ts=_ts(20),
+        ),
+        _report("t001", status="failed", fail_class="contract", ts=_ts(21)),
+    ]
+    plan = _plan(events, mode="resume")
+
+    action, = plan["actions"]
+    assert action["action"] == "dispatch"
+    assert action["attempt"] == 2
+    assert action["model"] == "opus"
+    assert action["mode"] == "resume"
+    assert "补交接单" in action["reason"]
+
+
 def test_record_attempt_events_without_dispatch_still_require_explicit_attempt(ledger):
     for event in ("report", "escalated", "silent_alerted", "attempt_terminal"):
         with pytest.raises(SystemExit, match="不允许生命周期事件"):
@@ -1156,6 +1179,11 @@ def test_late_attempt_one_events_do_not_end_or_latch_attempt_two():
         ("escalate", "t001"),
         ("dispatch", "t002"),
     ]
+    # late events 是 identity 混淆高风险路径：escalate 必须绑定 attempt 2 的
+    # 身份，不得引用 attempt 1 的 execution_id。
+    escalate = plan["actions"][0]
+    assert escalate["attempt"] == 2
+    assert escalate["execution_id"] == _eid("t001", 2)
 
 
 def test_dispatch_without_prior_terminal_is_illegal_overlap():
@@ -1234,7 +1262,7 @@ def test_bind_and_terminal_reject_wrong_or_old_identity(ledger):
     attempt, execution_id = _identity(first)
     with pytest.raises(ctx.TaskDataError, match="不匹配 identity"):
         bind_attempt("t001", attempt, "wrong")
-    bind_attempt("t001", attempt, execution_id)
+    bind_attempt("t001", attempt, execution_id, "host-1")
     terminal_attempt("t001", attempt, execution_id, "failed")
     second = reserve_attempt("t001", "inline")
     with pytest.raises(ctx.TaskDataError, match="旧或不匹配"):

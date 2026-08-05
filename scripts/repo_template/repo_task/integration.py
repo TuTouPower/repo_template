@@ -193,7 +193,11 @@ def _conflicted_paths() -> list[str]:
 def _commit_index() -> None:
     rebuild_index()
     paths = [ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)]
-    _git(["add", "--", *paths])
+    add_result = _git(["add", "--", *paths])
+    if add_result.returncode != 0:
+        # git add 失败（权限/磁盘满）若不检查，diff --cached 会静默吞掉，
+        # 产生索引与账本不一致。显式失败，保留现场供重试。
+        raise ctx.TaskDataError(f"index git add 失败：{add_result.stderr.strip()}")
     if _git(["diff", "--cached", "--quiet", "--", *paths]).returncode == 0:
         print("index 无变化，跳过维护 commit")
         return
@@ -233,6 +237,8 @@ def _delete_branches(branches: list[str]) -> None:
 def cmd_integrate(args):
     """Integrate exactly one terminal attempt."""
     require_primary_worktree()
+    if not ctx.TID_RE.fullmatch(args.tid):
+        sys.exit(f"tid 非法：{args.tid!r}")
     try:
         record, _ = _require_execution_gate(
             args.tid, args.attempt, args.execution_id, allow_integrated=True
@@ -426,6 +432,17 @@ def _validate_tx_members(payload: dict, tail_tid: str) -> list[dict]:
             raise ctx.TaskDataError("transaction member 字段非法")
         branches = _task_branch_names(tid)
         if branches != [branch]:
+            # awaiting_verification 且该成员已 integrated：分支可能已在上一轮
+            # _delete_chain_branches 中被删除。已终态完成，跳过分支存在性与
+            # handoff 校验，仅靠 exact attempt gate（allow_integrated）与
+            # integrated 事件/merge_sha 一致性收尾，否则 --continue 永久卡死。
+            if (
+                allow_integrated
+                and branches == []
+                and member.get("integrated_sha") == payload.get("merge_sha")
+            ):
+                previous = member
+                continue
             raise ctx.TaskDataError(
                 f"transaction 成员 {tid} 分支集合漂移：{branches!r}，预期 {[branch]!r}"
             )
@@ -485,20 +502,26 @@ def _record_index_phase(payload: dict) -> dict:
     if not isinstance(merge_sha, str) or not merge_sha:
         raise ctx.TaskDataError("merged transaction 缺 merge_sha")
     head = _get_head()
+    index_skipped = False
     if head == merge_sha:
         _commit_index()
         head = _get_head()
+        index_skipped = head == merge_sha
     elif _git(["rev-parse", "HEAD^1"]).stdout.strip() != merge_sha:
         raise ctx.TaskDataError("当前 HEAD 既非 merge_sha，也非其紧邻 index 维护 commit")
-    return _update_chain_tx(payload, "indexed", index_sha=head)
+    return _update_chain_tx(payload, "indexed", index_sha=head, index_skipped=index_skipped)
 
 
 def _record_integrated_phase(payload: dict) -> dict:
     index_sha = payload.get("index_sha")
     if _get_head() != index_sha:
         raise ctx.TaskDataError("indexed transaction 的 index_sha 与当前 HEAD 不符")
+    members = [
+        {**member, "integrated_sha": payload["merge_sha"]}
+        for member in payload["members"]
+    ]
     append_integrated_batch(payload["members"], payload["merge_sha"])
-    return _update_chain_tx(payload, "awaiting_verification")
+    return _update_chain_tx(payload, "awaiting_verification", members=members)
 
 
 def _delete_chain_branches(members: list[dict]) -> None:
@@ -529,6 +552,8 @@ def _resume_chain_to_verification(payload: dict) -> dict:
 
 def cmd_integrate_chain(args):
     require_primary_worktree()
+    if not ctx.TID_RE.fullmatch(args.tail_tid):
+        sys.exit(f"tid 非法：{args.tail_tid!r}")
     if args.continue_merge:
         try:
             tx_path, payload = _read_chain_tx()
@@ -541,7 +566,17 @@ def cmd_integrate_chain(args):
             if starting_phase == "awaiting_verification":
                 members = _validate_tx_members(payload, args.tail_tid)
                 append_integrated_batch(members, payload["merge_sha"])
-                if _get_head() != payload.get("index_sha"):
+                if payload.get("index_skipped"):
+                    # index 无变化时 index_sha == merge_sha；外部验证期间主干可能
+                    # 已被其他操作推进，此时只要求 merge_sha 是 HEAD 的祖先。
+                    if _git([
+                        "merge-base", "--is-ancestor",
+                        payload["merge_sha"], "HEAD",
+                    ]).returncode != 0:
+                        raise ctx.TaskDataError(
+                            "merge_sha 不再是 HEAD 祖先；拒绝删除分支"
+                        )
+                elif _get_head() != payload.get("index_sha"):
                     raise ctx.TaskDataError(
                         "外部验证后 HEAD 与 transaction index_sha 不符；拒绝删除分支"
                     )
