@@ -1,0 +1,20 @@
+{
+  "outdir": "/home/karon/karson_ubuntu/repo_template/docs/reviews/review_20260805_133245",
+  "meta_dir": "/home/karon/karson_ubuntu/repo_template/docs/reviews/review_20260805_133245/_meta",
+  "elapsed_sec": 903,
+  "timeout_sec": 900,
+  "remaining_sec": 0,
+  "phase": "timeout",
+  "source": "wait_reports",
+  "done": [
+    "review_claude_haiku.md",
+    "review_claude_sonnet.md",
+    "review_kimi_kimi_code_k3_256k.md",
+    "review_grok_grok_4_5.md"
+  ],
+  "pending": [
+    "review_kimi_gpt_5_6_luna.md",
+    "review_kimi_gemini_3_6_flash.md"
+  ],
+  "updated_at": "2026-08-05T05:47:48Z"
+}

@@ -1,0 +1,11 @@
+{
+  "t0_unix": 1785907965,
+  "timeout_sec": 900,
+  "cwd": "/home/karon/karson_ubuntu/repo_template",
+  "outdir": "/home/karon/karson_ubuntu/repo_template/docs/reviews/review_20260805_133245",
+  "outdir_rel": "docs/reviews/review_20260805_133245",
+  "meta_dir": "/home/karon/karson_ubuntu/repo_template/docs/reviews/review_20260805_133245/_meta",
+  "deadman_pid": 71676,
+  "skill_scripts": "/home/karon/.agents/skills/my-review/scripts",
+  "created_at": "2026-08-05T05:32:45Z"
+}
