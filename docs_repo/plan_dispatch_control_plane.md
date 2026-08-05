@@ -53,9 +53,9 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 | silent alert | exact identity, fingerprint | `attempt silent-alert` |
 | escalated | exact identity, reason | `attempt escalate` |
 | integrated | exact identity, merge_sha | `integrate` / `integrate-chain` |
-| breaker/note | model/state/reason 或 tid/reason | `ledger record` |
+| note | tid/reason | `ledger record` |
 
-`ledger record` 只允许 `note` / `breaker`，不能写生命周期事件；`ledger tail` 只读。账本追加使用文件锁，损坏行警告后跳过，不让单条截断写破坏整个控制面。
+`ledger record` 只允许 `note`，不能写生命周期事件；`ledger tail` 只读。账本追加使用文件锁，损坏行警告后跳过，不让单条截断写破坏整个控制面。
 
 ## Refs 与 handoff 是业务完成证据
 
@@ -94,7 +94,7 @@ python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 
 | 类别 | 来源 | 自动策略 | 升级条件 |
 |---|---|---|---|
-| infra | provider/API/宿主错误的 terminal/report failed | 模型阶梯降档；按现场 resume/restart；同模型连续失败可熔断 | 阶梯用尽或额度用尽 |
+| infra | provider/API/宿主错误的 terminal/report failed | 同模型重试一次（按现场 resume/restart）；不降档 | 额度用尽 |
 | contract | failed/stopped identity 的 refs/handoff/identity 验证失败 | 同模型 resume 补契约 | completed identity、重犯或无安全现场 |
 | task | 黑盒/review 等显式失败或 blocked | 按既有额度处理 | blocked 总是升级 |
 
@@ -137,7 +137,7 @@ python3 scripts/repo_template/task.py cleanup-worktree TID --attempt N --executi
 python3 scripts/repo_template/task.py integrate TID --attempt N --execution-id ID [--continue]
 python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 python3 scripts/repo_template/task.py ps [--all] [--silent-minutes N]
-python3 scripts/repo_template/task.py reconcile [--limit N] [--tids TIDS] [--model-ladder "opus>haiku"] [--silent-minutes N] [--max-auto-retries N] [--json]
-python3 scripts/repo_template/task.py ledger record --event note|breaker [--tid TID] [--model M] [--state open|closed] [--reason REASON]
+python3 scripts/repo_template/task.py reconcile [--limit N] [--tids TIDS] [--silent-minutes N] [--max-auto-retries N] [--json]
+python3 scripts/repo_template/task.py ledger record --event note [--tid TID] [--reason REASON]
 python3 scripts/repo_template/task.py ledger tail [--tid TID] [-n N]
 ```

@@ -96,7 +96,7 @@ context
 ### `ledger.py`
 
 - 只负责 JSONL 文件锁、append/read、原子 attempt 序号分配、批量 append 与坏行跳过。
-- 不承载 attempt 状态判断；`ledger record` 只暴露 note/breaker，`ledger tail` 只读。
+- 不承载 attempt 状态判断；`ledger record` 只暴露 note，`ledger tail` 只读。
 - 工具链按目录整体复制。
 
 ### `scheduling.py`
@@ -108,7 +108,7 @@ context
 
 - 仓库状态指纹、已 bind agent 的 exact `observe`、silence 判定。
 - refs/handoff 完成验证；`execution_id` 是 provenance，`host_worker_id` 只用于查询 agent 宿主。
-- `ps` 行计算、retry/breaker/escalate 规则和 reconcile 纯算法；attempt 投影只消费 `attempts.py`。
+- `ps` 行计算、retry/escalate 规则和 reconcile 纯算法；attempt 投影只消费 `attempts.py`。
 - 这是 worker 静默监控唯一实现落点；inline 不 observe、不触发 silent hold。
 
 ### `worktrees.py`
@@ -183,7 +183,7 @@ python3 scripts/repo_template/task.py attempt reserve TID --executor agent [--mo
 python3 scripts/repo_template/task.py attempt bind TID --attempt N --execution-id ID --host-worker-id HOST_ID
 ```
 
-`execution_id` 是执行 provenance；`host_worker_id` 只供 coordinator 查询宿主运行状态。生命周期不再通过 `ledger record` 写入；该命令只允许 note/breaker。
+`execution_id` 是执行 provenance；`host_worker_id` 只供 coordinator 查询宿主运行状态。生命周期不再通过 `ledger record` 写入；该命令只允许 note。
 
 ## 5. 将 stalled 自动重派改为 silent 告警
 

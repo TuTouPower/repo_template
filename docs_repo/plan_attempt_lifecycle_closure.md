@@ -59,7 +59,7 @@ coordinator 总是先写 terminal，再以同一 exact identity 写 report。ter
 - 生命周期：`task.py attempt reserve/bind/terminal/report/escalate/silent-alert`。
 - 仓库观察：`task.py observe` 写 `observation`。
 - 合并完成：`task.py integrate` / `integrate-chain` 写 exact `integrated`。
-- 运维备注：`task.py ledger record` 只允许 `note` / `breaker`。
+- 运维备注：`task.py ledger record` 只允许 `note`。
 - 查询：`task.py ledger tail` 只读。
 
 `ledger record` 的公共写面固定为上述运维备注，不参与 attempt 状态投影。

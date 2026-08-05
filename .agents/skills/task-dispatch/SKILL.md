@@ -16,7 +16,7 @@ disable-model-invocation: true
 
 ```text
 准备调度：{tid 列表}（并发上限 N，默认 3）
-worker 模型阶梯：{首选}>{回退}（默认继承当前会话模型；显式 infra 失败自动降档）
+worker 模型：{首选}（默认继承当前会话模型；infra 失败同模型重试一次，再失败 escalate）
 观察/reconcile 节拍：每 5 分钟 cron 兜底，调度结束或静默告警时注销
 每个 task：start → reserve agent attempt → 派发带 exact identity 的 Agent → bind host_worker_id；宿主终态后 terminal → report；done 后 exact cleanup-worktree → exact integrate → 重建 index → 合并后验证 → 删除该分支
 {依赖 task 列表} 会在其前置合并后由 reconcile 自动解锁补位。
@@ -70,12 +70,12 @@ exact identity 固定为 `(tid, attempt, execution_id)`：
 
    ```bash
    python3 scripts/repo_template/task.py reconcile --limit N [--tids 授权范围] \
-     --model-ladder "{阶梯}" --silent-minutes 30
+     --silent-minutes 30
    ```
 
 7. 按输出顺序执行计划；integrate 完成后同回合回到第 1 步。
 
-worker 不发送 heartbeat/progress，不调用 observe，不写 attempt 控制面。worker 只在自身分支写 `handoff.json`；宿主状态与生命周期命令只由 coordinator 处理。`ledger record` 不记录生命周期，只允许 `note` / `breaker`；`ledger tail` 只读。
+worker 不发送 heartbeat/progress，不调用 observe，不写 attempt 控制面。worker 只在自身分支写 `handoff.json`；宿主状态与生命周期命令只由 coordinator 处理。`ledger record` 不记录生命周期，只允许 `note`；`ledger tail` 只读。
 
 ## 行动执行
 
@@ -110,7 +110,7 @@ worker 通知到达时，通知只作为查询线索；coordinator 必须先用 
 
 | 类别 | 判定 | 自动策略 | 升级用户 |
 |---|---|---|---|
-| infra | API/provider/宿主错误的显式 failed | 按模型阶梯降档；有产出 resume、无产出 restart；同模型连续 2 次可记 breaker | 阶梯用尽或额度用尽 |
+| infra | API/provider/宿主错误的显式 failed | 同模型重试一次（按 mode resume/restart）；不降档 | 重试额度用尽 |
 | contract | handoff/refs/identity 验证失败 | 同模型 resume 补交接契约 | 重犯或无现场 |
 | task | 黑盒/review 等失败或 blocked | 既有 blocked 流程 | blocked 总是 |
 

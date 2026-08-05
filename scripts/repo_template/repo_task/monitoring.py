@@ -412,27 +412,6 @@ def compute_ps_rows(
     return rows
 
 
-def breaker_states(events: list[dict]) -> dict[str, str]:
-    states = {}
-    for event in events:
-        if event.get("event") == "breaker" and event.get("model"):
-            states[event["model"]] = event.get("state", "open")
-    return states
-
-
-def _pick_unbroken_model(
-    ladder: list[str], start: int, breakers: dict[str, str]
-) -> tuple[str | None, str]:
-    skipped = []
-    for index in range(start, len(ladder)):
-        model = ladder[index]
-        if breakers.get(model) == "open":
-            skipped.append(model)
-            continue
-        return model, f"{'、'.join(skipped)} 熔断，降 {model}" if skipped else ""
-    return None, ""
-
-
 def dispatch_mode(tid: str, events_for_tid: list[dict]) -> str:
     starts = [event for event in events_for_tid if event.get("event") == "start" and event.get("worktree")]
     worktree_rel = starts[-1]["worktree"] if starts else ctx.worktree_rel_path(tid)
@@ -455,8 +434,6 @@ def _retry_or_escalate_action(
     fail_class: str,
     detail: str,
     events: list[dict],
-    ladder: list[str] | None,
-    breakers: dict[str, str],
     max_auto_retries: int,
     mode_probe=dispatch_mode,
 ) -> dict:
@@ -479,32 +456,10 @@ def _retry_or_escalate_action(
                 "execution_id": record["execution_id"] if record else "",
                 "model": None, "reason": f"{reason}；无现场可续：worktree/分支缺失",
             }
-        model = parent_model
         reason += "（同模型 resume：补交接单）"
-    elif ladder:
-        model, note = _pick_unbroken_model(ladder, min(parent_attempt, len(ladder) - 1), breakers)
-        if model is None or (model == parent_model and fail_class == "infra"):
-            record = current_attempt_record(tid, events)
-            return {
-                "action": "escalate", "tid": tid, "attempt": parent_attempt,
-                "execution_id": record["execution_id"] if record else "",
-                "model": None,
-                "reason": f"{reason}；" + ("模型阶梯全部熔断" if model is None else "阶梯内已无未尝试模型"),
-            }
-        if note:
-            reason += f"（{note}）"
-    else:
-        model = parent_model
-        if model and breakers.get(model) == "open":
-            record = current_attempt_record(tid, events)
-            return {
-                "action": "escalate", "tid": tid, "attempt": parent_attempt,
-                "execution_id": record["execution_id"] if record else "",
-                "model": None, "reason": f"{reason}；模型阶梯全部熔断",
-            }
     return {
         "action": "dispatch", "tid": tid, "attempt": next_attempt(tid, events),
-        "model": model, "mode": mode, "reason": reason,
+        "model": parent_model, "mode": mode, "reason": reason,
     }
 
 
@@ -522,7 +477,6 @@ def compute_reconcile_plan(
     *,
     limit: int,
     scope: set[str] | None,
-    ladder: list[str] | None,
     silent_minutes: int,
     max_auto_retries: int,
     now: datetime,
@@ -533,7 +487,6 @@ def compute_reconcile_plan(
     main_done_set = schedule.get("main_done_set", set())
     dropped_set = schedule.get("dropped_set", set())
     effective_tasks = schedule.get("tasks", {})
-    breakers = breaker_states(events)
     allowed = lambda tid: scope is None or tid in scope
     actions = []
     occupancy = 0
@@ -630,7 +583,7 @@ def compute_reconcile_plan(
                 tid, attempt,
                 fail_class=(report or {}).get("class") or "task",
                 detail=(report or {}).get("reason", record["terminal_status"]),
-                events=events, ladder=ladder, breakers=breakers,
+                events=events,
                 max_auto_retries=max_auto_retries, mode_probe=mode_probe,
             )
         elif record["terminal_status"] == "completed":
@@ -663,22 +616,9 @@ def compute_reconcile_plan(
             if conflicts.get(tid, set()) & in_flight_tids:
                 continue
             reason = "空槽补位：下一批可跑"
-            model = None
-            if ladder:
-                model, note = _pick_unbroken_model(ladder, 0, breakers)
-                if model is None:
-                    actions.append({
-                        "action": "escalate", "tid": tid,
-                        "attempt": next_attempt(tid, events),
-                        "model": None, "reason": "模型阶梯全部熔断；尚未 reserve execution_id",
-                    })
-                    free -= 1
-                    continue
-                if note:
-                    reason += f"（{note}）"
             actions.append({
                 "action": "dispatch", "tid": tid,
-                "attempt": next_attempt(tid, events), "model": model, "reason": reason,
+                "attempt": next_attempt(tid, events), "model": None, "reason": reason,
             })
             in_flight_tids.add(tid)
             free -= 1

@@ -17,7 +17,7 @@
 | `docs/archive/tasks/{tid}_{slug}/` | 已归档 task 工作区 | 仅由 `scripts/repo_template/task.py finish` / `drop` 从 `docs/tasks/` 移入；内部文件只准新增 |
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` / `integrate-chain` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
-| `docs/runtime/dispatch_ledger.jsonl` | 全部执行拓扑共用的 attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/bind/terminal/report/escalate/silent-alert` 写入，`observe` 写精确绑定 identity 的 `observation`，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note` / `breaker`，`ledger tail` 只读；禁止手工编辑 |
+| `docs/runtime/dispatch_ledger.jsonl` | 全部执行拓扑共用的 attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/bind/terminal/report/escalate/silent-alert` 写入，`observe` 写精确绑定 identity 的 `observation`，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note`，`ledger tail` 只读；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -141,9 +141,8 @@ python3 scripts/repo_template/task.py edit t005 --depends-on "t001,t003" --confl
 python3 scripts/repo_template/task.py view                         # task 全景：运行中/待运行分组/已结束；冲突阻塞行附带被阻塞 task 标题
 python3 scripts/repo_template/task.py observe t002 --attempt 1 --execution-id EXECUTION_ID --json # observation 精确绑定 identity
 python3 scripts/repo_template/task.py ps --silent-minutes 30 --all # 在飞 attempt 活表（账本+refs+worktree 观察派生）
-python3 scripts/repo_template/task.py reconcile --limit 3 --silent-minutes 30 --model-ladder "opus>haiku" # 只读行动计划
+python3 scripts/repo_template/task.py reconcile --limit 3 --silent-minutes 30 # 只读行动计划
 python3 scripts/repo_template/task.py ledger record --event note --tid t002 --reason "人工备注"       # 生命周期外备注
-python3 scripts/repo_template/task.py ledger record --event breaker --model haiku --state open --reason "provider 故障"
 python3 scripts/repo_template/task.py ledger tail --tid t002       # 只读 attempt 控制面
 python3 scripts/repo_template/task.py rewind t001 --to backlog --reason "需补 spec"   # active/blocked → backlog
 python3 scripts/repo_template/task.py purge t001 --reason "误建"                       # backlog → deleted（仅从未开干）

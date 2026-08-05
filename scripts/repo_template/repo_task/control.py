@@ -148,19 +148,11 @@ def cmd_ledger_record(args):
     event = {"event": args.event}
     if args.tid:
         event["tid"] = args.tid
-    if args.event == "note":
-        if args.reason is not None:
-            event["text"] = args.reason
-    else:
-        if not args.model:
-            sys.exit("ledger record --event breaker 必须给 --model")
-        event["model"] = args.model
-        event["state"] = args.state or "open"
-        if args.reason is not None:
-            event["reason"] = args.reason
+    if args.reason is not None:
+        event["text"] = args.reason
     final = ledger_append(event)
     parts = [f"recorded: {final['event']}"]
-    for key in ("tid", "model", "state"):
+    for key in ("tid",):
         if final.get(key):
             parts.append(f"{key}={final[key]}")
     print(" ".join(parts))
@@ -240,13 +232,11 @@ def cmd_reconcile(args):
     events = ledger_read()
     schedule = compute_schedule()
     scope = set(parse_tid_list(args.tids, field="--tids")) if args.tids else None
-    ladder = [item.strip() for item in args.model_ladder.split(">") if item.strip()] or None
     plan = compute_reconcile_plan(
         events,
         schedule,
         limit=args.limit,
         scope=scope,
-        ladder=ladder,
         silent_minutes=args.silent_minutes,
         max_auto_retries=args.max_auto_retries,
         now=datetime.now().astimezone(),

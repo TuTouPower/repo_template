@@ -1,4 +1,4 @@
-"""调度控制面：统一 attempt 生命周期、账本、ps、reconcile 与 breaker 测试。"""
+"""调度控制面：统一 attempt 生命周期、账本、ps、reconcile 测试。"""
 
 import argparse
 import threading
@@ -27,7 +27,6 @@ from repo_task.attempts import (
 )
 from repo_task.ledger import ledger_append, ledger_next_attempt, ledger_read
 from repo_task.monitoring import (
-    breaker_states,
     compute_ps_rows,
     compute_reconcile_plan,
     is_silent,
@@ -209,7 +208,7 @@ def _escalated(tid: str, attempt: int = 1, *, execution_id: str | None = None) -
 
 
 def _record(**kwargs):
-    defaults = dict(event=None, tid=None, model=None, state=None, reason=None)
+    defaults = dict(event=None, tid=None, reason=None)
     defaults.update(kwargs)
     control.cmd_ledger_record(argparse.Namespace(**defaults))
 
@@ -476,7 +475,6 @@ def _plan(
     options = dict(
         limit=3,
         scope=None,
-        ladder=None,
         silent_minutes=20,
         max_auto_retries=1,
         now=NOW,
@@ -501,14 +499,14 @@ def test_reconcile_progressing_occupies_slot_and_fills_from_selected():
     events = _running("t001", model="opus", ts=_ts(5))
     schedule = _schedule(selected=["t002", "t003"])
     plan = _plan(
-        events, schedule, activities={"t001": _ts(5)}, ladder=["opus", "haiku"],
+        events, schedule, activities={"t001": _ts(5)},
     )
 
     assert plan["occupancy"]["used"] == 1
     assert [(action["action"], action["tid"]) for action in plan["actions"]] == [
         ("dispatch", "t002"), ("dispatch", "t003"),
     ]
-    assert all(action["model"] == "opus" for action in plan["actions"])
+    assert all(action["model"] is None for action in plan["actions"])
     assert all(action["attempt"] == 1 for action in plan["actions"])
     assert all("execution_id" not in action for action in plan["actions"])
 
@@ -548,7 +546,6 @@ def test_reconcile_completed_contract_escalates_without_retry():
     plan = _plan(
         events,
         verify=("contract", "分支 tip 缺 handoff.json"),
-        ladder=["opus", "haiku"],
         mode="resume",
     )
 
@@ -577,7 +574,7 @@ def test_reconcile_silent_alerts_without_redispatch():
     events = _running(
         "t001", model="opus", host_worker_id="worker-7", ts=_ts(30),
     )
-    plan = _plan(events, activities={"t001": _ts(30)}, ladder=["opus", "haiku"])
+    plan = _plan(events, activities={"t001": _ts(30)})
 
     action, = plan["actions"]
     assert action["action"] == "alert-silent"
@@ -591,7 +588,7 @@ def test_reconcile_silent_alerts_without_redispatch():
     assert plan["silent_hold"] is True
 
 
-def test_reconcile_failed_without_ladder_keeps_last_model():
+def test_reconcile_failed_infra_retries_same_model():
     events = [
         *_terminal(
             "t001", status="failed", model="opus",
@@ -704,7 +701,6 @@ def test_reconcile_completed_missing_handoff_escalates_without_retry():
     plan = _plan(
         events,
         verify=("contract", "分支 tip 缺 docs/archive/tasks/t001_x/handoff.json"),
-        ladder=["opus", "haiku"],
         mode="resume",
     )
 
@@ -738,128 +734,7 @@ def test_ps_refs_ready_shows_done_pending_merge():
 
 
 # --------------------------------------------------------------------------
-# 模型熔断器
-# --------------------------------------------------------------------------
-
-
-def test_record_breaker_requires_model(ledger):
-    with pytest.raises(SystemExit, match="必须给 --model"):
-        _record(event="breaker")
-    assert ledger_read() == []
-
-
-def test_record_breaker_defaults_open_and_accepts_closed(ledger):
-    _record(event="breaker", model="opus", reason="provider 不兼容")
-    _record(event="breaker", model="opus", state="closed", reason="恢复")
-
-    events = ledger_read()
-    assert events[0]["state"] == "open"
-    assert events[1]["state"] == "closed"
-
-
-def test_breaker_states_latest_event_wins():
-    events = [
-        {"event": "breaker", "model": "opus", "state": "open"},
-        {"event": "breaker", "model": "haiku"},
-        {"event": "breaker", "model": "opus", "state": "closed"},
-    ]
-
-    assert breaker_states(events) == {"opus": "closed", "haiku": "open"}
-
-
-def test_reconcile_dispatch_skips_broken_model_with_note():
-    schedule = _schedule(selected=["t001"])
-    events = [{"event": "breaker", "model": "opus", "state": "open"}]
-    plan = _plan(events, schedule, ladder=["opus", "haiku"])
-
-    action, = plan["actions"]
-    assert action["action"] == "dispatch"
-    assert action["model"] == "haiku"
-    assert "opus 熔断" in action["reason"] and "降 haiku" in action["reason"]
-
-
-def test_reconcile_redispatch_uses_next_unbroken_rung():
-    events = [
-        *_terminal(
-            "t001", status="failed", model="opus",
-            reserved_ts=_ts(10), terminal_ts=_ts(7),
-        ),
-        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
-        {"event": "breaker", "model": "haiku", "state": "open"},
-    ]
-    plan = _plan(events, ladder=["opus", "haiku", "sonnet"])
-
-    action, = plan["actions"]
-    assert action["action"] == "dispatch"
-    assert action["attempt"] == 2
-    assert action["model"] == "sonnet"
-    assert "haiku 熔断" in action["reason"]
-
-
-def test_reconcile_breaker_closed_restores_first_rung():
-    schedule = _schedule(selected=["t001"])
-    events = [
-        {"event": "breaker", "model": "opus", "state": "open"},
-        {"event": "breaker", "model": "opus", "state": "closed"},
-    ]
-    plan = _plan(events, schedule, ladder=["opus", "haiku"])
-
-    action, = plan["actions"]
-    assert action["action"] == "dispatch"
-    assert action["model"] == "opus"
-    assert "熔断" not in action["reason"]
-
-
-def test_reconcile_all_models_broken_dispatch_escalates():
-    schedule = _schedule(selected=["t001"])
-    events = [
-        {"event": "breaker", "model": "opus", "state": "open"},
-        {"event": "breaker", "model": "haiku", "state": "open"},
-    ]
-    plan = _plan(events, schedule, ladder=["opus", "haiku"])
-
-    action, = plan["actions"]
-    assert action["action"] == "escalate"
-    assert "execution_id" not in action
-    assert action["reason"] == "模型阶梯全部熔断；尚未 reserve execution_id"
-
-
-def test_reconcile_all_models_broken_redispatch_escalates():
-    events = [
-        *_terminal(
-            "t001", status="failed", model="opus",
-            reserved_ts=_ts(10), terminal_ts=_ts(7),
-        ),
-        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
-        {"event": "breaker", "model": "opus", "state": "open"},
-        {"event": "breaker", "model": "haiku", "state": "open"},
-    ]
-    plan = _plan(events, ladder=["opus", "haiku"])
-
-    action, = plan["actions"]
-    assert action["action"] == "escalate"
-    assert action["execution_id"] == _eid("t001", 1)
-    assert "模型阶梯全部熔断" in action["reason"]
-
-
-def test_reconcile_no_ladder_last_model_broken_escalates():
-    events = [
-        *_terminal(
-            "t001", status="failed", model="opus",
-            reserved_ts=_ts(10), terminal_ts=_ts(7),
-        ),
-        _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
-        {"event": "breaker", "model": "opus", "state": "open"},
-    ]
-    plan = _plan(events)
-
-    action, = plan["actions"]
-    assert action["action"] == "escalate"
-    assert "模型阶梯全部熔断" in action["reason"]
-
-
-# --------------------------------------------------------------------------
-# 处置、闩锁、占槽、阶梯、mode 与去重回归
+# 处置、闩锁、占槽、mode 与去重回归
 # --------------------------------------------------------------------------
 
 
@@ -875,11 +750,11 @@ def test_reconcile_note_does_not_mask_failed():
         ),
         {"event": "note", "tid": "t001", "text": "随便一句", "ts": _ts(6)},
     ]
-    plan = _plan(events, ladder=["opus", "haiku"], mode="restart")
+    plan = _plan(events, mode="restart")
 
     action, = plan["actions"]
     assert action["action"] == "dispatch"
-    assert action["model"] == "haiku"
+    assert action["model"] == "opus"
     assert "infra" in action["reason"]
 
 
@@ -891,11 +766,11 @@ def test_reconcile_report_status_failed_is_failure_path():
         ),
         _report("t001", status="failed", reason="黑盒满轮", ts=_ts(8)),
     ]
-    plan = _plan(events, ladder=["opus", "haiku"], mode="resume")
+    plan = _plan(events, mode="resume")
 
     action, = plan["actions"]
     assert action["action"] == "dispatch"
-    assert action["model"] == "haiku"
+    assert action["model"] == "opus"
     assert action["mode"] == "resume"
     assert "task 失败" in action["reason"] and "黑盒满轮" in action["reason"]
 
@@ -981,7 +856,7 @@ def test_reconcile_silent_attempts_hold_all_slots_without_dispatch():
     assert plan["silent_hold"] is True
 
 
-def test_reconcile_ladder_clamp_same_model_escalates():
+def test_reconcile_escalates_when_retry_budget_exhausted_same_model():
     events = [
         *_terminal(
             "t001", 1, status="failed", model="opus",
@@ -989,16 +864,16 @@ def test_reconcile_ladder_clamp_same_model_escalates():
         ),
         _report("t001", 1, status="failed", fail_class="infra", ts=_ts(49)),
         *_terminal(
-            "t001", 2, status="failed", model="haiku",
+            "t001", 2, status="failed", model="opus",
             reserved_ts=_ts(40), terminal_ts=_ts(30),
         ),
         _report("t001", 2, status="failed", fail_class="infra", ts=_ts(29)),
     ]
-    plan = _plan(events, ladder=["opus", "haiku"], max_auto_retries=3)
+    plan = _plan(events, max_auto_retries=1)
 
     action, = plan["actions"]
     assert action["action"] == "escalate"
-    assert "阶梯内已无未尝试模型" in action["reason"]
+    assert "额度" in action["reason"]
 
 
 def test_reconcile_redispatch_mode_restart_vs_resume():
@@ -1009,8 +884,8 @@ def test_reconcile_redispatch_mode_restart_vs_resume():
         ),
         _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
     ]
-    restart = _plan(events, ladder=["opus", "haiku"], mode="restart")
-    resume = _plan(events, ladder=["opus", "haiku"], mode="resume")
+    restart = _plan(events, mode="restart")
+    resume = _plan(events, mode="resume")
 
     assert restart["actions"][0]["mode"] == "restart"
     assert resume["actions"][0]["mode"] == "resume"
@@ -1083,7 +958,7 @@ def test_reconcile_explicit_task_failure_still_redispatches():
             reason="blackbox timeout", ts=_ts(25),
         ),
     ]
-    plan = _plan(events, ladder=["opus"], mode="resume")
+    plan = _plan(events, mode="resume")
 
     action, = plan["actions"]
     assert action["action"] == "dispatch"
@@ -1131,7 +1006,7 @@ def test_reconcile_new_fingerprint_restarts_silence_alert_cycle():
     assert action["execution_id"] == _eid("t001", 1)
 
 
-def test_reconcile_single_rung_infra_escalates():
+def test_reconcile_first_infra_retries_same_model():
     events = [
         *_terminal(
             "t001", status="failed", model="opus",
@@ -1139,11 +1014,11 @@ def test_reconcile_single_rung_infra_escalates():
         ),
         _report("t001", status="failed", fail_class="infra", ts=_ts(8)),
     ]
-    plan = _plan(events, ladder=["opus"])
+    plan = _plan(events)
 
     action, = plan["actions"]
-    assert action["action"] == "escalate"
-    assert "阶梯内已无未尝试模型" in action["reason"]
+    assert action["action"] == "dispatch"
+    assert action["model"] == "opus"
 
 
 def test_reconcile_contract_without_site_escalates():
@@ -1153,7 +1028,6 @@ def test_reconcile_contract_without_site_escalates():
     plan = _plan(
         events,
         verify=("contract", "分支 tip 缺 handoff.json"),
-        ladder=["opus", "haiku"],
         mode="restart",
     )
 
@@ -1231,7 +1105,6 @@ def test_reconcile_running_contract_waits_for_terminal():
     contract_plan = _plan(
         contract,
         verify=("contract", "handoff 缺失"),
-        ladder=["opus", "haiku"],
     )
     assert contract_plan["actions"][0]["action"] == "await-terminal"
     assert contract_plan["occupancy"]["used"] == 1
@@ -1253,7 +1126,7 @@ def test_reconcile_terminal_unlocks_ready_and_failed_paths():
         ),
         _report("t002", status="failed", fail_class="infra", ts=_ts(3)),
     ]
-    failed_plan = _plan(failed, ladder=["opus", "haiku"])
+    failed_plan = _plan(failed)
     assert failed_plan["actions"][0]["action"] == "dispatch"
     assert failed_plan["actions"][0]["attempt"] == 2
     assert "execution_id" not in failed_plan["actions"][0]
@@ -1536,7 +1409,6 @@ def test_reconcile_silent_alert_contains_exact_identity_and_never_redispatches(l
         _schedule(selected=("t002",)),
         limit=3,
         scope=None,
-        ladder=["opus", "haiku"],
         silent_minutes=20,
         max_auto_retries=1,
         now=NOW,
@@ -1571,7 +1443,6 @@ def test_reconcile_same_silent_fingerprint_dedupes_without_dispatch(ledger):
         _schedule(selected=("t002",)),
         limit=3,
         scope=None,
-        ladder=None,
         silent_minutes=20,
         max_auto_retries=1,
         now=NOW,
@@ -1595,7 +1466,6 @@ def test_reconcile_unreserved_dispatch_is_suggestion_without_execution_id(ledger
         _schedule(selected=("t001",)),
         limit=1,
         scope=None,
-        ladder=["opus"],
         silent_minutes=20,
         max_auto_retries=1,
         now=NOW,
@@ -1628,6 +1498,6 @@ def test_ps_uses_attempt_projection_and_exposes_executor_and_host(ledger):
 def test_ledger_record_rejects_lifecycle_event_even_when_called_directly(ledger):
     with pytest.raises(SystemExit, match="不允许生命周期事件"):
         control.cmd_ledger_record(argparse.Namespace(
-            event="attempt_reserved", tid="t001", reason=None, model=None, state=None,
+            event="attempt_reserved", tid="t001", reason=None,
         ))
     assert ledger_read() == []

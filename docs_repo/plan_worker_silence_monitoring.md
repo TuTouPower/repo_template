@@ -66,7 +66,7 @@ python3 scripts/repo_template/task.py attempt silent-alert TID \
 
 该命令只记录 current identity 的这个 fingerprint 已报告，不改变 running 状态，不写 terminal/report/escalated。
 
-`ledger record` 不能写 observation 或 silent alert；它只允许 `note` / `breaker`。
+`ledger record` 不能写 observation 或 silent alert；它只允许 `note`。
 
 ## ps 状态
 
