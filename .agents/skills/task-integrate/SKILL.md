@@ -17,7 +17,7 @@ disable-model-invocation: true
 
 ## 前提
 
-- 已取得会话级合并授权。`task-run` 可在启动时取得，也可在整链完成后、首次 `integrate-chain` 前只询问一次；单独调用本 skill 视为用户当次授权。
+- 已取得会话级合并授权。`task-run` 在整链完成后询问一次、用户同意后调用；单独调用本 skill 视为用户当次授权。
 - 待合成员已在自身分支完成一个执行 commit，并写入完整 `handoff.json`。
 - 待合成员已按 exact identity `(tid, attempt, execution_id)` 写入 terminal 与 report。
 - 只在主仓主干调用本 skill；不 push、不动远程。

@@ -34,6 +34,6 @@ task 工具链的执行拓扑、attempt 生命周期与合并授权。项目自�
 
 ## 合并授权
 
-合并主干需用户**会话级授权**。`task-run` 可在启动时取得，也可先执行整条链，仅在最终首次 `integrate-chain` 前询问一次。已有授权不重复询问，未获授权不 merge。合并环节只有 merge 冲突需裁决、合并后验证失败、task `blocked` 或范围扩大时停下来问用户；执行环节停止条件见各 skill。多会话并发时，不同链各自走自己的 `integrate-chain`，互不授权；先后合并冲突由 git 报错、人来收场。
+合并主干需用户**会话级授权**，且不在启动时询问。`task-run` 先执行整条链并完成 exact cleanup，完成后询问一次是否需要合入，用户同意后才首次调用 `integrate-chain`；未获授权不 merge，保留已清理的链分支。合并环节只有 merge 冲突需裁决、合并后验证失败、task `blocked` 或范围扩大时停下来问用户；执行环节停止条件见各 skill。多会话并发时，不同链各自走自己的 `integrate-chain`，互不授权；先后合并冲突由 git 报错、人来收场。
 
 `.claude/hooks/merge_guard.py` 拦截 Bash 工具里的 `git merge`（含 `--abort`，要求一次性 token）；`task.py integrate` / `integrate-chain` 内部 merge 经 subprocess 不经 Bash 工具，由会话级授权覆盖，hook 不拦。两层职责分离：脚本通道 = 已授权入口，hook = 防 agent 在脚本外手动 merge。

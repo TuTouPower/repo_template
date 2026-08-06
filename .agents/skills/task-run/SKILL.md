@@ -12,20 +12,18 @@ disable-model-invocation: true
 
 ## 会话级授权
 
-用户触发本 skill 即批准队列内全部 task 执行至各自执行 commit、terminal/report 与 exact cleanup 完成；不得逐 task 询问 commit。主干合并授权可在启动时一并取得，也可延后到整条链已完成时取得：
+用户触发本 skill 即批准队列内全部 task 执行至各自执行 commit、terminal/report 与 exact cleanup 完成；不得逐 task 询问 commit。合并授权不在启动时询问，整条链完成后才询问一次是否需要合入：
 
-- 启动时已授权合并：最终直接执行 `integrate-chain`，不重复询问。
-- 启动时尚未授权合并：先完整跑完链上所有 task 和 cleanup；仅在最终首次调用 `integrate-chain` 前询问一次。
-- 未获合并授权时保留已清理的链分支，不得提前 merge；授权只覆盖本次固定队列的一次链尾合并与后续可恢复 finalize。
+- 整链完成且各成员 exact cleanup 后，询问一次是否需要合入；用户同意后才调用 `integrate-chain`。
+- 用户未同意合入时，保留已清理的链分支与执行 commit，不得提前 merge；合并授权只覆盖本次固定队列的一次链尾合并与后续可恢复 finalize。
 
-启动时需要说明固定队列、每 task 一个执行 commit、链式 `--base` 继承、最终只合链尾一次、不 push。若当时请求合并授权，可使用：
+启动时只说明固定队列、每 task 一个执行 commit、链式 `--base` 继承、最终只合链尾一次、不 push；不征求合并授权：
 
 ```text
-准备串行执行：{tid 列表}（链式）。每个 task 一个执行 commit；中间只 exact cleanup；整链完成后 integrate-chain 一次 merge --no-ff 链尾，不 push。
-是否同时授权本次会话最终合并主干？
+准备串行执行：{tid 列表}（链式）。每个 task 一个执行 commit；中间只 exact cleanup；整链完成后问你是否需要合入主干，不 push。
 ```
 
-禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述 spec 已写明的内容征求同意。执行授权已由 skill 调用给出；只在最终尚缺合并授权或「停止条件」列举的情况停下来问用户。
+禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述 spec 已写明的内容征求同意。执行授权已由 skill 调用给出；只在「停止条件」列举的情况停下来问用户。
 
 ## 输入与固定队列
 
@@ -65,7 +63,7 @@ t002: start t002 --base t001_分支
       → reserve inline → task-work(identity) → terminal → report → cleanup exact
 t003: start t003 --base t002_分支
       → reserve inline → task-work(identity) → terminal → report → cleanup exact
-   ↓ 全部成员完成且已 cleanup；若尚无 merge 授权，此时只询问一次
+   ↓ 全部成员完成且已 cleanup；此时询问一次是否需要合入，同意后 integrate-chain
 integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index → exact integrated 原子批量写入
    ↓ transaction=awaiting_verification，分支保留
 执行合并后验证 → integrate-chain t003 --continue → 删整条链分支并清除 transaction
@@ -78,7 +76,7 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 3. 调用 `task-work` 时 `attempt` 与 `execution_id` 均必填。每个 task 只产生一个执行 commit。
 4. `task-work` 返回后先写 executor 终态：正常返回（包括业务 `blocked`）写 `terminal --status completed`；执行器/环境失败写 `failed`，用户或宿主停止写 `stopped`。再以同一 identity 写 `report --status done|blocked|failed`。
 5. 只有 `terminal completed` 且业务 `report done` 的成员才执行 `cleanup-worktree {tid} --attempt {N} --execution-id {ID}`。中间只 cleanup，**不合并**；分支保留并成为下一个 task 的 `--base`。
-6. 队列全部成员完成后，确认已有会话级 merge 授权；若启动时未取得，只在此处询问一次。随后调用 `integrate-chain {链尾 tid}`。它从控制面聚合各成员 exact identity，不接受 `--attempt` / `--execution-id`，主干只进一次链尾 merge commit；命令完成 index 与幂等批量 integrated 后停在 `awaiting_verification`，保留分支和 transaction。
+6. 队列全部成员完成后，询问一次是否需要合入；用户同意后调用 `integrate-chain {链尾 tid}`，未同意则不 merge、保留已清理的链分支。它从控制面聚合各成员 exact identity，不接受 `--attempt` / `--execution-id`，主干只进一次链尾 merge commit；命令完成 index 与幂等批量 integrated 后停在 `awaiting_verification`，保留分支和 transaction。
 7. 执行合并后验证。通过后调用同一 `integrate-chain {链尾 tid} --continue`，删除整条链分支并清除 transaction；验证失败则停止，保留可恢复证据，不调用最终 continue。
 8. 当前 task `blocked` → 队列停止，不 cleanup、不自动跳下一个；保留现场等待用户决定。
 9. 「循环」= 本 skill 内串行推进，不是后台常驻。
