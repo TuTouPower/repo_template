@@ -132,7 +132,7 @@ def test_build_model_shape(monkeypatch):
     }
     monkeypatch.setattr(view_server, "compute_schedule", lambda: schedule)
     model = view_server._build_model()
-    assert model["project"] == "repo_template"
+    assert model["project"] == ctx.REPO_ROOT.name
     assert model["summary"]["active"] == 1
     assert model["summary"]["runnable"] == 1
     assert model["summary"]["done"] == 1
