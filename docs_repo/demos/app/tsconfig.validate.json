@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "outDir": "/tmp/cpv",
+    "module": "commonjs",
+    "target": "es2022",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["scripts/*.ts", "src/lib/*.ts", "src/types/*.ts"]
+}
