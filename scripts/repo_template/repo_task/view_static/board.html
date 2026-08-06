@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>task 看板</title>
+<link rel="stylesheet" href="/static/board.css">
+<script>window.__BOARD__ = __BOARD_JSON__;</script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <h1 id="project-name"></h1>
+        <p class="muted" id="project-sub"></p>
+      </div>
+    </div>
+    <div class="pills" id="summary-pills"></div>
+    <div class="top-actions">
+      <button type="button" class="icon-btn" id="theme-toggle" title="切换深色/浅色模式">◐</button>
+      <button type="button" class="btn" id="reload-btn">刷新</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="search-box">
+      <span class="search-icon" aria-hidden="true"></span>
+      <input id="search-input" type="text" placeholder="按 id / 标题搜索任务…" autocomplete="off">
+      <button type="button" class="search-clear" id="search-clear" title="清除搜索" hidden>×</button>
+    </div>
+    <span class="muted" id="search-hint" hidden></span>
+    <div class="hover-legend" id="hover-legend" hidden>
+      <span><i class="legend-dot ring-amber"></i>上游依赖</span>
+      <span><i class="legend-dot ring-emerald"></i>下游被依赖</span>
+      <span><i class="legend-dot ring-red"></i>冲突任务</span>
+    </div>
+  </div>
+
+  <section class="card dag-card">
+    <header class="card-head">
+      <h2>依赖 DAG</h2>
+      <span class="muted" id="dag-sub"></span>
+      <div class="card-actions">
+        <label class="switch-label"><input type="checkbox" id="toggle-conflicts" checked><span>冲突边</span></label>
+        <label class="switch-label"><input type="checkbox" id="toggle-completed"><span>显示已完成</span></label>
+        <div class="zoom-group">
+          <button type="button" class="icon-btn" id="zoom-out" title="缩小">−</button>
+          <button type="button" class="icon-btn" id="zoom-in" title="放大">+</button>
+          <button type="button" class="icon-btn" id="zoom-fit" title="适配视图">⤢</button>
+        </div>
+      </div>
+    </header>
+    <div class="dag-canvas" id="dag-canvas"></div>
+  </section>
+
+  <section class="card archive" id="archive">
+    <button type="button" class="archive-trigger" id="archive-trigger" aria-expanded="false">
+      <span class="archive-icon" aria-hidden="true"></span>
+      <span class="archive-title">归档区</span>
+      <span class="muted">已完成 / 已放弃的任务不参与主视图</span>
+      <span class="archive-badge badge-amber" id="archive-related" hidden></span>
+      <span class="archive-counts">
+        <span class="pill" id="archive-done-count"></span>
+        <span class="pill" id="archive-dropped-count"></span>
+        <span class="chevron" aria-hidden="true"></span>
+      </span>
+    </button>
+    <div class="archive-body" id="archive-body" hidden>
+      <div class="archive-toolbar">
+        <div class="segmented">
+          <button type="button" class="seg-item active" data-tab="done">已完成 (<span id="tab-done-count"></span>)</button>
+          <button type="button" class="seg-item" data-tab="dropped">已放弃 (<span id="tab-dropped-count"></span>)</button>
+        </div>
+        <span class="muted" id="archive-filter-hint" hidden>已按当前搜索条件过滤</span>
+        <div class="archive-pager" id="archive-pager" hidden>
+          <button type="button" class="icon-btn" id="page-prev" title="上一页">‹</button>
+          <span class="muted" id="page-info"></span>
+          <button type="button" class="icon-btn" id="page-next" title="下一页">›</button>
+        </div>
+      </div>
+      <div class="archive-grid" id="archive-grid"></div>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+</div>
+
+<div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+<aside class="sheet" id="sheet" hidden aria-label="任务详情">
+  <header class="sheet-head">
+    <div class="sheet-head-left">
+      <span class="mono muted" id="sheet-id"></span>
+      <span class="category-badge" id="sheet-badge"></span>
+    </div>
+    <button type="button" class="icon-btn" id="sheet-close" title="关闭">×</button>
+  </header>
+  <h2 class="sheet-title" id="sheet-title"></h2>
+  <p class="muted" id="sheet-meta"></p>
+  <div class="sheet-tabs">
+    <button type="button" class="tab-item active" data-doc="detail">详情</button>
+    <button type="button" class="tab-item" data-doc="spec">spec.md</button>
+    <button type="button" class="tab-item" data-doc="task">task.md</button>
+  </div>
+  <div class="sheet-body" id="sheet-body"></div>
+</aside>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/static/board.js"></script>
+</body>
+</html>

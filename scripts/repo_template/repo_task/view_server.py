@@ -1,19 +1,35 @@
 """task 调度看板本地服务。
 
-只读；stdlib http.server；无 WebSocket、无后台轮询。每次请求重新计算 schedule。
+只读；stdlib http.server；无 WebSocket、无后台轮询。每次请求重新计算
+schedule，页面通过注入 JSON 交给客户端 JS 渲染；静态资源（board.css /
+board.js）从同目录 view_static/ 读取，无构建、无 CDN 依赖。
 """
 
 import contextlib
 import json
 import socket
 import subprocess
-import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import repo_task.context as ctx
 
 from .scheduling import compute_schedule
+
+_STATIC_DIR = Path(__file__).resolve().parent / "view_static"
+_DOC_NAMES = {"spec": "spec.md", "task": "task.md"}
+
+CATEGORIES = (
+    "active",
+    "runnable",
+    "blocked_deps",
+    "blocked_conflict",
+    "backlog",
+    "done",
+    "dropped",
+)
 
 
 def _find_free_port(host: str) -> int:
@@ -23,10 +39,10 @@ def _find_free_port(host: str) -> int:
 
 
 def _classify(tid, tasks, schedule):
-    """返回节点分类：active / runnable / blocked_deps / blocked_conflict / done / dropped。"""
+    """返回节点分类：active / runnable / blocked_deps / blocked_conflict / backlog / done / dropped。"""
     task = tasks.get(tid)
     if not task:
-        return "unknown"
+        return "backlog"
     status = task["status"]
     if status == "active":
         return "active"
@@ -42,9 +58,9 @@ def _classify(tid, tasks, schedule):
 
 
 def _build_model():
+    """调度图 → 前端模型：节点、边、全类别统计。"""
     schedule = compute_schedule()
     tasks = schedule["tasks"]
-    conflicts = schedule["conflicts"]
     nodes = []
     for tid, task in tasks.items():
         nodes.append({
@@ -68,115 +84,40 @@ def _build_model():
             if key not in seen and any(m["id"] == c for m in nodes):
                 edges.append({"type": "conflict", "from": n["id"], "to": c})
                 seen.add(key)
+    summary = {category: 0 for category in CATEGORIES}
+    for n in nodes:
+        summary[n["category"]] += 1
     return {
         "project": ctx.REPO_ROOT.name,
         "nodes": nodes,
         "edges": edges,
-        "summary": {
-            "active": len(schedule["active_list"]),
-            "runnable": len(schedule["selected"]),
-            "done": len(schedule["main_done_set"]),
-            "dropped": len(schedule["dropped_set"]),
-        },
+        "summary": summary,
     }
 
 
-HTML_TEMPLATE = """<!doctype html>
-<html lang="zh"><head><meta charset="utf-8">
-<title>{project} · task 看板</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-<style>
-  body {{ font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-         margin: 0; padding: 16px; background: #fafafa; color: #222; }}
-  header {{ display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px; }}
-  h1 {{ font-size: 18px; margin: 0; }}
-  .summary {{ font-size: 13px; color: #666; }}
-  .actions {{ margin-left: auto; }}
-  button {{ cursor: pointer; padding: 4px 12px; font-size: 13px; }}
-  #graph {{ background: #fff; border: 1px solid #e0e0e0; padding: 16px; min-height: 200px; }}
-  .legend {{ margin-top: 12px; font-size: 12px; color: #666; }}
-  .legend span {{ display: inline-block; margin-right: 12px; }}
-  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-          margin-right: 4px; vertical-align: middle; }}
-</style></head>
-<body>
-<header>
-  <h1>{project}</h1>
-  <div class="summary">运行中 {active} · 可跑 {runnable} · 已完成 {done} · 已弃 {dropped}</div>
-  <div class="actions"><button onclick="location.reload()">刷新</button></div>
-</header>
-<div id="graph"><pre class="mermaid">{mermaid}</pre></div>
-<div class="legend">
-  <span><span class="dot" style="background:#f59e0b"></span>运行中</span>
-  <span><span class="dot" style="background:#10b981"></span>可跑</span>
-  <span><span class="dot" style="background:#6b7280"></span>待运行</span>
-  <span><span class="dot" style="background:#ef4444"></span>被依赖阻塞</span>
-  <span><span class="dot" style="background:#8b5cf6"></span>被冲突阻塞</span>
-  <span><span class="dot" style="background:#9ca3af"></span>已结束</span>
-</div>
-<script>
-  mermaid.initialize({{ startOnLoad: true, flowchart: {{ htmlLabels: true }} }});
-</script>
-</body></html>
-"""
+def _render_html(model: dict) -> str:
+    """纯函数：读取模板，注入模型 JSON（转义 </script> 防闭合注入）。"""
+    template = (_STATIC_DIR / "board.html").read_text(encoding="utf-8")
+    payload = json.dumps(model, ensure_ascii=False).replace("</", "<\\/")
+    return template.replace("__BOARD_JSON__", payload)
 
 
-def _escape_mermaid_label(text: str) -> str:
-    # Mermaid 节点 label 在双引号内，用 &quot;/&#35;/&gt; 等实体避免破坏渲染。
-    return (
-        text.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("[", "&#91;")
-        .replace("]", "&#93;")
-        .replace("\n", " ")
-    )
-
-
-def _escape_html(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
-def _mermaid_graph(model):
-    color = {
-        "active": "#f59e0b",
-        "runnable": "#10b981",
-        "backlog": "#6b7280",
-        "blocked_deps": "#ef4444",
-        "blocked_conflict": "#8b5cf6",
-        "done": "#9ca3af",
-        "dropped": "#d1d5db",
-    }
-    lines = ["flowchart LR"]
-    for n in model["nodes"]:
-        c = color.get(n["category"], "#6b7280")
-        label_text = _escape_mermaid_label(f'{n["id"]} {n["title"]}')
-        lines.append(f'  {n["id"]}["{label_text}"];')
-        lines.append(f'  style {n["id"]} fill:{c},color:#fff,stroke:#333;')
-    for e in model["edges"]:
-        if e["type"] == "dep":
-            lines.append(f'  {e["from"]} --> {e["to"]}')
-        else:
-            lines.append(f'  {e["from"]} -.-> {e["to"]}')
-    return "\n".join(lines)
-
-
-def _render_html():
-    model = _build_model()
-    return HTML_TEMPLATE.format(
-        project=_escape_html(model["project"]),
-        active=model["summary"]["active"],
-        runnable=model["summary"]["runnable"],
-        done=model["summary"]["done"],
-        dropped=model["summary"]["dropped"],
-        mermaid=_mermaid_graph(model),
-    )
+def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str) -> Path:
+    """校验并解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
+    if tid not in tasks:
+        raise ctx.TaskDataError(f"未知任务 {tid!r}")
+    filename = _DOC_NAMES.get(doc)
+    if filename is None:
+        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 spec/task）")
+    directory = tasks[tid].get("dir", "")
+    root = ctx.REPO_ROOT.resolve()
+    path = (root / directory / filename).resolve()
+    allowed = (ctx.TASKS_DIR.resolve(), ctx.ARCHIVE_TASKS_DIR.resolve())
+    if not any(path.is_relative_to(base) for base in allowed):
+        raise ctx.TaskDataError(f"任务 {tid} 文档路径越界：{path}")
+    if not path.is_file():
+        raise ctx.TaskDataError(f"任务 {tid} 无 {filename}")
+    return path
 
 
 def _open_browser_wsl(url):
@@ -197,26 +138,64 @@ def _open_browser_wsl(url):
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path not in ("/", "/index.html"):
-            self.send_response(404)
-            self.end_headers()
-            return
-        try:
-            html = _render_html()
-        except Exception as e:
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(f"渲染失败：{e}".encode("utf-8"))
-            return
-        body = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+    def _send_bytes(self, status: int, body: bytes, content_type: str):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_error_text(self, status: int, message: str):
+        self._send_bytes(
+            status, message.encode("utf-8"), "text/plain; charset=utf-8"
+        )
+
+    def do_GET(self):
+        parts = urlsplit(self.path)
+        path = parts.path
+        if path in ("/", "/index.html"):
+            try:
+                html = _render_html(_build_model())
+            except Exception as e:
+                self._send_error_text(500, f"渲染失败：{e}")
+                return
+            self._send_bytes(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        if path.startswith("/static/"):
+            name = path[len("/static/"):]
+            if name not in ("board.css", "board.js"):
+                self._send_error_text(404, "静态资源不存在")
+                return
+            try:
+                body = (_STATIC_DIR / name).read_bytes()
+            except OSError as e:
+                self._send_error_text(500, f"读取静态资源失败：{e}")
+                return
+            content_type = (
+                "text/css; charset=utf-8" if name.endswith(".css")
+                else "text/javascript; charset=utf-8"
+            )
+            self._send_bytes(200, body, content_type)
+            return
+        if path == "/task-doc":
+            query = parse_qs(parts.query)
+            tid = (query.get("tid") or [""])[0]
+            doc = (query.get("doc") or [""])[0]
+            try:
+                doc_path = _resolve_task_doc(
+                    compute_schedule()["tasks"], tid, doc
+                )
+                body = doc_path.read_bytes()
+            except ctx.TaskDataError as e:
+                self._send_error_text(404, str(e))
+                return
+            except OSError as e:
+                self._send_error_text(500, f"读取文档失败：{e}")
+                return
+            self._send_bytes(body, 200, "text/plain; charset=utf-8")
+            return
+        self._send_error_text(404, "未找到资源")
 
     def log_message(self, *args):
         pass
