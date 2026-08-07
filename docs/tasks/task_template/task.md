@@ -61,7 +61,7 @@ reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符
 
 - spec：[`spec.md`](spec.md)
 - 结果：全部满足 / 未满足
-- 证据：测试、黑盒或人工检查结果；按需引用 AC 编号，不复制 AC 正文
+- 证据：每条 AC 在 `handoff.json` 的 `ac_evidence` 有对应引用（覆盖闭合门禁强制）；此处写一句话摘要，不复制 AC 正文
 
 ### Reviewer verdict
 

@@ -31,7 +31,7 @@ def _valid_spec():
         "{本 task 包含什么。}": "测试范围。",
         "{明确不做什么。}": "无。",
         "{可独立验证的行为结果。}": "可验证行为。",
-        "- {AC 编号}：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
+        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
         "- {分支或场景}：{不测原因}": "- 无",
         "- {内容}": "- 按项目默认",
         "- {契约}：{分类标记}，{待验证方式}": "- 外部行为：已核实",
@@ -136,6 +136,7 @@ def _handoff(tid, branch, identity, base_sha, **overrides):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
+        "ac_evidence": {"AC-001": ["tests/test_x.py::test_y 通过"]},
         "pending": [],
         "findings": [],
     }
@@ -258,6 +259,9 @@ def test_verify_incomplete_without_branch(git_repo):
         ("wrong-tid", "tid='t999'"),
         ("wrong-branch", "branch='t001_other'"),
         ("wrong-execution", "execution_id='wrong'"),
+        ("ac-evidence-empty", "缺 AC-001"),
+        ("ac-evidence-unknown", "未知 AC-002"),
+        ("ac-evidence-bad-value", "非空字符串数组"),
     ],
 )
 def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
@@ -289,6 +293,12 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
             payload["branch"] = "t001_other"
         elif defect == "wrong-execution":
             payload["execution_id"] = "wrong"
+        elif defect == "ac-evidence-empty":
+            payload["ac_evidence"] = {}
+        elif defect == "ac-evidence-unknown":
+            payload["ac_evidence"] = {"AC-002": ["x"]}
+        elif defect == "ac-evidence-bad-value":
+            payload["ac_evidence"] = {"AC-001": []}
         content = json.dumps(payload, ensure_ascii=False)
     _rewrite_handoff(git_repo, "t001", "alpha", content)
 

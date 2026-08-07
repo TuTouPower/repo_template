@@ -21,7 +21,7 @@ def _filled_spec() -> str:
         "{本 task 包含什么。}": "测试范围。",
         "{明确不做什么。}": "无。",
         "{可独立验证的行为结果。}": "可验证行为。",
-        "- {AC 编号}：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
+        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
         "- {分支或场景}：{不测原因}": "- 无",
         "- {内容}": "- 按项目默认",
         "- {契约}：{分类标记}，{待验证方式}": "- 无",
@@ -53,6 +53,42 @@ def test_filled_documents_pass():
 
     assert problems == []
     assert warnings == []
+
+
+def test_acceptance_missing_ac_id_fails():
+    spec = _filled_spec().replace(
+        "- [ ] AC-001：可验证行为。",
+        "- [ ] 可验证行为。",
+        1,
+    )
+
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+
+    assert any("缺 AC 编号" in problem for problem in problems)
+
+
+def test_acceptance_duplicate_ac_id_fails():
+    spec = _filled_spec().replace(
+        "- [ ] AC-001：可验证行为。",
+        "- [ ] AC-001：可验证行为。\n- [ ] AC-001：重复编号。",
+        1,
+    )
+
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+
+    assert any("AC 编号重复" in problem for problem in problems)
+
+
+def test_acceptance_deploy_ac_id_passes():
+    spec = _filled_spec().replace(
+        "- [ ] AC-001：可验证行为。",
+        "- [ ] [deploy] AC-001：需真实部署验证。",
+        1,
+    )
+
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+
+    assert problems == []
 
 
 @pytest.mark.parametrize(

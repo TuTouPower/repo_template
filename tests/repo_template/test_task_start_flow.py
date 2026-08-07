@@ -30,7 +30,7 @@ def _valid_spec(unknown_contract_item="外部行为：已核实"):
         "{本 task 包含什么。}": "测试范围。",
         "{明确不做什么。}": "无。",
         "{可独立验证的行为结果。}": "可验证行为。",
-        "- {AC 编号}：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
+        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
         "- {分支或场景}：{不测原因}": "- 无",
         "- {内容}": "- 按项目默认",
         "- {契约}：{分类标记}，{待验证方式}": f"- {unknown_contract_item}",
@@ -150,6 +150,7 @@ def _handoff(tid, branch, identity, base_sha, *, status="done"):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
+        "ac_evidence": {"AC-001": ["tests/test_x.py::test_y 通过"]},
         "pending": [],
         "findings": [],
     }

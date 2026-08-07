@@ -143,11 +143,15 @@ flowchart TD
     "tests": "pytest -q：120 passed",
     "blackbox": "黑盒命令通过",
     "review": "第 2 轮 PASS",
+    "ac_evidence": {
+      "AC-001": ["tests/test_x.py::test_y 通过"],
+      "AC-002": ["黑盒输出：返回 200"]
+    },
     "pending": ["p047"],
     "findings": ["d012"]
   }
   ```
-  `tid`、非 bool 的正整数 `attempt`、非空字符串 `execution_id` 必须逐字等于本 skill 输入；`status` 与 task 终态一致；`branch` 是当前 task 分支；`base_sha` 是执行 commit 前 HEAD 的完整 SHA，且必须等于 task `diff_anchor`。`tests`、`blackbox`、`review` 都必须是非空字符串；`pending`、`findings` 必须是字符串数组，没有条目时写 `[]`。所有字段逐项必填。
+  `tid`、非 bool 的正整数 `attempt`、非空字符串 `execution_id` 必须逐字等于本 skill 输入；`status` 与 task 终态一致；`branch` 是当前 task 分支；`base_sha` 是执行 commit 前 HEAD 的完整 SHA，且必须等于 task `diff_anchor`。`tests`、`blackbox`、`review` 都必须是非空字符串；`ac_evidence` 是 JSON 对象，键必须精确等于 spec 验收标准节的全部 `AC-NNN` 编号（缺或多都会导致 integrate 门禁失败），值为非空字符串数组，每项是一条证据引用（测试用例/断言摘要、黑盒输出摘要、review 报告锚点）；`pending`、`findings` 必须是字符串数组，没有条目时写 `[]`。所有字段逐项必填。
 - 本 skill 不写 attempt 控制面，也不记录 terminal/report/integrated；task-run 读取已入库 handoff 后，以同一 exact identity 完成后续生命周期。
 - 其他 task 若受本 task 影响需改 spec，不在此直接改——手动并发下其他会话看不到本分支改动，且合并时制造冲突。列进交出汇报，由 task-run 处置。
 
@@ -164,7 +168,7 @@ scripts/repo_template/task.py finish <tid>
 - 把本 task 执行期全部改动（含 7a 文档、7b 归档移动）一次性 commit；subject 含 `{tid}`。
 - 一 task 一执行 commit，不提交派生 index。
 - commit 后确认 worktree clean，当前 branch tip 就是该执行 commit，且 `git rev-parse HEAD^` 精确等于 handoff 的完整 `base_sha`。
-- 再核对 branch tip 中已归档 task 的 `handoff.json`：`tid` / `attempt` / `execution_id` / `status` / `branch` 与输入和 refs 一致，三项结果为非空字符串，两项条目为字符串数组。
+- 再核对 branch tip 中已归档 task 的 `handoff.json`：`tid` / `attempt` / `execution_id` / `status` / `branch` 与输入和 refs 一致，三项结果为非空字符串，`ac_evidence` 精确覆盖 spec 验收标准 AC，两项条目为字符串数组。
 - blocked 未放行前不 finish、不 commit 终态。
 
 ## 停止条件

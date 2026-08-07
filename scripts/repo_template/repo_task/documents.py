@@ -268,6 +268,22 @@ def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
         return None
     return "\n".join(lines[start:])
 
+AC_ID_RE = re.compile(r"AC-\d{3}")
+
+
+def extract_ac_ids(spec_text: str) -> list[str]:
+    """从 spec 验收标准节提取 AC-NNN 编号，按出现顺序去重。"""
+    acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
+    if not acceptance:
+        return []
+    seen: list[str] = []
+    for line in acceptance.splitlines():
+        for match in AC_ID_RE.findall(line):
+            if match not in seen:
+                seen.append(match)
+    return seen
+
+
 def _extract_guide_blocks(text: str) -> list[str]:
     """提取 spec 中所有 `<!-- 规范（门禁必留，不得删除） -->...<!-- /规范 -->` 块。
 
@@ -330,6 +346,26 @@ def validate_task_documents(
         r"^\s*-\s*\[ \]\s*\S", acceptance, re.MULTILINE
     ):
         problems.append("spec.md 验收标准为空")
+
+    if acceptance:
+        ac_ids: list[str] = []
+        for line in acceptance.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- [ ]"):
+                continue
+            match = re.match(
+                r"-\s*\[\s*\]\s*(?:\[deploy\]\s*)?(AC-\d{3})", stripped
+            )
+            if not match:
+                problems.append(
+                    "spec.md 验收标准条目缺 AC 编号（格式 `- [ ] AC-NNN：`，"
+                    f"[deploy] 位于编号前）：{stripped[:60]}"
+                )
+                continue
+            ac_id = match.group(1)
+            if ac_id in ac_ids:
+                problems.append(f"spec.md AC 编号重复：{ac_id}")
+            ac_ids.append(ac_id)
 
     missing_task_headings = _missing_heading_sequence(task_body, ctx.TASK_REQUIRED_HEADINGS)
     if missing_task_headings:
