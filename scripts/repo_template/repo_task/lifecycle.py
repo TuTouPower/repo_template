@@ -11,7 +11,7 @@ import repo_task.context as ctx
 
 from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter
 from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
-from .scheduling import _dependency_cycle, _scheduling_deadlock_cycle
+from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
 
@@ -29,44 +29,6 @@ def _dependency_path_exists(
         seen.add(node)
         stack.extend(dependencies.get(node, []))
     return False
-
-def _edit_deadlock_cycle(
-    tasks: list[dict],
-    owner_tid: str,
-    depends_override: list[str] | None,
-    conflict_overrides: dict[str, list[str]],
-) -> list[str] | None:
-    """edit 变更前/后的 backlog 等待图死锁环，供 cmd_edit 前后对比。
-
-    depends_override / conflict_overrides 为 owner 与已同步 peer 的变更后
-    取值；None / 缺省表示沿用 tasks 扫描快照（即变更前状态）。
-    """
-    backlog = {c["tid"] for c in tasks if c["status"] == "backlog"}
-    dependencies = {
-        c["tid"]: parse_tid_list(
-            c.get("depends_on", ""), field=f"{c['tid']}.depends_on"
-        )
-        for c in tasks
-        if c["status"] not in ctx.ARCHIVED_STATUSES
-    }
-    if depends_override is not None:
-        dependencies[owner_tid] = list(depends_override)
-    conflicts: dict[str, set[str]] = {tid: set() for tid in backlog}
-    for candidate in tasks:
-        tid = candidate["tid"]
-        if tid not in backlog:
-            continue
-        declared = conflict_overrides.get(tid)
-        if declared is None:
-            declared = parse_tid_list(
-                candidate.get("conflicts_with", ""),
-                field=f"{tid}.conflicts_with",
-            )
-        for peer in declared:
-            if peer in backlog:
-                conflicts[tid].add(peer)
-                conflicts[peer].add(peer)
-    return _scheduling_deadlock_cycle(backlog, dependencies, conflicts)
 
 def cmd_add(args):
     require_primary_worktree()
@@ -304,7 +266,7 @@ def cmd_edit(args):
 
     # L1 冗余门禁：仅当本次变更触碰了依赖/冲突字段时，校验 owner 相关
     # pair——冲突边两端间不得存在（传递）依赖路径。依赖已蕴含串行，
-    # 冗余冲突边的「序号小者优先」会与依赖方向互顶成调度死锁。
+    # 冗余冲突边无意义（数据卫生，见 blueprint 调度图语义不变式）。
     # 只拦新增/留存于本次变更后图中的 pair，不全图重验，保证
     # --conflicts-remove / --depends-remove 的增量修复路径畅通。
     if any(value is not None for value in dependency_actions + conflict_actions):
@@ -357,25 +319,6 @@ def cmd_edit(args):
                     f"冲突边与依赖路径冗余：{args.tid} ↔ {peer} 冲突，但{direction}"
                     "（依赖已蕴含串行）；请只保留依赖，删除冲突边"
                 )
-        # 全图等待环前后对比：依赖变更可能在无关 pair 上制造新传递路径，
-        # 使既有冲突边转成死锁环（owner-pair 校验覆盖不到）。仅拦
-        # 「变更前无环、变更后有环」；已脏图的修复性编辑一律放行。
-        post_conflicts = {
-            tid: parse_tid_list(
-                peer_fm.get("conflicts_with", ""), field=f"{tid}.conflicts_with"
-            )
-            for tid, peer_fm in updated_peer_fm.items()
-        }
-        post_conflicts[args.tid] = list(final_conflicts)
-        pre_cycle = _edit_deadlock_cycle(tasks, args.tid, None, {})
-        post_cycle = _edit_deadlock_cycle(
-            tasks, args.tid, final_depends, post_conflicts
-        )
-        if post_cycle and not pre_cycle:
-            sys.exit(
-                "变更会形成调度死锁环：" + " -> ".join(post_cycle)
-                + "；检查环上 task 的依赖×冲突关系后再落盘"
-            )
 
     for peer_path, (peer_fm, peer_body) in peer_updates.items():
         write_front_matter(peer_path, peer_fm, peer_body)

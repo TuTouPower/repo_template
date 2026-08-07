@@ -57,7 +57,7 @@ disable-model-invocation: true
 
    仅新增不同文件不算冲突。冲突存疑时保守标记。冲突边由 `task.py edit` 自动维护双向，不手工双写。
 
-   禁令：与已有 `depends_on` 关系（含传递）的 task 对禁止写 `conflicts_with`——依赖已蕴含串行，冲突边冗余；且 backlog 间冲突附带「序号小者优先」排序语义，一旦依赖方向与序号方向相反即构成调度死锁（`view` 以 `invalid_graph: 调度死锁环` 报错）。
+   禁令：与已有 `depends_on` 关系（含传递）的 task 对禁止写 `conflicts_with`——依赖已蕴含串行，冲突边冗余，`edit` 会以「冲突边与依赖路径冗余」拒绝。冲突的阻塞语义：仅当对端正在运行，或对端 backlog 且依赖已满足（dep-ready）且序号更小时，才压住本 task；被依赖阻塞的对端不构成互斥。
 
 5. **落盘**。禁止直接编辑 `task.md` 或 index。对判断完整的每个候选执行一次完整覆盖：
 

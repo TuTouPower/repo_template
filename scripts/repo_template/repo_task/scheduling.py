@@ -36,31 +36,6 @@ def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
                 return cycle
     return None
 
-def _scheduling_deadlock_cycle(
-    backlog: set[str],
-    dependencies: dict[str, list[str]],
-    conflicts: dict[str, set[str]],
-) -> list[str] | None:
-    """backlog 间「必须先跑」合并图环检测。
-
-    合并两类等待边：依赖边 dep→tid（dep 未完成则 tid 被依赖阻塞）与
-    冲突优先级边 序号小→序号大（双方均 backlog 时序号大者被压住）。
-    环上每个 task 都被环内另一 task 挡住，无一能启动，构成调度死锁；
-    典型形态是同一对 task 同时画了依赖边与冲突边，且依赖方向与序号
-    方向相反。
-    """
-    wait_on: dict[str, list[str]] = {}
-    for tid in backlog:
-        predecessors = set()
-        for dep in dependencies.get(tid, []):
-            if dep in backlog:
-                predecessors.add(dep)
-        for peer in conflicts.get(tid, ()):
-            if peer in backlog and tid_sort_key(peer) < tid_sort_key(tid):
-                predecessors.add(peer)
-        wait_on[tid] = sorted(predecessors, key=tid_sort_key)
-    return _dependency_cycle(wait_on)
-
 def compute_schedule() -> dict:
     """可跑集与分组计算：cmd_view 渲染与 reconcile 行动计划共用的只读调度图。"""
     require_primary_worktree()
@@ -153,16 +128,6 @@ def compute_schedule() -> dict:
         if task["status"] == "backlog"
     }
 
-    deadlock_cycle = _scheduling_deadlock_cycle(
-        set(backlog_tasks), dependencies, conflicts
-    )
-    if deadlock_cycle:
-        raise ctx.TaskDataError(
-            "invalid_graph: 调度死锁环（依赖×冲突优先级互斥）："
-            + " -> ".join(deadlock_cycle)
-            + "；检查环上 task 是否同时声明了依赖与冲突，删除冗余冲突边"
-        )
-
     # 按阻塞原因分组
     ready: list[str] = []
     waiting_deps: list[tuple[str, str]] = []  # (前置, 后继)
@@ -198,8 +163,15 @@ def compute_schedule() -> dict:
             if peer_status in ("active", "blocked"):
                 blocking.append(peer)
             elif peer_status == "backlog":
-                # backlog peer：序号小者优先，序号大者被阻塞
-                if tid_sort_key(peer) < tid_sort_key(tid):
+                # backlog peer 仅在自身依赖已满足（dep-ready，马上能占
+                # 资源）且序号更小时才压住本 task；peer 仍被依赖阻塞时
+                # 不构成互斥——否则「序号优先」会用假等待顶死依赖链
+                # （依赖×冲突方向相反即成调度死锁）。此规则下等待环
+                # 退化为纯依赖环，已由上方 depends_on 环检测拒绝。
+                peer_dep_ready = all(
+                    dep in satisfied_set for dep in dependencies.get(peer, [])
+                )
+                if peer_dep_ready and tid_sort_key(peer) < tid_sort_key(tid):
                     blocking.append(peer)
         if blocking:
             for peer in sorted(blocking, key=tid_sort_key):
@@ -215,7 +187,7 @@ def compute_schedule() -> dict:
         selected.append(tid)
 
     # 停滞哨兵：仍有已排程 backlog，但无运行中 task 且可跑集为空——
-    # 系统不会自行恢复，提示调度图可能死锁（环检测未覆盖的残留形态）。
+    # 系统不会自行恢复（如前置未排程），提示人工介入。
     scheduled_backlog = sorted(
         (
             tid for tid, task in backlog_tasks.items()

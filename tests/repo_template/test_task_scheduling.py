@@ -7,7 +7,6 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "repo_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from repo_task.context import TaskDataError
 from repo_task.scheduling import _dependency_cycle
 
 
@@ -22,42 +21,14 @@ def test_dependency_cycle_returns_stable_path():
     assert _dependency_cycle(dependencies) == ["t001", "t003", "t005", "t001"]
 
 
-"""以下为依赖×冲突合并图死锁检测与调度停滞哨兵（真实 git 仓库）。"""
+"""以下为调度阻塞规则（L3）与调度停滞哨兵（真实 git 仓库）。"""
 import argparse
 import subprocess
 
 from repo_task import context as ctx
 from repo_task.control import cmd_view
 from repo_task.documents import write_front_matter
-from repo_task.scheduling import _scheduling_deadlock_cycle, compute_schedule
-
-
-def test_deadlock_cycle_detects_dep_conflict_inversion():
-    """t350 依赖 t353 且序号更小，双方又互画冲突边 → 依赖方向与冲突
-    优先级方向相反，构成死锁环。"""
-    backlog = {"t350", "t353"}
-    dependencies = {"t350": ["t353"], "t353": []}
-    conflicts = {"t350": {"t353"}, "t353": {"t350"}}
-
-    cycle = _scheduling_deadlock_cycle(backlog, dependencies, conflicts)
-
-    assert cycle is not None
-    assert set(cycle) == {"t350", "t353"}
-
-
-def test_deadlock_cycle_ignores_healthy_chain():
-    """纯依赖链、方向一致的依赖+冲突组合都不构成环。"""
-    assert _scheduling_deadlock_cycle(
-        {"t350", "t353"},
-        {"t350": ["t353"], "t353": []},
-        {"t350": set(), "t353": set()},
-    ) is None
-    # 冲突优先级方向与依赖方向一致（序号小者本来就是前置）
-    assert _scheduling_deadlock_cycle(
-        {"t350", "t353"},
-        {"t350": [], "t353": ["t350"]},
-        {"t350": {"t353"}, "t353": {"t350"}},
-    ) is None
+from repo_task.scheduling import compute_schedule
 
 
 def _git(repo, *args):
@@ -123,14 +94,32 @@ def schedule_repo(tmp_path, monkeypatch):
     return repo
 
 
-def test_compute_schedule_raises_on_deadlock_cycle(schedule_repo):
+def test_conflict_peer_not_dep_ready_does_not_block(schedule_repo):
+    """L3：t350 依赖 t353 且互画冲突边（omni_media 死锁形态）——t350
+    自身被依赖阻塞、不构成互斥，t353 直接可跑，依赖链自愈。"""
     tasks_dir = ctx.TASKS_DIR
     _write_task(tasks_dir, "t350", "alpha",
                 depends_on="t353", conflicts_with="t353")
     _write_task(tasks_dir, "t353", "beta", conflicts_with="t350")
 
-    with pytest.raises(TaskDataError, match="调度死锁环"):
-        compute_schedule()
+    schedule = compute_schedule()
+
+    assert schedule["ready"] == ["t353"]
+    assert schedule["waiting_deps"] == [("t353", "t350")]
+    assert schedule["stalled"] is False
+
+
+def test_conflict_peer_dep_ready_smaller_tid_blocks(schedule_repo):
+    """L3 不削弱真互斥：双方依赖均满足时，序号小的 backlog peer 仍压
+    住序号大者。"""
+    tasks_dir = ctx.TASKS_DIR
+    _write_task(tasks_dir, "t001", "alpha", conflicts_with="t002")
+    _write_task(tasks_dir, "t002", "beta", conflicts_with="t001")
+
+    schedule = compute_schedule()
+
+    assert schedule["ready"] == ["t001"]
+    assert schedule["blocked_conflicts"] == [("t002", "t001")]
 
 
 def test_compute_schedule_stall_flag_when_nothing_runnable(schedule_repo):
@@ -227,7 +216,7 @@ def test_edit_allows_removing_redundant_conflict_on_dirty_graph(schedule_repo):
 
     cmd_edit(_edit_args("t353", conflicts_remove="t350"))
 
-    # 反向边已同步、死锁环解除
+    # 反向边已同步移除
     schedule = compute_schedule()
     assert "t350" not in schedule["conflicts"]["t353"]
     assert "t353" not in schedule["conflicts"]["t350"]
@@ -246,30 +235,18 @@ def test_edit_allows_unrelated_change_on_dirty_graph(schedule_repo):
     assert "renamed" in task_md.read_text(encoding="utf-8")
 
 
-def test_edit_rejects_indirect_deadlock_via_new_dependency(schedule_repo):
-    """P2-4：t002 自身无冲突边，owner-pair 校验落空；但 depends-append
-    t003 后 t001→t002→t003 新路径使 t001↔t003 冲突边成死锁环。"""
+def test_edit_indirect_dependency_path_schedules_fine(schedule_repo):
+    """原 P2-4 场景：t002 depends-append t003 使 t001↔t003 冲突边落在
+    新传递路径上。L3 下 t001 未 dep-ready 不阻塞 t003，图自愈——
+    edit 正常落盘，t003 直接可跑。"""
     tasks_dir = ctx.TASKS_DIR
     _write_task(tasks_dir, "t001", "alpha",
                 depends_on="t002", conflicts_with="t003")
     _write_task(tasks_dir, "t002", "beta")
     _write_task(tasks_dir, "t003", "gamma", conflicts_with="t001")
 
-    with pytest.raises(SystemExit, match="变更会形成调度死锁环"):
-        cmd_edit(_edit_args("t002", depends_append="t003"))
+    cmd_edit(_edit_args("t002", depends_append="t003"))
 
-
-def test_edit_allows_change_when_graph_already_deadlocked(schedule_repo):
-    """已脏图上继续做依赖/冲突编辑（含修复以外的维护）不拦——
-    只拦「原无环、变更后新造环」。"""
-    tasks_dir = ctx.TASKS_DIR
-    _write_task(tasks_dir, "t350", "alpha",
-                depends_on="t353", conflicts_with="t353")
-    _write_task(tasks_dir, "t353", "beta", conflicts_with="t350")
-    _write_task(tasks_dir, "t354", "gamma")
-
-    # 脏图上给无关 task 加依赖：原图已有环，放行（修复路径不被堵）
-    cmd_edit(_edit_args("t354", depends_append="t353"))
-
-    task_md = tasks_dir / "t354_gamma" / "task.md"
-    assert "t353" in task_md.read_text(encoding="utf-8")
+    schedule = compute_schedule()
+    assert schedule["ready"] == ["t003"]
+    assert schedule["stalled"] is False

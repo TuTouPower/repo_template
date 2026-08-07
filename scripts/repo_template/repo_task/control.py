@@ -76,7 +76,7 @@ def cmd_view(args):
             lines.extend([
                 "",
                 "  ⚠ 调度停滞：已排程 backlog 无可跑项且无运行中 task，不会自行恢复；"
-                "检查调度图是否死锁或前置未排程："
+                "检查前置是否未排程或调度图异常："
                 + " ".join(schedule["stalled_backlog"]),
             ])
         lines.extend(["", f"[已结束] done={len(main_done_set)}  dropped={len(dropped_set)}"])
