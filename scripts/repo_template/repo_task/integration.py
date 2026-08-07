@@ -474,7 +474,9 @@ def _collect_chain(tail_tid: str) -> list[tuple[str, str, str]]:
                 raise ctx.TaskDataError(
                     f"链成员非线性：{left[1]!r} 与 {right[1]!r} 无祖先关系"
                 )
-    candidates.sort(key=lambda item: sum(
+    # 用 sorted 而非 list.sort：list.sort 的 key 求值期会临时清空原列表，
+    # 遍历 candidates 恒为空集、key 恒 0，排序静默失效。
+    candidates = sorted(candidates, key=lambda item: sum(
         _git(["merge-base", "--is-ancestor", other[2], item[2]]).returncode == 0
         for other in candidates if other != item
     ))
