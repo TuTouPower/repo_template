@@ -244,3 +244,32 @@ def test_edit_allows_unrelated_change_on_dirty_graph(schedule_repo):
 
     task_md = tasks_dir / "t350_alpha" / "task.md"
     assert "renamed" in task_md.read_text(encoding="utf-8")
+
+
+def test_edit_rejects_indirect_deadlock_via_new_dependency(schedule_repo):
+    """P2-4：t002 自身无冲突边，owner-pair 校验落空；但 depends-append
+    t003 后 t001→t002→t003 新路径使 t001↔t003 冲突边成死锁环。"""
+    tasks_dir = ctx.TASKS_DIR
+    _write_task(tasks_dir, "t001", "alpha",
+                depends_on="t002", conflicts_with="t003")
+    _write_task(tasks_dir, "t002", "beta")
+    _write_task(tasks_dir, "t003", "gamma", conflicts_with="t001")
+
+    with pytest.raises(SystemExit, match="变更会形成调度死锁环"):
+        cmd_edit(_edit_args("t002", depends_append="t003"))
+
+
+def test_edit_allows_change_when_graph_already_deadlocked(schedule_repo):
+    """已脏图上继续做依赖/冲突编辑（含修复以外的维护）不拦——
+    只拦「原无环、变更后新造环」。"""
+    tasks_dir = ctx.TASKS_DIR
+    _write_task(tasks_dir, "t350", "alpha",
+                depends_on="t353", conflicts_with="t353")
+    _write_task(tasks_dir, "t353", "beta", conflicts_with="t350")
+    _write_task(tasks_dir, "t354", "gamma")
+
+    # 脏图上给无关 task 加依赖：原图已有环，放行（修复路径不被堵）
+    cmd_edit(_edit_args("t354", depends_append="t353"))
+
+    task_md = tasks_dir / "t354_gamma" / "task.md"
+    assert "t353" in task_md.read_text(encoding="utf-8")

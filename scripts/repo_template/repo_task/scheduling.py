@@ -158,7 +158,7 @@ def compute_schedule() -> dict:
     )
     if deadlock_cycle:
         raise ctx.TaskDataError(
-            "invalid_graph: 调度死锁环（依赖×冲突优先级互斥）"
+            "invalid_graph: 调度死锁环（依赖×冲突优先级互斥）："
             + " -> ".join(deadlock_cycle)
             + "；检查环上 task 是否同时声明了依赖与冲突，删除冗余冲突边"
         )
