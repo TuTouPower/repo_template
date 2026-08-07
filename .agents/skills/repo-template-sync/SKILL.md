@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 把 **repo_template** 的工具链与模板资产同步到**当前消费项目**。仅用户显式调用（`/repo-template-sync`）。禁止在模板仓本身当「推送源」跑。
 
-状态文件（本 skill 旁，须入库）：
+状态文件（消费项目本地运行态；**模板仓不入库**，由消费侧 `init` 生成后入库）：
 
 ```text
 .agents/skills/repo-template-sync/sync_state.json
@@ -31,10 +31,12 @@ disable-model-invocation: true
 - **不碰业务与项目状态**：`src/`、`assets/`、`schemas/`、`config/`、非 `repo_template` 的 `scripts/`、`docs/tasks/{tid}_*`、`docs/archive/`、`docs/pending/{todo,parked}/`、`docs/findings/dNNN_*`、`docs/specs*`、`docs/handoff.md`、`docs/runtime/`、`docs/reviews/review_*/`、`docs/spikes/{sid}_*`、`docs_repo/`、`README.md`（业务介绍）。
 - **禁止整树/整文件静默硬盖** skill、MCP、宿主配置、以及常被项目改写的共享文稿（`AGENTS.md`、`conventions.md`、`.gitignore` 等）——一律走「裁定同步」。
 - **有差异就必须裁定并报告**。不存在「只展示 diff、默认可永久不处理」的桶；差异要么写入（`update` / `merge`）、要么明确 `keep_consumer`（写清为什么保留）、要么 `ask_user`。禁止用「只 diff」当借口跳过该更新的模板演进。
-- 本 skill 的 `sync_state.json` 永不被模板抹掉（含 `user_prompts` 全历史）。
-- **`status` / `dry-run` 默认同步零写盘**：不 rsync、不改业务文件；缺源或缺 state → 报告并要求 `init`。例外：用户显式登记站立指令时可**只追加** `user_prompts`（见下）。
+- 消费侧 `sync_state.json` **永不**被模板侧文件覆盖或删除（模板本就不带该文件；更新 skill 时 rsync 须 `--exclude 'repo-template-sync/sync_state.json'`）。
+- **`status` / `dry-run` 默认同步零写盘**：不 rsync、不改业务文件；缺源或缺 state → 报告并要求 `init`。例外：登记站立指令时仅允许**字段级**改 state（见「state 写入纪律」）。
 
 ## 配置：`sync_state.json`
+
+消费项目本地文件。骨架仅作文档；**init 生成**，不要从模板仓复制。
 
 ```json
 {
@@ -48,7 +50,8 @@ disable-model-invocation: true
     {
       "at": "2026-08-08T15:30:00+08:00",
       "text": ".env 在消费项目里不要 ignore",
-      "tags": [".gitignore", ".env"]
+      "tags": [".gitignore", ".env"],
+      "revoked": false
     }
   ]
 }
@@ -60,35 +63,62 @@ disable-model-invocation: true
 | `template_source.value` | 绝对路径或 git remote URL |
 | `last_synced_commit` | 上次成功 `apply` 后模板 HEAD（完整 SHA）；仅当写入与该 commit 工作树一致时才可推进 |
 | `last_synced_at` | ISO 8601（UTC+8） |
-| `user_prompts` | **站立指令历史**（数组，只增不改不删，除非用户明确要求删改某条）。每轮同步**必须先读完**再裁定 |
+| `user_prompts` | 站立指令历史。每轮同步**必须先读完**再裁定（忽略 `revoked: true`） |
 
 ### `user_prompts[]` 条目
 
 | 字段 | 必填 | 含义 |
 |------|------|------|
 | `at` | 是 | 登记时间，ISO 8601（UTC+8） |
-| `text` | 是 | 用户原话或忠实摘要（优先原话）；例：「.env 在新项目里不要 ignore」 |
-| `tags` | 否 | 便于匹配的短标签（路径/主题），如 `[".gitignore",".env"]`；agent 可补，不改变 `text` |
+| `text` | 是 | 用户原话或忠实摘要（优先原话） |
+| `tags` | 否 | 短标签，如 `[".gitignore",".env"]`；agent 可补 |
+| `revoked` | 否 | `true` = 已作废，裁定忽略；条目保留备查 |
 
-**读写纪律**：
+### state 写入纪律（硬；防自我更新窗口丢字段）
 
-1. **每次** `status` / `dry-run` / `apply` 启动时加载 `user_prompts`；预览与汇报**置顶列出**（空则写「无历史指令」）。
-2. 裁定时 **`user_prompts` 优先于模板默认与一般合并启发式**。例：用户说过「.env 不要 ignore」→ 合并 `.gitignore` 时**不得**把模板的 `.env` / `.env.*` 忽略规则并进消费仓；若消费侧已有例外，保持例外。
-3. 本轮用户新说的站立偏好（非一次性确认）：
-   - 立即或 apply 结束时 **append** 一条 `{at,text,tags?}`；
-   - 不覆盖、不改写旧条；语义重复可仍追加（或用户要求合并时再整理）；
-   - 一次性「这次先别动 X」若用户说「不用记住」→ 不写入；未说明则默认**记住**（站立约束）。
-4. 更新 `SKILL.md` / 其它 state 字段时：**整文件读改写**，保留既有 `user_prompts`；禁止用模板空 `[]` 覆盖消费侧历史。
-5. 用户可要求删除/作废某条 → 从数组移除或标 `"revoked": true`（若标 revoked，仍保留条目备查，裁定时忽略）。
+**禁止**用编辑器/Write 按「内存里的 schema」整文件重建 `sync_state.json`。旧会话若 schema 不全，整文件写会抹掉未知字段（如 `user_prompts`）——这是已发生事故的根因。
 
-缺源：`init` 可写骨架；其它模式停并要求 `init`。
+**只准字段级更新**（读盘 → 改指定键 → 写回；未知键原样保留）：
+
+```bash
+# 推进 last（示例；路径按 CONSUMER）
+STATE=".agents/skills/repo-template-sync/sync_state.json"
+tmp="$(mktemp)"
+jq --arg c "$T_HEAD" --arg t "$(date -Iseconds)" \
+  '.last_synced_commit=$c | .last_synced_at=$t' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+
+# 写 template_source（init）
+jq --arg k "path" --arg v "$SRC" \
+  '.template_source={kind:$k, value:$v}' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+
+# append 一条 prompt（新条对象用 --argjson）
+jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+```
+
+无 `jq` 时用等价 Python：`json.load` → 只改目标键 / `list.append` → `json.dump`；**不得** `state = {只含已知键}` 再 dump。
+
+- 文件不存在（仅 `init`）：可**一次**写出完整骨架，此后永远字段级。
+- 更新本 skill 的 `SKILL.md` 与写 state **解耦**：rsync skill 正文时必须 exclude `sync_state.json`。
+
+### `user_prompts` 读写与时效
+
+1. **每次** `status` / `dry-run` / `apply` 加载；预览置顶列出**未 revoked** 条（空则写「无」）。
+2. 裁定时未撤销的 `user_prompts` **优先于**模板默认；rationale 引用序号或 `text`。
+3. 登记新站立指令：
+   - append 新条；**不删**旧条正文。
+   - **同 tag 覆盖**：若新条 `tags` 与某条未撤销旧条的 `tags` **有交集**（规范化小写比较），将旧条标 `"revoked": true`（字段级：改该元素的 `revoked`），再 append 新条。后出优先。无 tags 则不做自动 supersede，靠语义 + 用户显式 revoke。
+   - 一次性「这次先别动」且用户说「不用记住」→ 不写入；未说明则默认记住。
+4. 用户显式作废：将该条 `revoked: true`（字段级），不整表重写。
+5. 裁定只用 `revoked != true` 的条目；预览可附「已 supersede/revoked」缩略计数。
+
+缺源：`init`；其它模式停。
 
 ### `init`
 
-1. 无 state → 建骨架（`last_synced_*=null`，`user_prompts=[]`）。
+1. 无 state → **仅此时**写完整骨架（`last_synced_*=null`，`user_prompts=[]`，`template_source` 待填）。
 2. 推断 path/url（用户给定 → 常见本机路径 → 不臆造）。
 3. 本机含 `scripts/repo_template/task.py` → `kind=path`；否则 url。
-4. 只写 `template_source`；**不**清空已有 `user_prompts`。
+4. 有 state → **仅**字段级写 `template_source`；不动 `user_prompts` / `last_synced_*`。
 
 ## 两类同步
 
@@ -203,7 +233,7 @@ disable-model-invocation: true
 - 按键合并；禁冲密钥、token、本机路径。
 - 模板新 server → 建议并入；消费独有 server → 保留。
 
-**`repo-template-sync`**：可更新 `SKILL.md`；禁覆盖消费 `sync_state.json`。
+**`repo-template-sync`**：可更新 `SKILL.md`；**永不** rsync/覆盖/删除消费侧 `sync_state.json`（模板侧也不应存在该文件）。
 
 ### 软链
 
@@ -308,40 +338,47 @@ disable-model-invocation: true
    - `keep_consumer` / 未确认 `ask_user`：跳过。
 4. 软链建/修。
 5. `pytest tests/repo_template/ -q`；失败不推进 state。
-6. 干净 SRC + 验证通过（或用户跳过测试）→ 更新 `last_synced_*`；**append 本轮新 `user_prompts`**（若有）；读写 state 时保留全部历史 prompts。
-7. **进入审批门禁（强制，不可跳过）** — 见下节。此时工作区可有未提交变更；**尚未 commit**。
+6. 干净 SRC + 验证通过（或用户跳过测试）→ **字段级**更新 `last_synced_commit` / `last_synced_at`；本轮新 prompt **字段级** supersede（同 tag 旧条 `revoked`）+ append。**禁止**整文件重建 state。
+7. **进入审批门禁（强制，不可跳过）** — 见下节。工作区可有未提交变更；**尚未 commit**。
 
 ### 6. 审批门禁（apply 之后）
 
 apply 写盘结束后**必须**停下来问用户，不得默认提交。
 
-1. 输出「结果汇报」（下节模板）+ 可跟踪变更摘要：
+1. 输出「结果汇报」+ 变更摘要：
 
    ```bash
    git -C "$CONSUMER" status --short
    git -C "$CONSUMER" diff --stat
-   # 若有已 staged：git diff --cached --stat
    ```
 
-2. **明确询问**（原话或等价）：
+2. 列出**拟提交路径清单**（仅本轮同步触碰的路径，含变更的 `sync_state.json` 若有）。
+
+3. **明确询问**：
 
    > 同步已写入工作区（尚未 commit）。请审批：回复「审批通过」后才会提交；拒绝或其它表述则保持未提交。
 
-3. **等待用户本轮明确答复**：
-   - **通过**：用户明确说「审批通过」/「approve」/「可以 commit」/「同意提交」等**无歧义同意提交**的表述 → 才执行步骤 4。
-   - **不通过**：拒绝、再改、等等、沉默、仅「ok/好/收到」等**不足以当作审批** → **不 commit**，汇报「待审批 / 用户未批准提交」。
-4. 审批通过后：
+4. **等待用户本轮明确答复**：
+   - **通过**：「审批通过」/「approve」/「可以 commit」/「同意提交」等无歧义同意 → 步骤 5。
+   - **不通过**：拒绝、再改、沉默、仅「ok/好/收到」→ **不 commit**。
+5. 审批通过后——**只点名 add 清单内路径**（**禁止** `git add -A` / `git add .`）：
 
    ```bash
-   git -C "$CONSUMER" add -A  # 仅本轮同步相关路径更稳妥：按 status 点名 add，避免误加无关脏文件
+   git -C "$CONSUMER" add -- \
+     scripts/repo_template \
+     tests/repo_template \
+     .agents/skills/task-run \
+     .agents/skills/repo-template-sync/SKILL.md \
+     .agents/skills/repo-template-sync/sync_state.json \
+     # …预览/status 中本轮实际改动的每一路径
    git -C "$CONSUMER" commit -m "chore: sync repo_template @ <T_HEAD 短 SHA>"
    ```
 
-   - commit message 可附硬同步/裁定摘要一行。
-   - **不** `git push`，除非用户另说 push。
-   - 若工作区混有与同步无关的既有脏文件 → **禁止**盲目 `add -A`；只 stage 本轮同步触碰的路径，并在询问时列出拟提交文件清单。
+   - 路径以本轮真实 diff 为准，上表仅为形状示例。
+   - **不** `git push`，除非用户另说。
+   - 无关脏文件不得进 stage。
 
-5. 无任何可提交 diff（已干净）→ 说明「无变更可提交」，不问审批或说明无需 commit。
+6. 无任何可提交 diff → 说明无需 commit。
 
 ## 汇报
 
@@ -369,7 +406,7 @@ diff stat：…
 
 ## 完成条件
 
-- dry-run：加载并展示 `user_prompts`；对**每一个**有 diff 的裁定单元给出 disposition + 可执行 rationale；裁定不得违反未撤销的 prompt。
-- apply：硬同步完成；裁定遵守 prompt；`user_prompts` 历史不被清空；本轮站立指令已 append；`sync_state.json` 其余字段与 last 推进规则满足；**已展示待审批清单并询问用户**。
-- commit：仅在用户明确「审批通过」之后执行；否则工作区变更保留、不提交。
+- dry-run：加载并展示未撤销 `user_prompts`；每个有 diff 的裁定单元有 disposition + rationale；不违反 prompt。
+- apply：硬同步完成；裁定遵守 prompt；state **仅字段级**更新；未知字段仍在；本轮 prompt 已 append 且同 tag 旧条已 revoked；已展示待审批清单并询问。
+- commit：仅「审批通过」后、且**点名 add** 本轮路径；否则不提交。
 
