@@ -73,7 +73,7 @@ function truncate(s, max) {
 
 function isUnfinished(category) {
   if (window.ChainPlan) return window.ChainPlan.isUnfinished(category);
-  return category !== 'done' && category !== 'dropped' && category !== 'done_unmerged';
+  return category !== 'done' && category !== 'dropped';
 }
 
 function recomputePlan() {
@@ -526,13 +526,9 @@ function renderLegend() {
 }
 
 function updateDagSub(count) {
-  var unmerged = 0;
-  model.nodes.forEach(function (n) {
-    if (n.category === 'done_unmerged') unmerged += 1;
-  });
   $('dag-sub').textContent = state.showCompleted
     ? count + ' 节点(含归档)'
-    : count + ' 个待处理任务' + (unmerged > 0 ? '(含 ' + unmerged + ' 待合入)' : '') + ' · 归档任务已隐藏';
+    : count + ' 个待处理任务 · 归档任务已隐藏';
 }
 
 // ---------------------------------------------------------------------------

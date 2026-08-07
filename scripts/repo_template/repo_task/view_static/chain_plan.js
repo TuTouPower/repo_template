@@ -74,14 +74,12 @@ function computeCrossings(chains, data) {
 function buildSubgraph(data) {
   var idSet = new Set();
   var catOf = new Map();
-  var unmergedSet = new Set();
+  var schedOf = new Map();
   data.nodes.forEach(function (n) {
     if (isUnfinished(n.category)) {
       idSet.add(n.id);
       catOf.set(n.id, n.category);
-    } else if (n.category === 'done_unmerged') {
-      unmergedSet.add(n.id);
-      catOf.set(n.id, n.category);
+      schedOf.set(n.id, n.schedule_status || '');
     }
   });
   var ids = Array.from(idSet).sort(function (a, b) { return num(a) - num(b); });
@@ -90,7 +88,6 @@ function buildSubgraph(data) {
   var downstream = new Map();
   var indegree = new Map();
   var conflictOf = new Map();
-  var blockedByUnmerged = new Set();
   ids.forEach(function (id) {
     upstream.set(id, []);
     downstream.set(id, []);
@@ -100,25 +97,16 @@ function buildSubgraph(data) {
 
   data.edges.forEach(function (e) {
     if (e.type === 'dep') {
-      if (!idSet.has(e.to)) return;
-      if (idSet.has(e.from)) {
-        downstream.get(e.from).push(e.to);
-        upstream.get(e.to).push(e.from);
-        indegree.set(e.to, (indegree.get(e.to) || 0) + 1);
-      } else if (unmergedSet.has(e.from)) {
-        upstream.get(e.to).push(e.from);
-        indegree.set(e.to, (indegree.get(e.to) || 0) + 1);
-      }
+      if (!idSet.has(e.to) || !idSet.has(e.from)) return;
+      downstream.get(e.from).push(e.to);
+      upstream.get(e.to).push(e.from);
+      indegree.set(e.to, (indegree.get(e.to) || 0) + 1);
     } else {
       if (idSet.has(e.from) && idSet.has(e.to)) {
         var fa = conflictOf.get(e.from);
         var tb = conflictOf.get(e.to);
         if (fa.indexOf(e.to) < 0) fa.push(e.to);
         if (tb.indexOf(e.from) < 0) tb.push(e.from);
-      } else if (idSet.has(e.from) && unmergedSet.has(e.to)) {
-        blockedByUnmerged.add(e.from);
-      } else if (unmergedSet.has(e.from) && idSet.has(e.to)) {
-        blockedByUnmerged.add(e.to);
       }
     }
   });
@@ -126,9 +114,9 @@ function buildSubgraph(data) {
     list.sort(function (a, b) { return num(a) - num(b); });
   });
   return {
-    ids: ids, idSet: idSet, catOf: catOf, upstream: upstream,
-    downstream: downstream, indegree: indegree, conflictOf: conflictOf,
-    blockedByUnmerged: blockedByUnmerged,
+    ids: ids, idSet: idSet, catOf: catOf, schedOf: schedOf,
+    upstream: upstream, downstream: downstream, indegree: indegree,
+    conflictOf: conflictOf,
   };
 }
 
@@ -139,11 +127,13 @@ function buildSubgraph(data) {
 function computeBatchPlan(data) {
   var sub = buildSubgraph(data);
 
-  // 1. 候选链首：入度 0 的 active/runnable/blocked_conflict
+  // 1. 候选链首：入度 0 的 active/runnable。
+  //    runnable 即后端 compute_schedule 的 selected；blocked_conflict
+  //    被后端「序号小者优先」压住，前端不再依据局部候选冲突自行重推，
+  //    避免与后端调度规则漂移推荐出实际不可启动的链首
   var candidates = sub.ids.filter(function (id) {
     return (sub.indegree.get(id) || 0) === 0
-      && !sub.blockedByUnmerged.has(id)
-      && ['active', 'runnable', 'blocked_conflict'].indexOf(sub.catOf.get(id)) >= 0;
+      && ['active', 'runnable'].indexOf(sub.catOf.get(id)) >= 0;
   });
   var activeHeads = candidates.filter(function (id) {
     return sub.catOf.get(id) === 'active';
@@ -193,6 +183,7 @@ function computeBatchPlan(data) {
   var heads = activeHeads.concat(winners).sort(function (a, b) {
     return num(a) - num(b);
   });
+  var headSet = new Set(heads);
   var assigned = new Set();
   var chains = [];
 
@@ -211,7 +202,19 @@ function computeBatchPlan(data) {
       if (isCrossing) break;
       var cands = (sub.downstream.get(tail) || []).filter(function (id) {
         if (assigned.has(id)) return false;
-        return (sub.upstream.get(id) || []).every(function (p) { return chainSet.has(p); });
+        if (!(sub.upstream.get(id) || []).every(function (p) { return chainSet.has(p); })) return false;
+        // 只吸纳已排程后继：未排程 / 待澄清不进执行链
+        if (sub.schedOf.get(id) !== 'scheduled') return false;
+        // 冲突检查：链内冲突由串行顺序消化；与运行中 task、其他链成员
+        // 或其他链首（本轮确定并行）冲突的后继不进链
+        var conflicts = sub.conflictOf.get(id) || [];
+        for (var i = 0; i < conflicts.length; i++) {
+          var c = conflicts[i];
+          if (chainSet.has(c)) continue;
+          if (sub.catOf.get(c) === 'active') return false;
+          if (assigned.has(c) || headSet.has(c)) return false;
+        }
+        return true;
       });
       if (cands.length === 0) break;
       cands.sort(function (a, b) { return num(a) - num(b); });
@@ -256,7 +259,7 @@ function computeBatchPlan(data) {
 }
 
 function blocksDownstream(cat) {
-  return cat !== undefined && (isUnfinished(cat) || cat === 'done_unmerged');
+  return cat !== undefined && isUnfinished(cat);
 }
 
 /** 链停止原因（展示在链卡底部） */
@@ -299,7 +302,6 @@ function chainStopInfo(chain, plan, data) {
       });
       if (others.length > 0) {
         var desc = others.map(function (p) {
-          if (catOf.get(p) === 'done_unmerged') return p + ' 合入 main';
           if (chainOf.has(p)) return nameOf.get(chainOf.get(p)) + '的 ' + p;
           return p;
         }).join('、');

@@ -70,6 +70,7 @@ def _build_model():
             "title": task["title"],
             "status": task["status"],
             "category": _classify(tid, tasks, schedule),
+            "schedule_status": task.get("schedule_status", ""),
             "depends_on": [t for t in str(task.get("depends_on", "")).split(",") if t.strip()],
             "conflicts_with": [t for t in str(task.get("conflicts_with", "")).split(",") if t.strip()],
         })

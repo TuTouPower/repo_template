@@ -119,7 +119,7 @@ def test_build_model_shape(monkeypatch):
     schedule = {
         "tasks": {
             "t001": {"tid": "t001", "title": "任务一", "status": "active", "depends_on": "", "conflicts_with": ""},
-            "t002": {"tid": "t002", "title": "任务二", "status": "backlog", "depends_on": "t001", "conflicts_with": "t003"},
+            "t002": {"tid": "t002", "title": "任务二", "status": "backlog", "depends_on": "t001", "conflicts_with": "t003", "schedule_status": "scheduled"},
             "t003": {"tid": "t003", "title": "任务三", "status": "backlog", "depends_on": "", "conflicts_with": "t002"},
             "t004": {"tid": "t004", "title": "任务四", "status": "done", "depends_on": "", "conflicts_with": ""},
         },
@@ -140,6 +140,9 @@ def test_build_model_shape(monkeypatch):
     by_id = {n["id"]: n for n in model["nodes"]}
     assert by_id["t002"]["category"] == "runnable"
     assert by_id["t002"]["depends_on"] == ["t001"]
+    # 前端建链需要 schedule_status 区分未排程/待澄清 backlog
+    assert by_id["t002"]["schedule_status"] == "scheduled"
+    assert by_id["t003"]["schedule_status"] == ""
 
 
 def test_is_wsl_detects_env(monkeypatch):
