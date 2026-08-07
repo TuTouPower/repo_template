@@ -61,26 +61,27 @@
 
 用户入口：
 
-| 用户意图 | skill | 职责 |
-|----------|-------|------|
-| 新需求拆 task | `task-create` | 按**需求**拆建 backlog task；批量落盘后统一一个创建 commit |
-| 分析 backlog task 调度图 | `task-schedule` | Agent 首次分析依赖/冲突并落盘；之后 `task.py view` 机械计算可跑集 |
-| 串行跑完待做 task | `task-run` | 链式串行：每 task reserve inline attempt、一个执行 commit、中间 exact cleanup、后继 `--base` 前分支；链尾一次 `integrate-chain` |
-| 多会话手动并发 | 用户自决 | `task-schedule` 后用户在多个会话各跑 `task-run` 一段；`task.py view --serve` 起看板呈现依赖/冲突/运行中状态。无自动调度器，合并撞车由 git 报错收场 |
-| 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
-| 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
-| 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档；未修 bug 条目由用户选择派子代理分析/核实或不动 |
-| 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
-| 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
-| 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
-| 同步模板工具链到消费项目 | `repo-template-sync` | 仅消费项目；默认 dry-run；`apply` 须二次确认；工具链硬同步；skill/MCP/AGENTS/conventions/gitignore 等有 diff 则逐项裁定合并（禁整文件静默盖、禁「只 diff 不处理」）；源与上次 commit 记在 skill 旁 `sync_state.json` |
+| skill | 职责 |
+|-------|------|
+| `task-create` | 按需求拆 backlog task，批量落盘后统一创建 commit |
+| `task-schedule` | 分析依赖/冲突并落盘；可跑集由 `task.py view` 计算 |
+| `task-run` | 链式串行跑 task，链尾 `integrate-chain` 合主干 |
+| `task-preflight` | 只读汇总待做 task 缺口 |
+| `task-bug` | 复现/根因（仅 `.scratch/`）后建修复 task |
+| `task-from-pending` | 从 `docs/pending/todo/` 建 task 并归档条目 |
+| `task-merge` | 合并多个 backlog task（edit 目标 + drop 源） |
+| `repo-hygiene` | 过时 handoff/pending 等迁 archive |
+| `repo-cleanup` | 清缓存等无用文件，默认 dry-run |
+| `repo-template-sync` | 消费项目从模板仓同步工具链；审批通过后才 commit |
+
+多会话并发：用户自决开多个会话各跑 `task-run`；`task.py view --serve` 看看板。无自动调度器。
 
 内部调用：
 
-| skill | 调用方 | 职责 |
-|-------|--------|------|
-| `task-work` | `task-run` 在队列循环中调用 | 在自身 worktree 实施至一个执行 commit，并写完整 `handoff.json`；不碰主仓控制面与分支合并 |
-| `task-integrate` | `task-run` 链全部完成后 | 主干合并入口：单 task 用 exact cleanup + `integrate`；链式先逐成员 exact cleanup，最终 `integrate-chain` 聚合校验后一次合链尾 |
+| skill | 职责 |
+|-------|------|
+| `task-work` | 在 task worktree 实施并写 `handoff.json`（由 `task-run` 调用） |
+| `task-integrate` | 单 task 或链式合并回主干（由 `task-run` 调用） |
 
 典型路径：`/task-create` → `/task-schedule` → `task.py view --serve` 起看板 → 一个或多个会话 `/task-run`（多会话手动并发各跑一段）。
 
