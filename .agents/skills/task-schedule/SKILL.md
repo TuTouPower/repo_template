@@ -57,6 +57,8 @@ disable-model-invocation: true
 
    仅新增不同文件不算冲突。冲突存疑时保守标记。冲突边由 `task.py edit` 自动维护双向，不手工双写。
 
+   禁令：与已有 `depends_on` 关系（含传递）的 task 对禁止写 `conflicts_with`——依赖已蕴含串行，冲突边冗余；且 backlog 间冲突附带「序号小者优先」排序语义，一旦依赖方向与序号方向相反即构成调度死锁（`view` 以 `invalid_graph: 调度死锁环` 报错）。
+
 5. **落盘**。禁止直接编辑 `task.md` 或 index。对判断完整的每个候选执行一次完整覆盖：
 
    ```bash
@@ -93,4 +95,4 @@ disable-model-invocation: true
 
 ## 完成
 
-报告：已写图 tid、待澄清/跳过 tid；随后原样输出 `scripts/repo_template/task.py view` 结果。
+报告：已写图 tid、待澄清/跳过 tid；单列因已有依赖关系（含传递）而按 Step 4 禁令跳过的冲突对；随后原样输出 `scripts/repo_template/task.py view` 结果。

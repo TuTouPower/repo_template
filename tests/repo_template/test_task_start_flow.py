@@ -1314,12 +1314,14 @@ def test_edit_updates_dependencies_and_symmetric_conflicts(git_repo):
         "--schedule-status",
         "scheduled",
     )
+    # t002 已依赖 t001/t003，t001↔t002 冲突边会被 L1 冗余门禁拒绝；
+    # 对称边维护用无依赖路径的 t003 验证
     conflict = _task_cli(
         git_repo,
         "edit",
         "t001",
         "--conflicts-with",
-        "t003,t002",
+        "t003",
     )
 
     assert dependency.returncode == 0, dependency.stderr
@@ -1329,16 +1331,15 @@ def test_edit_updates_dependencies_and_symmetric_conflicts(git_repo):
     third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
     assert second["depends_on"] == "t001,t003"
     assert second["schedule_status"] == "scheduled"
-    assert first["conflicts_with"] == "t002,t003"
-    assert second["conflicts_with"] == "t001"
+    assert first["conflicts_with"] == "t003"
     assert third["conflicts_with"] == "t001"
 
-    removed = _task_cli(git_repo, "edit", "t001", "--conflicts-remove", "t002")
+    removed = _task_cli(git_repo, "edit", "t001", "--conflicts-remove", "t003")
     assert removed.returncode == 0, removed.stderr
     first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
-    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
-    assert first["conflicts_with"] == "t003"
-    assert second["conflicts_with"] == ""
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
+    assert first["conflicts_with"] == ""
+    assert third["conflicts_with"] == ""
 
 
 def test_edit_rejects_conflict_reverse_edge_to_active_task(git_repo):

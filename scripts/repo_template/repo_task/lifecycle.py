@@ -15,6 +15,21 @@ from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
 
+def _dependency_path_exists(
+    dependencies: dict[str, list[str]], src: str, dst: str
+) -> bool:
+    """dependencies 图上 src → … → dst 传递可达性（src 直接或间接依赖 dst）。"""
+    stack, seen = [src], set()
+    while stack:
+        node = stack.pop()
+        if node == dst:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(dependencies.get(node, []))
+    return False
+
 def cmd_add(args):
     require_primary_worktree()
     if not ctx.SLUG_RE.match(args.slug):
@@ -248,6 +263,62 @@ def cmd_edit(args):
     if values["schedule_status"] is not None:
         fm["schedule_status"] = values["schedule_status"]
         changed.append(f"schedule_status={values['schedule_status']}")
+
+    # L1 冗余门禁：仅当本次变更触碰了依赖/冲突字段时，校验 owner 相关
+    # pair——冲突边两端间不得存在（传递）依赖路径。依赖已蕴含串行，
+    # 冗余冲突边的「序号小者优先」会与依赖方向互顶成调度死锁。
+    # 只拦新增/留存于本次变更后图中的 pair，不全图重验，保证
+    # --conflicts-remove / --depends-remove 的增量修复路径畅通。
+    if any(value is not None for value in dependency_actions + conflict_actions):
+        final_depends = parse_tid_list(
+            fm.get("depends_on", ""), field=f"{args.tid}.depends_on"
+        )
+        final_conflicts = parse_tid_list(
+            fm.get("conflicts_with", ""), field=f"{args.tid}.conflicts_with"
+        )
+        # 冲突边双向口径：owner 声明 ∪ peer 声明（防脏数据单边挂边漏检）；
+        # peer 反向边若本次已同步变更，须用 peer_updates 里的新值而非旧快照，
+        # 否则 --conflicts-remove 的修复路径会被自己的反向边误拦
+        updated_peer_fm = {
+            peer_fm["tid"]: peer_fm for peer_fm, _ in peer_updates.values()
+        }
+        conflict_peers = set(final_conflicts)
+        for candidate in tasks:
+            if candidate["tid"] == args.tid:
+                continue
+            peer_fm = updated_peer_fm.get(candidate["tid"], candidate)
+            peer_conflicts = parse_tid_list(
+                peer_fm.get("conflicts_with", ""),
+                field=f"{candidate['tid']}.conflicts_with",
+            )
+            if args.tid in peer_conflicts:
+                conflict_peers.add(candidate["tid"])
+        candidate_dependencies = {
+            candidate["tid"]: parse_tid_list(
+                candidate.get("depends_on", ""),
+                field=f"{candidate['tid']}.depends_on",
+            )
+            for candidate in tasks
+            if candidate["status"] not in ctx.ARCHIVED_STATUSES
+        }
+        candidate_dependencies[args.tid] = final_depends
+        for peer in sorted(conflict_peers, key=tid_sort_key):
+            forward = _dependency_path_exists(
+                candidate_dependencies, args.tid, peer
+            )
+            backward = _dependency_path_exists(
+                candidate_dependencies, peer, args.tid
+            )
+            if forward or backward:
+                direction = (
+                    f"{args.tid} ⋯depends⋯→ {peer}"
+                    if forward
+                    else f"{peer} ⋯depends⋯→ {args.tid}"
+                )
+                sys.exit(
+                    f"冲突边与依赖路径冗余：{args.tid} ↔ {peer} 冲突，但{direction}"
+                    "（依赖已蕴含串行）；请只保留依赖，删除冲突边"
+                )
 
     for peer_path, (peer_fm, peer_body) in peer_updates.items():
         write_front_matter(peer_path, peer_fm, peer_body)
