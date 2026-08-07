@@ -69,7 +69,7 @@
 | 多会话手动并发 | 用户自决 | `task-schedule` 后用户在多个会话各跑 `task-run` 一段；`task.py view --serve` 起看板呈现依赖/冲突/运行中状态。无自动调度器，合并撞车由 git 报错收场 |
 | 待做 task 还缺我什么 | `task-preflight` | 只读汇总缺口 |
 | 修 bug / 复现 / 根因立项 | `task-bug` | 复现/根因（仅 `.scratch/`）→ 建修复 task + 补测分析 → commit 创建物 |
-| 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档 |
+| 把待办转成 task | `task-from-pending` | 从 `docs/pending/todo/` 重建 task 并回写归档；未修 bug 条目由用户选择派子代理分析/核实或不动 |
 | 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
