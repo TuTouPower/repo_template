@@ -73,7 +73,7 @@
 | 多个 backlog task 合并成一个 | `task-merge` | 仅 backlog；并 spec/task → `edit` 目标 → `drop` 源 |
 | 整理 handoff/pending/过时文档 | `repo-hygiene` | 迁 archive；不手改 task 状态 |
 | 清理缓存/无用文件 | `repo-cleanup` | 默认 dry-run |
-| 同步模板工具链到消费项目 | `repo-template-sync` | 仅消费项目；默认 dry-run；`apply` 须二次确认；源与上次 commit 记在 skill 旁 `sync_state.json` |
+| 同步模板工具链到消费项目 | `repo-template-sync` | 仅消费项目；默认 dry-run；`apply` 须二次确认；工具链硬同步，skill/MCP/宿主配置逐项裁定（禁整树覆盖）；源与上次 commit 记在 skill 旁 `sync_state.json` |
 
 内部调用：
 
