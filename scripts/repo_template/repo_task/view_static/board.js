@@ -24,11 +24,13 @@ var RING = { self: null, upstream: '#F59E0B', downstream: '#10B981', conflict: '
 var model = window.__BOARD__;
 var nodes = new Map(model.nodes.map(function (n) { return [n.id, n]; }));
 var index = null; // { dependenciesOf, dependentsOf, conflictsOf }
+var plan = null; // ChainPlan：当下可执行批次
 
 var state = {
   query: '',
   selectedId: null,
   hoveredId: null,
+  highlightChainId: null,
   showCompleted: false,
   showConflicts: true,
   dark: (function () {
@@ -70,7 +72,55 @@ function truncate(s, max) {
 }
 
 function isUnfinished(category) {
-  return category !== 'done' && category !== 'dropped';
+  if (window.ChainPlan) return window.ChainPlan.isUnfinished(category);
+  return category !== 'done' && category !== 'dropped' && category !== 'done_unmerged';
+}
+
+function recomputePlan() {
+  if (!window.ChainPlan) {
+    plan = { chains: [], unassigned: [], deferred: [], crossings: [] };
+    return;
+  }
+  plan = window.ChainPlan.computeBatchPlan(model);
+  state.highlightChainId = null;
+}
+
+function chainOfTask(id) {
+  if (!plan || !window.ChainPlan) return null;
+  return window.ChainPlan.chainOfMap(plan.chains).get(id) || null;
+}
+
+function chainById(cid) {
+  if (!plan) return null;
+  for (var i = 0; i < plan.chains.length; i++) {
+    if (plan.chains[i].id === cid) return plan.chains[i];
+  }
+  return null;
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(function () { fallbackCopy(text); });
+    return;
+  }
+  fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
+function showToast(msg) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(function () { t.hidden = true; }, 1600);
 }
 
 function catStyle(cat) {
@@ -314,22 +364,57 @@ function renderDag() {
     return false;
   };
 
-  // dep 边
+  // 链索引 / 交叉点 / 暂缓
+  var chainOf = plan && window.ChainPlan ? window.ChainPlan.chainOfMap(plan.chains) : new Map();
+  var chainByMap = new Map();
+  if (plan) plan.chains.forEach(function (c) { chainByMap.set(c.id, c); });
+  var chainNodeSet = null;
+  if (state.highlightChainId && chainByMap.has(state.highlightChainId)) {
+    chainNodeSet = new Set(chainByMap.get(state.highlightChainId).taskIds);
+  }
+  var crossingNodeTip = new Map();
+  var crossingEdgeKeys = new Set();
+  var deferredTip = new Map();
+  if (plan) {
+    var nameOf = function (cid) {
+      return cid === 'future' ? '未来批次' : ((chainByMap.get(cid) && chainByMap.get(cid).name) || cid);
+    };
+    plan.crossings.forEach(function (c) {
+      crossingNodeTip.set(
+        c.dependsOnNodeId,
+        '交叉点:' + nameOf(c.chainId) + ' 的 ' + c.nodeId + ' 在等待本任务完成'
+      );
+      crossingEdgeKeys.add(c.dependsOnNodeId + '|' + c.nodeId);
+    });
+    plan.deferred.forEach(function (d) {
+      deferredTip.set(d.taskId, d.reason);
+    });
+  }
+
+  var dimByChain = function (id) {
+    if (!chainNodeSet) return false;
+    return !chainNodeSet.has(id);
+  };
+
+  // 边
   model.edges.forEach(function (e) {
     if (!idSet.has(e.from) || !idSet.has(e.to)) return;
     var d = edgePath(e.from, e.to);
     if (!d) return;
     if (e.type === 'conflict' && !state.showConflicts) return;
     var path = svgEl('path', { d: d, fill: 'none' });
+    var isCrossing = e.type === 'dep' && crossingEdgeKeys.has(e.from + '|' + e.to);
+    var dim = edgeDimmed(e.from, e.to) || (chainNodeSet && !(chainNodeSet.has(e.from) && chainNodeSet.has(e.to)));
     if (e.type === 'dep') {
-      path.setAttribute('stroke', state.dark ? '#57534E' : '#C7C2BC');
-      path.setAttribute('stroke-width', '1.2');
-      path.setAttribute('opacity', edgeDimmed(e.from, e.to) ? '0.25' : '0.9');
+      path.setAttribute('stroke', isCrossing ? '#DC2626' : (state.dark ? '#57534E' : '#C7C2BC'));
+      path.setAttribute('stroke-width', isCrossing ? '2' : '1.2');
+      if (isCrossing) path.setAttribute('stroke-dasharray', '5 3');
+      path.setAttribute('opacity', dim && !isCrossing ? '0.25' : '0.9');
     } else {
       path.setAttribute('stroke', '#EF4444');
       path.setAttribute('stroke-width', '1.2');
       path.setAttribute('stroke-dasharray', '4 4');
-      path.setAttribute('opacity', '0.75');
+      path.setAttribute('opacity', dim ? '0.3' : '0.75');
     }
     g.appendChild(path);
   });
@@ -341,28 +426,84 @@ function renderDag() {
     if (!n || !pos) return;
     var cat = catStyle(n.category);
     var role = roleOf(id, related);
-    var stroke = (role && RING[role]) || cat.stroke;
-    var strokeW = (role || state.selectedId === id) ? 2.4 : 1.4;
+    var cid = chainOf.get(id);
+    var chain = cid ? chainByMap.get(cid) : null;
+    var archived = !isUnfinished(n.category);
+    var chainColor = (!archived && chain) ? chain.color : null;
+    var letter = (!archived && chain) ? window.ChainPlan.chainLetter(chain.name) : null;
+    var stroke = (role && RING[role]) || chainColor || (deferredTip.has(id) ? '#DC2626' : cat.stroke);
+    var strokeW = (role || state.selectedId === id || chainColor) ? 2.4 : 1.4;
+    var tip = crossingNodeTip.get(id) || deferredTip.get(id) || (id + ' · ' + n.title);
     var nodeG = svgEl('g', { transform: 'translate(' + pos.x + ',' + pos.y + ')' });
-    if (dimNode(id)) nodeG.setAttribute('opacity', '0.22');
+    if (dimNode(id) || dimByChain(id)) nodeG.setAttribute('opacity', '0.22');
     nodeG.style.cursor = 'pointer';
     nodeG.addEventListener('click', function (ev) {
       ev.stopPropagation();
       openSheet(id);
     });
-    nodeG.addEventListener('mouseenter', function () { state.hoveredId = id; renderDag(); renderArchive(); updateHoverLegend(); });
-    nodeG.addEventListener('mouseleave', function () { state.hoveredId = null; renderDag(); renderArchive(); updateHoverLegend(); });
-    nodeG.appendChild(svgEl('title', null, [document.createTextNode(id + ' · ' + n.title)]));
-    nodeG.appendChild(svgEl('rect', { width: NODE_W, height: NODE_H, rx: 8, fill: cat.fill, stroke: stroke, 'stroke-width': strokeW }));
-    if (state.selectedId === id) {
-      nodeG.appendChild(svgEl('rect', { x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10, fill: 'none', stroke: state.dark ? '#E7E5E4' : '#292524', 'stroke-width': 1.6 }));
+    nodeG.addEventListener('mouseenter', function () {
+      state.hoveredId = id;
+      renderDag();
+      renderArchive();
+      renderChainPanel();
+      updateHoverLegend();
+    });
+    nodeG.addEventListener('mouseleave', function () {
+      state.hoveredId = null;
+      renderDag();
+      renderArchive();
+      renderChainPanel();
+      updateHoverLegend();
+    });
+    nodeG.appendChild(svgEl('title', null, [document.createTextNode(tip)]));
+
+    // 交叉点脉冲
+    if (crossingNodeTip.has(id)) {
+      var pulse = svgEl('circle', {
+        cx: NODE_W - 4, cy: 4, r: 9, fill: 'none', stroke: '#DC2626', 'stroke-width': 1.6,
+      });
+      var animR = svgEl('animate', { attributeName: 'r', values: '7;13', dur: '1.4s', repeatCount: 'indefinite' });
+      var animO = svgEl('animate', { attributeName: 'opacity', values: '0.9;0', dur: '1.4s', repeatCount: 'indefinite' });
+      pulse.appendChild(animR);
+      pulse.appendChild(animO);
+      nodeG.appendChild(pulse);
+      nodeG.appendChild(svgEl('circle', {
+        cx: NODE_W - 4, cy: 4, r: 5, fill: '#DC2626',
+      }));
     }
-    var idText = svgEl('text', { x: 10, y: 17, 'font-size': 10, fill: state.dark ? '#A8A29E' : '#78716C' });
+
+    nodeG.appendChild(svgEl('rect', {
+      width: NODE_W, height: NODE_H, rx: 8,
+      fill: cat.fill, stroke: stroke, 'stroke-width': strokeW,
+    }));
+    if (state.selectedId === id) {
+      nodeG.appendChild(svgEl('rect', {
+        x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10,
+        fill: 'none', stroke: state.dark ? '#E7E5E4' : '#292524', 'stroke-width': 1.6,
+      }));
+    }
+    var idX = 10;
+    if (letter && chainColor) {
+      nodeG.appendChild(svgEl('rect', {
+        x: 4, y: 4, width: 16, height: 14, rx: 3, fill: chainColor,
+      }));
+      var letterText = svgEl('text', {
+        x: 12, y: 14, 'font-size': 9, 'text-anchor': 'middle', fill: '#fff',
+      });
+      letterText.setAttribute('font-family', 'sans-serif');
+      letterText.setAttribute('font-weight', '700');
+      letterText.textContent = letter;
+      nodeG.appendChild(letterText);
+      idX = 26;
+    }
+    var idText = svgEl('text', {
+      x: idX, y: 17, 'font-size': 10, fill: state.dark ? '#A8A29E' : '#78716C',
+    });
     idText.setAttribute('font-family', 'monospace');
     idText.textContent = id;
     nodeG.appendChild(idText);
     var titleText = svgEl('text', { x: 10, y: 37, 'font-size': 11.5, fill: cat.text });
-    titleText.textContent = truncate(n.title, 13);
+    titleText.textContent = truncate(n.title, letter ? 11 : 13);
     nodeG.appendChild(titleText);
     g.appendChild(nodeG);
   });
@@ -385,10 +526,203 @@ function renderLegend() {
 }
 
 function updateDagSub(count) {
-  var unmerged = 0; // 真实模型无「待合入」概念，占位保持计数一致
+  var unmerged = 0;
+  model.nodes.forEach(function (n) {
+    if (n.category === 'done_unmerged') unmerged += 1;
+  });
   $('dag-sub').textContent = state.showCompleted
     ? count + ' 节点(含归档)'
     : count + ' 个待处理任务' + (unmerged > 0 ? '(含 ' + unmerged + ' 待合入)' : '') + ' · 归档任务已隐藏';
+}
+
+// ---------------------------------------------------------------------------
+// 渲染：推荐链面板
+// ---------------------------------------------------------------------------
+
+function renderChainPanel() {
+  var list = $('chain-list');
+  if (!list || !plan) return;
+
+  var activeCount = 0;
+  plan.chains.forEach(function (c) {
+    var head = nodes.get(c.taskIds[0]);
+    if (head && head.category === 'active') activeCount += 1;
+  });
+  $('chain-sub').textContent =
+    plan.chains.length + ' 条链' +
+    (activeCount ? ' · ' + activeCount + ' 运行中' : '') +
+    (plan.deferred.length ? ' · 暂缓 ' + plan.deferred.length : '') +
+    (plan.unassigned.length ? ' · 未来 ' + plan.unassigned.length : '');
+
+  list.textContent = '';
+  if (plan.chains.length === 0) {
+    list.appendChild(el('div', { class: 'chain-empty' }, [
+      '当前无可并行推荐链（无可运行/冲突阻塞的链首）',
+    ]));
+  } else {
+    plan.chains.forEach(function (chain) {
+      list.appendChild(buildChainCard(chain));
+    });
+  }
+
+  // 暂缓
+  var dWrap = $('chain-deferred-wrap');
+  var dBox = $('chain-deferred');
+  if (plan.deferred.length === 0) {
+    dWrap.hidden = true;
+    dBox.textContent = '';
+  } else {
+    dWrap.hidden = false;
+    dBox.textContent = '';
+    plan.deferred.forEach(function (d) {
+      var n = nodes.get(d.taskId);
+      var row = el('button', { type: 'button', class: 'chain-deferred-item' });
+      row.appendChild(el('span', { class: 'mono' }, [d.taskId]));
+      row.appendChild(el('span', { class: 'title' }, [n ? n.title : '']));
+      row.appendChild(el('span', { class: 'reason' }, [d.reason]));
+      row.addEventListener('click', function () { openSheet(d.taskId); });
+      dBox.appendChild(row);
+    });
+  }
+
+  // 未来批次（折叠展示前 20 个）
+  var uWrap = $('chain-unassigned-wrap');
+  var uBox = $('chain-unassigned');
+  if (plan.unassigned.length === 0) {
+    uWrap.hidden = true;
+    uBox.textContent = '';
+  } else {
+    uWrap.hidden = false;
+    uBox.textContent = '';
+    plan.unassigned.slice(0, 20).forEach(function (tid) {
+      var n = nodes.get(tid);
+      var row = el('button', { type: 'button', class: 'chain-unassigned-item' });
+      row.appendChild(el('span', { class: 'mono' }, [tid]));
+      row.appendChild(el('span', { class: 'title' }, [n ? n.title : '']));
+      if (n) {
+        row.appendChild(el('span', {
+          class: 'category-badge',
+          style: badgeStyle(n.category),
+        }, [CAT[n.category] ? CAT[n.category].label : n.category]));
+      }
+      row.addEventListener('click', function () { openSheet(tid); });
+      uBox.appendChild(row);
+    });
+    if (plan.unassigned.length > 20) {
+      uBox.appendChild(el('div', { class: 'chain-empty' }, [
+        '…另有 ' + (plan.unassigned.length - 20) + ' 个未列出',
+      ]));
+    }
+  }
+}
+
+function buildChainCard(chain) {
+  var headNode = nodes.get(chain.taskIds[0]);
+  var running = headNode && headNode.category === 'active';
+  var highlighted = state.highlightChainId === chain.id;
+
+  // 本链作为交叉点被谁等待
+  var waitedBy = new Map();
+  var nameOf = new Map();
+  plan.chains.forEach(function (c) { nameOf.set(c.id, c.name); });
+  plan.crossings.forEach(function (c) {
+    if (c.dependsOnChainId !== chain.id) return;
+    var who = c.chainId === 'future'
+      ? c.nodeId + '(未来批次)'
+      : (nameOf.get(c.chainId) || c.chainId) + ' 的 ' + c.nodeId;
+    if (!waitedBy.has(c.dependsOnNodeId)) waitedBy.set(c.dependsOnNodeId, []);
+    waitedBy.get(c.dependsOnNodeId).push(who + ' 在等它');
+  });
+
+  var card = el('article', {
+    class: 'chain-card' + (highlighted ? ' highlighted' : ''),
+  });
+
+  var head = el('header', { class: 'chain-card-head' });
+  head.appendChild(el('span', {
+    class: 'chain-swatch',
+    style: 'background:' + chain.color,
+  }));
+  head.appendChild(el('h3', null, [chain.name]));
+  head.appendChild(el('span', {
+    class: 'chain-badge ' + (running ? 'running' : 'recommended'),
+  }, [running ? '运行中' : '新推荐']));
+  head.appendChild(el('span', { class: 'chain-badge muted' }, [
+    chain.taskIds.length + ' 任务',
+  ]));
+  if (waitedBy.size > 0) {
+    head.appendChild(el('span', { class: 'chain-badge cross' }, [
+      waitedBy.size + ' 个交叉点',
+    ]));
+  }
+
+  var actions = el('span', { class: 'chain-card-actions' });
+  var copyBtn = el('button', {
+    type: 'button',
+    class: 'icon-btn',
+    title: '复制本链(粘贴到终端派发 task-run)',
+  }, ['⎘']);
+  copyBtn.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    copyText(window.ChainPlan.chainText(chain));
+    showToast('已复制 ' + chain.name);
+  });
+  actions.appendChild(copyBtn);
+  head.appendChild(actions);
+
+  head.addEventListener('click', function () {
+    state.highlightChainId = highlighted ? null : chain.id;
+    renderDag();
+    renderChainPanel();
+  });
+  card.appendChild(head);
+
+  var tasks = el('div', { class: 'chain-tasks' });
+  // 当前任务：链内第一个非 done 的（生产侧多为 active/runnable）
+  var currentId = null;
+  for (var i = 0; i < chain.taskIds.length; i++) {
+    var tn = nodes.get(chain.taskIds[i]);
+    if (tn && isUnfinished(tn.category)) {
+      currentId = tn.id;
+      break;
+    }
+  }
+  chain.taskIds.forEach(function (tid, idx) {
+    var n = nodes.get(tid);
+    if (!n) return;
+    var row = el('button', { type: 'button', class: 'chain-task' });
+    if (state.selectedId === tid) row.classList.add('selected');
+    row.appendChild(el('span', { class: 'idx' }, [String(idx + 1)]));
+    var cat = catStyle(n.category);
+    row.appendChild(el('span', {
+      class: 'dot',
+      style: 'background:' + cat.stroke,
+    }));
+    row.appendChild(el('span', { class: 'tid' }, [tid]));
+    row.appendChild(el('span', { class: 'title' }, [n.title]));
+    if (currentId === tid) {
+      row.appendChild(el('span', {
+        class: 'tag',
+        style: 'background:' + chain.color,
+      }, ['当前']));
+    }
+    var wait = waitedBy.get(tid);
+    if (wait && wait.length) {
+      var cross = el('span', { class: 'tag cross', title: wait.join('\n') }, [
+        '交叉×' + wait.length,
+      ]);
+      row.appendChild(cross);
+    }
+    row.addEventListener('click', function () { openSheet(tid); });
+    tasks.appendChild(row);
+  });
+  card.appendChild(tasks);
+
+  var stop = window.ChainPlan.chainStopInfo(chain, plan, model);
+  if (stop) {
+    card.appendChild(el('footer', { class: 'chain-card-foot' }, [stop]));
+  }
+  return card;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,12 +824,15 @@ function badgeStyle(category) {
 
 function openSheet(id) {
   state.selectedId = id;
+  var cid = chainOfTask(id);
+  if (cid) state.highlightChainId = cid;
   $('sheet').classList.add('open');
   $('sheet-backdrop').hidden = false;
   setSheetTab('detail');
   renderSheetDetail();
   renderDag();
   renderArchive();
+  renderChainPanel();
 }
 
 function closeSheet() {
@@ -504,6 +841,7 @@ function closeSheet() {
   $('sheet-backdrop').hidden = true;
   renderDag();
   renderArchive();
+  renderChainPanel();
 }
 
 var sheetDocCache = {};
@@ -627,6 +965,7 @@ function toggleTheme() {
   renderPills();
   renderDag();
   renderArchive();
+  renderChainPanel();
   if (state.selectedId) renderSheetDetail();
 }
 
@@ -645,11 +984,13 @@ function renderFooter() {
     if (e.type === 'dep') dep += 1; else conflict += 1;
   });
   var footer = $('footer');
+  footer.textContent = '';
   footer.appendChild(el('span', null, [
-    '关系图:' + model.nodes.length + ' 节点 · ' + dep + ' 条依赖边 · ' + conflict + ' 条冲突边',
+    '关系图:' + model.nodes.length + ' 节点 · ' + dep + ' 条依赖边 · ' + conflict + ' 条冲突边' +
+    (plan ? ' · 推荐 ' + plan.chains.length + ' 条链' : ''),
   ]));
   var right = el('span', { class: 'right' }, [
-    '只读看板,刷新即重算;每次请求重新计算调度',
+    '只读看板;链推荐前端计算;刷新或「重新计算」更新',
   ]);
   footer.appendChild(right);
 }
@@ -662,6 +1003,24 @@ function bindEvents() {
   $('reload-btn').addEventListener('click', function () { location.reload(); });
   $('theme-toggle').addEventListener('click', toggleTheme);
 
+  $('chain-recalc').addEventListener('click', function () {
+    recomputePlan();
+    renderDag();
+    renderChainPanel();
+    renderFooter();
+    showToast('已重新计算推荐链');
+  });
+  $('chain-copy-all').addEventListener('click', function () {
+    if (!plan || !plan.chains.length) {
+      showToast('当前无推荐链');
+      return;
+    }
+    copyText(plan.chains.map(function (c) {
+      return window.ChainPlan.chainText(c);
+    }).join('\n'));
+    showToast('已复制整批 ' + plan.chains.length + ' 条链');
+  });
+
   var input = $('search-input');
   input.addEventListener('input', function () {
     state.query = input.value;
@@ -673,6 +1032,7 @@ function bindEvents() {
     }
     renderDag();
     renderArchive();
+    renderChainPanel();
   });
   $('search-clear').addEventListener('click', function () {
     input.value = '';
@@ -682,6 +1042,7 @@ function bindEvents() {
     $('search-hint').hidden = true;
     renderDag();
     renderArchive();
+    renderChainPanel();
   });
 
   $('toggle-conflicts').addEventListener('change', function (e) {
@@ -719,11 +1080,13 @@ function bindEvents() {
   canvasEl.addEventListener('pointerup', function () { dragState = null; canvasEl.classList.remove('dragging'); });
   canvasEl.addEventListener('pointerleave', function () { dragState = null; canvasEl.classList.remove('dragging'); });
   canvasEl.addEventListener('click', function (e) {
-    if (e.target === canvasEl) {
+    if (e.target === canvasEl || (e.target.tagName && e.target.tagName.toLowerCase() === 'svg')) {
       state.selectedId = null;
+      state.highlightChainId = null;
       $('sheet').classList.remove('open');
       $('sheet-backdrop').hidden = true;
       renderDag();
+      renderChainPanel();
     }
   });
 
@@ -761,8 +1124,10 @@ function init() {
   canvasEl = $('dag-canvas');
   initTheme();
   buildIndex();
+  recomputePlan();
   renderPills();
   renderDag();
+  renderChainPanel();
   renderArchive();
   renderFooter();
   bindEvents();

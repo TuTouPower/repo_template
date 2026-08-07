@@ -7,6 +7,8 @@ board.js）从同目录 view_static/ 读取，无构建、无 CDN 依赖。
 
 import contextlib
 import json
+import os
+import platform
 import socket
 import subprocess
 import webbrowser
@@ -120,17 +122,85 @@ def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str) -> Path:
     return path
 
 
-def _open_browser_wsl(url):
-    """从 WSL 打开 Windows 默认浏览器；非 WSL 用 webbrowser 兜底。"""
+def _is_wsl() -> bool:
+    """检测是否在 WSL 内运行（与 open-in-software skill 同口径）。"""
+    if os.environ.get("WSL_INTEROP") or os.environ.get("WSL_DISTRO_NAME"):
+        return True
     try:
-        # cmd.exe /c start 可唤醒默认浏览器；用空标题避免路径被当标题。
-        subprocess.run(
+        version = Path("/proc/version").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    lower = version.lower()
+    return "microsoft" in lower or "wsl" in lower
+
+
+def _is_windows() -> bool:
+    """原生 Windows 或 Git Bash / MSYS / Cygwin。"""
+    if os.name == "nt":
+        return True
+    system = platform.system().upper()
+    return system.startswith(("MINGW", "MSYS", "CYGWIN"))
+
+
+def _open_browser_windows(url: str) -> bool:
+    """用 Windows 默认浏览器打开 URL。成功返回 True。"""
+    # PowerShell Start-Process：WSL / Git Bash 均可用；经环境变量传 URL 避免引号问题。
+    for pwsh in (
+        "pwsh.exe",
+        "powershell.exe",
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+    ):
+        try:
+            env = os.environ.copy()
+            env["TASK_VIEW_OPEN_URL"] = url
+            if _is_wsl():
+                existing = env.get("WSLENV", "")
+                env["WSLENV"] = (existing + ":" if existing else "") + "TASK_VIEW_OPEN_URL"
+            result = subprocess.run(
+                [
+                    pwsh,
+                    "-NoProfile",
+                    "-Command",
+                    "Start-Process -FilePath $env:TASK_VIEW_OPEN_URL",
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                env=env,
+            )
+            if result.returncode == 0:
+                return True
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+    # 兜底：cmd start；空标题避免 URL 被当成窗口标题。
+    try:
+        result = subprocess.run(
             ["cmd.exe", "/c", "start", "", url],
-            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
         )
-        return
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _open_browser(url: str) -> None:
+    """打开默认浏览器：WSL → Windows 浏览器；Windows 直接开；其它 webbrowser。"""
+    if _is_wsl():
+        if _open_browser_windows(url):
+            return
+    elif _is_windows():
+        if os.name == "nt":
+            try:
+                os.startfile(url)  # type: ignore[attr-defined]
+                return
+            except OSError:
+                pass
+        if _open_browser_windows(url):
+            return
     try:
         webbrowser.open(url)
     except Exception:
@@ -164,7 +234,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/static/"):
             name = path[len("/static/"):]
-            if name not in ("board.css", "board.js"):
+            if name not in ("board.css", "board.js", "chain_plan.js"):
                 self._send_error_text(404, "静态资源不存在")
                 return
             try:
@@ -207,7 +277,7 @@ def serve(host="127.0.0.1", port=0):
     httpd = ThreadingHTTPServer((host, port), _Handler)
     print(f"task 看板已启动：{url}")
     print("只读服务；Ctrl+C 退出。")
-    _open_browser_wsl(url)
+    _open_browser(url)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

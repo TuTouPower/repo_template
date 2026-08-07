@@ -38,22 +38,46 @@
     </div>
   </div>
 
-  <section class="card dag-card">
-    <header class="card-head">
-      <h2>依赖 DAG</h2>
-      <span class="muted" id="dag-sub"></span>
-      <div class="card-actions">
-        <label class="switch-label"><input type="checkbox" id="toggle-conflicts" checked><span>冲突边</span></label>
-        <label class="switch-label"><input type="checkbox" id="toggle-completed"><span>显示已完成</span></label>
-        <div class="zoom-group">
-          <button type="button" class="icon-btn" id="zoom-out" title="缩小">−</button>
-          <button type="button" class="icon-btn" id="zoom-in" title="放大">+</button>
-          <button type="button" class="icon-btn" id="zoom-fit" title="适配视图">⤢</button>
+  <main class="main-row">
+    <section class="card dag-card">
+      <header class="card-head">
+        <h2>依赖 DAG</h2>
+        <span class="muted" id="dag-sub"></span>
+        <div class="card-actions">
+          <label class="switch-label"><input type="checkbox" id="toggle-conflicts" checked><span>冲突边</span></label>
+          <label class="switch-label"><input type="checkbox" id="toggle-completed"><span>显示已完成</span></label>
+          <div class="zoom-group">
+            <button type="button" class="icon-btn" id="zoom-out" title="缩小">−</button>
+            <button type="button" class="icon-btn" id="zoom-in" title="放大">+</button>
+            <button type="button" class="icon-btn" id="zoom-fit" title="适配视图">⤢</button>
+          </div>
+        </div>
+      </header>
+      <div class="dag-canvas" id="dag-canvas"></div>
+    </section>
+
+    <section class="card chain-panel" id="chain-panel" aria-label="推荐执行链">
+      <header class="card-head chain-panel-head">
+        <h2>推荐执行链</h2>
+        <span class="muted" id="chain-sub"></span>
+        <div class="card-actions">
+          <button type="button" class="btn" id="chain-copy-all" title="复制整批链到剪贴板">复制整批</button>
+          <button type="button" class="btn" id="chain-recalc" title="按当前任务状态重新推荐">重新计算</button>
+        </div>
+      </header>
+      <div class="chain-panel-body">
+        <div class="chain-list" id="chain-list"></div>
+        <div class="chain-section" id="chain-deferred-wrap" hidden>
+          <h3 class="chain-section-title">冲突暂缓</h3>
+          <div id="chain-deferred"></div>
+        </div>
+        <div class="chain-section" id="chain-unassigned-wrap" hidden>
+          <h3 class="chain-section-title">未来批次</h3>
+          <div id="chain-unassigned"></div>
         </div>
       </div>
-    </header>
-    <div class="dag-canvas" id="dag-canvas"></div>
-  </section>
+    </section>
+  </main>
 
   <section class="card archive" id="archive">
     <button type="button" class="archive-trigger" id="archive-trigger" aria-expanded="false">
@@ -108,6 +132,7 @@
 
 <div class="toast" id="toast" hidden></div>
 
+<script src="/static/chain_plan.js"></script>
 <script src="/static/board.js"></script>
 </body>
 </html>

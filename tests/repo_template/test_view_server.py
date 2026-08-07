@@ -140,3 +140,70 @@ def test_build_model_shape(monkeypatch):
     by_id = {n["id"]: n for n in model["nodes"]}
     assert by_id["t002"]["category"] == "runnable"
     assert by_id["t002"]["depends_on"] == ["t001"]
+
+
+def test_is_wsl_detects_env(monkeypatch):
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    assert view_server._is_wsl() is True
+
+
+def test_is_wsl_detects_proc_version(monkeypatch):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
+
+    class FakePath:
+        def __init__(self, path):
+            self._path = str(path)
+
+        def read_text(self, encoding="utf-8", errors="ignore"):
+            assert self._path == "/proc/version"
+            return "Linux version 5.15.0-microsoft-standard-WSL2"
+
+    monkeypatch.setattr(view_server, "Path", FakePath)
+    assert view_server._is_wsl() is True
+
+
+def test_open_browser_wsl_uses_windows_default(monkeypatch):
+    calls = []
+
+    def fake_windows(url):
+        calls.append(url)
+        return True
+
+    monkeypatch.setattr(view_server, "_is_wsl", lambda: True)
+    monkeypatch.setattr(view_server, "_is_windows", lambda: False)
+    monkeypatch.setattr(view_server, "_open_browser_windows", fake_windows)
+    opened = []
+    monkeypatch.setattr(view_server.webbrowser, "open", lambda url: opened.append(url))
+    view_server._open_browser("http://127.0.0.1:1234/")
+    assert calls == ["http://127.0.0.1:1234/"]
+    assert opened == []
+
+
+def test_open_browser_windows_nt_uses_startfile(monkeypatch):
+    started = []
+    monkeypatch.setattr(view_server, "_is_wsl", lambda: False)
+    monkeypatch.setattr(view_server, "_is_windows", lambda: True)
+    monkeypatch.setattr(view_server.os, "name", "nt")
+    monkeypatch.setattr(
+        view_server.os, "startfile", lambda url: started.append(url), raising=False
+    )
+    win_calls = []
+    monkeypatch.setattr(
+        view_server, "_open_browser_windows", lambda url: win_calls.append(url) or True
+    )
+    opened = []
+    monkeypatch.setattr(view_server.webbrowser, "open", lambda url: opened.append(url))
+    view_server._open_browser("http://127.0.0.1:9/")
+    assert started == ["http://127.0.0.1:9/"]
+    assert win_calls == []
+    assert opened == []
+
+
+def test_open_browser_other_uses_webbrowser(monkeypatch):
+    monkeypatch.setattr(view_server, "_is_wsl", lambda: False)
+    monkeypatch.setattr(view_server, "_is_windows", lambda: False)
+    opened = []
+    monkeypatch.setattr(view_server.webbrowser, "open", lambda url: opened.append(url))
+    view_server._open_browser("http://127.0.0.1:9/")
+    assert opened == ["http://127.0.0.1:9/"]
