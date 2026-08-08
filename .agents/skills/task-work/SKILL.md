@@ -1,7 +1,6 @@
 ---
 name: task-work
 description: none
-disable-model-invocation: true
 ---
 
 # task-work
