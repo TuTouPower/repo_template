@@ -24,4 +24,4 @@ README 应改成项目自身介绍，不继续保留模板说明。
 - Agent 工作规则与目录权责：[`AGENTS.md`](AGENTS.md)
 - 内容与格式约定：[`docs/blueprint/conventions.md`](docs/blueprint/conventions.md)
 - 测试方法（`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}`）：[`docs/blueprint/testing.md`](docs/blueprint/testing.md)
-- 操作 skill：`/task-preflight`、`/task-schedule`、`/task-bug`、`/task-create`、`/task-from-pending`、`/task-merge`、`/task-run`、`/task-work`、`/task-integrate`、`/repo-hygiene`、`/repo-cleanup`
+- 操作 skill：`/task-preflight`、`/task-schedule`、`/task-bug`、`/pending-record`、`/task-create`、`/task-from-pending`、`/task-merge`、`/task-run`、`/task-work`、`/task-integrate`、`/repo-hygiene`、`/repo-cleanup`

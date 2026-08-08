@@ -19,7 +19,7 @@
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/runtime/dispatch_ledger.jsonl` | attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/terminal/report` 写入，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note`，`ledger tail` 只读；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
-| `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`task-bug` 登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
+| `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`pending-record` 持续澄清后派子代理登记；`task-bug` 分析后登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
 | `docs/archive/pending/pNNN_{slug}.md` | 已闭环待办 | 仅由 `scripts/repo_template/pending.py archive` 迁入；只准新增 |
 | `docs/archive/handoff.md` | handoff 的过时历史 | 只追加；由对应 skill 在用户调用时迁入 |
@@ -67,7 +67,8 @@
 | `task-schedule` | 分析依赖/冲突并落盘；可跑集由 `task.py view` 计算 |
 | `task-run` | 链式串行跑 task，链尾 `integrate-chain` 合主干 |
 | `task-preflight` | 只读汇总待做 task 缺口 |
-| `task-bug` | 复现/根因（仅 `.scratch/`）后建修复 task |
+| `task-bug` | 复现/根因/同类位点扫描（仅 `.scratch/`）后建修复 task |
+| `pending-record` | 持续澄清后派子代理登记 pending；bug 走 task-bug 分析再记 |
 | `task-from-pending` | 从 `docs/pending/todo/` 建 task 并归档条目 |
 | `task-merge` | 合并多个 backlog task（edit 目标 + drop 源） |
 | `repo-hygiene` | 过时 handoff/pending 等迁 archive |
