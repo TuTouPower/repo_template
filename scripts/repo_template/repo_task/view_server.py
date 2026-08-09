@@ -46,7 +46,8 @@ def _classify(tid, tasks, schedule):
     if not task:
         return "backlog"
     status = task["status"]
-    if status == "active":
+    if status in ("active", "blocked"):
+        # blocked 仍占用资源，与 active 同属「运行中」统计口径（前端无独立 blocked 类别）
         return "active"
     if status in ctx.ARCHIVED_STATUSES:
         return "done" if status == "done" else "dropped"
@@ -264,7 +265,7 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send_error_text(500, f"读取文档失败：{e}")
                 return
-            self._send_bytes(body, 200, "text/plain; charset=utf-8")
+            self._send_bytes(200, body, "text/plain; charset=utf-8")
             return
         self._send_error_text(404, "未找到资源")
 

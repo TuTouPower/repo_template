@@ -265,7 +265,11 @@ function generateBoard(meta: DatasetMeta): BoardData {
     categories[r] = 'runnable'
     categories[b] = 'blocked_deps'
   }
-  for (let i = 0; i < cfg.conflictCount; i++) categories[conflictStart + i] = 'blocked_conflict'
+  for (let i = 0; i < cfg.conflictCount; i++) {
+    // 互斥对按序号分胜负（对齐生产冲突裁决：小号不被大号压 → 可排 runnable，
+    // 大号被压 → blocked_conflict，等对手完成释放）。
+    categories[conflictStart + i] = i % 2 === 0 ? 'runnable' : 'blocked_conflict'
+  }
   for (let i = 0; i < backlogCount; i++) categories[backlogStart + i] = 'backlog'
 
   // 3. 生成节点骨架
@@ -276,6 +280,11 @@ function generateBoard(meta: DatasetMeta): BoardData {
     category: cat,
     depends_on: [],
     conflicts_with: [],
+    // schedule_status 对齐生产调度：除未排程 backlog 外，已规划节点
+    // （active/runnable/blocked_deps/blocked_conflict）都视为 scheduled——
+    // 解锁（applyMerge）后它们变成 runnable 时须保留 scheduled 才能入候选，
+    // 否则批次推荐停滞。
+    schedule_status: cat === 'backlog' ? '' : 'scheduled',
   }))
 
   // 4. 依赖关系 —— 历史区:偏向链接前一个 done 节点,形成长主链
@@ -413,10 +422,12 @@ function generateBoard(meta: DatasetMeta): BoardData {
     if (!a.conflicts_with.includes(b.id)) a.conflicts_with.push(b.id)
     if (!b.conflicts_with.includes(a.id)) b.conflicts_with.push(a.id)
   }
-  const conflictNodes = nodes.filter((n) => n.category === 'blocked_conflict')
-  for (let i = 0; i + 1 < conflictNodes.length; i += 2) {
-    pair(conflictNodes[i], conflictNodes[i + 1])
+  // 互斥对：conflictStart+i 区，i 偶数=runnable（可排）、i 奇数=blocked_conflict（被压）。
+  // 每对（偶数, 奇数）配对，避免 bc↔bc 死锁。
+  for (let i = 0; i < cfg.conflictCount; i += 2) {
+    pair(nodes[conflictStart + i], nodes[conflictStart + i + 1])
   }
+  const conflictNodes = nodes.filter((n) => n.category === 'blocked_conflict')
   const runnableNodes = nodes.filter((n) => n.category === 'runnable')
   for (let k = 0; k < cfg.runnableConflictEdges && k < runnableNodes.length; k++) {
     pair(runnableNodes[k], conflictNodes[(k * 2 + 1) % conflictNodes.length])

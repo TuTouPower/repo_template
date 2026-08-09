@@ -217,6 +217,11 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
                 )
             if current["state"] == "integrated":
                 raise ctx.TaskDataError(f"{tid} 当前 attempt 已 integrated；拒绝 reserve 新 attempt")
+            if current["state"] == "terminal" and current.get("report") is None:
+                raise ctx.TaskDataError(
+                    f"{tid} 当前 attempt={current['attempt']} terminal 后尚未 report；"
+                    "先 report 再 reserve 新 attempt"
+                )
             retryable = (
                 current.get("terminal_status") in {"failed", "stopped"}
                 or report.get("status") in {"failed", "blocked"}

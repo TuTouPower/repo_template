@@ -485,7 +485,9 @@ def _close_task(args, status: str, note: str | None) -> None:
             f"worktree {fm['worktree']} 待执行 commit 后从主仓 cleanup-worktree"
         )
     else:
-        removed, wt_msg = remove_worktree(ctx.effective_worktree(fm))
+        removed, wt_msg = remove_worktree(
+            ctx.effective_worktree(fm), expected_branch=fm.get("branch")
+        )
 
     orig_fm = dict(fm)
     fm["status"] = status
@@ -637,15 +639,34 @@ def cmd_purge(args):
         )
     if fm.get("branch") and has_unmerged_commits(fm["branch"]):
         sys.exit(f"{args.tid} 分支 {fm['branch']!r} 有未合并 commit；purge 拒绝（请用 drop）")
-    append_audit(
-        "purge", tid=fm["tid"], fr="backlog", to="deleted", reason=args.reason,
-        slug=fm["slug"], title=fm["title"],
+    removed, wt_msg = remove_worktree(
+        fm.get("worktree", ""), expected_branch=fm.get("branch")
     )
-    removed, wt_msg = remove_worktree(fm.get("worktree", ""))
     if not removed:
         sys.exit(f"{wt_msg}\npurge 中止：worktree 未清理时删除 task 目录会留下无主工作区")
-    shutil.rmtree(task_dir)
-    rebuild_index()
+    # 先原子移动到可恢复 tombstone，完成 index/审计后再最终删除；
+    # 避免 rmtree 成功但收尾失败 → 已删却无审计、index 残留旧项。
+    tomb = ctx.REPO_ROOT / ".scratch" / f"purge_{fm['tid']}_{fm['slug']}"
+    tomb.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.replace(task_dir, tomb)
+    except OSError as error:
+        sys.exit(f"purge 中止：无法移动到 tombstone（{error}）")
+    try:
+        rebuild_index()
+        append_audit(
+            "purge", tid=fm["tid"], fr="backlog", to="deleted", reason=args.reason,
+            slug=fm["slug"], title=fm["title"],
+        )
+    except (OSError, ctx.TaskDataError) as error:
+        try:
+            os.replace(tomb, task_dir)  # 恢复，避免已删但无审计
+        except OSError:
+            pass
+        sys.exit(
+            f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理"
+        )
+    shutil.rmtree(tomb)
     print(f"{args.tid} purged（tid 已释放；审计见 {ctx._rel(ctx.AUDIT_PATH)}）")
 
 def cmd_list(args):

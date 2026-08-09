@@ -21,6 +21,8 @@ export interface TaskNode {
   category: TaskCategory
   depends_on: string[]
   conflicts_with: string[]
+  /** 后端 schedule_status（backlog 区分 scheduled / pending_clarification / 未排程；active 通常为空） */
+  schedule_status?: string
 }
 
 export type EdgeType = 'dep' | 'conflict'

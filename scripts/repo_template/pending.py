@@ -187,6 +187,12 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
             destination.write_text(
                 "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
             )
+        # git mv 已 staged；正文状态字段随后变更未入索引，直接 commit 会留下旧状态。
+        # 对已跟踪文件 add，登记内容改动（未入库条目退化为普通 rename，由用户自行 add）。
+        if _git(["ls-files", "--error-unmatch", _rel(destination)]).returncode == 0:
+            add_result = _git(["add", _rel(destination)])
+            if add_result.returncode != 0:
+                raise IdScanError(f"git add 失败：{_rel(destination)}")
         sys.stderr.write(f"已迁移：{_rel(destination)}\n")
 
 

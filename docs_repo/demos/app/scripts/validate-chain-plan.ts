@@ -155,9 +155,11 @@ console.log('\n[small 批次#1 快照]')
   )
   const heads = plan.chains.map((c) => c.taskIds[0]).sort((a, b) => num(a) - num(b))
   check(
-    JSON.stringify(heads) === JSON.stringify(['t976', 't982', 't991', 't994', 't997', 't998']),
-    `链首 = [t976 t982 t991 t994 t997 t998](实际:${heads.join(' ')})`,
+    JSON.stringify(heads) === JSON.stringify(['t976', 't982', 't991', 't994', 't996', 't998']),
+    `链首 = [t976 t982 t991 t994 t996 t998](实际:${heads.join(' ')})`,
   )
+  // 互斥对的小号(runnable)可排、大号(blocked_conflict)被压：t997/t999 不在链首
+  check(!heads.includes('t997') && !heads.includes('t999'), '被压的 blocked_conflict t997/t999 不在链首')
   const chainA = plan.chains.find((c) => c.taskIds[0] === 't976')
   check(
     JSON.stringify(chainA?.taskIds) === JSON.stringify(['t976', 't977', 't978', 't979']),
@@ -170,21 +172,22 @@ console.log('\n[small 批次#1 快照]')
   )
   const defIds = plan.deferred.map((d) => d.taskId)
   check(
-    JSON.stringify(defIds) === JSON.stringify(['t987', 't996', 't999']),
-    `暂缓 = [t987 t996 t999](实际:${defIds.join(' ')})`,
+    JSON.stringify(defIds) === JSON.stringify(['t987']),
+    `暂缓 = [t987](实际:${defIds.join(' ')})`,
   )
 }
 
 // ---------------------------------------------------------------------------
-// 3. 模拟执行循环:完成 t991/t997 → 待合入(不解锁)→ 合入 main → 批次#2
+// 3. 模拟执行循环:完成 t991/t996 → 待合入(不解锁)→ 合入 main → 批次#2
+//    t996 是 t997 的冲突对端（互斥对小号可排），完成它解锁 t997。
 // ---------------------------------------------------------------------------
-console.log('\n[small 模拟循环:完成 991/997 → 待合入 → 合入 → 批次#2]')
+console.log('\n[small 模拟循环:完成 991/996 → 待合入 → 合入 → 批次#2]')
 {
   let data = getBoard('small')
   let plan = computeBatchPlan(data)
   const initialUnmerged = data.summary.done_unmerged ?? 0
   const done = plan.chains
-    .filter((c) => ['t991', 't997'].includes(c.taskIds[0]))
+    .filter((c) => ['t991', 't996'].includes(c.taskIds[0]))
     .flatMap((c) => c.taskIds)
 
   // 3a. 完成 → done_unmerged:不解锁任何下游/冲突
@@ -200,8 +203,10 @@ console.log('\n[small 模拟循环:完成 991/997 → 待合入 → 合入 → �
   )
   plan = computeBatchPlan(data)
   const preHeads = plan.chains.map((c) => c.taskIds[0])
+  // 未合入的 done_unmerged 仍阻塞冲突对端：t987/t997 不推荐；t996 已完成不入链
   check(!preHeads.includes('t987'), `合入前不推荐 t987(链首:${preHeads.join(' ')})`)
-  check(!preHeads.includes('t996') && !preHeads.includes('t999'), '合入前不推荐 t996/t999')
+  check(!preHeads.includes('t996') && !preHeads.includes('t997') && !preHeads.includes('t999'),
+    '合入前不推荐 t996/t997/t999')
   check(preHeads.includes('t976') && preHeads.includes('t982'), '合入前仍包含运行中的 链A/链B')
   checkBatch(ctxOf(data, plan), 'small 合入前(完成未合入)合法性')
 
@@ -214,11 +219,8 @@ console.log('\n[small 模拟循环:完成 991/997 → 待合入 → 合入 → �
   const heads = plan.chains.map((c) => c.taskIds[0]).sort((a, b) => num(a) - num(b))
   check(heads.includes('t987'), `批次#2 推荐了刚解锁的 t987(链首:${heads.join(' ')})`)
   check(heads.includes('t976') && heads.includes('t982'), '批次#2 仍包含运行中的 链A/链B')
-  check(heads.includes('t996') && heads.includes('t999'), '批次#2 解锁了 t996/t999')
-  check(
-    JSON.stringify(plan.deferred.map((d) => d.taskId)) === JSON.stringify(['t998']),
-    `批次#2 暂缓 = [t998](实际:${plan.deferred.map((d) => d.taskId).join(' ')})`,
-  )
+  check(heads.includes('t997'), `批次#2 解锁 t997(t996 完成)(链首:${heads.join(' ')})`)
+  check(!heads.includes('t999'), '批次#2 不含 t999(冲突对端 t998 未完成)')
   checkBatch(ctxOf(data, plan), 'small 批次#2(合入后)合法性')
 }
 

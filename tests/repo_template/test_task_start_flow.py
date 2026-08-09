@@ -162,6 +162,14 @@ def _terminal(repo, tid, identity, status="completed"):
         "--status", status,
     )
     assert result.returncode == 0, result.stderr
+    if status == "completed":
+        # report 门禁：cleanup/integrate 前须 report=done
+        report = _task_cli(
+            repo, "attempt", "report", tid, *_identity_args(identity),
+            "--status", "done",
+            "--sha", _git(repo, "rev-parse", "HEAD").stdout.strip(),
+        )
+        assert report.returncode == 0, report.stderr
     return result
 
 

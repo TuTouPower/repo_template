@@ -25,6 +25,23 @@ import merge_guard
             ("git-merge", "git-merge:feature/X"),
         ),
         ("gh pr merge 12", ("gh-pr-merge", "gh-pr-merge:gh pr merge 12")),
+        # 审阅修复：git -C / wrapper 前缀不再绕过
+        ("git -C . merge feature/X", ("git-merge", "git-merge:feature/X")),
+        ("git --no-pager merge feature/X", ("git-merge", "git-merge:feature/X")),
+        ("command git merge feature/X", ("git-merge", "git-merge:feature/X")),
+        ("env git merge feature/X", ("git-merge", "git-merge:feature/X")),
+        ("env FOO=bar git merge feature/X", ("git-merge", "git-merge:feature/X")),
+        ("sudo -u root git merge feature/X", ("git-merge", "git-merge:feature/X")),
+        # 第二轮审阅：无空格分隔符 / 换行 / env 赋值 / 绝对路径 wrapper / gh 全局参数
+        ("echo ok;git merge feature/x", ("git-merge", "git-merge:feature/x")),
+        ("true&&git merge feature/x", ("git-merge", "git-merge:feature/x")),
+        ("echo ok\ngit merge feature/x", ("git-merge", "git-merge:feature/x")),
+        ("FOO=bar git merge feature/x", ("git-merge", "git-merge:feature/x")),
+        ("/usr/bin/env git merge feature/x", ("git-merge", "git-merge:feature/x")),
+        (
+            "gh --repo owner/repo pr merge 12",
+            ("gh-pr-merge", "gh-pr-merge:gh --repo owner/repo pr merge 12"),
+        ),
     ],
 )
 def test_detect_merge_catches_merge_commands(command, expected):
@@ -42,6 +59,11 @@ def test_detect_merge_catches_merge_commands(command, expected):
         'git commit -m "git merge" && git push',
         "echo git merge foo",
         "git log --grep=merge",
+        # 审阅修复：非命令位置文本不再误判
+        "echo gh pr merge 12",
+        "cat gh pr merge 12",
+        "env git status",
+        "command git push",
     ],
 )
 def test_detect_merge_ignores_non_merge(command):

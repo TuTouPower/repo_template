@@ -1,5 +1,6 @@
 """Task worktree creation, cleanup, and exact-identity integration."""
 
+import functools
 import json
 import os
 import sys
@@ -51,24 +52,25 @@ def _order_by_ancestry(branches: list[str]) -> list[str] | None:
     否则返回 None。用 git merge-base --is-ancestor 判定。"""
     if not branches:
         return []
-    # 任一对 (a, b)：a 是 b 的祖先 ⟺ a 排在 b 前
-    pairs = {a: {b for b in branches if b != a and _is_ancestor(a, b)} for a in branches}
-    # 链头：不是任何其他分支的后继
-    heads = [a for a in branches if not any(a in pairs[b] for b in branches if b != a)]
-    tails = [a for a in branches if not pairs[a]]
+    # ancestors[a] = 排在 a 之前（a 的祖先）的集合；pairs 语义必须用祖先，不能是后继
+    ancestors = {
+        a: {b for b in branches if b != a and _is_ancestor(b, a)}
+        for a in branches
+    }
+    heads = [a for a in branches if not ancestors[a]]
+    tails = [a for a in branches if not any(a in ancestors[b] for b in branches if b != a)]
     if len(heads) != 1 or len(tails) != 1:
         return None
     # 从 head 起按祖先链顺出
     ordered = [heads[0]]
     remaining = set(branches) - {heads[0]}
     while remaining:
-        # 找下一个：是当前链尾的后继，且其所有祖先已在链中
+        # 严格单链：candidates 应为恰好一个「紧邻链尾且其全部祖先已入链」的分支
         current_tip = ordered[-1]
-        candidates = [b for b in remaining if current_tip in pairs[b] or _is_ancestor(current_tip, b)]
-        # 严格单链：candidates 应恰好 1
-        direct = [b for b in remaining if _is_ancestor(current_tip, b) and all(
-            ancestor in ordered for ancestor in pairs[b]
-        )]
+        direct = [
+            b for b in remaining
+            if _is_ancestor(current_tip, b) and ancestors[b] <= set(ordered)
+        ]
         if len(direct) != 1:
             return None
         ordered.append(direct[0])
@@ -81,8 +83,36 @@ def _is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
     return r.returncode == 0
 
 
+def _dependency_implementations(dep: str) -> list[str]:
+    """依赖的可校验实现 ref：分支 tips；分支已删（已合入 main）时退 main 上该 dep 的 merge commit。
+
+    链式合入（merge-chain）无独立 `merge({dep}):` commit，返回空——无法精确判断，
+    调用方对这类依赖放宽（链内依赖通常已含于 base）。
+    """
+    refs = []
+    for branch in _task_branch_names(dep):
+        try:
+            _, sha = resolve_local_branch(branch)
+        except ctx.TaskDataError:
+            continue
+        refs.append(sha)
+    if refs:
+        return refs
+    base = default_branch()
+    r = _git([
+        "rev-list", "--merges", "--max-count=1", "--grep",
+        f"merge({dep}):", f"refs/heads/{base}",
+    ])
+    if r.returncode == 0 and r.stdout.strip():
+        return [r.stdout.strip().splitlines()[0]]
+    return []
+
+
 def cmd_start(args):
     require_primary_worktree()
+    # 前置验证 ledger 可读：创建 branch/worktree 后再追加 ledger 若因损坏
+    # fail-closed 抛错，会留下完整副作用却返回非零。提前校验，失败即无副作用。
+    ledger_read()
     base_arg = getattr(args, "base", None)
     base_branch, base_sha = resolve_start_base(base_arg)
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
@@ -100,15 +130,32 @@ def cmd_start(args):
     depends_on = [t for t in str(ref_fm.get("depends_on", "")).split(",") if t.strip()]
     conflicts_with = [t for t in str(ref_fm.get("conflicts_with", "")).split(",") if t.strip()]
 
-    # 依赖硬拒（完成口径：done/dropped 即满足，不要求已合并主干）。
+    # 依赖硬拒（完成口径：done 即满足，不要求已合并主干；dropped 已归档不产出代码，
+    # 引用 dropped 的边非法，start 对 dropped 依赖直接拒）。
     unmet = []
     for dep in depends_on:
         dep_task = effective.get(dep)
         dep_status = dep_task["status"] if dep_task else None
-        if dep_status not in ctx.ARCHIVED_STATUSES:
+        if dep_status != "done":
             unmet.append(f"{dep}({dep_status or '缺失'})")
     if unmet:
         sys.exit(f"start=FAIL：{args.tid} 依赖未满足：{', '.join(unmet)}")
+
+    # 显式 --base 时同样须继承前置实现：base 分支须包含每个依赖的实现 ref。
+    # 用「实现是否 base 祖先」而非「是否已合入当前 main」推导——已合入 main 的
+    # 依赖若合入于 base 分支 fork 之后，base 仍缺其代码（t023 合 main、t025 分支
+    # fork 于旧 main 时，start t028 --base t025 会缺 t023）。
+    if base_arg is not None and depends_on:
+        missing_in_base = []
+        for dep in depends_on:
+            for ref in _dependency_implementations(dep):
+                if _git(["merge-base", "--is-ancestor", ref, base_sha]).returncode != 0:
+                    missing_in_base.append(f"{dep}（实现 {ref[:12]} 不在 base {base_branch!r}）")
+        if missing_in_base:
+            sys.exit(
+                f"start=FAIL：{args.tid} 显式 --base {base_branch!r} 缺依赖实现："
+                f"{', '.join(missing_in_base)}；请以依赖分支为 --base 或先 integrate 前置"
+            )
 
     # 冲突只警告：「正在运行」= 登记 worktree 存在 且 status=active。
     running_conflicts = []
@@ -228,11 +275,18 @@ def _require_execution_gate(
         tid, attempt, execution_id, events,
         allow_integrated=allow_integrated,
     )
-    if record["state"] == "terminal" and record["terminal_status"] != "completed":
-        raise ctx.TaskDataError(
-            f"{tid} attempt={attempt} terminal status={record['terminal_status']!r}，"
-            "只有 completed 可 cleanup/integrate"
-        )
+    if record["state"] == "terminal":
+        if record["terminal_status"] != "completed":
+            raise ctx.TaskDataError(
+                f"{tid} attempt={attempt} terminal status={record['terminal_status']!r}，"
+                "只有 completed 可 cleanup/integrate"
+            )
+        report = record.get("report") or {}
+        if report.get("status") != "done":
+            raise ctx.TaskDataError(
+                f"{tid} attempt={attempt} execution_id={execution_id!r} terminal 后 report 未 done"
+                f"（report status={report.get('status') or '缺失'}）；先 report"
+            )
     return record, events
 
 
@@ -416,13 +470,55 @@ def _integration_tx_path() -> Path:
     return Path(result.stdout.strip()) / "repo-task" / "integrate-chain.json"
 
 
+def _lock_fh(fh, *, unlock: bool) -> None:
+    """跨平台文件锁（Linux fcntl / Windows msvcrt）。"""
+    fh.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        if unlock:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_UN if unlock else fcntl.LOCK_EX)
+
+
+def _chain_locked(func):
+    """integrate-chain 全程持独立持久锁，覆盖预检、transaction 创建、merge 与 phase 更新。
+
+    O_EXCL/.tmp 只挡「同时创建」；两进程先后过 exists() 检查后仍会互相覆盖
+    transaction。锁保证同一时刻只有一个会话操作 chain transaction。
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        lock_path = _integration_tx_path().parent / "integrate-chain.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_fh:
+            if lock_fh.tell() == 0:
+                lock_fh.write("\0")
+                lock_fh.flush()
+            _lock_fh(lock_fh, unlock=False)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _lock_fh(lock_fh, unlock=True)
+    return wrapper
+
+
 def _write_chain_tx(payload: dict) -> Path:
     path = _integration_tx_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # 持久锁已挡并发；O_EXCL 只防御中断留下的 .tmp 残留（正常 replace 后消失）
+    try:
+        fd = os.open(str(temporary), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise ctx.TaskDataError(
+            "integrate-chain .tmp 残留：检查并清理该文件后重试"
+        ) from None
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     os.replace(temporary, path)
     return path
 
@@ -655,6 +751,7 @@ def _resume_chain_to_verification(payload: dict) -> dict:
     return payload
 
 
+@_chain_locked
 def cmd_integrate_chain(args):
     require_primary_worktree()
     if not ctx.TID_RE.fullmatch(args.tail_tid):

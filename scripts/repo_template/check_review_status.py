@@ -22,12 +22,15 @@
 """
 
 import argparse
+import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
+REVIEW_SCOPE_RE = re.compile(r"^reviewed_scope:\s*([0-9a-f]{16})", re.MULTILINE)
 ROUND_HEADER_RE = re.compile(r"^##\s+Round\s+([0-9]+)(?:\s|$)", re.MULTILINE)
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
 FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
@@ -169,16 +172,16 @@ def is_separator_row(cells: list[str]) -> bool:
     return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
 
 
-def disposition_stats(task_md: Path) -> dict[str, int]:
-    """从 Review 处置表 status 列统计；结构错误直接拒绝。"""
+def _parse_disposition_rows(task_md: Path) -> tuple[dict[str, int], set[str]]:
+    """扫描 Review 处置表，返回 (status 统计, 已处置 finding 集合)。结构错误直接拒绝。"""
     stats = dict.fromkeys(STATUSES, 0)
+    seen = set()
     fm = parse_front_matter(task_md)
     task_tid = fm.get("tid", "")
     if not re.fullmatch(r"t[0-9]+", task_tid):
         raise ReviewDataError(f"{task_md}: missing or invalid front matter tid")
 
     lines = extract_h2_lines(read(task_md), "## Review 处置")
-    seen = set()
     index = 0
     while index < len(lines):
         header = table_cells(lines[index])
@@ -193,6 +196,7 @@ def disposition_stats(task_md: Path) -> dict[str, int]:
 
         finding_col = header.index("finding_id")
         status_col = header.index("status")
+        fix_col = header.index("fix_ref") if "fix_ref" in header else None
         index += 2
         while index < len(lines):
             cells = table_cells(lines[index])
@@ -220,10 +224,101 @@ def disposition_stats(task_md: Path) -> dict[str, int]:
                 raise ReviewDataError(f"finding_id 重复：{finding_id}")
             if status not in STATUSES:
                 raise ReviewDataError(f"status 非法：{status!r}")
+            if status == "遗留":
+                if fix_col is None:
+                    raise ReviewDataError(
+                        f"status=遗留 的 {finding_id} 需要 fix_ref 列；处置表缺该列"
+                    )
+                fix_value = cells[fix_col].strip()
+                if not re.fullmatch(r"(?:p[0-9]+|t[0-9]+)", fix_value):
+                    raise ReviewDataError(
+                        f"status=遗留 的 {finding_id} fix_ref 非法：{fix_value!r}"
+                        "（须 pNNN 或 follow-up tid）"
+                    )
             seen.add(finding_id)
             stats[status] += 1
             index += 1
+    return stats, seen
+
+
+def disposition_stats(task_md: Path) -> dict[str, int]:
+    stats, _ = _parse_disposition_rows(task_md)
     return stats
+
+
+def disposed_findings(task_md: Path) -> set[str]:
+    _, seen = _parse_disposition_rows(task_md)
+    return seen
+
+
+def reported_findings(task_tid: str, *paths: Path) -> set[str]:
+    """从 review 报告提取本 task 的结构化 finding（表格行首精确匹配当前 tid）。
+
+    只取「行首即 finding_id」的表行，不扫描正文/代码块/其它 task 引用——
+    否则引用历史 finding（如 t099_code_f001）会被误要求处置，而处置表又拒绝
+    非当前 tid，造成无法闭环。
+    """
+    findings = set()
+    pattern = re.compile(
+        rf"^\|?\s*({re.escape(task_tid)}_(?:code|test|gen)_f[0-9]+)(?=$|[\s|])"
+    )
+    for path in paths:
+        for line in visible_markdown_lines(read(path)):
+            stripped = line.strip()
+            match = pattern.search(stripped)
+            if match and not stripped.startswith("t000_"):
+                findings.add(match.group(1))
+    return findings
+
+
+def reviewed_scope(path: Path) -> str | None:
+    """报告最后一条 `reviewed_scope:` 指纹（对应最后 verdict 的被审 diff）。"""
+    scopes = REVIEW_SCOPE_RE.findall(read(path))
+    return scopes[-1] if scopes else None
+
+
+SCOPE_EXCLUDES = [
+    # 只排除处置过程产生的具体文件/目录；行为文件（hooks/skills/review prompts/
+    # blueprint/specs/guides/README 等）计入指纹，改之则 PASS 失效。
+    ":(exclude)docs/pending",
+    ":(exclude)docs/findings",
+    ":(exclude)docs/archive",
+    ":(exclude)docs/tasks_index.json",
+    ":(exclude)docs/archive/tasks_index.json",
+    ":(exclude)docs/spikes",
+    ":(exclude).scratch",
+]
+
+
+def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
+    """当前被审 diff 指纹；与 render_review_prompts.review_scope_fingerprint 同口径。
+
+    缺 diff_anchor 或 git 失败返回 None（保守视为不可验证）。
+    """
+    if not diff_anchor:
+        return None
+    try:
+        rel = task_dir.resolve().relative_to(REPO_ROOT.resolve())
+    except ValueError:
+        return None
+    rel_posix = rel.as_posix()
+    excludes = SCOPE_EXCLUDES + [
+        f":(exclude){rel_posix}/task.md",
+        f":(exclude){rel_posix}/review_code.md",
+        f":(exclude){rel_posix}/review_test.md",
+        f":(exclude){rel_posix}/review_general.md",
+        f":(exclude){rel_posix}/handoff.json",
+    ]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return hashlib.sha1(result.stdout).hexdigest()[:16]
 
 
 def resolve_task_dir(value: str) -> Path:
@@ -294,10 +389,41 @@ def main():
         print(f"code_verdict={code_verdict}")
         print(f"test_verdict={test_verdict}")
 
+    disposed = disposed_findings(task_dir / "task.md")
+    reported = reported_findings(fm.get("tid", ""), *reports)
+    missing = sorted(
+        (finding for finding in reported if finding not in disposed),
+        key=lambda f: (f.split("_")[0], int(f.rsplit("_f", 1)[1])),
+    )
+    # 首轮 FAIL 时处置表尚未填，missing 必然非空——FAIL 是更严格的信息，
+    # 保留 FAIL（task-work 只有 PASS/FAIL 分支）；仅 PASS 才降级为 INCOMPLETE。
+    if missing and overall == "PASS":
+        overall = "INCOMPLETE"
+
+    # PASS 有效性锚点：报告须回写被审 diff 指纹且与当前一致（review 后改动 → stale）
+    current_scope = current_scope_fingerprint(task_dir, fm.get("diff_anchor", ""))
+    scopes = [reviewed_scope(report) for report in reports]
+    scope_ok = (
+        current_scope is not None
+        and all(scope is not None for scope in scopes)
+        and all(scope == current_scope for scope in scopes)
+    )
+    if not scope_ok and overall == "PASS":
+        overall = "INCOMPLETE"
+    if current_scope is None or all(scope is None for scope in scopes):
+        scope_status = "missing"
+    elif not scope_ok:
+        scope_status = "stale"
+    else:
+        scope_status = "ok"
+
     total = sum(stats.values())
     rate = stats["撤回"] / total if total else 0.0
 
     print(f"overall={overall}")
+    print(f"review_scope={scope_status}")
+    if missing:
+        print(f"missing_disposition={','.join(missing)}")
     print(f"round={regression_rounds(*reports)}")
     print(f"max_review_round={args.max_review_round}")
     print(f"withdraw_rate={rate:.2f}")

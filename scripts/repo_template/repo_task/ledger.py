@@ -51,19 +51,18 @@ def _read_unlocked() -> list[dict]:
             continue
         try:
             value = json.loads(line)
-        except json.JSONDecodeError:
-            print(
-                f"WARNING: 调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行无法解析，已跳过",
-                file=sys.stderr,
+        except json.JSONDecodeError as e:
+            # fail-closed：损坏行跳过会让后续事件基于缺失事件续写，导致
+            # attempt 号复用或 current identity 误判。拒绝继续，提示手动修复。
+            raise ctx.TaskDataError(
+                f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行损坏（{e}）；"
+                "拒绝继续以防 attempt 号复用。请手动修复该行后重试"
+            ) from None
+        if not isinstance(value, dict):
+            raise ctx.TaskDataError(
+                f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行非 JSON 对象；拒绝继续"
             )
-            continue
-        if isinstance(value, dict):
-            events.append(value)
-        else:
-            print(
-                f"WARNING: 调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行非 JSON 对象，已跳过",
-                file=sys.stderr,
-            )
+        events.append(value)
     return events
 
 
@@ -74,6 +73,14 @@ def _append_many_unlocked(events: list[dict]) -> list[dict]:
     payload = "".join(
         json.dumps(event, ensure_ascii=False) + "\n" for event in finals
     )
+    # 无换行尾行（截断残留）会被新事件直接拼接；先补换行把坏尾行隔离为独立行
+    if ctx.LEDGER_PATH.is_file() and ctx.LEDGER_PATH.stat().st_size > 0:
+        with ctx.LEDGER_PATH.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(-1, os.SEEK_END)
+            if stream.read(1) != b"\n":
+                with ctx.LEDGER_PATH.open("ab") as fix:
+                    fix.write(b"\n")
     with ctx.LEDGER_PATH.open("a", encoding="utf-8") as stream:
         stream.write(payload)
         stream.flush()
@@ -163,7 +170,8 @@ def _ledger_append_safely(event: dict) -> None:
         if not ctx.LEDGER_PATH.resolve().is_relative_to(ctx.REPO_ROOT.resolve()):
             return
         ledger_append(event)
-    except OSError as error:
+    except (OSError, ctx.TaskDataError) as error:
+        # TaskDataError：ledger 损坏 fail-closed；写失败也不阻断主流程，仅记录
         print(
             f"WARNING: 调度账本写入失败（{error}）；{event.get('event')} 事件未记录",
             file=sys.stderr,

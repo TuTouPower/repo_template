@@ -1,4 +1,14 @@
-## 共享规则（所有 reviewer 都遵守）
+### review scope 指纹（PASS 有效性锚点）
+
+本报告必须原样写入本 prompt 注入的审查范围指纹，不改写、不缩写：
+`reviewed_scope: {review_scope_fingerprint}`
+
+指纹由实施方渲染 prompt 时按 `git diff {diff_anchor}`（排除 task.md / 处置表 / pending / findings 等流程文件）计算。`check_review_status.py` 重算当前指纹比对：
+
+- 报告缺 `reviewed_scope`，或指纹与当前不一致 → 判定「审查后又改动，PASS 失效」，overall=INCOMPLETE，须重审。
+- 多轮追加时，`## Round N` 小节内写**本轮** `reviewed_scope:`；脚本取全文最后一条与当前比对。
+
+### 共享规则（所有 reviewer 都遵守）
 
 ## spec 契约区（判 AC 只看本区）
 

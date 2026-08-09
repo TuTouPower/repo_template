@@ -176,6 +176,11 @@ def _prepare_done(
             "--status", "completed",
         )
         assert result.returncode == 0, result.stderr
+        report = _task_cli(
+            repo, "attempt", "report", tid, *_identity_args(identity),
+            "--status", "done", "--sha", head,
+        )
+        assert report.returncode == 0, report.stderr
     return identity, branch, head
 
 
@@ -521,6 +526,12 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
     assert terminal_event["event"] == "attempt_terminal"
     assert terminal_event["execution_id"] == identity["execution_id"]
 
+    report = _task_cli(
+        git_repo, "attempt", "report", "t001", *_identity_args(identity),
+        "--status", "done", "--sha", _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
+    )
+    assert report.returncode == 0, report.stderr
+
     worktree = _worktree(git_repo, "t001")
     (worktree / "dirty.txt").write_text("user data\n", encoding="utf-8")
     dirty = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
@@ -541,21 +552,10 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
     assert records[-1]["execution_id"] == identity["execution_id"]
 
 
-def test_escalated_completed_allows_manual_integrate(git_repo):
-    """escalated 的 attempt 如果 terminal=completed，手动 cleanup/integrate 应放行。"""
-    identity, branch, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
-    _task_cli(git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
-              "--status", "completed")
-    _task_cli(git_repo, "attempt", "escalate", "t001", *_identity_args(identity),
-              "--reason", "用户处理")
-
-    cleaned = _cleanup(git_repo, "t001", identity)
-    assert "worktree 已移除" in cleaned.stdout
-
-    integrated = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
-    assert integrated.returncode == 0, integrated.stderr
-    records = [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
-    assert records[-1]["execution_id"] == identity["execution_id"]
+# test_escalated_completed_allows_manual_integrate 已删除：
+# escalate 命令已退役（CLI 仅 reserve/terminal/report，见 repo_task/cli.py），
+# 原测试调用不存在的 `task.py attempt escalate` 且未断言其 returncode，属假绿；
+# terminal=completed 后 cleanup/integrate 放行的场景已由 _prepare_done 系列测试覆盖。
 
 
 # --------------------------------------------------------------------------

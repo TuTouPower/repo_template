@@ -271,3 +271,179 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         crs.main()
     assert exc.value.code == 2
+
+
+def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
+    """报告含但处置表未处置的 finding → overall=INCOMPLETE 并列出漏记。"""
+    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
+    task_dir = tmp_path / "docs" / "tasks" / "t001_x"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nreview_level: single\n---\n## Review 处置\n\n"
+        "| finding_id | severity | status | rationale | fix_ref |\n"
+        "|---|---|---|---|---|\n"
+        "| t001_gen_f001 | minor | 已修 | x | f:1 |\n",
+        encoding="utf-8",
+    )
+    (task_dir / "review_general.md").write_text(
+        "verdict: PASS\n\n## 结论\n\n"
+        "| finding_id | severity | 说明 |\n|---|---|---|\n"
+        "| t001_gen_f001 | minor | a |\n"
+        "| t001_gen_f002 | minor | b |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=INCOMPLETE" in out
+    assert "missing_disposition=t001_gen_f002" in out
+
+
+def test_disposition_legacy_requires_fix_ref(tmp_path):
+    """status=遗留 缺 fix_ref（- 或空）→ 拒绝。"""
+    p = tmp_path / "task.md"
+    p.write_text(
+        "---\ntid: t001\n---\n\n## Review 处置\n\n"
+        "| finding_id | severity | status | rationale | fix_ref |\n"
+        "|---|---|---|---|---|\n"
+        "| t001_code_f001 | critical | 遗留 | x | - |\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewDataError, match="fix_ref"):
+        crs.disposition_stats(p)
+
+
+def test_disposition_legacy_rejects_free_text_fix_ref(tmp_path):
+    """遗留 fix_ref 填 TODO/later 等任意文本 → 拒绝（须 pNNN 或 tNNN）。"""
+    p = tmp_path / "task.md"
+    p.write_text(
+        "---\ntid: t001\n---\n\n## Review 处置\n\n"
+        "| finding_id | severity | status | rationale | fix_ref |\n"
+        "|---|---|---|---|---|\n"
+        "| t001_code_f001 | minor | 遗留 | x | TODO |\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewDataError, match="fix_ref 非法"):
+        crs.disposition_stats(p)
+
+
+def test_disposition_legacy_requires_fix_ref_column(tmp_path):
+    """处置表有遗留行但缺 fix_ref 列 → 拒绝。"""
+    p = tmp_path / "task.md"
+    p.write_text(
+        "---\ntid: t001\n---\n\n## Review 处置\n\n"
+        "| finding_id | status | rationale |\n|---|---|---|\n"
+        "| t001_code_f001 | 遗留 | x |\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewDataError, match="fix_ref 列"):
+        crs.disposition_stats(p)
+
+
+def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys):
+    """首轮 FAIL（报告含 blocker、处置表未填）→ overall 保留 FAIL，不降 INCOMPLETE。"""
+    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
+    task_dir = tmp_path / "docs" / "tasks" / "t001_x"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nreview_level: single\ndiff_anchor: "
+        + "0" * 40 + "\n---\n## Review 处置\n",
+        encoding="utf-8",
+    )
+    (task_dir / "review_general.md").write_text(
+        "verdict: FAIL\n\n| finding_id | severity | 说明 |\n|---|---|---|\n"
+        "| t001_gen_f001 | critical | x |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=FAIL" in out
+    assert "missing_disposition=t001_gen_f001" in out
+
+
+def test_reported_findings_ignores_foreign_task(tmp_path):
+    """报告引用其它 task finding（t099_...）→ 不进入本 task 的 missing 集合。"""
+    p = tmp_path / "review_general.md"
+    p.write_text(
+        "verdict: PASS\n\n"
+        "| finding_id | 说明 |\n|---|---|\n"
+        "| t001_gen_f001 | 本 task |\n"
+        "| t099_code_f001 | 历史引用 |\n",
+        encoding="utf-8",
+    )
+    assert crs.reported_findings("t001", p) == {"t001_gen_f001"}
+
+
+SCOPE = "abcdef0123456789"
+
+
+def _scope_task_dir(tmp_path, monkeypatch, scope_line):
+    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
+    task_dir = tmp_path / "docs/tasks/t001_x"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.md").write_text(
+        "---\ntid: t001\nreview_level: single\ndiff_anchor: "
+        + "0" * 40 + "\n---\n## Review 处置\n",
+        encoding="utf-8",
+    )
+    (task_dir / "review_general.md").write_text(
+        "verdict: PASS\n\n" + scope_line, encoding="utf-8"
+    )
+    return task_dir
+
+
+def test_main_pass_requires_matching_scope(tmp_path, monkeypatch, capsys):
+    """PASS + 报告指纹与当前一致 → overall=PASS, review_scope=ok。"""
+    task_dir = _scope_task_dir(
+        tmp_path, monkeypatch, f"reviewed_scope: {SCOPE}\n"
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=PASS" in out
+    assert "review_scope=ok" in out
+
+
+def test_main_pass_stale_scope_fails(tmp_path, monkeypatch, capsys):
+    """PASS 后 diff 变（指纹不等）→ overall=INCOMPLETE, review_scope=stale。"""
+    task_dir = _scope_task_dir(
+        tmp_path, monkeypatch, f"reviewed_scope: {SCOPE}\n"
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: "0" * 16
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=INCOMPLETE" in out
+    assert "review_scope=stale" in out
+
+
+def test_main_pass_missing_scope_fails(tmp_path, monkeypatch, capsys):
+    """报告缺 reviewed_scope → overall=INCOMPLETE, review_scope=missing。"""
+    task_dir = _scope_task_dir(tmp_path, monkeypatch, "verdict: PASS\n")
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=INCOMPLETE" in out
+    assert "review_scope=missing" in out

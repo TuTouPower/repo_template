@@ -18,6 +18,7 @@ reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 pr
 
 import argparse
 import difflib
+import hashlib
 import re
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
 PLACEHOLDER_RE = re.compile(
-    r"\{(tid|slug|spec_path|task_dir|diff_anchor|review_level|contract_section|context_section)\}"
+    r"\{(tid|slug|spec_path|task_dir|diff_anchor|review_level|contract_section|context_section|review_scope_fingerprint)\}"
 )
 CONTRACT_HEADING = "## 契约区"
 CONTEXT_HEADING = "## 上下文区"
@@ -123,6 +124,35 @@ def validate_diff_anchor(diff_anchor: str) -> str:
         detail = result.stderr.strip() or "unknown revision"
         sys.exit(f"invalid diff_anchor {diff_anchor!r}: {detail}")
     return result.stdout.strip()
+
+
+def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
+    """被审 diff 指纹：`git diff {diff_anchor}` 排除 task 流程文件后的内容摘要。
+
+    reviewer 把本值写回报告 `reviewed_scope:`；checker 重算当前指纹比对。
+    review 后改动代码/测试/spec 会改变指纹，PASS 随即失效（防「PASS 后继续改」）。
+    """
+    excludes = [
+        f":(exclude){rel_task_dir}/task.md",
+        f":(exclude){rel_task_dir}/review_code.md",
+        f":(exclude){rel_task_dir}/review_test.md",
+        f":(exclude){rel_task_dir}/review_general.md",
+        f":(exclude){rel_task_dir}/handoff.json",
+        # 只排除处置过程产生的具体文件/目录；行为文件（hooks/skills/review
+        # prompts/blueprint/specs/guides/README 等）计入指纹，改之则 PASS 失效。
+        ":(exclude)docs/pending", ":(exclude)docs/findings",
+        ":(exclude)docs/archive", ":(exclude)docs/tasks_index.json",
+        ":(exclude)docs/archive/tasks_index.json", ":(exclude)docs/spikes",
+        ":(exclude).scratch",
+    ]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return hashlib.sha1(result.stdout).hexdigest()[:16]
 
 
 def apply_placeholders(template: str, values: dict) -> str:
@@ -229,6 +259,7 @@ def render_review_prompts(
         "review_level": level,
         "contract_section": contract,
         "context_section": context,
+        "review_scope_fingerprint": review_scope_fingerprint(diff_anchor, rel_task_dir),
     }
     shared = template_paths["share"].read_text(encoding="utf-8")
 

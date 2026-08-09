@@ -194,14 +194,24 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
     _git(["worktree", "prune"])
     return True, f"worktree 已强制移除：{rel}"
 
-def remove_worktree(rel: str) -> tuple[bool, str]:
-    """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。"""
+def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bool, str]:
+    """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。
+
+    expected_branch 非空时校验登记分支归属，防止 front matter 损坏/冲突解决
+    错误导致一个 task 清理另一个 task 的工作区。
+    """
     if not rel:
         return True, "无 worktree"
     path = (ctx.REPO_ROOT / rel).resolve()
-    if str(path) not in worktree_paths():
+    registered_branch = worktree_paths().get(str(path))
+    if registered_branch is None:
         _git(["worktree", "prune"])
         return True, f"worktree 不在登记表，已 prune：{rel}"
+    if expected_branch and registered_branch != expected_branch:
+        return False, (
+            f"{rel} 登记分支为 {registered_branch!r}，预期 {expected_branch!r}；"
+            "拒绝移除其他 task 的 worktree"
+        )
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 出去后执行 git worktree remove {rel}"
     unlink_managed_env_links(path)

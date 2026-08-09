@@ -50,6 +50,8 @@ interface Subgraph {
   ids: string[]
   idSet: Set<string>
   catOf: Map<string, TaskCategory>
+  /** id → schedule_status（仅未完成节点；active 通常为空字符串） */
+  schedOf: Map<string, string>
   /** id → 阻塞它的上游(未完成任务 + 待合入任务;已合入的 done 不算) */
   upstream: Map<string, string[]>
   /** id → 依赖它的未完成任务(下游) */
@@ -65,11 +67,13 @@ interface Subgraph {
 function buildSubgraph(data: BoardData): Subgraph {
   const idSet = new Set<string>()
   const catOf = new Map<string, TaskCategory>()
+  const schedOf = new Map<string, string>()
   const unmergedSet = new Set<string>()
   for (const n of data.nodes) {
     if (isUnfinished(n.category)) {
       idSet.add(n.id)
       catOf.set(n.id, n.category)
+      schedOf.set(n.id, n.schedule_status ?? '')
     } else if (n.category === 'done_unmerged') {
       unmergedSet.add(n.id)
       catOf.set(n.id, n.category)
@@ -112,7 +116,7 @@ function buildSubgraph(data: BoardData): Subgraph {
     }
   }
   for (const list of downstream.values()) list.sort((a, b) => num(a) - num(b))
-  return { ids, idSet, catOf, upstream, downstream, indegree, conflictOf, blockedByUnmerged }
+  return { ids, idSet, catOf, schedOf, upstream, downstream, indegree, conflictOf, blockedByUnmerged }
 }
 
 /**
@@ -123,12 +127,17 @@ function buildSubgraph(data: BoardData): Subgraph {
 export function computeBatchPlan(data: BoardData): ChainPlan {
   const sub = buildSubgraph(data)
 
-  // 1. 候选链首:未完成入度为 0(依赖全部满足)的 active/runnable/blocked_conflict
+  // 1. 候选链首:未完成入度为 0(依赖全部满足)的 active/runnable。
+  //    blocked_conflict 是冲突阻塞,非可跑,不入候选——与生产 `selected` 只取
+  //    无冲突阻塞的 ready 对齐;backlog 语义为「暂不可跑」同样不在候选内。
+  //    runnable 还须 schedule_status=scheduled(生产只调度已排程 backlog,
+  //    待澄清/未排程的 backlog 不可入链),active 已在跑不受此限。
   const candidates = sub.ids.filter(
     (id) =>
       (sub.indegree.get(id) ?? 0) === 0 &&
       !sub.blockedByUnmerged.has(id) &&
-      ['active', 'runnable', 'blocked_conflict'].includes(sub.catOf.get(id) as string),
+      (sub.catOf.get(id) === 'active' ||
+        (sub.catOf.get(id) === 'runnable' && sub.schedOf.get(id) === 'scheduled')),
   )
   const activeHeads = candidates.filter((id) => sub.catOf.get(id) === 'active')
   const activeSet = new Set(activeHeads)
@@ -170,6 +179,7 @@ export function computeBatchPlan(data: BoardData): ChainPlan {
 
   // 3. 建链:链首按 id 升序,依次延伸
   const heads = [...activeHeads, ...winners].sort((a, b) => num(a) - num(b))
+  const headSet = new Set(heads)
   const assigned = new Set<string>()
   const chains: Chain[] = []
 
@@ -189,12 +199,21 @@ export function computeBatchPlan(data: BoardData): ChainPlan {
           (sub.upstream.get(y) ?? []).some((p) => !chainSet.has(p)),
       )
       if (isCrossing) break
-      // 延伸:阻塞依赖全部落在本链内的最小 id 后继
-      const cands = (sub.downstream.get(tail) ?? []).filter(
-        (id) =>
-          !assigned.has(id) &&
-          (sub.upstream.get(id) ?? []).every((p) => chainSet.has(p)),
-      )
+      // 延伸(对齐生产 chain_plan.js 三类门禁):依赖全部落链内、已排程、
+      // 冲突可被串行消化(链内)且不与运行中/其它链/其它链首冲突
+      const cands = (sub.downstream.get(tail) ?? []).filter((id) => {
+        if (assigned.has(id)) return false
+        if (!(sub.upstream.get(id) ?? []).every((p) => chainSet.has(p))) return false
+        // 只吸纳已排程后继:未排程 / 待澄清不进执行链
+        if (sub.schedOf.get(id) !== 'scheduled') return false
+        const conflicts = sub.conflictOf.get(id) ?? []
+        for (const c of conflicts) {
+          if (chainSet.has(c)) continue // 链内冲突由串行顺序消化
+          if (sub.catOf.get(c) === 'active') return false
+          if (assigned.has(c) || headSet.has(c)) return false
+        }
+        return true
+      })
       if (cands.length === 0) break
       const next = cands.sort((a, b) => num(a) - num(b))[0]
       taskIds.push(next)
@@ -213,7 +232,6 @@ export function computeBatchPlan(data: BoardData): ChainPlan {
 
   // 4. 未来批次 + 暂缓清单
   const unassigned = sub.ids.filter((id) => !assigned.has(id) && !deferredSet.has(id))
-  const headSet = new Set(heads)
   const deferred: DeferredTask[] = deferredList
     .map(({ taskId, partners }) => {
       // blockedBy:最终胜出的冲突对手(进链首集合的)

@@ -115,7 +115,9 @@ def compute_schedule() -> dict:
     dropped_set = {
         tid for tid, task in tasks.items() if task["status"] == "dropped"
     }
-    satisfied_set = done_set | dropped_set  # dropped 也视为依赖满足
+    # 依赖满足只认 done：dropped 已归档不产出代码，引用 dropped 的边非法
+    # （上方 invalid_graph 拒绝），dropped 实际不可能作为依赖满足状态
+    satisfied_set = done_set
     active_list = sorted(
         (
             tid for tid, task in tasks.items()

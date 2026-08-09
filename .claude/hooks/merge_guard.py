@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
-import shlex
 import sys
 import time
 from pathlib import Path
@@ -29,30 +29,186 @@ from typing import Any
 TOKEN_TTL_SECONDS = 600  # 10 分钟
 STATE_PATH = Path(__file__).resolve().parent.parent / "state" / "merge_tokens.json"
 TOKEN_COMMENT_RE = re.compile(r"#\s*merge-token\s*=\s*([0-9a-fA-F]+)\b", re.IGNORECASE)
-# 命令边界匹配 git merge：行首或换行 / ; / & / | 之后，避免引号内文本误判。
-# 不锚定命令尾，复合命令（`git merge X && git push`）同样纳入授权。
-# 否定前瞻排除 `git merge-*` 子命令（merge-base / merge-tree / merge-file 等），避免误判。
-GIT_MERGE_RE = re.compile(r"(?:^|[\n;&|]\s*)git\s+merge(?![-])", re.IGNORECASE)
-GH_PR_MERGE_RE = re.compile(
-    r"(?:^|\s)gh\s+(?:pr\s+)?merge\b",
-    re.IGNORECASE,
-)
+# token 级识别 git/gh 及其 wrapper 前缀，避免引号内文本误判、避免 echo/cat
+# 等非命令文本误判；git merge-* 子命令（merge-base/merge-tree 等）经子命令名排除。
+GIT_WRAPPERS = {"command", "env", "sudo", "nohup", "time", "nice", "xargs"}
+ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# wrapper option 吃参数（如 sudo -u root / nice -n 5）；未列出的 option 视为无参
+WRAPPER_OPT_ARGS = {
+    "sudo": {"-u", "-g", "-p", "-r", "-t", "-C", "--user", "--group", "--prompt", "--role", "--type", "--chdir"},
+    "nice": {"-n", "--adjustment"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S"},
+    "xargs": {"-I", "-P", "-n", "-d"},
+}
+GH_GLOBAL_OPTS = {"-R", "--repo", "--host", "-t", "--config", "-c", "--cli-config"}
 
 
-def _git_merge_target(command: str) -> str:
-    """取 `git merge` 后第一个非选项、非注释参数作为 target key。"""
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = command.split()
-    for index, token in enumerate(tokens):
-        if token == "git" and index + 1 < len(tokens) and tokens[index + 1] == "merge":
-            for following in tokens[index + 2:]:
-                if following.startswith("-") or following.startswith("#"):
+def _shell_tokens(command: str) -> list[tuple[str, bool]]:
+    """手写 shell tokenizer：保留分隔符（; && || | & 换行）为独立 token，引号内不切。"""
+    tokens: list[tuple[str, bool]] = []
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in " \t":
+            i += 1
+            continue
+        if command.startswith("&&", i):
+            tokens.append(("&&", True)); i += 2; continue
+        if command.startswith("||", i):
+            tokens.append(("||", True)); i += 2; continue
+        if c in ";&|\n":
+            tokens.append((c, True)); i += 1; continue
+        buf: list[str] = []
+        while i < n:
+            c = command[i]
+            if c == "'":
+                j = command.find("'", i + 1)
+                if j == -1:
+                    j = n
+                buf.append(command[i + 1:j])
+                i = j + 1
+                continue
+            if c == '"':
+                j = i + 1
+                while j < n and command[j] != '"':
+                    if command[j] == "\\" and j + 1 < n:
+                        j += 2
+                    else:
+                        j += 1
+                buf.append(command[i + 1:j])
+                i = j + 1 if j < n else j
+                continue
+            if c == "\\":
+                if i + 1 < n:
+                    buf.append(command[i + 1])
+                    i += 2
                     continue
-                return following.strip('"\'')
-            return "unspecified"
+                i += 1
+                continue
+            if c in " \t;&|\n" or command.startswith("&&", i) or command.startswith("||", i):
+                break
+            buf.append(c)
+            i += 1
+        tokens.append(("".join(buf), False))
+    return tokens
+
+
+def _command_segments(command: str) -> list[list[str]]:
+    """按 shell 分隔符切段；引号内分隔符不切。"""
+    segments, current = [], []
+    for token, is_sep in _shell_tokens(command):
+        if is_sep:
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _find_command(segment: list[str], names: set[str]) -> int | None:
+    """段内命令位置（git/gh 起始 index）。
+
+    识别环境变量赋值（FOO=bar）、绝对路径 wrapper（/usr/bin/env）、
+    wrapper 的选项及其参数（sudo -u root）。
+    """
+    index = 0
+    while index < len(segment):
+        token = segment[index]
+        base = os.path.basename(token)
+        if ENV_ASSIGN_RE.match(token):
+            index += 1
+            continue
+        if base.lower() in names:
+            return index
+        if base in GIT_WRAPPERS:
+            index += 1
+            opts = WRAPPER_OPT_ARGS.get(base, set())
+            while index < len(segment):
+                nxt = segment[index]
+                if os.path.basename(nxt).lower() in names:
+                    return index
+                if ENV_ASSIGN_RE.match(nxt):
+                    index += 1
+                    continue
+                if nxt in GIT_WRAPPERS:
+                    break
+                if nxt.startswith("-"):
+                    index += 1
+                    if nxt in opts:
+                        index += 1
+                    continue
+                # 裸 token：wrapper 的普通参数，跳过后继续找命令
+                index += 1
+                continue
+            continue
+        return None
+    return None
+
+
+def _git_subcommand(segment: list[str], git_index: int) -> str | None:
+    """git 后第一个非 option 子命令；git 顶层选项可带参数（-C <dir> 等）。"""
+    index = git_index + 1
+    while index < len(segment):
+        token = segment[index]
+        if token.startswith("-"):
+            if token in (
+                "-C", "--git-dir", "--work-tree", "--exec-path",
+                "--namespace", "--super-prefix", "-c", "--config-env",
+            ):
+                index += 2
+            else:
+                index += 1
+            continue
+        return token
+    return None
+
+
+def _git_merge_target(segment: list[str], git_index: int) -> str:
+    """merge 子命令后第一个非选项、非注释参数作为 target key。"""
+    index = git_index + 1
+    while index < len(segment) and segment[index] != "merge":
+        index += 1
+    for token in segment[index + 1:]:
+        if token.startswith("-") or token.startswith("#"):
+            continue
+        return token.strip("\"'")
     return "unspecified"
+
+
+def detect_merge(command: str) -> tuple[str, str] | None:
+    """识别 merge 操作并返回 (kind, target_key)。
+
+    target_key 用于 token 绑定：git merge 取目标 branch 名；gh pr merge 取整条
+    命令的归一化文本。非 merge 返回 None。
+    """
+    for segment in _command_segments(command):
+        git_index = _find_command(segment, {"git", "git.exe"})
+        if git_index is not None:
+            if _git_subcommand(segment, git_index) == "merge":
+                return (
+                    "git-merge",
+                    f"git-merge:{_git_merge_target(segment, git_index)}",
+                )
+        gh_index = _find_command(segment, {"gh", "gh.exe"})
+        if gh_index is not None:
+            rest = segment[gh_index + 1:]
+            # 跳过 gh 全局参数（-R/--repo 及值 等）
+            while rest and rest[0].startswith("-"):
+                opt = rest[0]
+                rest = rest[1:]
+                if opt in GH_GLOBAL_OPTS and rest:
+                    rest = rest[1:]
+            if rest and rest[0] == "pr":
+                rest = rest[1:]
+            if rest and rest[0] == "merge":
+                return (
+                    "gh-pr-merge",
+                    f"gh-pr-merge:{compact(' '.join(segment), 120)}",
+                )
+    return None
 
 
 def allow() -> None:
@@ -89,20 +245,6 @@ def compact(command: str, limit: int = 200) -> str:
     return text if len(text) <= limit else f"{text[:limit]}..."
 
 
-def detect_merge(command: str) -> tuple[str, str] | None:
-    """识别 merge 操作并返回 (kind, target_key)。
-
-    target_key 用于 token 绑定：git merge 取目标 branch 名；gh pr merge 取整条
-    命令的归一化文本（PR 号/URL 可能出现在多种位置，整条命令作键更稳）。
-    非 merge 返回 None。
-    """
-    if GIT_MERGE_RE.search(command):
-        return ("git-merge", f"git-merge:{_git_merge_target(command)}")
-    if GH_PR_MERGE_RE.search(command):
-        return ("gh-pr-merge", f"gh-pr-merge:{compact(command, 120)}")
-    return None
-
-
 def load_state() -> list[dict[str, Any]]:
     if not STATE_PATH.is_file():
         return []
@@ -126,45 +268,78 @@ def prune_expired(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in records if now - r.get("issued_at", 0) < TOKEN_TTL_SECONDS * 2]
 
 
+def _state_lock(fh, exclusive: bool) -> None:
+    fh.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(
+            fh.fileno(), msvcrt.LK_LOCK if exclusive else msvcrt.LK_UNLCK, 1
+        )
+    else:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX if exclusive else fcntl.LOCK_UN)
+
+
+def _with_state_lock(callback):
+    """token 状态读改写全程独占锁，防并发会话同时校验通过并复用同一 token。"""
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = STATE_PATH.with_suffix(".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_fh:
+        if lock_fh.tell() == 0:
+            lock_fh.write("\0")
+            lock_fh.flush()
+        _state_lock(lock_fh, True)
+        try:
+            return callback()
+        finally:
+            _state_lock(lock_fh, False)
+
+
 def issue_token(target_key: str, command_text: str) -> str:
-    token = secrets.token_hex(8)
-    records = prune_expired(load_state())
-    cmd_hash = hashlib.sha1(command_text.encode("utf-8")).hexdigest()[:16]
-    records.append(
-        {
-            "token": token,
-            "target": target_key,
-            "cmd_hash": cmd_hash,
-            "issued_at": time.time(),
-            "used": False,
-        }
-    )
-    save_state(records)
-    return token
+    def build() -> str:
+        token = secrets.token_hex(8)
+        records = prune_expired(load_state())
+        cmd_hash = hashlib.sha1(command_text.encode("utf-8")).hexdigest()[:16]
+        records.append(
+            {
+                "token": token,
+                "target": target_key,
+                "cmd_hash": cmd_hash,
+                "issued_at": time.time(),
+                "used": False,
+            }
+        )
+        save_state(records)
+        return token
+
+    return _with_state_lock(build)
 
 
 def verify_token(token: str, target_key: str, command_text: str) -> tuple[bool, str]:
-    records = prune_expired(load_state())
-    now = time.time()
-    cmd_hash = hashlib.sha1(command_text.encode("utf-8")).hexdigest()[:16]
-    for r in records:
-        if r.get("token") != token:
-            continue
-        if r.get("used"):
-            return False, "token 已使用过（一次性）；请重新申请授权。"
-        if now - r.get("issued_at", 0) > TOKEN_TTL_SECONDS:
-            return False, "token 已过期；请重新申请授权。"
-        if r.get("target") != target_key:
-            return (
-                False,
-                f"token 绑定的目标与当前命令不符（期望 {r.get('target')}，实际 {target_key}）；拒签。",
-            )
-        if r.get("cmd_hash") != cmd_hash:
-            return False, "token 绑定的命令与当前命令不符；拒签。"
-        r["used"] = True
-        save_state(records)
-        return True, "授权通过"
-    return False, "token 无效；请重新申请授权。"
+    def check() -> tuple[bool, str]:
+        records = prune_expired(load_state())
+        now = time.time()
+        cmd_hash = hashlib.sha1(command_text.encode("utf-8")).hexdigest()[:16]
+        for r in records:
+            if r.get("token") != token:
+                continue
+            if r.get("used"):
+                return False, "token 已使用过（一次性）；请重新申请授权。"
+            if now - r.get("issued_at", 0) > TOKEN_TTL_SECONDS:
+                return False, "token 已过期；请重新申请授权。"
+            if r.get("target") != target_key:
+                return (
+                    False,
+                    f"token 绑定的目标与当前命令不符（期望 {r.get('target')}，实际 {target_key}）；拒签。",
+                )
+            if r.get("cmd_hash") != cmd_hash:
+                return False, "token 绑定的命令与当前命令不符；拒签。"
+            r["used"] = True
+            save_state(records)
+            return True, "授权通过"
+        return False, "token 无效；请重新申请授权。"
+
+    return _with_state_lock(check)
 
 
 def main() -> None:
