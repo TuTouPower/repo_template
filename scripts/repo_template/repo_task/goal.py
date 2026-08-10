@@ -89,7 +89,7 @@ def cmd_goal(args) -> None:
     QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
     snapshot = {
         "version": 1,
-        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "created_at": datetime.now(ctx.TZ_CN).isoformat(timespec="seconds"),
         "queue": queue,
     }
     QUEUE_PATH.write_text(

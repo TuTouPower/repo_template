@@ -36,7 +36,7 @@ def _sanitize(event: dict) -> dict:
         if isinstance(value, str) else value
         for key, value in event.items()
     }
-    final["ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    final["ts"] = datetime.now(ctx.TZ_CN).isoformat(timespec="seconds")
     return final
 
 
