@@ -12,12 +12,23 @@ task 工具链的执行拓扑、attempt 生命周期与合并授权。项目自�
 主干 ── t001 ── t002 ── t003 ──► 全部完成后 merge 链尾
 ```
 
-**手动并发**。无自动调度器。用户用 `task.py view --serve` 看依赖/冲突/运行中状态后，在多个会话各自 `/task-run tNNN,...` 一段。`start` 加调度门：依赖未完成（完成口径=`done`，不要求已合并主干；`dropped` 已归档不产出代码，引用 dropped 的边非法）硬拒，冲突方正在运行只警告。多会话同时写主仓不互斥——合并撞车由 git 报错、人来收场，index 是派生缓存、撞了重建。
+**手动并发**。无自动调度器。用户用 `task.py view` / `view --serve` 看依赖/冲突/运行中状态，用 `task.py plan` 取**本波**并发链与可复制 `/task-run` 后，在多个会话各自跑一段。`start` 加调度门：依赖未完成（完成口径=`done`，不要求已合并主干；`dropped` 已归档不产出代码，引用 dropped 的边非法）硬拒，冲突方正在运行只警告。多会话同时写主仓不互斥——合并撞车由 git 报错、人来收场，index 是派生缓存、撞了重建。
 
 ```text
         主干 ──┬── 会话 A：t001 ── t003 ──► 链尾 merge
                └── 会话 B：t002       ──► 链尾 merge
 ```
+
+## 本波执行计划（`task.py plan`）
+
+写图（`task-schedule` → `depends_on` / `conflicts_with`）与推链分离。`plan` 只读、不落盘，算法权威在 `repo_task.plan.compute_batch_plan`；CLI 与 `view --serve` 看板共用。
+
+- **输入**：当前有效状态 + 已落盘调度图（与 `compute_schedule` / 节点分类同源）。
+- **本波链首**：`active` 与 `runnable`（`runnable` = 调度「下一批可跑」`selected`）；被冲突序号压住的 dep-ready 对端不进链首。
+- **链首语义**：`active` = 接续运行中（`task-run` 进已有 worktree）；`runnable` = 新启动。默认输出标 `[接续]`；`--copy` 行尾 `# 接续 active`。
+- **链延伸**：单父且已排程的后继可串入；**多父汇流点不进任一条本波链**；与他链/他链首/运行中冲突的后继不跨链并行。
+- **输出**：可复制 `/task-run`、链内 `tid + title`、停因、冲突暂缓、下一解锁（汇流注明 integrate/`--base` 约束）。`--serial` 全串行；`--copy` 仅命令；`--json` 机器可读。看板「复制链」与 `--copy` 同形。
+- **下一批**：状态变化（链完成、汇流前置 done）后**重跑** `plan`，不重跑 schedule。不冻结多波剧本。
 
 ## 调度图语义
 

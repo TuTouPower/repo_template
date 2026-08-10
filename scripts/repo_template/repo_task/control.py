@@ -14,6 +14,7 @@ from .documents import tid_sort_key
 from .git_ops import require_primary_worktree
 from .ledger import ledger_append, ledger_read
 from .monitoring import compute_ps_rows
+from .plan import build_board_model, chain_letter, compute_batch_plan
 from .scheduling import compute_schedule
 from .store import discover_effective_tasks, scan_tasks
 
@@ -85,6 +86,20 @@ def cmd_view(args):
                 f"  （{len(unmerged_done)} 个 done 在未合并分支，未入 main："
                 + " ".join(unmerged_done) + "）"
             )
+        # 本波链摘要：算法权威 = plan.compute_batch_plan
+        board = build_board_model(schedule)
+        batch = compute_batch_plan(board)
+        n_chains = len(batch.get("chains") or [])
+        if n_chains:
+            lines.extend([
+                "",
+                f"[本波] {n_chains} 条并发链（详情 / 含 title：task.py plan）",
+            ])
+            for chain in batch["chains"]:
+                seq = " -> ".join(chain["taskIds"])
+                lines.append(f"  {chain_letter(chain['name'])}: {seq}")
+        else:
+            lines.extend(["", "[本波] 无可推荐链（task.py plan）"])
         print("\n".join(lines))
     except ctx.TaskDataError as error:
         message = str(error)

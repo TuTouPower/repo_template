@@ -77,11 +77,8 @@ function isUnfinished(category) {
 }
 
 function recomputePlan() {
-  if (!window.ChainPlan) {
-    plan = { chains: [], unassigned: [], deferred: [], crossings: [] };
-    return;
-  }
-  plan = window.ChainPlan.computeBatchPlan(model);
+  // 算法权威在后端 repo_task.plan；注入于 model.plan。刷新页面以重算。
+  plan = model.plan || { chains: [], unassigned: [], deferred: [], crossings: [] };
   state.highlightChainId = null;
 }
 
@@ -656,11 +653,14 @@ function buildChainCard(chain) {
   var copyBtn = el('button', {
     type: 'button',
     class: 'icon-btn',
-    title: '复制本链(粘贴到终端派发 task-run)',
+    title: '复制本链 /task-run 命令（与 plan --copy 一致）',
   }, ['⎘']);
   copyBtn.addEventListener('click', function (ev) {
     ev.stopPropagation();
-    copyText(window.ChainPlan.chainText(chain));
+    // 与 task.py plan --copy 对齐：可粘贴 /task-run
+    var line = '/task-run ' + chain.taskIds.join(' -> ');
+    if (chain.head_kind === 'continue') line += '  # 接续 active';
+    copyText(line);
     showToast('已复制 ' + chain.name);
   });
   actions.appendChild(copyBtn);
@@ -714,7 +714,8 @@ function buildChainCard(chain) {
   });
   card.appendChild(tasks);
 
-  var stop = window.ChainPlan.chainStopInfo(chain, plan, model);
+  var stop = chain.stop_reason
+    || (window.ChainPlan ? window.ChainPlan.chainStopInfo(chain, plan, model) : '');
   if (stop) {
     card.appendChild(el('footer', { class: 'chain-card-foot' }, [stop]));
   }
@@ -986,7 +987,7 @@ function renderFooter() {
     (plan ? ' · 推荐 ' + plan.chains.length + ' 条链' : ''),
   ]));
   var right = el('span', { class: 'right' }, [
-    '只读看板;链推荐前端计算;刷新或「重新计算」更新',
+    '只读看板;链推荐后端计算;刷新或「重新计算」更新',
   ]);
   footer.appendChild(right);
 }
@@ -1000,19 +1001,19 @@ function bindEvents() {
   $('theme-toggle').addEventListener('click', toggleTheme);
 
   $('chain-recalc').addEventListener('click', function () {
-    recomputePlan();
-    renderDag();
-    renderChainPanel();
-    renderFooter();
-    showToast('已重新计算推荐链');
+    // 状态可能已在仓库侧变化；整页重载以拉取后端最新 plan
+    location.reload();
   });
   $('chain-copy-all').addEventListener('click', function () {
     if (!plan || !plan.chains.length) {
       showToast('当前无推荐链');
       return;
     }
+    // 与 task.py plan --copy 对齐
     copyText(plan.chains.map(function (c) {
-      return window.ChainPlan.chainText(c);
+      var line = '/task-run ' + c.taskIds.join(' -> ');
+      if (c.head_kind === 'continue') line += '  # 接续 active';
+      return line;
     }).join('\n'));
     showToast('已复制整批 ' + plan.chains.length + ' 条链');
   });

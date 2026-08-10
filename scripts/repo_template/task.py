@@ -23,6 +23,13 @@ from repo_task.control import (
     cmd_ps,
     cmd_view,
 )
+from repo_task.plan import (  # noqa: F401 — façade re-export
+    build_board_model,
+    build_execution_plan,
+    cmd_plan,
+    compute_batch_plan,
+    format_plan_text,
+)
 from repo_task.documents import (
     _extract_markdown_section,
     _markdown_headings,

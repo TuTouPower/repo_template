@@ -15,6 +15,7 @@ from .control import (
     cmd_view,
 )
 from .goal import cmd_goal, cmd_goal_check
+from .plan import cmd_plan
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
     cmd_add,
@@ -122,6 +123,32 @@ def main():
     view.add_argument("--host", default="127.0.0.1")
     view.add_argument("--port", type=int, default=0)
     view.set_defaults(func=cmd_view)
+
+    plan = sub.add_parser(
+        "plan",
+        help="本波并发链推荐（只读；含 title 与可复制 /task-run）",
+        description=(
+            "按当前调度状态重算本波并发链。链首为 active 表示接续运行中 "
+            "（task-run 进已有 worktree）；runnable 表示新启动。"
+            "状态变化后重跑得下一批。"
+        ),
+    )
+    plan.add_argument(
+        "--serial",
+        action="store_true",
+        help="全串行一条链（依赖序 + 冲突对序号小者先）",
+    )
+    plan.add_argument(
+        "--copy",
+        action="store_true",
+        help="只输出可粘贴的 /task-run 行（active 链首附 # 接续 active）",
+    )
+    plan.add_argument(
+        "--json",
+        action="store_true",
+        help="JSON 输出",
+    )
+    plan.set_defaults(func=cmd_plan)
 
     attempt = sub.add_parser("attempt", help="统一 exact attempt 生命周期")
     attempt_sub = attempt.add_subparsers(dest="attempt_cmd", required=True)

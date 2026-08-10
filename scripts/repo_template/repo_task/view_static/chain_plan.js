@@ -1,6 +1,7 @@
 'use strict';
-/* 当下可执行批次推荐（对齐 docs_repo/demos batchPlan + chainPlan）。
- * 纯前端、确定性；刷新即重算，不落库。
+/* 看板展示辅助（算法权威在后端 repo_task.plan.compute_batch_plan）。
+ * 保留 chainText / chainOfMap 等纯展示函数；computeBatchPlan 仅作离线兼容，
+ * 生产路径使用服务端注入的 model.plan。
  */
 (function (global) {
 
@@ -121,16 +122,12 @@
   }
 
   /**
- * 计算当下可执行批次。
- * 返回 { chains, unassigned, deferred, crossings }
+ * 兼容离线/测试：生产看板使用后端 model.plan。
+ * 语义须与 repo_task.plan.compute_batch_plan 保持一致。
  */
   function computeBatchPlan(data) {
     var sub = buildSubgraph(data);
 
-    // 1. 候选链首：入度 0 的 active/runnable。
-    //    runnable 即后端 compute_schedule 的 selected；blocked_conflict
-    //    被后端「序号小者优先」压住，前端不再依据局部候选冲突自行重推，
-    //    避免与后端调度规则漂移推荐出实际不可启动的链首
     var candidates = sub.ids.filter(function (id) {
       return (sub.indegree.get(id) || 0) === 0
       && ['active', 'runnable'].indexOf(sub.catOf.get(id)) >= 0;
@@ -141,7 +138,6 @@
     var activeSet = new Set(activeHeads);
     var rest = candidates.filter(function (id) { return !activeSet.has(id); });
 
-    // 2. 冲突裁决
     var deferredList = [];
     rest.forEach(function (id) {
       var partners = (sub.conflictOf.get(id) || []).filter(function (c) {
@@ -179,7 +175,6 @@
 
     var winners = rest.filter(function (id) { return !deferredSet.has(id); });
 
-    // 3. 建链
     var heads = activeHeads.concat(winners).sort(function (a, b) {
       return num(a) - num(b);
     });
@@ -203,10 +198,7 @@
         var cands = (sub.downstream.get(tail) || []).filter(function (id) {
           if (assigned.has(id)) return false;
           if (!(sub.upstream.get(id) || []).every(function (p) { return chainSet.has(p); })) return false;
-          // 只吸纳已排程后继：未排程 / 待澄清不进执行链
           if (sub.schedOf.get(id) !== 'scheduled') return false;
-          // 冲突检查：链内冲突由串行顺序消化；与运行中 task、其他链成员
-          // 或其他链首（本轮确定并行）冲突的后继不进链
           var conflicts = sub.conflictOf.get(id) || [];
           for (var i = 0; i < conflicts.length; i++) {
             var c = conflicts[i];
@@ -233,14 +225,13 @@
       });
     });
 
-    // 4. 未来批次 + 暂缓
     var unassigned = sub.ids.filter(function (id) {
       return !assigned.has(id) && !deferredSet.has(id);
     });
-    var headSet = new Set(heads);
+    var headSet2 = new Set(heads);
     var deferred = deferredList.map(function (item) {
       var blockedBy = item.partners.filter(function (p) {
-        return headSet.has(p) || activeSet.has(p);
+        return headSet2.has(p) || activeSet.has(p);
       });
       var shown = blockedBy.length > 0 ? blockedBy : item.partners;
       return {
@@ -250,19 +241,22 @@
       };
     }).sort(function (a, b) { return num(a.taskId) - num(b.taskId); });
 
-    return {
+    var plan = {
       chains: chains,
       unassigned: unassigned,
       deferred: deferred,
       crossings: computeCrossings(chains, data),
     };
+    chains.forEach(function (chain) {
+      chain.stop_reason = chainStopInfo(chain, plan, data);
+    });
+    return plan;
   }
 
   function blocksDownstream(cat) {
     return cat !== undefined && isUnfinished(cat);
   }
 
-  /** 链停止原因（展示在链卡底部） */
   function chainStopInfo(chain, plan, data) {
     var tail = chain.taskIds[chain.taskIds.length - 1];
     if (!tail) return '';

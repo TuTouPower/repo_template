@@ -18,20 +18,19 @@ from urllib.parse import parse_qs, urlsplit
 
 import repo_task.context as ctx
 
+from .plan import (
+    CATEGORIES,
+    build_board_model,
+    classify_node,
+    compute_batch_plan,
+)
 from .scheduling import compute_schedule
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
 _DOC_NAMES = {"spec": "spec.md", "task": "task.md"}
 
-CATEGORIES = (
-    "active",
-    "runnable",
-    "blocked_deps",
-    "blocked_conflict",
-    "backlog",
-    "done",
-    "dropped",
-)
+# 兼容旧测试与外部引用
+_classify = classify_node
 
 
 def _find_free_port(host: str) -> int:
@@ -40,63 +39,14 @@ def _find_free_port(host: str) -> int:
         return s.getsockname()[1]
 
 
-def _classify(tid, tasks, schedule):
-    """返回节点分类：active / runnable / blocked_deps / blocked_conflict / backlog / done / dropped。"""
-    task = tasks.get(tid)
-    if not task:
-        return "backlog"
-    status = task["status"]
-    if status in ("active", "blocked"):
-        # blocked 仍占用资源，与 active 同属「运行中」统计口径（前端无独立 blocked 类别）
-        return "active"
-    if status in ctx.ARCHIVED_STATUSES:
-        return "done" if status == "done" else "dropped"
-    if tid in schedule["selected"]:
-        return "runnable"
-    if tid in [row[1] for row in schedule["waiting_deps"]]:
-        return "blocked_deps"
-    if tid in [row[0] for row in schedule["blocked_conflicts"]]:
-        return "blocked_conflict"
-    return "backlog"
-
-
 def _build_model():
-    """调度图 → 前端模型：节点、边、全类别统计。"""
-    schedule = compute_schedule()
-    tasks = schedule["tasks"]
-    nodes = []
-    for tid, task in tasks.items():
-        nodes.append({
-            "id": tid,
-            "title": task["title"],
-            "status": task["status"],
-            "category": _classify(tid, tasks, schedule),
-            "schedule_status": task.get("schedule_status", ""),
-            "depends_on": [t for t in str(task.get("depends_on", "")).split(",") if t.strip()],
-            "conflicts_with": [t for t in str(task.get("conflicts_with", "")).split(",") if t.strip()],
-        })
-    edges = []
-    seen = set()
-    for n in nodes:
-        for dep in n["depends_on"]:
-            key = ("dep", dep, n["id"])
-            if key not in seen and any(m["id"] == dep for m in nodes):
-                edges.append({"type": "dep", "from": dep, "to": n["id"]})
-                seen.add(key)
-        for c in n["conflicts_with"]:
-            key = ("conflict", tuple(sorted([n["id"], c])))
-            if key not in seen and any(m["id"] == c for m in nodes):
-                edges.append({"type": "conflict", "from": n["id"], "to": c})
-                seen.add(key)
-    summary = {category: 0 for category in CATEGORIES}
-    for n in nodes:
-        summary[n["category"]] += 1
-    return {
-        "project": ctx.REPO_ROOT.name,
-        "nodes": nodes,
-        "edges": edges,
-        "summary": summary,
-    }
+    """调度图 → 前端模型：节点、边、统计 + 后端权威 plan。
+
+    使用本模块 ``compute_schedule`` 引用，便于测试 monkeypatch。
+    """
+    model = build_board_model(compute_schedule())
+    model["plan"] = compute_batch_plan(model)
+    return model
 
 
 def _render_html(model: dict) -> str:

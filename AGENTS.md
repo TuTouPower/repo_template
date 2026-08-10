@@ -65,7 +65,7 @@
 | skill | 职责 |
 |-------|------|
 | `task-create` | 按需求拆 backlog task，批量落盘后统一创建 commit |
-| `task-schedule` | 分析依赖/冲突并落盘；可跑集由 `task.py view` 计算 |
+| `task-schedule` | 分析依赖/冲突并落盘；可跑集由 `task.py view` 计算；本波链由 `task.py plan` 重算 |
 | `task-run` | 链式串行跑 task，链尾 `integrate-chain` 合主干 |
 | `task-preflight` | 只读汇总待做 task 缺口 |
 | `task-bug` | 复现/根因/同类位点扫描（仅 `.scratch/`）后建修复 task |
@@ -76,7 +76,7 @@
 | `repo-cleanup` | 清缓存等无用文件，默认 dry-run |
 | `repo-template-sync` | 消费项目从模板仓同步工具链；审批通过后才 commit |
 
-多会话并发：用户自决开多个会话各跑 `task-run`；`task.py view --serve` 看看板。无自动调度器。
+多会话并发：用户自决开多个会话各跑 `task-run`；`task.py plan` 取本波并发链，`task.py view --serve` 看看板。无自动调度器。
 
 内部调用：
 
@@ -85,7 +85,7 @@
 | `task-work` | 在 task worktree 实施并写 `handoff.json`（由 `task-run` 调用） |
 | `task-integrate` | 单 task 或链式合并回主干（由 `task-run` 调用） |
 
-典型路径：`/task-create` → `/task-schedule` → `task.py view --serve` 起看板 → 一个或多个会话 `/task-run`（多会话手动并发各跑一段）。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
+典型路径：`/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
 
 ### `scripts/repo_template/task.py` 使用示例
 
