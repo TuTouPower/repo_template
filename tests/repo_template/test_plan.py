@@ -1,4 +1,4 @@
-"""repo_task.plan.compute_batch_plan 行为级回归（对齐原 chain_plan.js 用例）。"""
+"""repo_task.plan.compute_batch_plan 行为级回归（批计划算法唯一权威）。"""
 
 import sys
 from pathlib import Path

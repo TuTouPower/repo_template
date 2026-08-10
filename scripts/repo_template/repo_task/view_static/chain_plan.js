@@ -1,7 +1,7 @@
 'use strict';
 /* 看板展示辅助（算法权威在后端 repo_task.plan.compute_batch_plan）。
- * 保留 chainText / chainOfMap 等纯展示函数；computeBatchPlan 仅作离线兼容，
- * 生产路径使用服务端注入的 model.plan。
+ * 生产路径使用服务端注入的 model.plan；本文件不再实现批计划算法，
+ * 避免与 Python 双实现漂移。
  */
 (function (global) {
 
@@ -16,10 +16,6 @@
 
   function isUnfinished(cat) {
     return !!UNFINISHED[cat];
-  }
-
-  function num(id) {
-    return Number(String(id).replace(/^[^\d]*/, '')) || 0;
   }
 
   function chainName(i) {
@@ -42,221 +38,11 @@
     return chainLetter(chain.name) + ': ' + chain.taskIds.join(' ');
   }
 
-  /** 交叉点：dep from→to，from 在链内、to 未完成且不在同链 */
-  function computeCrossings(chains, data) {
-    var chainOf = chainOfMap(chains);
-    var catOf = new Map();
-    data.nodes.forEach(function (n) { catOf.set(n.id, n.category); });
-    var crossings = [];
-    data.edges.forEach(function (e) {
-      if (e.type !== 'dep') return;
-      var toCat = catOf.get(e.to);
-      if (!toCat || !isUnfinished(toCat)) return;
-      var fromChain = chainOf.get(e.from);
-      if (!fromChain) return;
-      var toChain = chainOf.get(e.to);
-      if (toChain === fromChain) return;
-      crossings.push({
-        chainId: toChain || 'future',
-        nodeId: e.to,
-        dependsOnChainId: fromChain,
-        dependsOnNodeId: e.from,
-      });
-    });
-    crossings.sort(function (a, b) {
-      if (a.dependsOnNodeId === b.dependsOnNodeId) {
-        return a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0;
-      }
-      return num(a.dependsOnNodeId) - num(b.dependsOnNodeId);
-    });
-    return crossings;
-  }
-
-  function buildSubgraph(data) {
-    var idSet = new Set();
-    var catOf = new Map();
-    var schedOf = new Map();
-    data.nodes.forEach(function (n) {
-      if (isUnfinished(n.category)) {
-        idSet.add(n.id);
-        catOf.set(n.id, n.category);
-        schedOf.set(n.id, n.schedule_status || '');
-      }
-    });
-    var ids = Array.from(idSet).sort(function (a, b) { return num(a) - num(b); });
-
-    var upstream = new Map();
-    var downstream = new Map();
-    var indegree = new Map();
-    var conflictOf = new Map();
-    ids.forEach(function (id) {
-      upstream.set(id, []);
-      downstream.set(id, []);
-      indegree.set(id, 0);
-      conflictOf.set(id, []);
-    });
-
-    data.edges.forEach(function (e) {
-      if (e.type === 'dep') {
-        if (!idSet.has(e.to) || !idSet.has(e.from)) return;
-        downstream.get(e.from).push(e.to);
-        upstream.get(e.to).push(e.from);
-        indegree.set(e.to, (indegree.get(e.to) || 0) + 1);
-      } else {
-        if (idSet.has(e.from) && idSet.has(e.to)) {
-          var fa = conflictOf.get(e.from);
-          var tb = conflictOf.get(e.to);
-          if (fa.indexOf(e.to) < 0) fa.push(e.to);
-          if (tb.indexOf(e.from) < 0) tb.push(e.from);
-        }
-      }
-    });
-    downstream.forEach(function (list) {
-      list.sort(function (a, b) { return num(a) - num(b); });
-    });
-    return {
-      ids: ids, idSet: idSet, catOf: catOf, schedOf: schedOf,
-      upstream: upstream, downstream: downstream, indegree: indegree,
-      conflictOf: conflictOf,
-    };
-  }
-
-  /**
- * 兼容离线/测试：生产看板使用后端 model.plan。
- * 语义须与 repo_task.plan.compute_batch_plan 保持一致。
- */
-  function computeBatchPlan(data) {
-    var sub = buildSubgraph(data);
-
-    var candidates = sub.ids.filter(function (id) {
-      return (sub.indegree.get(id) || 0) === 0
-      && ['active', 'runnable'].indexOf(sub.catOf.get(id)) >= 0;
-    });
-    var activeHeads = candidates.filter(function (id) {
-      return sub.catOf.get(id) === 'active';
-    });
-    var activeSet = new Set(activeHeads);
-    var rest = candidates.filter(function (id) { return !activeSet.has(id); });
-
-    var deferredList = [];
-    rest.forEach(function (id) {
-      var partners = (sub.conflictOf.get(id) || []).filter(function (c) {
-        return activeSet.has(c);
-      });
-      if (partners.length > 0) {
-        deferredList.push({ taskId: id, partners: partners.slice().sort() });
-      }
-    });
-    var deferredSet = new Set(deferredList.map(function (d) { return d.taskId; }));
-    rest = rest.filter(function (id) { return !deferredSet.has(id); });
-
-    for (;;) {
-      var remaining = rest.filter(function (id) { return !deferredSet.has(id); });
-      var degree = new Map();
-      var maxDeg = 0;
-      remaining.forEach(function (id) {
-        var d = (sub.conflictOf.get(id) || []).filter(function (c) {
-          return remaining.indexOf(c) >= 0;
-        }).length;
-        degree.set(id, d);
-        if (d > maxDeg) maxDeg = d;
-      });
-      if (maxDeg === 0) break;
-      var victims = remaining.filter(function (id) {
-        return (degree.get(id) || 0) === maxDeg;
-      }).sort(function (a, b) { return num(a) - num(b); });
-      var victim = victims[0];
-      var partners = (sub.conflictOf.get(victim) || [])
-        .filter(function (c) { return remaining.indexOf(c) >= 0; })
-        .sort(function (a, b) { return num(a) - num(b); });
-      deferredList.push({ taskId: victim, partners: partners });
-      deferredSet.add(victim);
-    }
-
-    var winners = rest.filter(function (id) { return !deferredSet.has(id); });
-
-    var heads = activeHeads.concat(winners).sort(function (a, b) {
-      return num(a) - num(b);
-    });
-    var headSet = new Set(heads);
-    var assigned = new Set();
-    var chains = [];
-
-    heads.forEach(function (head) {
-      if (assigned.has(head)) return;
-      var taskIds = [head];
-      var chainSet = new Set([head]);
-      assigned.add(head);
-
-      for (;;) {
-        var tail = taskIds[taskIds.length - 1];
-        var isCrossing = (sub.downstream.get(tail) || []).some(function (y) {
-          if (!sub.idSet.has(y) || chainSet.has(y)) return false;
-          return (sub.upstream.get(y) || []).some(function (p) { return !chainSet.has(p); });
-        });
-        if (isCrossing) break;
-        var cands = (sub.downstream.get(tail) || []).filter(function (id) {
-          if (assigned.has(id)) return false;
-          if (!(sub.upstream.get(id) || []).every(function (p) { return chainSet.has(p); })) return false;
-          if (sub.schedOf.get(id) !== 'scheduled') return false;
-          var conflicts = sub.conflictOf.get(id) || [];
-          for (var i = 0; i < conflicts.length; i++) {
-            var c = conflicts[i];
-            if (chainSet.has(c)) continue;
-            if (sub.catOf.get(c) === 'active') return false;
-            if (assigned.has(c) || headSet.has(c)) return false;
-          }
-          return true;
-        });
-        if (cands.length === 0) break;
-        cands.sort(function (a, b) { return num(a) - num(b); });
-        var next = cands[0];
-        taskIds.push(next);
-        chainSet.add(next);
-        assigned.add(next);
-      }
-
-      var idx = chains.length;
-      chains.push({
-        id: 'c' + (idx + 1),
-        name: chainName(idx),
-        color: CHAIN_COLORS[idx % CHAIN_COLORS.length],
-        taskIds: taskIds,
-      });
-    });
-
-    var unassigned = sub.ids.filter(function (id) {
-      return !assigned.has(id) && !deferredSet.has(id);
-    });
-    var headSet2 = new Set(heads);
-    var deferred = deferredList.map(function (item) {
-      var blockedBy = item.partners.filter(function (p) {
-        return headSet2.has(p) || activeSet.has(p);
-      });
-      var shown = blockedBy.length > 0 ? blockedBy : item.partners;
-      return {
-        taskId: item.taskId,
-        blockedBy: shown,
-        reason: '与 ' + shown.join('、') + ' 冲突,本轮暂缓(优先让可并行的链最多)',
-      };
-    }).sort(function (a, b) { return num(a.taskId) - num(b.taskId); });
-
-    var plan = {
-      chains: chains,
-      unassigned: unassigned,
-      deferred: deferred,
-      crossings: computeCrossings(chains, data),
-    };
-    chains.forEach(function (chain) {
-      chain.stop_reason = chainStopInfo(chain, plan, data);
-    });
-    return plan;
-  }
-
   function blocksDownstream(cat) {
     return cat !== undefined && isUnfinished(cat);
   }
 
+  /** 链停止原因（人类可读）；服务端已写入 stop_reason 时看板优先用服务端值。 */
   function chainStopInfo(chain, plan, data) {
     var tail = chain.taskIds[chain.taskIds.length - 1];
     if (!tail) return '';
@@ -270,7 +56,7 @@
     var chainOf = chainOfMap(plan.chains);
     var nameOf = new Map();
     plan.chains.forEach(function (c) { nameOf.set(c.id, c.name); });
-    var deferredSet = new Set(plan.deferred.map(function (d) { return d.taskId; }));
+    var deferredSet = new Set((plan.deferred || []).map(function (d) { return d.taskId; }));
 
     var upstream = new Map();
     data.edges.forEach(function (e) {
@@ -315,8 +101,6 @@
     chainLetter: chainLetter,
     chainOfMap: chainOfMap,
     chainText: chainText,
-    computeCrossings: computeCrossings,
-    computeBatchPlan: computeBatchPlan,
     chainStopInfo: chainStopInfo,
   };
 

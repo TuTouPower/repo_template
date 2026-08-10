@@ -1,8 +1,9 @@
 """本波并发链规划：确定性、只读、不落盘。
 
-算法对齐原看板 chain_plan.js computeBatchPlan：链首 = active/runnable
-（runnable = compute_schedule 的 selected），冲突裁决最大化并行链数，
-向下游延伸直至汇流点或冲突边界。状态变化后重新调用即得下一批。
+算法权威在本模块 compute_batch_plan（CLI plan 与 view --serve 看板共用）。
+链首 = active/runnable（runnable = compute_schedule 的 selected），冲突裁决
+最大化并行链数，向下游延伸直至汇流点或冲突边界。状态变化后重新调用即得下一批。
+看板 JS 只做展示，不复刻本算法。
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@ var RING = { self: null, upstream: '#F59E0B', downstream: '#10B981', conflict: '
 var model = window.__BOARD__;
 var nodes = new Map(model.nodes.map(function (n) { return [n.id, n]; }));
 var index = null; // { dependenciesOf, dependentsOf, conflictsOf }
-var plan = null; // ChainPlan：当下可执行批次
+var plan = null; // 服务端 model.plan（repo_task.plan）
 
 var state = {
   query: '',
