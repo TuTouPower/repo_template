@@ -11,6 +11,7 @@ import os
 import platform
 import socket
 import subprocess
+import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -223,9 +224,23 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _is_loopback_host(host: str) -> bool:
+    """本机回环地址才视为默认安全绑定。"""
+    normalized = (host or "").strip().lower()
+    return normalized in {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
+
+
 def serve(host="127.0.0.1", port=0):
     port = port or _find_free_port(host)
-    url = f"http://{host}:{port}/"
+    # ThreadingHTTPServer 对 IPv6 字面量需要方括号才能当 URL host
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    url = f"http://{url_host}:{port}/"
+    if not _is_loopback_host(host):
+        print(
+            f"WARNING: 看板绑定 {host!r}（非 loopback）；"
+            "只读但会暴露 task spec/task 正文，确认网络边界后再用",
+            file=sys.stderr,
+        )
     httpd = ThreadingHTTPServer((host, port), _Handler)
     print(f"task 看板已启动：{url}")
     print("只读服务；Ctrl+C 退出。")

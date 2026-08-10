@@ -210,3 +210,31 @@ def test_open_browser_other_uses_webbrowser(monkeypatch):
     monkeypatch.setattr(view_server.webbrowser, "open", lambda url: opened.append(url))
     view_server._open_browser("http://127.0.0.1:9/")
     assert opened == ["http://127.0.0.1:9/"]
+
+
+def test_is_loopback_host():
+    assert view_server._is_loopback_host("127.0.0.1")
+    assert view_server._is_loopback_host("localhost")
+    assert view_server._is_loopback_host("::1")
+    assert not view_server._is_loopback_host("0.0.0.0")
+    assert not view_server._is_loopback_host("192.168.1.1")
+
+
+def test_serve_warns_non_loopback(monkeypatch, capsys):
+    class FakeServer:
+        def __init__(self, addr, handler):
+            self.addr = addr
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
+    monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8765)
+    monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
+    view_server.serve(host="0.0.0.0", port=8765)
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "0.0.0.0" in err
