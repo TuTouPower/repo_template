@@ -1,6 +1,7 @@
 ---
 name: pending-record
 description: 持续澄清并登记 pending 条目（需求/技术债/bug）。用户连续口述待办时调用；澄清后派子代理写 pending，主会话不停聊。bug 派子代理走 task-bug 分析后登记。触发：/pending-record、记 pending、登记待办、记录 bug/需求。
+disable-model-invocation: true
 ---
 
 # pending-record

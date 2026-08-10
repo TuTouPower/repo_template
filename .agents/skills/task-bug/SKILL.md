@@ -1,7 +1,6 @@
 ---
 name: task-bug
 description: none
-disable-model-invocation: true
 ---
 
 # task-bug

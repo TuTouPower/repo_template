@@ -1,7 +1,6 @@
 ---
 name: task-run
 description: none
-disable-model-invocation: true
 ---
 
 # task-run

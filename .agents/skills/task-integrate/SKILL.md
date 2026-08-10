@@ -1,7 +1,6 @@
 ---
 name: task-integrate
 description: none
-disable-model-invocation: true
 ---
 
 # task-integrate
