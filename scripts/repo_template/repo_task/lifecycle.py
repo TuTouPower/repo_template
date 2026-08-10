@@ -1,10 +1,8 @@
 """Canonical lifecycle implementation for the task toolchain."""
 
 import os
-import re
 import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import repo_task.context as ctx

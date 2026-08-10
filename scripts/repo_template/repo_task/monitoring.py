@@ -13,7 +13,6 @@ from .attempts import (
     attempts_for_tid,
     current_attempt_record,
     in_flight_attempts,
-    next_attempt,
     overlapping_attempts,
     project_attempts,
 )

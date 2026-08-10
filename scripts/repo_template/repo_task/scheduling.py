@@ -1,7 +1,5 @@
 """Canonical scheduling implementation for the task toolchain."""
 
-import re
-
 import repo_task.context as ctx
 
 from .documents import parse_tid_list, tid_sort_key
