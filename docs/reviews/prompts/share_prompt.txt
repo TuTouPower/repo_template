@@ -28,6 +28,15 @@
 
 `task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以 `git diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
 
+### AC 复验披露（结论段必写）
+
+结论段必须含「AC 复验方式」小节：逐条 AC 标注复验类别——
+
+- `re_verified`：reviewer 独立复验（重跑命令、查证代码/测试断言本身），附一句证据。
+- `trust_prior`：无法独立复验（部署态、人工 UI、外部服务），只能依赖实施侧已产出的证据，注明依赖的是什么证据。
+
+小节末尾给覆盖率行：`coverage = re_verified / 总 AC 数`。`trust_prior` 占比 >30% 时加一行：「建议合并前人工抽查 trust_prior 项」。诚实披露哪些 AC 没有被 reviewer 真正复验，不允许默认全标 `re_verified`。
+
 ### 零发现合法与 finding 边界
 
 - clean review（0 finding）是有效输出；**禁止凑数**。

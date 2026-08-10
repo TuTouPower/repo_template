@@ -63,6 +63,7 @@ from repo_task.git_ops import (
     tracked_dirty_entries,
     worktree_paths,
 )
+from repo_task.goal import cmd_goal, cmd_goal_check
 from repo_task.integration import (
     _commit_index,
     _conflicted_paths,

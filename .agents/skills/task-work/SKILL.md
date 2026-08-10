@@ -85,6 +85,8 @@ flowchart TD
 
 按 `docs/blueprint/testing.md` 中 `{blackbox_verify}` 执行。通过→Step 5。未通过且 `< max_verify_round` → 回 Step 3 再黑盒。未通过且 `≥ max_verify_round` → `block --reason blackbox`，停止。
 
+进入最后一轮（已用轮次 = `max_verify_round - 1`）仍未过时，回 Step 3 前先在实施笔记写「聚焦修复计划」：失败项、根因假设、最小修复动作；范围仅限失败项，禁止顺手改动。把盲目重试升级为带假设的最后一击。
+
 ### Step 5：审阅
 
 - 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
@@ -111,13 +113,25 @@ flowchart TD
 - `prompt_hint` 非空 → 下一轮派发附上轮撤回 finding_id 与理由。
 - reviewer 标注 spec 过时：改 spec 上下文区，不计 FAIL，不因此回 Step 3。
 - `overall=PASS` → Step 7。
-- `FAIL` 且 `round < max`：填处置表；改代码/测试则 Step 3→4→5→6，只改必要文档也须回 Step 5 完整重审。
+- `FAIL` 且 `round < max`：填处置表；改代码/测试则 Step 3→4→5→6，只改必要文档也须回 Step 5 完整重审。进入最后一轮（`round = max - 1`）的处置前，除处置表外须先在实施笔记写「聚焦修复计划」：失败 finding、根因假设、最小修复动作；范围仅限失败项。
 - `FAIL` 且 `round ≥ max`：处置表填完 → `block --reason review`，停止。
 - 禁止同一 round 内「复核翻 PASS」。
 
 ### Step 7：收尾与执行 commit
 
 进入本步前重新运行 `check_review_status.py`，确认最新 `overall=PASS`。
+
+清洁度检查（必做）：对本 task 执行产生的全部新增行（committed + staged + unstaged + 未跟踪，单 ref diff 工作树语义）做机械 grep，判据按项目 stack 调整（Python 仓示例）：
+
+```bash
+mkdir -p .scratch
+python3 scripts/repo_template/repo_state.py added-lines {diff_anchor} \
+  --exclude 'docs/*' --exclude '.scratch/*' > .scratch/added_lines.txt
+grep -cE 'print\(|pprint\(' .scratch/added_lines.txt || true   # debug 输出残留
+grep -cE '\b(TODO|FIXME|XXX)\b' .scratch/added_lines.txt || true # 会话 TODO 残留
+```
+
+`grep -c` 零匹配时 exit 1，属预期绿态，须带 `|| true`；判据只看计数数字，不看退出码。非零计数 = 收尾前必须修掉的残留。spec 声明 `Cleanliness override:` 的项报告计数但不判失败（override 须写明放行理由与具体项，保持窄口径）。该检查专门防「未提交的 debug 残留」——只看 `..HEAD` 的 diff 对它不可见。
 
 **7a 收尾文档**：
 

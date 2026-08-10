@@ -18,6 +18,7 @@
 | `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 活跃/归档 task 派生索引 | 工作区可由 `add`/`edit`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交，合并后由 `integrate` / `integrate-chain` 单独 chore commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit |
 | `docs/archive/tasks_audit.log` | rewind/purge 审计（append-only） | 仅 `scripts/repo_template/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改 |
 | `docs/runtime/dispatch_ledger.jsonl` | attempt 控制面（append-only；已 gitignore，仅主仓） | exact identity 为 `(tid, attempt, execution_id)`；生命周期只经 `task.py attempt reserve/terminal/report` 写入，`integrate` / `integrate-chain` 写 `integrated`；`ledger record` 仅允许 `note`，`ledger tail` 只读；禁止手工编辑 |
+| `docs/runtime/goal_queue.json` | goal 模式冻结队列快照（已 gitignore，仅主仓） | 仅 `task.py goal` 覆盖式写入（同时只服务一个队列）；`task.py goal-check` 只读；禁止手工编辑 |
 | `docs/handoff.md` | 项目级交接（仅最新一节） | 记录须含 branch 与交出时 head_commit；过时段落迁 `docs/archive/handoff.md` |
 | `docs/pending/{todo,parked}/pNNN_{slug}.md` | 待办与不办总账（一条目一文件，统一 `pNNN`；`parked/`=用户确认暂搁，不迁 archive） | 条目创建与迁移只经 `scripts/repo_template/pending.py`；`pending-record` 持续澄清后派子代理登记；`task-bug` 分析后登记 bug；`task-work` 收尾闭环迁 archive、遗留建条目；`task-from-pending` 只捞 `todo/` 建 task；`repo-hygiene` 补迁漏项、`parked/` 保留不动 |
 | `docs/findings/dNNN_{slug}.md` | 已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`） | 条目创建只经 `scripts/repo_template/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入 |
@@ -84,7 +85,7 @@
 | `task-work` | 在 task worktree 实施并写 `handoff.json`（由 `task-run` 调用） |
 | `task-integrate` | 单 task 或链式合并回主干（由 `task-run` 调用） |
 
-典型路径：`/task-create` → `/task-schedule` → `task.py view --serve` 起看板 → 一个或多个会话 `/task-run`（多会话手动并发各跑一段）。
+典型路径：`/task-create` → `/task-schedule` → `task.py view --serve` 起看板 → 一个或多个会话 `/task-run`（多会话手动并发各跑一段）。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
 
 ### `scripts/repo_template/task.py` 使用示例
 
@@ -93,4 +94,5 @@ python3 scripts/repo_template/task.py --help        # 所有子命令、参数�
 python3 scripts/repo_template/pending.py --help     # 待办总账
 python3 scripts/repo_template/findings.py --help    # 技术发现
 python3 scripts/repo_template/spikes.py --help      # 技术 spike
+python3 scripts/repo_template/repo_state.py --help  # 完整工作树 vs baseline 取数（清洁度/deliverable 核对）
 ```

@@ -14,6 +14,7 @@ from .control import (
     cmd_ps,
     cmd_view,
 )
+from .goal import cmd_goal, cmd_goal_check
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
     cmd_add,
@@ -166,6 +167,13 @@ def main():
     ps_parser = sub.add_parser("ps", help="attempt 活表")
     ps_parser.add_argument("--all", action="store_true")
     ps_parser.set_defaults(func=cmd_ps)
+
+    goal = sub.add_parser("goal", help="冻结 goal 模式队列并打印 ready-to-paste /goal 行")
+    goal.add_argument("tids", nargs="*", help="显式队列（严格按输入顺序）；缺省 = backlog ∪ active")
+    goal.set_defaults(func=cmd_goal)
+
+    goal_check = sub.add_parser("goal-check", help="只读判定 goal 队列终态 marker")
+    goal_check.set_defaults(func=cmd_goal_check)
 
     ledger = sub.add_parser("ledger", help="非生命周期账本记录与读取")
     ledger_sub = ledger.add_subparsers(dest="ledger_cmd", required=True)

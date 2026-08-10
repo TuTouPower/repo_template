@@ -25,6 +25,22 @@ disable-model-invocation: true
 
 禁止进入 plan mode（`EnterPlanMode` / `ExitPlanMode`），禁止开跑前重述 spec 已写明的内容征求同意。执行授权已由 skill 调用给出；只在「停止条件」列举的情况停下来问用户。
 
+## goal 模式
+
+用 goal 模式自治跑队列时，`task.py goal` 是唯一入口；它冻结队列快照到 `docs/runtime/goal_queue.json` 并打印 ready-to-paste 的 `/goal` 行（含机器终态判定）。手写 `/goal 请按 task-run 执行所有 task` 是反模式：终态不可判定，evaluator 无依据反驳中途停止。
+
+goal 会话内的执行行为与本 skill 队列循环完全一致，固定队列以快照为准（不得变更成员）。终态由 `task.py goal-check` 只读判定：
+
+| marker | exit | 语义 |
+|--------|------|------|
+| `GOAL_QUEUE_COMPLETE` | 0 | 全部成员 closed（terminal+report+handoff+cleanup）或 integrated；goal 结束 |
+| `GOAL_QUEUE_STOPPED: <tid>=<state>` | 3 | 任一成员 blocked/failed；合法停止，按「停止条件」汇报后 goal 结束 |
+| `GOAL_QUEUE_INCOMPLETE: x/y closed` | 2 | 继续执行 |
+
+逐 tid 状态行里 `pending` / `running` / `cleanup_pending` / `unverified`（handoff/refs 校验未过）/ `incomplete` 均归入 INCOMPLETE；`dropped` 意味着快照过期（成员在 goal 期间被 drop），按 STOPPED 处理，由用户决策后重新 `task.py goal`。
+
+goal 模式同时只服务一个队列（快照覆盖式）；多会话手动并发各跑普通 task-run，不用 goal 生成器。合并授权语义不变：整链完成后询问一次，merge 是 goal 判定范围外的人工步骤。
+
 ## 输入与固定队列
 
 | 用户输入 | 队列 |

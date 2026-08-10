@@ -47,7 +47,9 @@ disable-model-invocation: true
 
    `--ref` 只检查快照状态、spec 与 front matter，不检查 worktree 和当前脏改动；输出该警告属预期，不算用户缺口。机器门禁检查状态、spec 完整、工作区一致性与未知契约分类。`UNVERIFIED-BLOCKING`、裸 `UNVERIFIED` 和其它 FAIL 项直接进输出表，标「阻塞」；`UNVERIFIED-SPIKE` 只警告，属于执行期 Step 1 工作。
 
-3. **逐 task 查用户侧缺口**。从上一步确定的有效来源读取 `spec.md` 与 `task.md`：worktree 直接读文件，分支中的 task 用 `--ref` 读取，主干 backlog 从主仓读取。检查契约区 AC、上下文区依赖与约束、未知契约清单、实施笔记与阻塞说明。对照 `.env.example`（若有）与 spec 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
+3. **baseline 健康检查**（一次，主干）：从 `docs/blueprint/testing.md` 读 `{doctor_cmd}`（写「无」则跳过并注明），在主干跑一次。绿 → 输出表注明 baseline 绿。红 → 输出表加一行 `baseline`，标「阻塞」：先确认是「先修基线再跑队列」还是「队列首 task 的目的即修复基线」（后者用户在输出表结论处明确放行后才可执行）。不预检的后果是 attempt 对注定失败的基线空转。
+
+4. **逐 task 查用户侧缺口**。从上一步确定的有效来源读取 `spec.md` 与 `task.md`：worktree 直接读文件，分支中的 task 用 `--ref` 读取，主干 backlog 从主仓读取。检查契约区 AC、上下文区依赖与约束、未知契约清单、实施笔记与阻塞说明。对照 `.env.example`（若有）与 spec 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
 
    未知契约按 spec 标记处理：
    - `UNVERIFIED-BLOCKING`：只有用户或外部环境能核实，属于阻塞缺口；核实并改写结论前不得 `start`。
@@ -68,7 +70,7 @@ disable-model-invocation: true
 
    每条标严重度：**阻塞**（缺它执行跑不下去）/ **可后补**（能开干但某条 AC 或上线会缺）。
 
-4. **输出缺口表**：
+5. **输出缺口表**：
 
    ```markdown
    ## Preflight 结果
@@ -90,7 +92,7 @@ disable-model-invocation: true
 
 ## 边界
 
-- 只读：不改代码、测试、task 状态、环境。`task.py preflight`、`list/show --ref` 只读不写。
+- 只读：不改代码、测试、task 状态、环境。`task.py preflight`、`list/show --ref` 只读不写；baseline 检查的 `{doctor_cmd}` 限无副作用的环境/编译/收集类命令，有写副作用的命令不代入。
 - 不把主干中被 worktree 或未合并分支覆盖的旧 backlog 当成待启动 task。
 - 不自动执行 task；无阻塞时只**提示**用户可自行 `/task-run`（多会话手动并发各跑一段）。
 

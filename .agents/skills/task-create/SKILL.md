@@ -47,6 +47,11 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
 5. **逐 task 自检**：
    - AC 可验收，`spec.md` / `task.md` 无残留 `{...}` 占位符。
    - 每个 task 填写完成后运行 `python3 scripts/repo_template/task.py preflight {tid} --allow-backlog`；全部 `preflight=PASS` 才能进入统一询问提交。
+   - 拆分三问（对本次全部 task 过一遍，发现并修正后再提交）：
+     1. **AC 可证伪**：每条 AC 是 yes/no 可判；出现「可用/合理/正常/完好」类不可测词 → 就地改写为可观察谓词。
+     2. **task 原子性**：标题含「和/与/并」或一个 task 有两个不共享验收面的独立交付 → 拆。
+     3. **最弱依赖**：哪个 task 失败会级联最多下游？扇出过大 → 评估降扇出或重排顺序。
+     三问结论（clean 或 findings + 已做修正）随第 7 步统一提交询问一并列出。
 
 6. **未知契约分类**：
    - task 需要先做实验确认的事项（新 major、非标准 provider、协议兼容、平台差异、性能或工具行为），写进「未知契约清单」并标 `UNVERIFIED-SPIKE`。不在创建期写生产代码，留给 `task-work` Step 1 实验。
