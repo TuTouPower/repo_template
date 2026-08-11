@@ -29,7 +29,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 4. 按评审要点扫 diff，每条 finding 过 Pre-Report Gate（含 blocking 硬阈值）
 5. 输出到 `{task_dir}/review_general.md`
 6. Round N（N≥2）：逐条复核前轮 finding 是否真修或已撤回，扫描修复过程引入的新问题
-7. 末行 `verdict: PASS` 或 `verdict: FAIL`（判定式见共享规则）
+7. 末行 verdict: PASS 或 verdict: FAIL（判定式见共享规则）
 
 ## 输出格式
 

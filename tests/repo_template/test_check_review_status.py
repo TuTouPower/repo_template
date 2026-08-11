@@ -447,3 +447,56 @@ def test_main_pass_missing_scope_fails(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "overall=INCOMPLETE" in out
     assert "review_scope=missing" in out
+
+
+def test_main_scope_tolerates_backtick_wrapped(tmp_path, monkeypatch, capsys):
+    """指纹行被反引号整行包裹（历史误抄）→ 宽容解析自愈为 ok，不再误报。"""
+    task_dir = _scope_task_dir(
+        tmp_path, monkeypatch, f"`reviewed_scope: {SCOPE}`\n"
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=PASS" in out
+    assert "review_scope=ok" in out
+
+
+@pytest.mark.parametrize("prefix", ["**", "- "])
+def test_main_scope_tolerates_bold_and_list_prefix(
+    prefix, tmp_path, monkeypatch, capsys
+):
+    """加粗或列表前缀修饰 → 宽容解析自愈。"""
+    task_dir = _scope_task_dir(
+        tmp_path, monkeypatch, f"{prefix}reviewed_scope: {SCOPE}\n"
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "review_scope=ok" in out
+
+
+def test_main_scope_reports_format_error(tmp_path, monkeypatch, capsys):
+    """报告含 reviewed_scope 但格式无法解析 → format_error，区分于 missing。"""
+    task_dir = _scope_task_dir(
+        tmp_path, monkeypatch, "reviewed_scope: not-hex\n"
+    )
+    monkeypatch.setattr(
+        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=INCOMPLETE" in out
+    assert "review_scope=format_error" in out

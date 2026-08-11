@@ -65,7 +65,7 @@ diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试�
 6. 每条 finding 过 Pre-Report Gate
 7. 输出到 `{task_dir}/review_test.md`
 8. Round N（N≥2）：逐条复核前轮 finding 是否真修（注意弱化断言可能被「修」成另一种弱化形式），扫描新问题
-9. 末行 `verdict: PASS` 或 `verdict: FAIL`（判定式见共享规则）
+9. 末行 verdict: PASS 或 verdict: FAIL（判定式见共享规则）
 
 ## 输出格式
 

@@ -17,6 +17,7 @@
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
   max_review_round=N      # 默认 5，与 task-run 的 max_review_round 默认一致
+  review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
   withdraw_rate=0.NN
   prompt_hint=...       # 撤回率超阈值时的下一轮 prompt 附加要求
 """
@@ -30,7 +31,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
-REVIEW_SCOPE_RE = re.compile(r"^reviewed_scope:\s*([0-9a-f]{16})", re.MULTILINE)
+# 行首容忍照抄环节常见的轻量 markdown 修饰（反引号 / 加粗 / 列表前缀），
+# 避免 reviewer 误带修饰导致行首锚定失败而误报 missing/stale。
+REVIEW_SCOPE_RE = re.compile(
+    r"^[ \t]*(?:`+\s*|\*+[ \t]*|[*-][ \t]+)*reviewed_scope\s*:\s*([0-9a-f]{16})",
+    re.MULTILINE,
+)
+# 宽容解析仍失败但文本提及 reviewed_scope → 判定格式错误（format_error），区分于缺失。
+REVIEW_SCOPE_HINT_RE = re.compile(r"reviewed_scope", re.IGNORECASE)
 ROUND_HEADER_RE = re.compile(r"^##\s+Round\s+([0-9]+)(?:\s|$)", re.MULTILINE)
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
 FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
@@ -277,6 +285,11 @@ def reviewed_scope(path: Path) -> str | None:
     return scopes[-1] if scopes else None
 
 
+def reviewed_scope_hint(path: Path) -> bool:
+    """报告提及 reviewed_scope 但宽容正则提取不到 → 写了但格式错。"""
+    return REVIEW_SCOPE_HINT_RE.search(read(path)) is not None
+
+
 SCOPE_EXCLUDES = [
     # 只排除处置过程产生的具体文件/目录；行为文件（hooks/skills/review prompts/
     # blueprint/specs/guides/README 等）计入指纹，改之则 PASS 失效。
@@ -411,7 +424,10 @@ def main():
     if not scope_ok and overall == "PASS":
         overall = "INCOMPLETE"
     if current_scope is None or all(scope is None for scope in scopes):
-        scope_status = "missing"
+        if any(reviewed_scope_hint(report) for report in reports):
+            scope_status = "format_error"
+        else:
+            scope_status = "missing"
     elif not scope_ok:
         scope_status = "stale"
     else:
