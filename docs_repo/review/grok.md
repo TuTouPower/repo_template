@@ -30,15 +30,15 @@
 
 ## 2. 文件清单与角色
 
-| 文件 | 角色 | 质量 | 与当前模板关系 |
-|------|------|------|----------------|
-| `workflow_retrospective_0.md` | t001–t007 初跑复盘（痛点 1–7 + 横向缺口根因） | 高：例子具体、ROI 表清晰 | 部分已吸收（AC 行为化、round 默认 4）；横向开 task / doctor / 审阅分级未制度化 |
-| `workflow_retrospective.md` | t041–t061 实战（merge 灾难、跳过审阅、plan 无用） | 高：P0=merge 冲突判断准确 | 分支策略仍默认 task branch；worktree 仅在 `tasks-parallel` 提示 |
-| `workflow_feedback.md` | 结构假设 + plan/spec/粒度/审阅/索引 设计债 | 高；后半「按读者切」是升级版 | plan 模板仍旧；无 risk/review_level；无 depends_on |
-| `workflow_session_analysis_2026-07.md` | omni_usage 会话实证（信噪比、/goal、TDD 违规） | **最高价值**：P0 根因写到 prompt 层 | Pre-Report Gate 已有雏形；**AC 硬边界 / 决策上下文注入 / infra blocked / 旧测只删不改**仍弱或缺失 |
-| `workflow_record.md` | t071 未提交丢失事故（branch ≠ worktree） | 中高：事实清楚；格式偏对话草稿 | 未写成 skill 硬步骤；与 retrospective「直接 main」冲突未消解 |
-| `archive/workflow_skill_split_proposal.md` | AGENTS 与 skill 拆分方案 | 高且**基本已实现** | 现状 skill 表比提案更细（create/run/bug/debt/merge/parallel/preflight/hygiene/clean）；archive 合理 |
-| `11111.md` | 三条碎片备忘 | 低：无日期、无上下文 | 内容仍有效（遗留清单、禁 plan mode、并发索引冲突）但应并入正式笔记 |
+|文件|角色|质量|与当前模板关系|
+|------|------|------|------|
+|`workflow_retrospective_0.md`|t001–t007 初跑复盘（痛点 1–7 + 横向缺口根因）|高：例子具体、ROI 表清晰|部分已吸收（AC 行为化、round 默认 4）；横向开 task / doctor / 审阅分级未制度化|
+|`workflow_retrospective.md`|t041–t061 实战（merge 灾难、跳过审阅、plan 无用）|高：P0=merge 冲突判断准确|分支策略仍默认 task branch；worktree 仅在 `tasks-parallel` 提示|
+|`workflow_feedback.md`|结构假设 + plan/spec/粒度/审阅/索引 设计债|高；后半「按读者切」是升级版|plan 模板仍旧；无 risk/review_level；无 depends_on|
+|`workflow_session_analysis_2026-07.md`|omni_usage 会话实证（信噪比、/goal、TDD 违规）|**最高价值**：P0 根因写到 prompt 层|Pre-Report Gate 已有雏形；**AC 硬边界 / 决策上下文注入 / infra blocked / 旧测只删不改**仍弱或缺失|
+|`workflow_record.md`|t071 未提交丢失事故（branch ≠ worktree）|中高：事实清楚；格式偏对话草稿|未写成 skill 硬步骤；与 retrospective「直接 main」冲突未消解|
+|`archive/workflow_skill_split_proposal.md`|AGENTS 与 skill 拆分方案|高且**基本已实现**|现状 skill 表比提案更细（create/run/bug/debt/merge/parallel/preflight/hygiene/clean）；archive 合理|
+|`11111.md`|三条碎片备忘|低：无日期、无上下文|内容仍有效（遗留清单、禁 plan mode、并发索引冲突）但应并入正式笔记|
 
 ---
 
@@ -46,35 +46,35 @@
 
 ### 3.1 已吸收（不必再论证）
 
-| 历史建议 | 当前落点 |
-|----------|----------|
-| skill 从 AGENTS 拆出 | `.agents/skills/*` + CLAUDE 路由表；`disable-model-invocation` |
-| 创建 / 执行边界 | `task-create` vs `tasks-run` |
-| AC 不写版本号/库/目录 | `task_template/spec.md` + code_prompt 技术约束判断 |
-| AC 唯一源，task 引用不复制 | `task_template/task.md` 收尾 |
-| max_review_round 抬高 | 默认 **4**（原 2） |
-| 横向缺口 → follow-up task 字段 | review 输出「系统性 follow-up」；`task-debt` skill |
-| minor 不阻断 | share_prompt + task 处置语义 |
-| 纯文档 task 0 finding 合法 | test_prompt |
-| 红灯归因 / 危险模式扫描 | test_prompt 较完整 |
-| Pre-Report Gate | share_prompt（质量门雏形） |
+|历史建议|当前落点|
+|------|------|
+|skill 从 AGENTS 拆出|`.agents/skills/*` + CLAUDE 路由表；`disable-model-invocation`|
+|创建 / 执行边界|`task-create` vs `tasks-run`|
+|AC 不写版本号/库/目录|`task_template/spec.md` + code_prompt 技术约束判断|
+|AC 唯一源，task 引用不复制|`task_template/task.md` 收尾|
+|max_review_round 抬高|默认 **4**（原 2）|
+|横向缺口 → follow-up task 字段|review 输出「系统性 follow-up」；`task-debt` skill|
+|minor 不阻断|share_prompt + task 处置语义|
+|纯文档 task 0 finding 合法|test_prompt|
+|红灯归因 / 危险模式扫描|test_prompt 较完整|
+|Pre-Report Gate|share_prompt（质量门雏形）|
 
 ### 3.2 仍开放（高价值未落地）
 
-| 议题 | 来源 | 现状缺口 | 建议优先级 |
-|------|------|----------|------------|
-| 审阅 finding **AC 硬边界**（只报阻塞级） | session §1 | Gate 有，但无「无界覆盖建议 → non-blocking」硬规则；无撤回率监控 | **P0** |
-| review prompt **注入决策上下文 / 有意不测清单** | feedback 补充 + session §1b | `render_review_prompts`  predominantly 仍以 spec 为中心；plan 上下文未强制进 reviewer | **P0** |
-| **branch ≠ worktree** 隔离 | record + retrospective merge | `tasks-run` 未强制 worktree；并行只「提示」不创建 | **P0**（并发/多会话场景） |
-| `tasks_index.json` **跨分支 merge 冲突** | retrospective §1 + 11111 | 仍 JSON 权威 + 每分支改 index；无 main-only / derived / 服务端方案 | **P0**（若保留多分支） |
-| **审阅分级**（full/single/none） | feedback + retrospective | 仍「固定审阅」；文档/格式 task 成本未制度化 | **P1** |
-| plan 按读者/复杂度 | feedback | 模板仍「步骤+风险+blueprint」；与实施脱节 | **P1** |
-| TDD：**旧绿测只删不改** | session §3 | test_prompt 有红灯归因，**无「禁止就地改预期」硬句** | **P1** |
-| blocked 原因 **infra**（503 等） | session §4 | blocked 表只有 blackbox / review | **P1** |
-| 未知契约清单 + 假设审计 | session §5 | spec 模板无此字段 | **P1** |
-| depends_on / 依赖图 | feedback D | 依赖仍散落 spec | **P2** |
-| 遗留待办与 bugs 统一登记 | 11111 | bugs.md 只管未修 bug；finding 遗留靠 task-debt 捞 | **P2** |
-| 一 task 一 commit → 一主题 N commit | feedback B / retrospective §7 | 规则仍「执行期一个 task 一个 commit」 | **待裁决**（见下） |
+|议题|来源|现状缺口|建议优先级|
+|------|------|------|------|
+|审阅 finding **AC 硬边界**（只报阻塞级）|session §1|Gate 有，但无「无界覆盖建议 → non-blocking」硬规则；无撤回率监控|**P0**|
+|review prompt **注入决策上下文 / 有意不测清单**|feedback 补充 + session §1b|`render_review_prompts`  predominantly 仍以 spec 为中心；plan 上下文未强制进 reviewer|**P0**|
+|**branch ≠ worktree** 隔离|record + retrospective merge|`tasks-run` 未强制 worktree；并行只「提示」不创建|**P0**（并发/多会话场景）|
+|`tasks_index.json` **跨分支 merge 冲突**|retrospective §1 + 11111|仍 JSON 权威 + 每分支改 index；无 main-only / derived / 服务端方案|**P0**（若保留多分支）|
+|**审阅分级**（full/single/none）|feedback + retrospective|仍「固定审阅」；文档/格式 task 成本未制度化|**P1**|
+|plan 按读者/复杂度|feedback|模板仍「步骤+风险+blueprint」；与实施脱节|**P1**|
+|TDD：**旧绿测只删不改**|session §3|test_prompt 有红灯归因，**无「禁止就地改预期」硬句**|**P1**|
+|blocked 原因 **infra**（503 等）|session §4|blocked 表只有 blackbox / review|**P1**|
+|未知契约清单 + 假设审计|session §5|spec 模板无此字段|**P1**|
+|depends_on / 依赖图|feedback D|依赖仍散落 spec|**P2**|
+|遗留待办与 bugs 统一登记|11111|bugs.md 只管未修 bug；finding 遗留靠 task-debt 捞|**P2**|
+|一 task 一 commit → 一主题 N commit|feedback B / retrospective §7|规则仍「执行期一个 task 一个 commit」|**待裁决**（见下）|
 
 ### 3.3 未裁决冲突（必须先拍板再改代码）
 
@@ -263,14 +263,14 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 
 ## 7. 文档本身的写法评价
 
-| 维度 | 评价 |
+|维度|评价|
 |------|------|
-| 实证性 | 强；session 分析可作范本 |
-| 可执行性 | 中；动作表有，缺「已落地 / 负责人 / 验收」 |
-| 去重 | 弱；审阅分级等主题 ≥3 处全文重述 |
-| 冲突处理 | 弱；main vs worktree、plan 归属未收敛 |
-| 对模板可迁移性 | 中；业务细节与流程原则混写 |
-| 可读路径 | 弱；无推荐阅读顺序 |
+|实证性|强；session 分析可作范本|
+|可执行性|中；动作表有，缺「已落地 / 负责人 / 验收」|
+|去重|弱；审阅分级等主题 ≥3 处全文重述|
+|冲突处理|弱；main vs worktree、plan 归属未收敛|
+|对模板可迁移性|中；业务细节与流程原则混写|
+|可读路径|弱；无推荐阅读顺序|
 
 **推荐阅读顺序（后人）**
 

@@ -10,32 +10,32 @@ disable-model-invocation: true
 
 ## 输入
 
-| 用户输入 | 行为 |
-|----------|------|
-| 无参数 / `dry-run` | 只扫只列，不删 |
-| `apply` | 删**默认类别**命中项 |
-| `apply` + 类别名（可多个） | 只删这些类别 |
+|用户输入|行为|
+|------|------|
+|无参数 / `dry-run`|只扫只列，不删|
+|`apply`|删**默认类别**命中项|
+|`apply` + 类别名（可多个）|只删这些类别|
 
 ## 类别
 
 **默认**（`apply` 未点名时）：`pycache` / `pytest` / `logs` / `os` / `editor`。
 
-| 类别 | 匹配 |
+|类别|匹配|
 |------|------|
-| `pycache` | `__pycache__/`、`*.pyc` / `*.pyo` / `*.pyd` |
-| `pytest` | `.pytest_cache/` |
-| `logs` | 仓库内 `*.log`（保护路径除外） |
-| `os` | `.DS_Store`、`Thumbs.db`、`desktop.ini` |
-| `editor` | `*~`、`*.swp`、`*.swo`、`.*.swp` |
+|`pycache`|`__pycache__/`、`*.pyc` / `*.pyo` / `*.pyd`|
+|`pytest`|`.pytest_cache/`|
+|`logs`|仓库内 `*.log`（保护路径除外）|
+|`os`|`.DS_Store`、`Thumbs.db`、`desktop.ini`|
+|`editor`|`*~`、`*.swp`、`*.swo`、`.*.swp`|
 
 **点名才清**（不在默认集合）：
 
-| 类别 | 匹配 | 处理 |
+|类别|匹配|处理|
 |------|------|------|
-| `node` | `node_modules/` | 直接删；汇报提示重装依赖 |
-| `scratch` | `.scratch/` **内**草稿 | 清内容、保留目录；跳过活跃 task 引用路径 |
-| `artifacts` | `artifacts/` 内容 | 清内容、保留目录 |
-| `data` | `data/` 内容 | 清内容、保留目录 |
+|`node`|`node_modules/`|直接删；汇报提示重装依赖|
+|`scratch`|`.scratch/` **内**草稿|清内容、保留目录；跳过活跃 task 引用路径|
+|`artifacts`|`artifacts/` 内容|清内容、保留目录|
+|`data`|`data/` 内容|清内容、保留目录|
 
 ## 保护（永不删）
 
@@ -69,9 +69,9 @@ disable-model-invocation: true
    模式：dry-run
    类别：…
 
-   | 路径 | 类别 | 说明 |
+|路径|类别|说明|
    |------|------|------|
-   | ./tests/repo_template/__pycache__/ | pycache | 目录 |
+|./tests/repo_template/__pycache__/|pycache|目录|
 
    合计：N 项
    下一步：确认后 `/repo-cleanup apply`（或带类别）。

@@ -46,16 +46,16 @@ flowchart TD
 
 开始或继续时，先确认当前目录就是 tid 登记的 worktree，且调用参数中的 `attempt` / `execution_id` 是本次 handoff 目标；再读 `scripts/repo_template/task.py show <tid>`、task 目录下 `spec.md` / `task.md` / `review_*.md`、分支、`git status`、`diff_anchor`、测试与实施笔记判断入口：
 
-| 状态 / 证据 | 从哪继续 |
-|-------------|---------|
-| 无 task worktree，或当前目录/分支不归属 tid | 停止，回到 task-run 修复 start/ownership；本 skill 不自行 start |
-| `active`，无 preflight/红灯证据 | Step 1 |
-| 红已有、实现未完 | Step 3 |
-| 绿过、黑盒未过 | Step 4 |
-| 黑盒过、无审阅 | Step 5 |
-| 有 FAIL、未满轮 | Step 6 处置后按表回流 |
-| `blocked` | 停止，呈 blocked 选项 |
-| `done` / `dropped` | 不改动，交出 branch 与 HEAD；task-run 仍以 exact handoff/attempt gate 判断 |
+|状态 / 证据|从哪继续|
+|------|------|
+|无 task worktree，或当前目录/分支不归属 tid|停止，回到 task-run 修复 start/ownership；本 skill 不自行 start|
+|`active`，无 preflight/红灯证据|Step 1|
+|红已有、实现未完|Step 3|
+|绿过、黑盒未过|Step 4|
+|黑盒过、无审阅|Step 5|
+|有 FAIL、未满轮|Step 6 处置后按表回流|
+|`blocked`|停止，呈 blocked 选项|
+|`done` / `dropped`|不改动，交出 branch 与 HEAD；task-run 仍以 exact handoff/attempt gate 判断|
 
 ### Step 1：开干与前置
 

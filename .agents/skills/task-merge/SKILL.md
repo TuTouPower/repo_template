@@ -22,10 +22,10 @@ disable-model-invocation: true
 
 3. **定目标**：
 
-   | 情况 | 目标 |
+|情况|目标|
    |------|------|
-   | 合并后语义仍贴合某个源 task | 该 tid（默认取 tid 最小者）；保留其目录与 slug |
-   | 合并后是新的、源 slug 都不贴切的范围 | `scripts/repo_template/task.py add --title "..." --slug "..."` 新建，全部源 task 都作为被合并方 |
+|合并后语义仍贴合某个源 task|该 tid（默认取 tid 最小者）；保留其目录与 slug|
+|合并后是新的、源 slug 都不贴切的范围|`scripts/repo_template/task.py add --title "..." --slug "..."` 新建，全部源 task 都作为被合并方|
 
 4. **合并文档**（写入目标 task 目录 `spec.md`）：
    - **契约区**：范围、非范围逐节合并去重；**验收标准取并集**，逐条保持可独立验证；可测试性声明合并。矛盾的 AC 停下问用户，不自行取舍。

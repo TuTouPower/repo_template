@@ -10,16 +10,16 @@ disable-model-invocation: true
 
 ## 目标视图
 
-| 路径 | 只保留 | 迁 archive |
-|------|--------|------------|
-| `docs/pending/todo/` | 未闭环待办 | 已闭环条目 → `docs/archive/pending/`（整文件迁移） |
-| `docs/pending/parked/` | 用户确认暂搁的条目 | **不迁**：暂搁非闭环 |
-| `docs/findings/` | 全部已验证发现 | **不迁**：发现是长期资产，失效时就地改写「现状」并注明日期 |
-| `docs/handoff.md` | 最新一版交接 | 过时段落 → `docs/archive/handoff.md`（整段追加） |
-| `docs/tasks/{tid}_{slug}/task.md` | 活跃 task 状态（经 `task.py`） | 已由 `finish`/`drop` 处理，本 skill 不手改 |
-| `docs/spikes/{sid}_{slug}/` | 进行中的 spike | 报告已写且结论已入 `docs/findings/` 的完结 spike → 整目录迁 `docs/archive/spikes/` |
-| `docs/reviews/review_*/` | 报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库 | 用户确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`；archive 下 `_meta/` 继续 gitignore |
-| 其它过时文档 | 仍生效的说明 | 明确过时且有历史价值 → `docs/archive/` 镜像路径 |
+|路径|只保留|迁 archive|
+|------|------|------|
+|`docs/pending/todo/`|未闭环待办|已闭环条目 → `docs/archive/pending/`（整文件迁移）|
+|`docs/pending/parked/`|用户确认暂搁的条目|**不迁**：暂搁非闭环|
+|`docs/findings/`|全部已验证发现|**不迁**：发现是长期资产，失效时就地改写「现状」并注明日期|
+|`docs/handoff.md`|最新一版交接|过时段落 → `docs/archive/handoff.md`（整段追加）|
+|`docs/tasks/{tid}_{slug}/task.md`|活跃 task 状态（经 `task.py`）|已由 `finish`/`drop` 处理，本 skill 不手改|
+|`docs/spikes/{sid}_{slug}/`|进行中的 spike|报告已写且结论已入 `docs/findings/` 的完结 spike → 整目录迁 `docs/archive/spikes/`|
+|`docs/reviews/review_*/`|报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库|用户确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`；archive 下 `_meta/` 继续 gitignore|
+|其它过时文档|仍生效的说明|明确过时且有历史价值 → `docs/archive/` 镜像路径|
 
 ## 步骤
 

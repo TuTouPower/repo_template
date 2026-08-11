@@ -176,19 +176,19 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 
 ## 10. 改进优先级（综合四份笔记 + 当前现状）
 
-| 优先级 | 项 | 来源 | 当前状态 | 动作 |
-|---|---|---|---|---|
-| P0 | reviewer 注入决策上下文 + AC 硬阈值 | session_analysis P0 / feedback 再评估 | 未做（render 无 plan 注入，prompt 无阈值） | 改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区 |
-| P0 | 审阅按 risk_level 分级 | 三份笔记一致 | 未做（仅统一抬 max 到 4） | spec front matter 加 review_level + complexity；task.py 按级提示 |
-| P0 | tasks_index merge 冲突 | retrospective §1 / 11111 | 未做（仍分支+JSON 单点写） | 状态写 task.md front matter，JSON 改 derived data |
-| P1 | commit 策略改「一主题 N commit」 | feedback B / retrospective §7 | 未做（仍一 task 一 commit） | 改 AGENTS.md commit 策略；task.md 收尾列 commit hash |
-| P1 | blocked 加 infra 触发 | session_analysis §4 | 未做（blocked 表只两行） | AGENTS.md blocked 表加第三行 |
-| P1 | worktree 隔离硬校验 | workflow_record | 未做 | tasks-run Step 1 加 git worktree 校验 |
-| P1 | TDD 旧绿测只删不改 | session_analysis §3 | 未做 | AGENTS.md 开发原则 + test prompt 复核项 |
-| P2 | subagent prompt 文件路径化 | session_analysis §2 | 部分（render 写 .scratch，需确认不内联正文） | 审 tasks-run Step 5 派发方式 |
-| P2 | 横向缺口 reviewer 建议开 task | retrospective_0 根因 | 半落实（prompt 有 follow-up 字段） | prompt 强化「引用已有 tid，不重复 finding」 |
-| P2 | AC 唯一源 spec.md | retrospective_0 痛点 7 | 未做（task.md 模板仍复制 AC） | 改 task_template/task.md 收尾引用不复制 |
-| P3 | 环境前置 doctor + 已知陷阱文档 | retrospective_0 痛点 6 / session §9 | 未做 | 建 env_doctor task + known_pitfalls.md |
-| P3 | /goal 切会话 + 单会话 ≤2 task | session_analysis §2 | 本仓未引入 /goal，预防性 | 引入 /goal 时同步加约束 |
+|优先级|项|来源|当前状态|动作|
+|------|------|------|------|------|
+|P0|reviewer 注入决策上下文 + AC 硬阈值|session_analysis P0 / feedback 再评估|未做（render 无 plan 注入，prompt 无阈值）|改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区|
+|P0|审阅按 risk_level 分级|三份笔记一致|未做（仅统一抬 max 到 4）|spec front matter 加 review_level + complexity；task.py 按级提示|
+|P0|tasks_index merge 冲突|retrospective §1 / 11111|未做（仍分支+JSON 单点写）|状态写 task.md front matter，JSON 改 derived data|
+|P1|commit 策略改「一主题 N commit」|feedback B / retrospective §7|未做（仍一 task 一 commit）|改 AGENTS.md commit 策略；task.md 收尾列 commit hash|
+|P1|blocked 加 infra 触发|session_analysis §4|未做（blocked 表只两行）|AGENTS.md blocked 表加第三行|
+|P1|worktree 隔离硬校验|workflow_record|未做|tasks-run Step 1 加 git worktree 校验|
+|P1|TDD 旧绿测只删不改|session_analysis §3|未做|AGENTS.md 开发原则 + test prompt 复核项|
+|P2|subagent prompt 文件路径化|session_analysis §2|部分（render 写 .scratch，需确认不内联正文）|审 tasks-run Step 5 派发方式|
+|P2|横向缺口 reviewer 建议开 task|retrospective_0 根因|半落实（prompt 有 follow-up 字段）|prompt 强化「引用已有 tid，不重复 finding」|
+|P2|AC 唯一源 spec.md|retrospective_0 痛点 7|未做（task.md 模板仍复制 AC）|改 task_template/task.md 收尾引用不复制|
+|P3|环境前置 doctor + 已知陷阱文档|retrospective_0 痛点 6 / session §9|未做|建 env_doctor task + known_pitfalls.md|
+|P3|/goal 切会话 + 单会话 ≤2 task|session_analysis §2|本仓未引入 /goal，预防性|引入 /goal 时同步加约束|
 
 **一句话**：四份笔记诊断高度一致且相互印证，方向（分级/按读者切/derived data/横向开 task）都对；当前模板仓吸收了约三成（skill 拆分、max 抬 4、task-debt/bug 路由），剩下七成（reviewer 上下文、审阅分级、JSON 冲突、commit 粒度、blocked infra、worktree 校验、TDD 硬约束）是最该先做的。建议按 P0 三项先试点，不要全量推。

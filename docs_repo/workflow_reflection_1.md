@@ -138,11 +138,11 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 #### C. 审阅按 task 风险等级
 
-| Task 类型 | 流程 |
-|---|---|
-| CRITICAL / HIGH 资金 / 安全 / 并发 | 审阅 + e2e |
-| MEDIUM 代码 | 单审（code 或 test 二选一）+ 单测 |
-| LOW / 文档 / 风格 / 配置 | lint 通过 + 自验收（无 reviewer） |
+|Task 类型|流程|
+|------|------|
+|CRITICAL / HIGH 资金 / 安全 / 并发|审阅 + e2e|
+|MEDIUM 代码|单审（code 或 test 二选一）+ 单测|
+|LOW / 文档 / 风格 / 配置|lint 通过 + 自验收（无 reviewer）|
 
 减少无效成本，把审阅精力集中在风险高的地方。task spec 加 `risk_level` 字段，task.py 根据 risk_level 提示对应流程。
 
@@ -203,16 +203,16 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 ### 按读者重新归位
 
-| 信息 | 读者 | 稳定性 | 归属 |
-|---|---|---|---|
-| 范围 / AC | reviewer | 契约 | spec |
-| 可测试性声明 | reviewer | 契约 | spec（新增） |
-| 决策上下文（有意不测的分支） | reviewer | 契约 | spec（从 plan 收编） |
-| 未知契约清单 | reviewer / 用户 | 契约 | spec（新增） |
-| 测试策略 | reviewer | 半稳定 | spec（从 plan 收编） |
-| 风险与回退 | agent / 处置 | 易变 | plan（简单 task 可省） |
-| 文件级实现步骤 | agent | 易变 | plan（可省，agent 现场定） |
-| 技术决策细节 | agent | 易变 | plan（改进建议 A 的核心） |
+|信息|读者|稳定性|归属|
+|------|------|------|------|
+|范围 / AC|reviewer|契约|spec|
+|可测试性声明|reviewer|契约|spec（新增）|
+|决策上下文（有意不测的分支）|reviewer|契约|spec（从 plan 收编）|
+|未知契约清单|reviewer / 用户|契约|spec（新增）|
+|测试策略|reviewer|半稳定|spec（从 plan 收编）|
+|风险与回退|agent / 处置|易变|plan（简单 task 可省）|
+|文件级实现步骤|agent|易变|plan（可省，agent 现场定）|
+|技术决策细节|agent|易变|plan（改进建议 A 的核心）|
 
 净效果：**spec 吸收所有"对他人稳定可见"的信息，plan 退化为"给 agent 自己的易变笔记"**。简单 task 可不要 plan，agent 拿强 spec 现场定 HOW——对应会话分析中"agent 执行时自行决定"的方向。
 

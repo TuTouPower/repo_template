@@ -9,11 +9,11 @@
 
 ## 0. 与已有三份审阅的关系
 
-| 已有审阅 | 做对了什么 | 我补充什么 |
-|---|---|---|
-| gemini | 概括了证据强度与主结论，结构清晰 | 末尾的"落地到 AGENTS"建议过简，未指出落地时的操作冲突；对 `11111.md` 与 `workflow_record.md` 的改造停留在"归档/整理"层，不够 |
-| grok | "证据强于方案、方案强于落地跟踪"的核心判断准确；§3.3 的冲突裁决到位 | §6 的 P0/P1 行动项与 CLAUDE.md 现行字段未做逐条映射，可执行性仍偏弱；"裁决 §3.3"未给出裁决格式 |
-| k3 | 跨文档总账意识最强；"缺的是总账而非复盘"这一元判断最锋利 | 提出了 `decision_log.md` 但没定义它；"建议落地率存疑"是断言但未做盘点 |
+|已有审阅|做对了什么|我补充什么|
+|------|------|------|
+|gemini|概括了证据强度与主结论，结构清晰|末尾的"落地到 AGENTS"建议过简，未指出落地时的操作冲突；对 `11111.md` 与 `workflow_record.md` 的改造停留在"归档/整理"层，不够|
+|grok|"证据强于方案、方案强于落地跟踪"的核心判断准确；§3.3 的冲突裁决到位|§6 的 P0/P1 行动项与 CLAUDE.md 现行字段未做逐条映射，可执行性仍偏弱；"裁决 §3.3"未给出裁决格式|
+|k3|跨文档总账意识最强；"缺的是总账而非复盘"这一元判断最锋利|提出了 `decision_log.md` 但没定义它；"建议落地率存疑"是断言但未做盘点|
 
 本文做三件事：(1) 一张落地状态总账，终结"已改/仍缺/已否决"三态不明；(2) 一组裁决表，收敛 grok §3.3 的四个冲突；(3) 一组被三份审阅漏掉但应该单独提出的文档级与流程级问题。
 
@@ -23,24 +23,24 @@
 
 > 表格只列**被两份以上复盘诊断过**的议题。单文档独有意见不进总账，避免再增噪。
 
-| # | 议题 | 出处（≥2 份） | 当前模板状态 | 建议裁决 |
-|---|---|---|---|---|
-| L1 | `tasks_index.json` 多分支 merge 冲突 | feedback §4/E、retrospective §1、11111#3、session §12 | JSON 仍是唯一权威；task.py 仍是唯一写者 | **P0**：状态写 per-task front matter，index 改 derived；见 §3.1 |
-| L2 | 审阅 finding 无界 / 信噪比低 | session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3 | share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控 | **P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2 |
-| L3 | reviewer 缺决策上下文 → 撤回率堆积 | session §1b、feedback 再评估节 | render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt | **P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无" |
-| L4 | branch ≠ worktree，未提交丢失 | record、retrospective §1、session §11 | tasks-run 未强制 worktree；tasks-parallel 仅提示 | **P0**：tasks-run Step 1 加工作区门禁；见 §3.3 |
-| L5 | 审阅对所有 task 无差别（文档/格式也审阅） | feedback §3/C、retrospective §2、retrospective_0 痛点 3 | 仍固定审阅 | **P1**：`review_level: full\|single\|none` 进 spec front matter |
-| L6 | plan.md 实际弃用 / 退化为 spec 副本 | feedback §1+A、retrospective §4、session §1b | 模板仍是「步骤+风险+blueprint」，未按读者切 | **P1**：按读者重划——spec 吸收契约区+上下文区；plan 降为可选实施笔记；见 §3.4 |
-| L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retrospective_0 痛点 1、feedback §1 | spec 模板已约束"不写版本号/库/目录"；code_prompt 技术约束不判 blocking | **已吸收**；补一条：发现 spec 技术字段漂移时改 spec 不计 FAIL |
-| L8 | max_review_round 不够 / 语义模糊 | retrospective §3、retrospective_0 痛点 5、session §1 | 默认已抬到 4；round 语义仍混（出场次数 vs 闭环次数） | **P1**：round 定义为"同一批 finding 的回归轮次"；新 finding 不强制 N+1 |
-| L9 | 横向缺口只标遗留、不开 task | retrospective_0 根因节、feedback、session §13、11111#1 | review 输出"系统性 follow-up"；task-debt skill 已有 | **已吸收**；强化：遗留 finding 必须映射到 tid，禁止悬空 |
-| L10 | AC 三处维护（spec / task.md 勾选 / 处置表） | retrospective_0 痛点 7 | task_template 已约束"引用不复制" | **已吸收** |
-| L11 | TDD 顺序违规（改测试适配实现） | session §3 | test_prompt 有红灯归因，**无"旧绿测只删不改预期"硬句** | **P1**：加硬句；见 §3.5 |
-| L12 | blocked 原因表只覆盖 blackbox/review | session §4 | blocked 表无 infra 路径 | **P1**：加 `--reason infra` |
-| L13 | spec 脑补外部契约 | session §5 | spec 模板无「未知契约清单」 | **P1**：spec 增必填项；见 §3.4 |
-| L14 | commit 粒度"一 task 一 commit"与实战脱节 | feedback B、retrospective §7 | 仍写"执行期一个 task 一个 commit" | **待裁决**；见 §3.6 |
-| L15 | bug 调研后不开 task、只口头 | session §6 | 无硬约束 | **P2**：CLAUDE.md 加"只读调研完必须追加 bugs.md + 提议 task" |
-| L16 | 任务建完又删 | session §7 | 无 add 后确认门 | **P2**：`task.py add` 后列影响文件，等确认才进 Step 1 |
+|#|议题|出处（≥2 份）|当前模板状态|建议裁决|
+|------|------|------|------|------|
+|L1|`tasks_index.json` 多分支 merge 冲突|feedback §4/E、retrospective §1、11111#3、session §12|JSON 仍是唯一权威；task.py 仍是唯一写者|**P0**：状态写 per-task front matter，index 改 derived；见 §3.1|
+|L2|审阅 finding 无界 / 信噪比低|session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3|share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控|**P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2|
+|L3|reviewer 缺决策上下文 → 撤回率堆积|session §1b、feedback 再评估节|render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt|**P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无"|
+|L4|branch ≠ worktree，未提交丢失|record、retrospective §1、session §11|tasks-run 未强制 worktree；tasks-parallel 仅提示|**P0**：tasks-run Step 1 加工作区门禁；见 §3.3|
+|L5|审阅对所有 task 无差别（文档/格式也审阅）|feedback §3/C、retrospective §2、retrospective_0 痛点 3|仍固定审阅|**P1**：`review_level: full\|single\|none` 进 spec front matter|
+|L6|plan.md 实际弃用 / 退化为 spec 副本|feedback §1+A、retrospective §4、session §1b|模板仍是「步骤+风险+blueprint」，未按读者切|**P1**：按读者重划——spec 吸收契约区+上下文区；plan 降为可选实施笔记；见 §3.4|
+|L7|spec 写死技术选型 → 过时 → FAIL 循环|retrospective_0 痛点 1、feedback §1|spec 模板已约束"不写版本号/库/目录"；code_prompt 技术约束不判 blocking|**已吸收**；补一条：发现 spec 技术字段漂移时改 spec 不计 FAIL|
+|L8|max_review_round 不够 / 语义模糊|retrospective §3、retrospective_0 痛点 5、session §1|默认已抬到 4；round 语义仍混（出场次数 vs 闭环次数）|**P1**：round 定义为"同一批 finding 的回归轮次"；新 finding 不强制 N+1|
+|L9|横向缺口只标遗留、不开 task|retrospective_0 根因节、feedback、session §13、11111#1|review 输出"系统性 follow-up"；task-debt skill 已有|**已吸收**；强化：遗留 finding 必须映射到 tid，禁止悬空|
+|L10|AC 三处维护（spec / task.md 勾选 / 处置表）|retrospective_0 痛点 7|task_template 已约束"引用不复制"|**已吸收**|
+|L11|TDD 顺序违规（改测试适配实现）|session §3|test_prompt 有红灯归因，**无"旧绿测只删不改预期"硬句**|**P1**：加硬句；见 §3.5|
+|L12|blocked 原因表只覆盖 blackbox/review|session §4|blocked 表无 infra 路径|**P1**：加 `--reason infra`|
+|L13|spec 脑补外部契约|session §5|spec 模板无「未知契约清单」|**P1**：spec 增必填项；见 §3.4|
+|L14|commit 粒度"一 task 一 commit"与实战脱节|feedback B、retrospective §7|仍写"执行期一个 task 一个 commit"|**待裁决**；见 §3.6|
+|L15|bug 调研后不开 task、只口头|session §6|无硬约束|**P2**：CLAUDE.md 加"只读调研完必须追加 bugs.md + 提议 task"|
+|L16|任务建完又删|session §7|无 add 后确认门|**P2**：`task.py add` 后列影响文件，等确认才进 Step 1|
 
 共 16 条。**已吸收 3 条**（L7/L9/L10），**P0 共 4 条**（L1-L4），**P1 共 7 条**，**P2 共 2 条**，**待裁决 1 条**。这就是四份复盘 1200+ 行换来的全部共识，可以收敛。
 
@@ -179,9 +179,9 @@ grok 建议 `README.md`，k3 建议 `decision_log.md` / `index.md`。两者目�
 两者都需要，不冲突。decision_log 的最小格式：
 
 ```markdown
-| 议题 | 出处 | 方案 | 当前裁决 | 裁决依据 |
-|---|---|---|---|---|
-| tasks_index 冲突 | feedback §4/E, retro §1, 11111#3, session §12 | main-only / front matter derived / 不切分支 / 统一服务 | front matter + derived index（本审阅 §3.1） | 消除多分支写冲突；唯一写权保留 |
+|议题|出处|方案|当前裁决|裁决依据|
+|------|------|------|------|------|
+|tasks_index 冲突|feedback §4/E, retro §1, 11111#3, session §12|main-only / front matter derived / 不切分支 / 统一服务|front matter + derived index（本审阅 §3.1）|消除多分支写冲突；唯一写权保留|
 ```
 
 本审阅 §1 的总账就是这个 decision_log 的第一版。直接用它启动，不必再写第五份。

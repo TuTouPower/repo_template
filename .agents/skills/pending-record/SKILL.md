@@ -16,10 +16,10 @@ disable-model-invocation: true
 
 主会话维护两张表（内存即可，不必落盘）：
 
-| 表 | 内容 |
-|----|------|
-| **in-flight** | 已派未终态的 worker：`worker_id`、类型（entry/bug/update/park）、主题摘要、拟 slug、确认要点 |
-| **session ledger** | 已终态项：`pNNN`、路径、动作（新建/更新/复用未改/park/失败）、worker 结论摘要 |
+|表|内容|
+|------|------|
+|**in-flight**|已派未终态的 worker：`worker_id`、类型（entry/bug/update/park）、主题摘要、拟 slug、确认要点|
+|**session ledger**|已终态项：`pNNN`、路径、动作（新建/更新/复用未改/park/失败）、worker 结论摘要|
 
 规则：
 
@@ -35,11 +35,11 @@ disable-model-invocation: true
 
 先判定类型；说不清就问一句，不默认：
 
-| 类型 | 判定 | 落盘 |
+|类型|判定|落盘|
 |------|------|------|
-| **bug** | 已有行为与期望不符 / 回归 / 假绿 | 子代理走 `task-bug` 第 1–6 步后 `--kind bug` 登记；用户同时明确「现在不办」→ 登记后再 `park`（须理由） |
-| **普通** | 新功能、遗留、技术债、该做未做 | 子代理 `pending.py new`（默认 entry）填字段 |
-| **不办/暂搁** | 用户明确现在不办（含 bug 暂搁） | 先按上表完成登记（或复用已有 `pNNN`），再 `pending.py park {pNNN} --reason "..." --write` |
+|**bug**|已有行为与期望不符 / 回归 / 假绿|子代理走 `task-bug` 第 1–6 步后 `--kind bug` 登记；用户同时明确「现在不办」→ 登记后再 `park`（须理由）|
+|**普通**|新功能、遗留、技术债、该做未做|子代理 `pending.py new`（默认 entry）填字段|
+|**不办/暂搁**|用户明确现在不办（含 bug 暂搁）|先按上表完成登记（或复用已有 `pNNN`），再 `pending.py park {pNNN} --reason "..." --write`|
 
 已验证技术事实不进 pending，走 `findings.py`（本 skill 不登记 findings，除非用户明确要求另开）。
 

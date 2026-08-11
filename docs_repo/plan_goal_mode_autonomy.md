@@ -12,16 +12,16 @@
 
 ## 设计总览
 
-| # | 机制 | 落点 | 来源 |
-|---|------|------|------|
-| A1 | `task.py goal`：冻结队列快照 + 打印 ready-to-paste `/goal` 行（含机器终态判定） | `repo_task/goal.py` | supergoal Stage 7 |
-| A2 | `task.py goal-check`：只读判定器，ledger + worktree 登记为权威，输出 marker | `repo_task/goal.py` | supergoal transcript marker 的机器化替代 |
-| A3 | task-run skill「goal 模式」节 | `.agents/skills/task-run/SKILL.md` | — |
-| B | baseline 健康预检：跑 `{doctor_cmd}`，红则标阻塞 | task-preflight skill | supergoal Stage 6.5 |
-| C | `repo_state.py`：baseline→完整工作树取数（added-lines / deliverable / changed-files）；task-work Step 7 清洁度 grep | `scripts/repo_template/repo_state.py` | supergoal repo-state.sh |
-| D | 聚焦修复轮：verify/review 达 max-1 轮时先写聚焦修复计划再执行最后一轮 | task-work skill | supergoal fix-spec |
-| E | task-create 落盘自检三问：AC 可证伪 / task 原子性 / 最弱依赖 | task-create skill | supergoal Stage 6a |
-| F | review 报告 AC 复验披露：`re_verified` / `trust_prior` 分类 + 覆盖率行 + >30% 人工抽查提示 | `docs/reviews/prompts/share_prompt.txt` | supergoal audit coverage |
+|#|机制|落点|来源|
+|------|------|------|------|
+|A1|`task.py goal`：冻结队列快照 + 打印 ready-to-paste `/goal` 行（含机器终态判定）|`repo_task/goal.py`|supergoal Stage 7|
+|A2|`task.py goal-check`：只读判定器，ledger + worktree 登记为权威，输出 marker|`repo_task/goal.py`|supergoal transcript marker 的机器化替代|
+|A3|task-run skill「goal 模式」节|`.agents/skills/task-run/SKILL.md`|—|
+|B|baseline 健康预检：跑 `{doctor_cmd}`，红则标阻塞|task-preflight skill|supergoal Stage 6.5|
+|C|`repo_state.py`：baseline→完整工作树取数（added-lines / deliverable / changed-files）；task-work Step 7 清洁度 grep|`scripts/repo_template/repo_state.py`|supergoal repo-state.sh|
+|D|聚焦修复轮：verify/review 达 max-1 轮时先写聚焦修复计划再执行最后一轮|task-work skill|supergoal fix-spec|
+|E|task-create 落盘自检三问：AC 可证伪 / task 原子性 / 最弱依赖|task-create skill|supergoal Stage 6a|
+|F|review 报告 AC 复验披露：`re_verified` / `trust_prior` 分类 + 覆盖率行 + >30% 人工抽查提示|`docs/reviews/prompts/share_prompt.txt`|supergoal audit coverage|
 
 ## A. goal 模式控制面
 
@@ -39,16 +39,16 @@
 
 只读、幂等。逐 tid 判定（权威 = ledger 投影 + worktree 登记，不看 transcript）：
 
-| 状态 | 判据 |
+|状态|判据|
 |------|------|
-| `integrated` | 主干已 done 或 attempt state=integrated |
-| `closed` | terminal completed + report done + `verify_integrate_ready` ready + worktree 未登记（exact cleanup 完成） |
-| `cleanup_pending` | 业务闭环但 worktree 仍登记 |
-| `running` | current attempt state=running |
-| `pending` | ledger 无记录 |
-| `blocked` | report status=blocked |
-| `failed` | terminal failed/stopped 或 report failed |
-| `dropped` | 主干已 dropped（快照过期，需重新 `task.py goal`） |
+|`integrated`|主干已 done 或 attempt state=integrated|
+|`closed`|terminal completed + report done + `verify_integrate_ready` ready + worktree 未登记（exact cleanup 完成）|
+|`cleanup_pending`|业务闭环但 worktree 仍登记|
+|`running`|current attempt state=running|
+|`pending`|ledger 无记录|
+|`blocked`|report status=blocked|
+|`failed`|terminal failed/stopped 或 report failed|
+|`dropped`|主干已 dropped（快照过期，需重新 `task.py goal`）|
 
 总结 marker 与退出码：
 

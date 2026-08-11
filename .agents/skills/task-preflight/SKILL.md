@@ -10,12 +10,12 @@ disable-model-invocation: true
 
 ## 输入
 
-| 用户输入 | 检查范围 |
-|----------|----------|
-| 无参数 | `backlog` ∪ `active` ∪ `blocked` 全部 |
-| 状态词（`backlog` / `active` / `blocked`，可组合） | 这些状态的全部 task |
-| tid（`tNNN`，可多个） | 这些 tid 中状态属于上述三态的；非待做记「跳过」 |
-| 状态词 + tid | 两者并集 |
+|用户输入|检查范围|
+|------|------|
+|无参数|`backlog` ∪ `active` ∪ `blocked` 全部|
+|状态词（`backlog` / `active` / `blocked`，可组合）|这些状态的全部 task|
+|tid（`tNNN`，可多个）|这些 tid 中状态属于上述三态的；非待做记「跳过」|
+|状态词 + tid|两者并集|
 
 `done` / `dropped` 永不在范围。
 
@@ -38,12 +38,12 @@ disable-model-invocation: true
 
 2. **跑机器门禁**（每个 task 各一次，只读，按有效状态与来源选择位置）：
 
-   | 有效状态 / 来源 | 命令 |
-   |-----------------|------|
-   | 主干中尚未启动的 `backlog` | `scripts/repo_template/task.py preflight {tid} --allow-backlog` |
-   | 未合并分支中的 `backlog` | `scripts/repo_template/task.py preflight {tid} --allow-backlog --ref {branch}` |
-   | 登记 worktree 中的 `active` | 在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}` |
-   | 登记 worktree 中的 `blocked` | 在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}`，保留 blocked FAIL |
+|有效状态 / 来源|命令|
+|------|------|
+|主干中尚未启动的 `backlog`|`scripts/repo_template/task.py preflight {tid} --allow-backlog`|
+|未合并分支中的 `backlog`|`scripts/repo_template/task.py preflight {tid} --allow-backlog --ref {branch}`|
+|登记 worktree 中的 `active`|在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}`|
+|登记 worktree 中的 `blocked`|在该 worktree 执行 `scripts/repo_template/task.py preflight {tid}`，保留 blocked FAIL|
 
    `--ref` 只检查快照状态、spec 与 front matter，不检查 worktree 和当前脏改动；输出该警告属预期，不算用户缺口。机器门禁检查状态、spec 完整、工作区一致性与未知契约分类。`UNVERIFIED-BLOCKING`、裸 `UNVERIFIED` 和其它 FAIL 项直接进输出表，标「阻塞」；`UNVERIFIED-SPIKE` 只警告，属于执行期 Step 1 工作。
 
@@ -58,13 +58,13 @@ disable-model-invocation: true
 
    只记**必须用户提供、agent 不能编造**的缺口：
 
-   | 类型 | 举例 |
+|类型|举例|
    |------|------|
-   | 密钥 | API token、DB 密码 |
-   | 环境 | 需启动的服务、端口、平台限制 |
-   | 账号权限 | 云控制台、第三方组织 |
-   | 产品决策 | 方案 A/B、范围取舍、blocked 后加轮或 drop |
-   | 外部数据 | 样例文件、回调 URL |
+|密钥|API token、DB 密码|
+|环境|需启动的服务、端口、平台限制|
+|账号权限|云控制台、第三方组织|
+|产品决策|方案 A/B、范围取舍、blocked 后加轮或 drop|
+|外部数据|样例文件、回调 URL|
 
    不算缺口：读代码/文档能搞定的；agent 可装可查且不违硬约束的。
 
@@ -77,10 +77,10 @@ disable-model-invocation: true
 
    范围：<实际查了什么>
 
-   | tid | 标题 | 有效状态 | 来源 | preflight | 缺口 | 阻塞? | 请用户做什么 |
-   |-----|------|----------|------|-----------|------|-------|--------------|
-   | t002 | … | active | worktree `../repo_t002` | PASS | 缺 OPENAI_API_KEY | 是 | 写入本地 .env（勿提交） |
-   | t003 | … | backlog | ref `t002_xxx` | FAIL：spec 缺契约区 | 无 | 是 | 补全 spec 契约区 |
+|tid|标题|有效状态|来源|preflight|缺口|阻塞?|请用户做什么|
+|------|------|------|------|------|------|------|------|
+|t002|…|active|worktree `../repo_t002`|PASS|缺 OPENAI_API_KEY|是|写入本地 .env（勿提交）|
+|t003|…|backlog|ref `t002_xxx`|FAIL：spec 缺契约区|无|是|补全 spec 契约区|
 
    跳过：
    - t009：status=done，非待做

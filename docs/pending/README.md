@@ -6,11 +6,11 @@
 
 一条目一文件，文件名 `pNNN_{slug}.md`；三态由所在目录表达：
 
-| 目录 | 语义 |
+|目录|语义|
 |------|------|
-| `docs/pending/todo/` | 未闭环、待启动 |
-| `docs/pending/parked/` | 用户显式确认暂搁（不办）；不等于闭环 |
-| `docs/archive/pending/` | 已闭环 |
+|`docs/pending/todo/`|未闭环、待启动|
+|`docs/pending/parked/`|用户显式确认暂搁（不办）；不等于闭环|
+|`docs/archive/pending/`|已闭环|
 
 `pNNN` 全局递增，跨三个目录共享一条序列，历史编号不复用。已验证的技术发现不属于待办，写 `docs/findings/`。
 

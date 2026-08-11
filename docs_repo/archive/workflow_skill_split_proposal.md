@@ -211,32 +211,32 @@ skill 内的循环必须以文件和命令结果为依据：
 
 ## 权威来源划分
 
-| 内容 | 权威位置 |
-| --- | --- |
-| 目录用途和写入责任 | `AGENTS.md` |
-| task 状态和门禁语义 | `AGENTS.md` |
-| hard constraints 和安全规则 | `AGENTS.md` |
-| task 文档字段格式 | `docs/blueprint/conventions.md` |
-| 创建 task 的操作顺序 | `/task_create` |
-| 执行和恢复 task 的操作顺序 | `/task_run` |
-| task 索引实际状态 | `scripts/task.py` 管理的 JSON |
-| review 实际结论 | `review_code.md` / `review_test.md` |
-| task 过程和处置 | `task.md` |
+|内容|权威位置|
+|------|------|
+|目录用途和写入责任|`AGENTS.md`|
+|task 状态和门禁语义|`AGENTS.md`|
+|hard constraints 和安全规则|`AGENTS.md`|
+|task 文档字段格式|`docs/blueprint/conventions.md`|
+|创建 task 的操作顺序|`/task_create`|
+|执行和恢复 task 的操作顺序|`/task_run`|
+|task 索引实际状态|`scripts/task.py` 管理的 JSON|
+|review 实际结论|`review_code.md` / `review_test.md`|
+|task 过程和处置|`task.md`|
 
 同一规则只在一个权威位置完整定义。其他位置引用稳定标题，不复制正文。
 
 ## 与当前方案对比
 
-| 维度 | 当前全部写在 `AGENTS.md` | 拆分后的混合方案 |
-| --- | --- | --- |
-| 初始上下文 | 每次加载完整操作流程 | 始终加载核心规则，按需加载操作步骤 |
-| 全局状态机 | 集中完整 | 继续集中在 `AGENTS.md` |
-| 操作入口 | 需要从长文判断 | `/task_create`、`/task_run` 明确 |
-| 创建与执行边界 | 位于同一长流程 | 两个 skill 各自负责 |
-| 中途恢复 | 依赖 agent 从全文判断 | `/task_run` 明确定义状态恢复 |
-| 维护风险 | 单文件较长 | 多文件可能漂移，需要权威边界 |
-| 自动执行能力 | 无程序级保证 | skill 同样无程序级保证 |
-| 强制力 | 上下文规则 | 上下文规则；关键限制仍靠脚本或 hook |
+|维度|当前全部写在 `AGENTS.md`|拆分后的混合方案|
+|------|------|------|
+|初始上下文|每次加载完整操作流程|始终加载核心规则，按需加载操作步骤|
+|全局状态机|集中完整|继续集中在 `AGENTS.md`|
+|操作入口|需要从长文判断|`/task_create`、`/task_run` 明确|
+|创建与执行边界|位于同一长流程|两个 skill 各自负责|
+|中途恢复|依赖 agent 从全文判断|`/task_run` 明确定义状态恢复|
+|维护风险|单文件较长|多文件可能漂移，需要权威边界|
+|自动执行能力|无程序级保证|skill 同样无程序级保证|
+|强制力|上下文规则|上下文规则；关键限制仍靠脚本或 hook|
 
 ## 预期收益
 

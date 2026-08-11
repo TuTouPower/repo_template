@@ -14,12 +14,12 @@
 
 ## 范围
 
-| 做 | 不做 |
-|----|------|
-| front matter 增加调度字段 | 修改 `tasks-run` 或 `task.py start` |
-| `tasks-parallel` 改名 `/tasks-schedule`，分析并落盘调度图 | 新增执行层 skill |
-| `task.py next-batch` 纯脚本命令 | 自动启动 Agent、worktree、分支或合并 |
-| 调度数据的 edit、rewind、merge、drop 生命周期 | batch 身份、priority 字段、第三张图 |
+|做|不做|
+|------|------|
+|front matter 增加调度字段|修改 `tasks-run` 或 `task.py start`|
+|`tasks-parallel` 改名 `/tasks-schedule`，分析并落盘调度图|新增执行层 skill|
+|`task.py next-batch` 纯脚本命令|自动启动 Agent、worktree、分支或合并|
+|调度数据的 edit、rewind、merge、drop 生命周期|batch 身份、priority 字段、第三张图|
 
 ## 调度模型
 
@@ -51,13 +51,13 @@ schedule_status: "scheduled"
 
 字段定义：
 
-| 字段 | 值 | 语义 |
-|------|----|------|
-| `depends_on` | 逗号分隔 `tNNN`，空字符串表示无依赖 | 依赖 DAG 入边 |
-| `conflicts_with` | 逗号分隔 `tNNN`，空字符串表示无冲突 | 无向互斥边 |
-| `schedule_status` | `scheduled` | 已完成调度分析；即使两张边表都为空，也可进入算法 |
-| `schedule_status` | `pending_clarification` | spec 改动面或依赖无法确认，不得进入批次 |
-| `schedule_status` | 缺失/空 | 未调度（通常是新建 task），不得进入批次 |
+|字段|值|语义|
+|------|------|------|
+|`depends_on`|逗号分隔 `tNNN`，空字符串表示无依赖|依赖 DAG 入边|
+|`conflicts_with`|逗号分隔 `tNNN`，空字符串表示无冲突|无向互斥边|
+|`schedule_status`|`scheduled`|已完成调度分析；即使两张边表都为空，也可进入算法|
+|`schedule_status`|`pending_clarification`|spec 改动面或依赖无法确认，不得进入批次|
+|`schedule_status`|缺失/空|未调度（通常是新建 task），不得进入批次|
 
 不另建调度文件。调度元数据随 task 状态和归档移动，避免第二状态源及 hash 漂移。
 
@@ -137,14 +137,14 @@ alias 属用户环境配置，不进仓库。Claude Code 不支持固定逻辑�
 
 示例：
 
-| 输入 | 规范化结果 |
-|------|------------|
-| `t11` / `T11` | `t011` |
-| `13` | `t013` |
-| `t0015` | `t015` |
-| `T14` | `t014` |
-| `T00025` | `t025` |
-| `t1000` | 若仓库存在则为 `t1000` |
+|输入|规范化结果|
+|------|------|
+|`t11` / `T11`|`t011`|
+|`13`|`t013`|
+|`t0015`|`t015`|
+|`T14`|`t014`|
+|`T00025`|`t025`|
+|`t1000`|若仓库存在则为 `t1000`|
 
 非数字、数值 0、无对应 task 或数值匹配不唯一时，报错并列出原始输入，不猜测。
 
@@ -194,19 +194,19 @@ next-batch=FAIL：invalid_graph: depends_on cycle t003 -> t005 -> t003
 
 ### 依赖字段
 
-| 参数 | 语义 |
+|参数|语义|
 |------|------|
-| `--depends-on t001,t003` | 整体覆盖；`""` 清空 |
-| `--depends-append t004` | 追加单值，幂等去重 |
-| `--depends-remove t001` | 移除单值；不存在时报错 |
+|`--depends-on t001,t003`|整体覆盖；`""` 清空|
+|`--depends-append t004`|追加单值，幂等去重|
+|`--depends-remove t001`|移除单值；不存在时报错|
 
 ### 冲突字段
 
-| 参数 | 语义 |
+|参数|语义|
 |------|------|
-| `--conflicts-with t006,t008` | 整体覆盖；`""` 清空 |
-| `--conflicts-append t009` | 追加单值，幂等去重 |
-| `--conflicts-remove t006` | 移除单值；不存在时报错 |
+|`--conflicts-with t006,t008`|整体覆盖；`""` 清空|
+|`--conflicts-append t009`|追加单值，幂等去重|
+|`--conflicts-remove t006`|移除单值；不存在时报错|
 
 冲突字段由脚本维护对称性：覆盖、追加、移除时同步更新受影响 backlog task 的反向边。被引用 task 不是可编辑 backlog 时拒绝操作并列出原因。读取侧仍按无向图归一化，兼容历史单向数据。
 
@@ -221,13 +221,13 @@ python3 scripts/task.py edit t005 --schedule-status pending_clarification
 
 ## 调度数据生命周期
 
-| 操作 | 处理 |
+|操作|处理|
 |------|------|
-| add | 新 task 无 `schedule_status`，由 `next-batch` 列为 unscheduled |
-| rewind 到 backlog | 自动置 `pending_clarification`，保留旧边供重新分析参考，但不参与批次 |
-| tasks-merge | 不猜测合并后的图；目标 task 和所有引用源 tid 的 backlog task 置 `pending_clarification`，重跑 `/tasks-schedule` |
-| drop | 若任何 task 的依赖/冲突字段引用目标 tid，列出引用并拒绝静默 drop；清理或重算引用后再执行 |
-| finish/archive | 调度字段随 task 目录归档，供依赖校验和审计 |
+|add|新 task 无 `schedule_status`，由 `next-batch` 列为 unscheduled|
+|rewind 到 backlog|自动置 `pending_clarification`，保留旧边供重新分析参考，但不参与批次|
+|tasks-merge|不猜测合并后的图；目标 task 和所有引用源 tid 的 backlog task 置 `pending_clarification`，重跑 `/tasks-schedule`|
+|drop|若任何 task 的依赖/冲突字段引用目标 tid，列出引用并拒绝静默 drop；清理或重算引用后再执行|
+|finish/archive|调度字段随 task 目录归档，供依赖校验和审计|
 
 ## 批次消费边界
 
@@ -248,16 +248,16 @@ tasks-run t006
 
 ## 改动面
 
-| 文件 | 改动 |
+|文件|改动|
 |------|------|
-| `scripts/task.py` | 新增三个 front matter key、列表 edit 参数、冲突边对称维护、调度数据生命周期、状态基线共用函数、`next-batch` 子命令与宽松 `--done` 解析 |
-| `docs/tasks/task_template/task.md` | 增加空 `depends_on` / `conflicts_with`；不预填 `schedule_status` |
-| `.agents/skills/tasks-parallel/` | 改名 `tasks-schedule`，只经 `task.py edit` 写图并调用 `next-batch` |
-| `.agents/skills/tasks-merge/SKILL.md` | 合并 task 后标记受影响调度数据待澄清 |
-| `.claude/skills/` | 删除 `tasks-parallel` 软链，新增 `tasks-schedule` 软链 |
-| `AGENTS.md` / `CLAUDE.md` | 更新 skill 路由和 `task.py` 使用示例；`tasks-run` 规则不改 |
-| `docs_repo/decision_log.md` | 修正 L21 与代码不一致的「已落地」状态，记录本方案待实施范围 |
-| `docs/tasks_index.json` / `docs/archive/tasks_index.json` | 重建后增加调度字段（派生、向后兼容，不手改） |
+|`scripts/task.py`|新增三个 front matter key、列表 edit 参数、冲突边对称维护、调度数据生命周期、状态基线共用函数、`next-batch` 子命令与宽松 `--done` 解析|
+|`docs/tasks/task_template/task.md`|增加空 `depends_on` / `conflicts_with`；不预填 `schedule_status`|
+|`.agents/skills/tasks-parallel/`|改名 `tasks-schedule`，只经 `task.py edit` 写图并调用 `next-batch`|
+|`.agents/skills/tasks-merge/SKILL.md`|合并 task 后标记受影响调度数据待澄清|
+|`.claude/skills/`|删除 `tasks-parallel` 软链，新增 `tasks-schedule` 软链|
+|`AGENTS.md` / `CLAUDE.md`|更新 skill 路由和 `task.py` 使用示例；`tasks-run` 规则不改|
+|`docs_repo/decision_log.md`|修正 L21 与代码不一致的「已落地」状态，记录本方案待实施范围|
+|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|重建后增加调度字段（派生、向后兼容，不手改）|
 
 ## 验证
 

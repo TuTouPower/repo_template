@@ -19,13 +19,13 @@
 
 按消费方决定落点，`schemas/` 只放跨服务契约。
 
-| 类型 | 例子 | 落点 |
-| ---- | ---- | ---- |
-| 跨服务接口契约 | OpenAPI、gRPC `.proto`、GraphQL `.graphql`、AsyncAPI | `schemas/`，按协议分子目录：`schemas/openapi/`、`schemas/proto/`、`schemas/graphql/`；单一协议直接扁平 |
-| 代码内数据契约 | Pydantic model、TS interface、Zod schema、Go struct tag | 跟模块走：`src/<module>/schemas/` 或语言惯例位置（`src/types/`、`src/models/`） |
-| 数据库 schema | Alembic、Prisma schema、SQL migration、Django migration | 工具默认：`migrations/` / `prisma/` / `alembic/`，不另立目录 |
-| 配置 schema | JSON Schema 校验 config、CI workflow schema、env schema | 跟配置走：`config/schemas/`，或跟消费方 |
-| 文档/元数据 schema | frontmatter、Cosmjs、yaml metadata 校验 | `docs/schemas/`，或跟文档源 |
+|类型|例子|落点|
+|------|------|------|
+|跨服务接口契约|OpenAPI、gRPC `.proto`、GraphQL `.graphql`、AsyncAPI|`schemas/`，按协议分子目录：`schemas/openapi/`、`schemas/proto/`、`schemas/graphql/`；单一协议直接扁平|
+|代码内数据契约|Pydantic model、TS interface、Zod schema、Go struct tag|跟模块走：`src/<module>/schemas/` 或语言惯例位置（`src/types/`、`src/models/`）|
+|数据库 schema|Alembic、Prisma schema、SQL migration、Django migration|工具默认：`migrations/` / `prisma/` / `alembic/`，不另立目录|
+|配置 schema|JSON Schema 校验 config、CI workflow schema、env schema|跟配置走：`config/schemas/`，或跟消费方|
+|文档/元数据 schema|frontmatter、Cosmjs、yaml metadata 校验|`docs/schemas/`，或跟文档源|
 
 原则：
 

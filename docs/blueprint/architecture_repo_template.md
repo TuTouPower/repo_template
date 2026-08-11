@@ -34,10 +34,10 @@ task 工具链的执行拓扑、attempt 生命周期与合并授权。项目自�
 
 task 图的两类边各司其职，不可混用：
 
-| 边 | 表达 | 不表达 |
-|----|------|--------|
-| `depends_on` | 必须先后（结果/接口/产物依赖） | 改动面相交 |
-| `conflicts_with` | 不能并发（改动面相交） | 已由依赖保证的先后 |
+|边|表达|不表达|
+|------|------|------|
+|`depends_on`|必须先后（结果/接口/产物依赖）|改动面相交|
+|`conflicts_with`|不能并发（改动面相交）|已由依赖保证的先后|
 
 不变式：有（传递）依赖关系的 task 对禁止声明冲突边——依赖已蕴含串行，冲突边冗余；`task.py edit` 在依赖/冲突变更时强制校验，冲突边两端存在任一方向的传递依赖路径即拒。
 
@@ -53,10 +53,10 @@ task 图的两类边各司其职，不可混用：
 
 同一会话内按阶段区分写域，两阶段写域互不重叠：
 
-| 阶段 | 唯一写域 | 职责 | skill |
-|------|---------|------|-------|
-| 实施 | 当前 task worktree | 接收必填 `attempt` / `execution_id`，实施、测试、黑盒、review、finish、一个执行 commit；只写精确 identity 的 `handoff.json` 并交出 `{tid}: {branch} @ {sha}` | `task-work` |
-| 调度合并 | 主仓 | `start`；reserve attempt；写 exact terminal/report；以 exact identity cleanup；单 task `integrate` 或链式 `integrate-chain`；派生 index、分支清理、合并后验证 | `task-run` / `task-integrate` |
+|阶段|唯一写域|职责|skill|
+|------|------|------|------|
+|实施|当前 task worktree|接收必填 `attempt` / `execution_id`，实施、测试、黑盒、review、finish、一个执行 commit；只写精确 identity 的 `handoff.json` 并交出 `{tid}: {branch} @ {sha}`|`task-work`|
+|调度合并|主仓|`start`；reserve attempt；写 exact terminal/report；以 exact identity cleanup；单 task `integrate` 或链式 `integrate-chain`；派生 index、分支清理、合并后验证|`task-run` / `task-integrate`|
 
 实施阶段不合并任何分支、不重建 index、不 push、不删分支、不清理 worktree、不询问是否合并主干，也不写 attempt 控制面；唯一交接写入是本 task 分支中的 `handoff.json`。`task-run` 在同一会话依次走完调度合并与实施两个阶段——调度阶段调控制面命令，实施阶段进 worktree 调 `task-work`。多会话手动并发时，每个会话在自己的 worktree 内完整跑链，会话间不互斥——合并撞车由 git 报错、人来收场，index 是派生缓存、撞了重建。
 

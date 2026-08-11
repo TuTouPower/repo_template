@@ -10,10 +10,10 @@ disable-model-invocation: true
 
 ## 输入
 
-| 用户输入 | 分析范围 |
-|----------|----------|
-| 无参数 | 全部有效 `backlog` task |
-| 一个或多个规范 `tNNN` | 重算指定 task；判冲突时仍比较全部已调度 backlog 与进行中 task |
+|用户输入|分析范围|
+|------|------|
+|无参数|全部有效 `backlog` task|
+|一个或多个规范 `tNNN`|重算指定 task；判冲突时仍比较全部已调度 backlog 与进行中 task|
 
 仅接受仓库规范 tid。
 
@@ -42,11 +42,11 @@ disable-model-invocation: true
 
 3. **推导改动面与依赖**。读取每个候选 `spec.md`：契约区的范围/非范围，上下文区的依赖与约束、blueprint 更新点。推导：
 
-   | 维度 | 内容 |
+|维度|内容|
    |------|------|
-   | 代码路径 | 预计新增/修改的 `src/` `tests/` `scripts/` 文件或目录 |
-   | 共享契约 | `schemas/`、schema/codegen 输入、`config/`、blueprint 与共享文档条目 |
-   | 硬前置 | spec 明示依赖的 task；写入 `depends_on` |
+|代码路径|预计新增/修改的 `src/` `tests/` `scripts/` 文件或目录|
+|共享契约|`schemas/`、schema/codegen 输入、`config/`、blueprint 与共享文档条目|
+|硬前置|spec 明示依赖的 task；写入 `depends_on`|
 
    spec 太粗、存在多种合理解释或依赖无法确认时，不猜测，标记 `pending_clarification`。
 

@@ -14,11 +14,11 @@
 
 对方机制分三层，强度递减。本文第一版曾统一写成「运行时硬门禁」，高估了其自动化与防绕过程度：
 
-| 层 | 内容 | 强度 |
-|----|------|------|
-| A. 编译期硬校验 | `compileBundle` 系列：批准 hash、parallel_conflict、validator 白名单、覆盖闭合、档位约束 | 端到端强制，计划不过编译即拒绝 |
-| B. 状态机库函数 | `activateNode` / `assertNodeSubmission` / `assertNodeTransition` / `staleDescendants` / `invalidateArtifactDescendants` / `markReadyNodes` / `approvalMatches` 等 | 有完整测试，但**无生产调用方、未接入 CLI**；全仓唯一生产导入者 graphctl.mjs 只用 `compileBundle` / `loadBundle` / `validateRuntimeRegistries` |
-| C. 规程约定 | Node test/lint 提交门、实际调度与状态迁移、stale 传播执行、重试不覆盖历史、能力探测与串行降级 | SKILL.md / references/*.md 要求 Agent 自觉遵守，代码无强制点 |
+|层|内容|强度|
+|------|------|------|
+|A. 编译期硬校验|`compileBundle` 系列：批准 hash、parallel_conflict、validator 白名单、覆盖闭合、档位约束|端到端强制，计划不过编译即拒绝|
+|B. 状态机库函数|`activateNode` / `assertNodeSubmission` / `assertNodeTransition` / `staleDescendants` / `invalidateArtifactDescendants` / `markReadyNodes` / `approvalMatches` 等|有完整测试，但**无生产调用方、未接入 CLI**；全仓唯一生产导入者 graphctl.mjs 只用 `compileBundle` / `loadBundle` / `validateRuntimeRegistries`|
+|C. 规程约定|Node test/lint 提交门、实际调度与状态迁移、stale 传播执行、重试不覆盖历史、能力探测与串行降级|SKILL.md / references/*.md 要求 Agent 自觉遵守，代码无强制点|
 
 CLI 唯一入口 `graphctl.mjs:12-18` 明文声明只读（"The tool is read-only. It never starts workers or changes plan state"），仅暴露 `validate` / `summary` / `hash` / `check-state` 四个子命令。
 

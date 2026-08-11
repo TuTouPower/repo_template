@@ -8,16 +8,16 @@
 
 ## 文件概览
 
-| 文件 | 来源 | 核心贡献 |
-|---|---|---|
-| `11111.md` | 随笔 | 并发 task 索引冲突的初步观察 |
-| `workflow_feedback.md` | omni_media 理论分析 | spec/plan 边界、审阅分级、索引简化 |
-| `workflow_record.md` | t071 事故复盘 | branch ≠ worktree 的血泪教训 |
-| `workflow_retrospective_0.md` | t001-t007 复盘 | 7 条痛点 + 横向缺口根因 |
-| `workflow_retrospective.md` | t041-t061 复盘 | merge 冲突灾难、plan 弃用、手写脚本破坏 |
-| `workflow_session_analysis_2026-07.md` | omni_usage 实证 | 审阅信噪比、context 溢出、TDD 违规 |
-| `archive/workflow_skill_split_proposal.md` | 方案设计 | AGENTS.md + skill 拆分的完整提案 |
-| `review/gemini.md` | Gemini 审阅 | 总结 + 补充建议 |
+|文件|来源|核心贡献|
+|------|------|------|
+|`11111.md`|随笔|并发 task 索引冲突的初步观察|
+|`workflow_feedback.md`|omni_media 理论分析|spec/plan 边界、审阅分级、索引简化|
+|`workflow_record.md`|t071 事故复盘|branch ≠ worktree 的血泪教训|
+|`workflow_retrospective_0.md`|t001-t007 复盘|7 条痛点 + 横向缺口根因|
+|`workflow_retrospective.md`|t041-t061 复盘|merge 冲突灾难、plan 弃用、手写脚本破坏|
+|`workflow_session_analysis_2026-07.md`|omni_usage 实证|审阅信噪比、context 溢出、TDD 违规|
+|`archive/workflow_skill_split_proposal.md`|方案设计|AGENTS.md + skill 拆分的完整提案|
+|`review/gemini.md`|Gemini 审阅|总结 + 补充建议|
 
 ---
 
@@ -91,24 +91,24 @@
 
 以下发现值得固化进项目规则：
 
-| 发现 | 来源 | 价值 |
-|---|---|---|
-| spec 不写技术选型（版本号/库/目录），只写行为 AC | retrospective_0 §1 | 消除 spec 过时循环 |
-| 横向系统性缺口立即开 task 根治，不在业务 task 打补丁 | retrospective_0 §根因 | 消除 ~60% 噪音 turn |
-| branch ≠ worktree，多分支并行需 worktree 隔离 | record 全文 | 防止代码丢失 |
-| tasks_index.json 是 merge 冲突灾难源 | retrospective §1 | 驱动 derived data 方案 |
-| 审阅 finding 必须锚 AC，禁止无界审查 | session_analysis §1 | 首轮 PASS 率从 30% 提升 |
-| `/goal` hook 串行多 task 导致 context 溢出 | session_analysis §2 | 单会话 task 数硬上限 |
-| TDD 顺序违规：改测试适配实现 | session_analysis §3 | 测试纪律硬约束 |
+|发现|来源|价值|
+|------|------|------|
+|spec 不写技术选型（版本号/库/目录），只写行为 AC|retrospective_0 §1|消除 spec 过时循环|
+|横向系统性缺口立即开 task 根治，不在业务 task 打补丁|retrospective_0 §根因|消除 ~60% 噪音 turn|
+|branch ≠ worktree，多分支并行需 worktree 隔离|record 全文|防止代码丢失|
+|tasks_index.json 是 merge 冲突灾难源|retrospective §1|驱动 derived data 方案|
+|审阅 finding 必须锚 AC，禁止无界审查|session_analysis §1|首轮 PASS 率从 30% 提升|
+|`/goal` hook 串行多 task 导致 context 溢出|session_analysis §2|单会话 task 数硬上限|
+|TDD 顺序违规：改测试适配实现|session_analysis §3|测试纪律硬约束|
 
 #### 2. 存疑或过时的观点
 
-| 观点 | 来源 | 存疑原因 |
-|---|---|---|
-| "plan 模板拆三套（plan_code/doc/style）" | feedback §A | 引入三套模板增加维护成本，不如按 complexity 可选 |
-| "一个 task 一个主题，N 个 commit" | feedback §B、retrospective §7 | 模糊了 task 的原子性定义，可能退化为"一个 task 什么都做" |
-| "不切分支，所有 task 直接在 main 上做" | retrospective §P0 | 对长期多人项目不可行，短期单人项目可接受 |
-| "AC 唯一源 spec.md，task.md 引用不复制" | retrospective_0 §7 | 方向正确，但 task.md 收尾报告需要部分 AC 原文做勾选标记，纯引用降低可读性 |
+|观点|来源|存疑原因|
+|------|------|------|
+|"plan 模板拆三套（plan_code/doc/style）"|feedback §A|引入三套模板增加维护成本，不如按 complexity 可选|
+|"一个 task 一个主题，N 个 commit"|feedback §B、retrospective §7|模糊了 task 的原子性定义，可能退化为"一个 task 什么都做"|
+|"不切分支，所有 task 直接在 main 上做"|retrospective §P0|对长期多人项目不可行，短期单人项目可接受|
+|"AC 唯一源 spec.md，task.md 引用不复制"|retrospective_0 §7|方向正确，但 task.md 收尾报告需要部分 AC 原文做勾选标记，纯引用降低可读性|
 
 #### 3. 遗漏的问题
 
@@ -144,14 +144,14 @@
 
 ### 五、优先行动建议
 
-| 优先级 | 行动 | 原因 |
-|---|---|---|
-| **立即** | 创建 `docs_repo/README.md`，建立时间线索引 + 文档状态标记 | 解决当前最大的可读性障碍 |
-| **立即** | 删除或归档 `11111.md` | 临时草稿无保留价值 |
-| **短期** | 合并改进建议，产出一份统一的"工作流 v2 改进清单" | 结束四份文档各自列待决策项的混乱状态 |
-| **短期** | 将"审阅分级"和"spec 不写技术选型"这两个最成熟的建议落盘到 AGENTS.md | 已被三个以上独立来源验证 |
-| **中期** | 实施 `archive/workflow_skill_split_proposal.md` 的 skill 拆分 | 解决 AGENTS.md 职责过重问题 |
-| **中期** | 建立 review prompt 版本管理 | 防止 prompt 变更导致审查标准漂移 |
+|优先级|行动|原因|
+|------|------|------|
+|**立即**|创建 `docs_repo/README.md`，建立时间线索引 + 文档状态标记|解决当前最大的可读性障碍|
+|**立即**|删除或归档 `11111.md`|临时草稿无保留价值|
+|**短期**|合并改进建议，产出一份统一的"工作流 v2 改进清单"|结束四份文档各自列待决策项的混乱状态|
+|**短期**|将"审阅分级"和"spec 不写技术选型"这两个最成熟的建议落盘到 AGENTS.md|已被三个以上独立来源验证|
+|**中期**|实施 `archive/workflow_skill_split_proposal.md` 的 skill 拆分|解决 AGENTS.md 职责过重问题|
+|**中期**|建立 review prompt 版本管理|防止 prompt 变更导致审查标准漂移|
 
 ---
 

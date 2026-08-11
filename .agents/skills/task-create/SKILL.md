@@ -9,13 +9,13 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
 
 ## 不用本 skill 的场景
 
-| 场景 | 用 |
-|------|-----|
-| 修 bug、复现、根因、补测分析 | `task-bug` |
-| 连续口述登记 pending（含 bug 分析后只记总账） | `pending-record` |
-| 把待办转成 task | `task-from-pending` |
-| 执行实施 | `task-run`（多会话手动并发各跑一段） |
-| 只查缺什么资源 | `task-preflight` |
+|场景|用|
+|------|------|
+|修 bug、复现、根因、补测分析|`task-bug`|
+|连续口述登记 pending（含 bug 分析后只记总账）|`pending-record`|
+|把待办转成 task|`task-from-pending`|
+|执行实施|`task-run`（多会话手动并发各跑一段）|
+|只查缺什么资源|`task-preflight`|
 
 ## 步骤
 
@@ -31,10 +31,10 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
    1. `scripts/repo_template/task.py add --title "..." --slug "..." [--review-level full|single]`
       脚本自动分配 tid、建 `docs/tasks/{tid}_{slug}/`、复制模板、写 front matter。
    2. `review_level` 按风险判：
-      | level | 适用 |
-      |-------|------|
-      | `full` | 安全、鉴权、资金、并发、数据迁移、协议兼容（默认） |
-      | `single` | 其余全部（含纯文档、配置、格式化） |
+|level|适用|
+|------|------|
+|`full`|安全、鉴权、资金、并发、数据迁移、协议兼容（默认）|
+|`single`|其余全部（含纯文档、配置、格式化）|
       判不准取 `full`。定 `single` 时在提交询问里说明理由，由用户确认。
    3. 只读仓库，填写 `spec.md`：
       - **只替换 `{...}` 占位符**；`<!-- 规范 -->` 标记内的就近规范（如「只写可观察行为」「mock 边界、fixture 来源」）不得删除或改写。
