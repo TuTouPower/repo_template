@@ -101,7 +101,7 @@ disable-model-invocation: true
 
 - 本 skill 只写 task 调度字段和脚本派生 index；不改 spec、代码、测试或 blueprint。
 - 不建分支/worktree，不调用执行类 skill，不执行、finish、drop 或合并 task。
-- 不生成三种执行形式或静态多波剧本；执行计划唯一入口为 `task.py plan`（看板同源）。
+- 执行计划唯一入口为 `task.py plan`（看板同源）；不手写链。
 - `view` 输出状态全景与本波链摘要；执行由 `task-run` 承担（多会话手动并发各跑一段）。
 - 新增、rewind、merge 后出现 `unscheduled` / `pending_clarification` 时，用户再次调用本 skill 重算相关 task。
 

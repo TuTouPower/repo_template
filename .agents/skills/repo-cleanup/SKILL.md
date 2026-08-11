@@ -16,6 +16,8 @@ disable-model-invocation: true
 |`apply`|删**默认类别**命中项|
 |`apply` + 类别名（可多个）|只删这些类别|
 
+模式解析见「步骤 1」；类别见下。
+
 ## 类别
 
 **默认**（`apply` 未点名时）：`pycache` / `pytest` / `logs` / `os` / `editor`。

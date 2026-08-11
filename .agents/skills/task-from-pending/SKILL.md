@@ -42,7 +42,7 @@ disable-model-invocation: true
 
 5. **确认范围**。候选多、含争议、或评估后判断条目不重要时，向用户呈核实结论（现在还在不在、影响、建议）并确认；用户已说「全部捞」则全建非重复、仍有效的项。
 
-6. **每个确认项落盘**（按 `task-create` 流程，链式调用）。必须先用 `scripts/repo_template/task.py add` 复制完整模板，禁止手写简化版 `spec.md` / `task.md` 骨架；填写后通过 `task-create` 规定的 backlog preflight。spec 上下文区写清来源 `pNNN` / finding_id / 原 tid + 核实结论（什么时候核实、核实结果）。**bug 修复 task** 另须写入：共享根因、**已确认同类位点清单**（或条目中已写的「已扫无同类」）、覆盖各点的补测方向；契约区范围与行为 AC 覆盖合并后的修复面，避免只修首发点（与 `task-bug` 建修复 task 要求对齐）。
+6. **每个确认项落盘**（按 `task-create` 流程，链式调用）。必须先用 `scripts/repo_template/task.py add` 复制完整模板，禁止手写简化版 `spec.md` / `task.md` 骨架；填写后通过 `task-create` 规定的 backlog preflight。spec 上下文区写清来源 `pNNN` / finding_id / 原 tid + 核实结论（什么时候核实、核实结果）。**bug 修复 task** 的 spec 字段要求（共享根因、已确认同类位点清单或「已扫无同类」、覆盖各点的补测方向、范围/AC 覆盖合并修复面）与 `task-bug` 第 8 步一致，按该处填写。
 
 7. **回写总账**。每个已建 task 的条目用 `scripts/repo_template/pending.py archive {pNNN} --fix-ref {tid} --write` 迁入 `docs/archive/pending/`。条目留在 `todo/` 等于没转。
 

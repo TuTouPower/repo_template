@@ -65,19 +65,14 @@ task 按执行顺序成链：
 
 ## 队列循环
 
-每个 tid 依次走一次队列循环。`attempt reserve` 返回的整数 `attempt` 与字符串 `execution_id` 是本次执行的 exact identity，必须原样传给 `task-work`、terminal、report 与 cleanup：
+每个 tid 依次走一次队列循环。`attempt reserve` 返回的整数 `attempt` 与字符串 `execution_id` 是本次执行的 exact identity，必须原样传给 `task-work`、terminal、report 与 cleanup。命令顺序见下方「命令顺序固定」；循环形态概览：
 
 ```text
-t001: start t001
-      → attempt reserve t001 --executor inline
+t001: start t001 → attempt reserve t001 --executor inline
       → task-work(t001, attempt, execution_id)
-      → attempt terminal ... --status completed|failed|stopped
-      → attempt report ... --status done|blocked|failed
-      → cleanup-worktree t001 --attempt N --execution-id ID（分支保留）
-t002: start t002 --base t001_分支
-      → reserve inline → task-work(identity) → terminal → report → cleanup exact
-t003: start t003 --base t002_分支
-      → reserve inline → task-work(identity) → terminal → report → cleanup exact
+      → attempt terminal ... → attempt report ... → cleanup-worktree t001 exact
+t002: start t002 --base t001_分支 → reserve → task-work → terminal → report → cleanup exact
+t003: …（同上前置）
    ↓ 全部成员完成且已 cleanup；此时询问一次是否需要合入，同意后 integrate-chain
 integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index → exact integrated 原子批量写入
    ↓ transaction=awaiting_verification，分支保留

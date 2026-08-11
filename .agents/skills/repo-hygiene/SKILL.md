@@ -17,8 +17,8 @@ disable-model-invocation: true
 |`docs/findings/`|全部已验证发现|**不迁**：发现是长期资产，失效时就地改写「现状」并注明日期|
 |`docs/handoff.md`|最新一版交接|过时段落 → `docs/archive/handoff.md`（整段追加）|
 |`docs/tasks/{tid}_{slug}/task.md`|活跃 task 状态（经 `task.py`）|已由 `finish`/`drop` 处理，本 skill 不手改|
-|`docs/spikes/{sid}_{slug}/`|进行中的 spike|报告已写且结论已入 `docs/findings/` 的完结 spike → 整目录迁 `docs/archive/spikes/`|
-|`docs/reviews/review_*/`|报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库|用户确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`；archive 下 `_meta/` 继续 gitignore|
+|`docs/spikes/{sid}_{slug}/`|进行中的 spike|完结 spike 整目录迁 `docs/archive/spikes/`（迁移细节见步骤 4）|
+|`docs/reviews/review_*/`|报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库|用户确认过时 → 整目录迁 `docs/archive/reviews/`（迁移细节见步骤 4）|
 |其它过时文档|仍生效的说明|明确过时且有历史价值 → `docs/archive/` 镜像路径|
 
 ## 步骤
