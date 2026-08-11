@@ -16,13 +16,13 @@ disable-model-invocation: true
 
 ## 输入
 
-| 用户输入 | 行为 |
-|----------|------|
-| 无参数 / `dry-run` | 只读：解析源、读 `user_prompts`、列 diff + **完整裁定表**；**不写同步文件**（见下：仅允许显式登记 prompt） |
-| `apply` | 先出与 dry-run 相同预览；**须用户再确认**才按 disposition 写入；回写 state（含本轮新 prompt）；**写完后必须走审批门禁**，用户明确「审批通过」后才可 commit |
-| `init` | 只写/修正 `template_source`（可建 state 骨架），不同步文件 |
-| `status` | 只读：源、上次 commit、模板 HEAD、`user_prompts`、是否落后、差异摘要 |
-| `prompt add "…"` / 用户本轮给出站立指令 | **追加**到 `user_prompts`（可在任意模式；须原样保留用户措辞） |
+|用户输入|行为|
+|------|------|
+|无参数 / `dry-run`|只读：解析源、读 `user_prompts`、列 diff + **完整裁定表**；**不写同步文件**（见下：仅允许显式登记 prompt）|
+|`apply`|先出与 dry-run 相同预览；**须用户再确认**才按 disposition 写入；回写 state（含本轮新 prompt）；**写完后必须走审批门禁**，用户明确「审批通过」后才可 commit|
+|`init`|只写/修正 `template_source`（可建 state 骨架），不同步文件|
+|`status`|只读：源、上次 commit、模板 HEAD、`user_prompts`、是否落后、差异摘要|
+|`prompt add "…"` / 用户本轮给出站立指令|**追加**到 `user_prompts`（可在任意模式；须原样保留用户措辞）|
 
 ## 边界（硬）
 
@@ -30,6 +30,7 @@ disable-model-invocation: true
 - **禁止自动 commit**。apply 写盘与 state 更新完成后，必须进入「审批门禁」：展示变更摘要，**询问用户是否审批通过**；仅当用户明确表示审批通过（如「审批通过」「approve」「可以 commit」）后才可 `git add` + `git commit`。用户未表态、只说「好的/继续/知道了」、或明确拒绝 → **不 commit**。
 - **不碰业务与项目状态**：`src/`、`assets/`、`schemas/`、`config/`、非 `repo_template` 的 `scripts/`、`docs/tasks/{tid}_*`、`docs/archive/`、`docs/pending/{todo,parked}/`、`docs/findings/dNNN_*`、`docs/specs*`、`docs/handoff.md`、`docs/runtime/`、`docs/reviews/review_*/`、`docs/spikes/{sid}_*`、`docs_repo/`、`README.md`（业务介绍）。
 - **禁止整树/整文件静默硬盖** skill、MCP、宿主配置、以及常被项目改写的共享文稿（`AGENTS.md`、`conventions.md`、`.gitignore` 等）——一律走「裁定同步」。
+- **合并共享文稿禁止格式化**：合并 `AGENTS.md`、`conventions.md` 等共享文稿时，禁止运行任何 Markdown 格式化 / 表格对齐工具（prettier 等），保持模板原格式（紧凑表格，单元格不做空格 pad 填充）。
 - **有差异就必须裁定并报告**。不存在「只展示 diff、默认可永久不处理」的桶；差异要么写入（`update` / `merge`）、要么明确 `keep_consumer`（写清为什么保留）、要么 `ask_user`。禁止用「只 diff」当借口跳过该更新的模板演进。
 - 消费侧 `sync_state.json` **永不**被模板侧文件覆盖或删除（模板本就不带该文件；更新 skill 时 rsync 须 `--exclude 'repo-template-sync/sync_state.json'`）。
 - **`status` / `dry-run` 默认同步零写盘**：不 rsync、不改业务文件；缺源或缺 state → 报告并要求 `init`。例外：登记站立指令时仅允许**字段级**改 state（见「state 写入纪律」）。
@@ -57,22 +58,22 @@ disable-model-invocation: true
 }
 ```
 
-| 字段 | 含义 |
+|字段|含义|
 |------|------|
-| `template_source.kind` | `path` 或 `url` |
-| `template_source.value` | 绝对路径或 git remote URL |
-| `last_synced_commit` | 上次成功 `apply` 后模板 HEAD（完整 SHA）；仅当写入与该 commit 工作树一致时才可推进 |
-| `last_synced_at` | ISO 8601（UTC+8） |
-| `user_prompts` | 站立指令历史。每轮同步**必须先读完**再裁定（忽略 `revoked: true`） |
+|`template_source.kind`|`path` 或 `url`|
+|`template_source.value`|绝对路径或 git remote URL|
+|`last_synced_commit`|上次成功 `apply` 后模板 HEAD（完整 SHA）；仅当写入与该 commit 工作树一致时才可推进|
+|`last_synced_at`|ISO 8601（UTC+8）|
+|`user_prompts`|站立指令历史。每轮同步**必须先读完**再裁定（忽略 `revoked: true`）|
 
 ### `user_prompts[]` 条目
 
-| 字段 | 必填 | 含义 |
+|字段|必填|含义|
 |------|------|------|
-| `at` | 是 | 登记时间，ISO 8601（UTC+8） |
-| `text` | 是 | 用户原话或忠实摘要（优先原话） |
-| `tags` | 否 | 短标签，如 `[".gitignore",".env"]`；agent 可补 |
-| `revoked` | 否 | `true` = 已作废，裁定忽略；条目保留备查 |
+|`at`|是|登记时间，ISO 8601（UTC+8）|
+|`text`|是|用户原话或忠实摘要（优先原话）|
+|`tags`|否|短标签，如 `[".gitignore",".env"]`；agent 可补|
+|`revoked`|否|`true` = 已作废，裁定忽略；条目保留备查|
 
 ### state 写入纪律（硬；防自我更新窗口丢字段）
 
@@ -122,10 +123,10 @@ jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$
 
 ## 两类同步
 
-| 类型 | 范围 | 策略 |
+|类型|范围|策略|
 |------|------|------|
-| **硬同步** | 纯模板工具链与无项目定制的文档模板 | 树对树：以 SRC 为准写入/删除；预览确认后 apply |
-| **裁定同步** | skill / MCP / 宿主配置 / 共享文稿（AGENTS、conventions、gitignore 等） | **禁止**整树 `--delete` 与未裁定整文件盖；agent **读 diff、逐项裁定、写 rationale**；该合就合、该留就留；拿不准 → `ask_user` 并**明示用户** |
+|**硬同步**|纯模板工具链与无项目定制的文档模板|树对树：以 SRC 为准写入/删除；预览确认后 apply|
+|**裁定同步**|skill / MCP / 宿主配置 / 共享文稿（AGENTS、conventions、gitignore 等）|**禁止**整树 `--delete` 与未裁定整文件盖；agent **读 diff、逐项裁定、写 rationale**；该合就合、该留就留；拿不准 → `ask_user` 并**明示用户**|
 
 写入清单权威：硬同步 = 树对树；裁定 = 逐项 disposition。commit range 仅信息摘要。
 
@@ -133,21 +134,21 @@ jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$
 
 ## 硬同步路径
 
-| 模板侧 | 消费侧 | 动作 |
-|--------|--------|------|
-| 存在 | 无 / 内容不同 | 写入 |
-| 存在 | 相同 | 不动 |
-| 不存在 | 存在 | **删除**（仅下列路径） |
+|模板侧|消费侧|动作|
+|------|------|------|
+|存在|无 / 内容不同|写入|
+|存在|相同|不动|
+|不存在|存在|**删除**（仅下列路径）|
 
-| 相对路径 | 说明 |
-|----------|------|
-| `scripts/repo_template/` | task 工具链 |
-| `tests/repo_template/` | 工具链测试 |
-| `docs/tasks/task_template/` | task 文件模板 |
-| `docs/reviews/prompts/` | review prompt |
-| `docs/spikes/report_template.md` | spike 报告模板 |
-| `docs/blueprint/architecture_repo_template.md` | 模板执行架构 |
-| `.claude/hooks/merge_guard.py` | merge hook（SRC 无 → 删消费侧） |
+|相对路径|说明|
+|------|------|
+|`scripts/repo_template/`|task 工具链|
+|`tests/repo_template/`|工具链测试|
+|`docs/tasks/task_template/`|task 文件模板|
+|`docs/reviews/prompts/`|review prompt|
+|`docs/spikes/report_template.md`|spike 报告模板|
+|`docs/blueprint/architecture_repo_template.md`|模板执行架构|
+|`.claude/hooks/merge_guard.py`|merge hook（SRC 无 → 删消费侧）|
 
 噪声忽略：`__pycache__/`、`*.pyc`、`.pytest_cache/`、`.DS_Store`。
 
@@ -159,38 +160,38 @@ jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$
 
 ### 裁定范围
 
-| 路径 / 单元 | 粒度 | 典型裁定方式 |
-|-------------|------|--------------|
-| `.agents/skills/<name>/` | 每个 skill（保护 `repo-template-sync/sync_state.json`） | 整 skill 更新或保留 |
-| `.claude/skills/<name>` | 软链 | 随 skill 建/修；不删 consumer_only |
-| `.grok/skills/<name>/` | 若存在 | 同 skill |
-| MCP 清单 | 按 server 键（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json` 等实际扫到的） | 按键合并 |
-| 宿主 settings 中 mcp/hooks 等片段 | `.claude/settings.json` 等 | 片段合并，禁冲密钥 |
-| `AGENTS.md`（及 `CLAUDE.md` 软链目标） | **按段/按表行** | 保留项目首行介绍；合并模板工作流表、目录权责、skill 路由等模板演进 |
-| `docs/blueprint/conventions.md` | **按节/按条** | 保留项目追加约定；并入模板新增的命名/流程条 |
-| `.gitignore` | **按行/按块** | 保留项目规则；并入模板新增忽略项（去重） |
-| 其它两边都存在、且明显属「模板脚手架 + 项目改写」的共享文件 | 按内容 | 同左；不进「永久不写」桶 |
+|路径 / 单元|粒度|典型裁定方式|
+|------|------|------|
+|`.agents/skills/<name>/`|每个 skill（保护 `repo-template-sync/sync_state.json`）|整 skill 更新或保留|
+|`.claude/skills/<name>`|软链|随 skill 建/修；不删 consumer_only|
+|`.grok/skills/<name>/`|若存在|同 skill|
+|MCP 清单|按 server 键（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json` 等实际扫到的）|按键合并|
+|宿主 settings 中 mcp/hooks 等片段|`.claude/settings.json` 等|片段合并，禁冲密钥|
+|`AGENTS.md`（及 `CLAUDE.md` 软链目标）|**按段/按表行**|保留项目首行介绍；合并模板工作流表、目录权责、skill 路由等模板演进|
+|`docs/blueprint/conventions.md`|**按节/按条**|保留项目追加约定；并入模板新增的命名/流程条|
+|`.gitignore`|**按行/按块**|保留项目规则；并入模板新增忽略项（去重）|
+|其它两边都存在、且明显属「模板脚手架 + 项目改写」的共享文件|按内容|同左；不进「永久不写」桶|
 
 **不在**裁定也不硬同步：纯业务 `README` 项目介绍、`docs/blueprint/{architecture,domain,testing,decisions}.md` 等项目真相文档——除非用户点名。若模板与消费差异巨大且疑似模板脚手架残留，可在预览「范围外差异提示」里提一句，默认不动。
 
 ### 分类
 
-| 类 | 条件 |
-|----|------|
-| `template_only` | 仅 SRC 有 |
-| `consumer_only` | 仅消费有 |
-| `both_identical` | 等价（忽略噪声） |
-| `both_differ` | 都有且不同 → **必读 diff 再裁** |
+|类|条件|
+|------|------|
+|`template_only`|仅 SRC 有|
+|`consumer_only`|仅消费有|
+|`both_identical`|等价（忽略噪声）|
+|`both_differ`|都有且不同 → **必读 diff 再裁**|
 
 ### disposition（有 diff 必须落其一）
 
-| disposition | 含义 | apply 行为 |
-|-------------|------|------------|
-| `update_from_template` | 整单元以模板为准 | 覆盖该单元（skill 目录 / 整文件仅当无项目定制） |
-| `merge_into_consumer` | **智能合并**：把模板新增/修正并入消费侧，保留消费定制 | agent **编辑**消费文件（补表行、补 ignore 行、补约定条…），**禁止**整文件 rsync 盖掉 |
-| `keep_consumer` | 明确保留消费侧 | 不写；rationale 必须说明「为何不用模板」（例：项目业务约定 246 行） |
-| `ask_user` | 无法独断 | 不写该单元直至用户逐项答复；预览须写清冲突要点 |
-| `skip_identical` | 无实质差异 | 不写 |
+|disposition|含义|apply 行为|
+|------|------|------|
+|`update_from_template`|整单元以模板为准|覆盖该单元（skill 目录 / 整文件仅当无项目定制）|
+|`merge_into_consumer`|**智能合并**：把模板新增/修正并入消费侧，保留消费定制|agent **编辑**消费文件（补表行、补 ignore 行、补约定条…），**禁止**整文件 rsync 盖掉|
+|`keep_consumer`|明确保留消费侧|不写；rationale 必须说明「为何不用模板」（例：项目业务约定 246 行）|
+|`ask_user`|无法独断|不写该单元直至用户逐项答复；预览须写清冲突要点|
+|`skip_identical`|无实质差异|不写|
 
 **偏见**（优先级从高到低）：
 
@@ -301,9 +302,9 @@ jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$
 …
 
 ### 站立指令 user_prompts（裁定优先）
-| # | at | text |
-|---|-----|------|
-| 0 | 2026-08-08T15:30:00+08:00 | .env 在消费项目里不要 ignore |
+|#|at|text|
+|------|------|------|
+|0|2026-08-08T15:30:00+08:00|.env 在消费项目里不要 ignore|
 
 （无则写「无」；本轮将新登记：…）
 
@@ -311,11 +312,11 @@ jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$
 …
 
 ### 裁定同步 — 逐项（有 diff 必出现）
-| 单元 | 分类 | disposition | rationale / 拟操作 |
-|------|------|--------------|---------------------|
-| AGENTS.md | both_differ | merge_into_consumer | 保留首行；并入 skill 路由 2 行 |
-| .gitignore | both_differ | merge_into_consumer | 追加模板独有（**跳过 .env 相关，遵循 prompt#0**）；保留消费 node_modules |
-| .agents/skills/my-proj | consumer_only | keep_consumer | 项目自有 skill |
+|单元|分类|disposition|rationale / 拟操作|
+|------|------|------|------|
+|AGENTS.md|both_differ|merge_into_consumer|保留首行；并入 skill 路由 2 行|
+|.gitignore|both_differ|merge_into_consumer|追加模板独有（**跳过 .env 相关，遵循 prompt#0**）；保留消费 node_modules|
+|.agents/skills/my-proj|consumer_only|keep_consumer|项目自有 skill|
 
 ### 软链
 …
