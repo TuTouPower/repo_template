@@ -1,0 +1,5 @@
+# md_kx 仓库级格式化约定（repo_template 统一风格）
+# 对应 CLI 参数：--indent-width 4 --table-mode compact --number
+number = true
+table_mode = "compact"
+indent_width = 4

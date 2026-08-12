@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 把 **repo_template** 的工具链与模板资产同步到**当前消费项目**。仅用户显式请求时运行（如「同步模板」）。禁止在模板仓本身当「推送源」跑。
 
+**机械化对齐一律由脚本 `scripts/repo_template/repo_sync.py` 执行**——能用脚本做的不手动拼命令。agent 只负责：裁定非机械化单元（共享文稿语义合并）、审查预览、执行审批门禁、管理站立指令登记。
+
 状态文件（消费项目本地运行态；**模板仓不入库**，由消费侧首次接入时生成后入库）：
 
 ```text
@@ -16,376 +18,158 @@ disable-model-invocation: true
 
 ## 入口
 
-本 skill **仅用户显式请求同步时运行**（如「同步模板」「repo-template-sync」）。用户不传参数；agent 全自动按「流程」执行。`init` / `status` / `apply` 是**流程内部阶段**（见「流程」），不是用户可敲的命令。
+本 skill **仅用户显式请求同步时运行**（如「同步模板」「repo-template-sync」）。用户不传参数；agent 全自动按「流程」执行。`init` / `status` / `plan` / `apply` 是**流程内部阶段**（见「流程」），不是用户可敲的命令。
 
-同步过程中的用户站立指令（如「.env 不要 ignore」）由 agent 记录进 `user_prompts`（见「状态文件」），后续每轮同步持续生效。
+同步过程中的用户站立指令（如「.env 不要 ignore」）由 `repo_sync.py prompt add` 登记进 `user_prompts`（见「state 与站立指令」），后续每轮同步持续生效。
 
 ## 边界（硬）
 
-- **只在消费项目跑**。当前仓库根与 `template_source` 解析后为同一路径 → 立即停止并说明。
+- **只在消费项目跑**。`repo_sync.py apply` 会做同一性检查：当前仓库根与 `template_source` 解析后为同一路径 → 拒绝并停止。
 - **禁止自动 commit**。apply 写盘与 state 更新完成后，必须进入「审批门禁」：展示变更摘要，**询问用户是否审批通过**；仅当用户明确表示审批通过（如「审批通过」「approve」「可以 commit」）后才可 `git add` + `git commit`。用户未表态、只说「好的/继续/知道了」、或明确拒绝 → **不 commit**。
-- **不碰业务与项目状态**：`src/`、`assets/`、`schemas/`、`config/`、非 `repo_template` 的 `scripts/`、`docs/tasks/{tid}_*`、`docs/archive/`、`docs/pending/{todo,parked}/`、`docs/findings/dNNN_*`、`docs/specs*`、`docs/handoff.md`、`docs/runtime/`、`docs/reviews/review_*/`、`docs/spikes/{sid}_*`、`docs_repo/`、`README.md`（业务介绍）。
-- **不静默硬盖可定制的共享资产**：`AGENTS.md`、`conventions.md`、`.gitignore`、MCP、宿主 settings 等必须走「裁定同步」，逐项裁定。模板资产（工具链、模板侧存在的 skill）归「同步分类」强制覆盖。
+- **不碰业务与项目状态**：`src/`、`assets/`、`schemas/`、`config/`、非 `repo_template` 的 `scripts/`、`docs/tasks/{tid}_*`、`docs/archive/`、`docs/pending/{todo,parked}/`、`docs/findings/dNNN_*`、`docs/specs*`、`docs/handoff.md`、`docs/runtime/`、`docs/reviews/review_*/`、`docs/spikes/{sid}_*`、`docs_repo/`、`README.md`（业务介绍）。硬同步只动脚本声明的清单路径，不越界。
+- **不静默硬盖可定制的共享资产**：`AGENTS.md`、`conventions.md`、`.gitignore`、MCP、宿主 settings 等必须走「裁定」，逐项裁定。模板资产（工具链、模板侧存在的 skill）归「强制覆盖」。
 - **合并共享文稿禁止格式化**：合并 `AGENTS.md`、`conventions.md` 等共享文稿时，禁止运行任何 Markdown 格式化 / 表格对齐工具（prettier 等），保持模板原格式（紧凑表格，单元格不做空格 pad 填充）。
 - **有差异就必须处理并报告**。不存在「只展示 diff、默认可永久不处理」的桶：模板资产 → 强制覆盖；裁定单元 → 要么写入（`update` / `merge`）、要么明确 `keep_consumer`（写清为什么保留）、要么 `ask_user`。禁止用「只 diff」当借口跳过该更新的模板演进。
-- 消费侧 `sync_state.json` **永不**被模板侧文件覆盖或删除（模板本就不带该文件；更新 skill 时 rsync 须 `--exclude 'repo-template-sync/sync_state.json'`）。
-- **计算变更阶段默认零写盘**：不 rsync、不改业务文件；缺源或缺 state → 先走「流程步骤 0 初始化」。例外：登记站立指令时仅允许**字段级**改 state（见「state 写入纪律」）。
-- **每次同步全量对比，不信任上一次同步**：diff 一律基于「模板当前工作树 ↔ 消费项目当前工作树」逐路径重新对比；`last_synced_commit` / `last_synced_at` 仅作审计记录（上次 apply 的模板 HEAD 与时间），**绝不**作为对比基线、跳过依据或增量范围。凡需对比必以当前两棵工作树为准，无「上次同步过所以这次跳过」的路径。
+- 消费侧 `sync_state.json` **永不**被模板侧文件覆盖或删除（模板本就不带该文件；`repo_sync.py` 的 skill 覆盖天然排除它）。
+- **每次同步全量对比，不信任上一次同步**：diff 一律基于「模板当前工作树 ↔ 消费项目当前工作树」逐路径重新对比；`last_synced_commit` / `last_synced_at` 仅作审计记录，**绝不**作为对比基线、跳过依据或增量范围。
 
-## 同步分类
+## 脚本能力映射
 
-同步目标按「是否允许消费项目定制」分三类：**模板资产强制覆盖；可定制资产逐项裁定；项目定制保留、项目真相不同步**。
+`repo_sync.py` 在消费项目 `scripts/repo_template/` 下（硬同步清单路径，随模板演进同步）。子命令见 `repo_sync.py --help`。
 
-|处置|资产|判定依据|方式|
-|------|------|------|------|
-|**强制覆盖**|模板工具链（硬同步清单）|属硬同步路径|树对树：以 SRC 为准写/删|
-|**强制覆盖**|模板侧存在的 skill（含软链）|模板 `.agents/skills/` 下有同名目录|整 skill 逐字覆盖（含 front matter）；建/修软链|
-|**裁定**|共享文稿（`AGENTS.md`、`conventions.md`、`.gitignore`）|双方都可能定制|逐项：`merge_into_consumer` / `keep_consumer` / `ask_user`|
-|**裁定**|MCP / settings 片段|按 server 键 / 配置键|按键合并，禁冲密钥、token、本机路径|
-|**保留**|仅消费侧存在的 skill|模板无此名|不写，**禁止删**，软链保留|
-|**不碰**|业务真相文档（`architecture`/`domain`/`testing`/`decisions`）、README 项目介绍|项目真相|除非用户点名|
+| 能力 | 命令 | 说明 |
+| --- | --- | --- |
+| 初始化 template_source | `repo_sync.py init --source <path\|url>` | 首次接入；仅字段级写 state |
+| 状态与差异 | `repo_sync.py status` | 源、HEAD、dirty、user_prompts、差异摘要（零写盘） |
+| 差异预览 | `repo_sync.py plan` | 输出 markdown 预览表（强制覆盖/裁定/软链/state 预期），零写盘 |
+| 硬同步强制覆盖 | `repo_sync.py apply` | 硬同步清单树对树（含多余删除）；噪声忽略 |
+| skill 整目录覆盖 | `repo_sync.py apply` | 含 front matter；保护 `sync_state.json`；不做整树 `--delete` |
+| 软链建/修 | `repo_sync.py apply` / `link-skills` | `.claude/skills/<name>` → `.agents/skills/<name>`；非本机制链接报告不碰 |
+| .gitignore / MCP 机械合并 | `repo_sync.py apply` | 追加去重、按键合并、禁冲密钥；遵从 `user_prompts` 拦截 |
+| 裁定单元写盘 | `repo_sync.py apply --decision U:D` | `update` / `keep`；`merge` 提示后由 agent 手动编辑 |
+| state 字段级更新 | `apply` / `prompt` 内部 | 原子写盘，未知键保留（脚本保证纪律） |
+| user_prompts 管理 | `repo_sync.py prompt add\|revoke\|list` | 同 tag 自动 supersede（后出优先） |
 
-### 强制覆盖
-
-模板工具链与模板侧存在的 skill：以模板为唯一真相，整单元覆盖（含 front matter）；消费侧与模板的任何差异视为消费侧漂移。细则见下。
-
-#### skill
-
-- 模板侧存在该 skill → **整 skill 目录覆盖，含 front matter**。模板 `SKILL.md` 为**唯一真相**，逐字写入。**禁止**读 diff 智能合并、**禁止**凭启发式补/删 front matter 字段——模板没有的字段（如 `disable-model-invocation`）消费侧不得新增/保留，模板有的必须补上。消费侧与模板的任何差异都视为消费侧漂移，用模板覆盖。
-  - 例外：`repo-template-sync/sync_state.json` 永不覆盖（见「state 写入纪律」）。
-  - 例外：`user_prompts` 显式要求保留消费侧版本 → `keep_consumer`，rationale 引用 prompt。
-- 仅消费侧存在 → `keep_consumer`，禁止删。
-- 同名但消费侧有项目定制需求 → **先按模板覆盖，再把定制需求登记为 `user_prompts`**，不要就地改模板 skill 正文。
-- apply 时**不对 `skills/` 整树 `--delete`**；`repo-template-sync` 排除 `sync_state.json`。
-
-#### 硬同步清单
-
-|模板侧|消费侧|动作|
-|------|------|------|
-|存在|无 / 内容不同|写入|
-|存在|相同|不动|
-|不存在|存在|**删除**（仅下列路径）|
-
-|相对路径|说明|
-|------|------|
-|`scripts/repo_template/`|task 工具链|
-|`tests/repo_template/`|工具链测试|
-|`docs/tasks/task_template/`|task 文件模板|
-|`docs/reviews/prompts/`|review prompt|
-|`docs/spikes/report_template.md`|spike 报告模板|
-|`docs/blueprint/architecture_repo_template.md`|模板执行架构|
-|`.claude/hooks/merge_guard.py`|merge hook（SRC 无 → 删消费侧）|
-
-噪声忽略：`__pycache__/`、`*.pyc`、`.pytest_cache/`、`.DS_Store`。
-
-#### 软链
-
-1. apply 后仍存在的 `.agents/skills/<name>/` → 建/修 `.claude/skills/<name>` → `../../.agents/skills/<name>`。
-2. 不因模板没有而删 consumer_only skill 或其软链。
-3. 仅用户确认删除的 skill 才清对应悬空链。
-4. 非本机制管理链接：报告，不碰。
-5. `CLAUDE.md` → `AGENTS.md` 损坏：报告，确认后修。
-
-### 裁定同步
-
-可定制共享资产（`AGENTS.md`、`conventions.md`、`.gitignore`、MCP、settings）：凡可能叠项目定制的路径，**必须**走本节。有 diff → **必须**产出 classification + disposition + rationale，并在预览里给用户看清楚「将怎么改」。skill 及其软链**不在**本节——处置见「强制覆盖」。
-
-#### 裁定范围
-
-|路径 / 单元|粒度|典型裁定方式|
-|------|------|------|
-|MCP 清单|按 server 键（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json` 等实际扫到的）|按键合并|
-|宿主 settings 中 mcp/hooks 等片段|`.claude/settings.json` 等|片段合并，禁冲密钥|
-|`AGENTS.md`（及 `CLAUDE.md` 软链目标）|**按段/按表行**|保留项目首行介绍；合并模板工作流表、目录权责、skill 路由等模板演进|
-|`docs/blueprint/conventions.md`|**按节/按条**|保留项目追加约定；并入模板新增的命名/流程条|
-|`.gitignore`|**按行/按块**|保留项目规则；并入模板新增忽略项（去重）|
-|其它两边都存在、且明显属「模板脚手架 + 项目改写」的共享文件|按内容|同左；不进「永久不写」桶|
-
-#### 分类
-
-|类|条件|
-|------|------|
-|`template_only`|仅 SRC 有|
-|`consumer_only`|仅消费有|
-|`both_identical`|等价（忽略噪声）|
-|`both_differ`|都有且不同 → **必读 diff 再裁**|
-
-#### disposition（有 diff 必须落其一）
-
-|disposition|含义|apply 行为|
-|------|------|------|
-|`update_from_template`|整单元以模板为准|整文件 rsync/拷贝覆盖|
-|`merge_into_consumer`|**智能合并**：把模板新增/修正并入消费侧，保留消费定制|agent **编辑**消费文件（补表行、补 ignore 行、补约定条…），**禁止**整文件 rsync 盖掉|
-|`keep_consumer`|明确保留消费侧|不写；rationale 必须说明「为何不用模板」（例：项目业务约定 246 行）|
-|`ask_user`|无法独断|不写该单元直至用户逐项答复；预览须写清冲突要点|
-|`skip_identical`|无实质差异|不写|
-
-**偏见**（优先级从高到低）：
-
-1. **`user_prompts` 站立指令**（见状态文件）— 与指令冲突的模板增量一律不并入；rationale 写「遵循 user_prompts#N」。
-2. 不确定 → `ask_user`（优先）或 `keep_consumer`，**绝不**默认整文件 `update_from_template`。
-3. 模板有清晰增量、消费有清晰定制、且可机械/语义合并 → **优先 `merge_into_consumer`**。
-4. `keep_consumer` 用于「模板侧无值得并入的增量」或「并入会破坏项目语义 / 违反 prompt」。
-
-#### 各资产裁定要点
-
-**`AGENTS.md`**
-
-- 保留消费侧**项目一句话介绍**（首段/首行）。
-- 模板新增/改写的：目录权责表行、开发工作流、skill 路由表、task 状态机等 → 通常 `merge_into_consumer`（按行/段并入）。
-- 预览须写明：将补哪些表行/段落；不动哪段项目介绍。
-
-**`docs/blueprint/conventions.md`**
-
-- 统计模板独有 vs 消费独有行/节。
-- 模板独有且属通用命名/流程 → `merge_into_consumer`。
-- 消费大段项目约定 → `keep_consumer` 那些节；不要整文件覆盖。
-- 预览须列出「拟并入的模板条」摘要（可摘关键句）。
-
-**`.gitignore`**
-
-- 模板新增规则且消费没有 → `merge_into_consumer`（追加，去重）。
-- 消费独有（如 `node_modules/`、构建产物）→ 保留。
-- 禁止用模板 `.gitignore` 整文件覆盖。
-- **先套 `user_prompts`**：若指令禁止 ignore 某路径（如 `.env`），则模板中对应规则**不得**并入；消费侧若误有该规则且指令要求跟踪 → 在预览中提议删除该 ignore 行（`merge_into_consumer` 或明确操作），不得无视 prompt。
-
-**MCP / settings**
-
-- 按键合并；禁冲密钥、token、本机路径。
-- 模板新 server → 建议并入；消费独有 server → 保留。
-
-**`repo-template-sync`**：可更新 `SKILL.md`；**永不** rsync/覆盖/删除消费侧 `sync_state.json`（模板侧也不应存在该文件）。
-
-### 保留和不同步
-
-项目定制资产保留、项目真相不同步，除非用户点名。
-
-|资产|处置|
-|------|------|
-|仅消费侧存在的 skill（consumer_only）|**保留**，禁止删，软链保留（见「强制覆盖/软链」）|
-|纯业务 `README` 项目介绍|**不同步**，除非用户点名|
-|`docs/blueprint/{architecture,domain,testing,decisions}.md` 等项目真相文档|**不同步**，除非用户点名|
-
-若模板与消费差异巨大且疑似模板脚手架残留，可在预览「范围外差异提示」里提一句，默认不动。
-
-## 状态文件：`sync_state.json`
-
-消费项目本地文件。骨架仅作文档；**首次接入时生成**，不要从模板仓复制。
-
-```json
-{
-  "template_source": {
-    "kind": "path",
-    "value": "/absolute/path/to/repo_template"
-  },
-  "last_synced_commit": "full-or-abbrev-sha-or-null",
-  "last_synced_at": "2026-08-08T12:00:00+08:00",
-  "user_prompts": [
-    {
-      "at": "2026-08-08T15:30:00+08:00",
-      "text": ".env 在消费项目里不要 ignore",
-      "tags": [".gitignore", ".env"],
-      "revoked": false
-    }
-  ]
-}
-```
-
-|字段|含义|
-|------|------|
-|`template_source.kind`|`path` 或 `url`|
-|`template_source.value`|绝对路径或 git remote URL|
-|`last_synced_commit`|上次成功 `apply` 后模板 HEAD（完整 SHA）；**仅审计记录，不参与本轮 diff/裁定**；干净 SRC + 验证通过时由 `apply` 字段级推进|
-|`last_synced_at`|ISO 8601（UTC+8）|
-|`user_prompts`|站立指令历史。每轮同步**必须先读完**再裁定（忽略 `revoked: true`）|
-
-### `user_prompts[]` 条目
-
-|字段|必填|含义|
-|------|------|------|
-|`at`|是|登记时间，ISO 8601（UTC+8）|
-|`text`|是|用户原话或忠实摘要（优先原话）|
-|`tags`|否|短标签，如 `[".gitignore",".env"]`；agent 可补|
-|`revoked`|否|`true` = 已作废，裁定忽略；条目保留备查|
-
-### state 写入纪律（硬；防自我更新窗口丢字段）
-
-**禁止**用编辑器/Write 按「内存里的 schema」整文件重建 `sync_state.json`。旧会话若 schema 不全，整文件写会抹掉未知字段（如 `user_prompts`）——这是已发生事故的根因。
-
-**只准字段级更新**（读盘 → 改指定键 → 写回；未知键原样保留）：
-
-```bash
-# 推进 last（示例；路径按 CONSUMER）
-STATE=".agents/skills/repo-template-sync/sync_state.json"
-tmp="$(mktemp)"
-jq --arg c "$T_HEAD" --arg t "$(date -Iseconds)" \
-  '.last_synced_commit=$c | .last_synced_at=$t' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-
-# 写 template_source（首次接入）
-jq --arg k "path" --arg v "$SRC" \
-  '.template_source={kind:$k, value:$v}' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-
-# append 一条 prompt（新条对象用 --argjson）
-jq --argjson p "$PROMPT_JSON" '.user_prompts += [$p]' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-```
-
-无 `jq` 时用等价 Python：`json.load` → 只改目标键 / `list.append` → `json.dump`；**不得** `state = {只含已知键}` 再 dump。
-
-- 文件不存在（仅首次接入）：可**一次**写出完整骨架，此后永远字段级。
-- 更新本 skill 的 `SKILL.md` 与写 state **解耦**：rsync skill 正文时必须 exclude `sync_state.json`。
-
-### `user_prompts` 读写与时效
-
-1. **每轮同步**加载；预览置顶列出**未 revoked** 条（空则写「无」）。
-2. 裁定时未撤销的 `user_prompts` **优先于**模板默认；rationale 引用序号或 `text`。
-3. 登记新站立指令：
-   - append 新条；**不删**旧条正文。
-   - **同 tag 覆盖**：若新条 `tags` 与某条未撤销旧条的 `tags` **有交集**（规范化小写比较），将旧条标 `"revoked": true`（字段级：改该元素的 `revoked`），再 append 新条。后出优先。无 tags 则不做自动 supersede，靠语义 + 用户显式 revoke。
-   - 一次性「这次先别动」且用户说「不用记住」→ 不写入；未说明则默认记住。
-4. 用户显式作废：将该条 `revoked: true`（字段级），不整表重写。
-5. 裁定只用 `revoked != true` 的条目；预览可附「已 supersede/revoked」缩略计数。
+agent 不手动用 rsync / jq / sed 重写脚本已覆盖的机械化路径；脚本不覆盖的部分（AGENTS.md 语义合并、settings 片段合并、悬空链清理）由 agent 处理。
 
 ## 流程
 
-### 0. 初始化：模板源 + state
+### 0. 初始化：脚本 + 模板源 + state
 
-`CONSUMER` = 当前消费项目根，`STATE` = 其 `sync_state.json`。
+`CONSUMER` = 当前消费项目根。
 
-**首次接入（无 state）**——生成骨架并写 `template_source`：
+1. **脚本存在性**：`scripts/repo_template/repo_sync.py` 缺失时，先从模板仓复制该脚本到消费项目（首次接入引导；完整工具链随后由 apply 硬同步补齐）。
+2. **首次接入（无 state）**：`repo_sync.py init --source <path|url>`。推断模板源：用户给定 → 常见本机路径 → 不臆造。本机含 `scripts/repo_template/task.py` → `kind=path`；否则 `url`。
+3. 已有 state → 不重跑 init；仅当 `template_source` 缺失时用 `init` 字段级补。
+4. 缺源或缺 state 且无法初始化 → **停止并报告**。
 
-1. 写完整骨架（`last_synced_*=null`，`user_prompts=[]`，`template_source` 待填）。
-2. 推断模板源 path/url（用户给定 → 常见本机路径 → 不臆造）。
-3. 本机含 `scripts/repo_template/task.py` → `kind=path`；否则 url。
+### 1. 现状（status）
 
-已有 state → 仅字段级补 `template_source`；不动 `user_prompts` / `last_synced_*`。
+`repo_sync.py status`：源、T_HEAD、dirty；`last_synced_commit` 仅作审计展示，**不参与**落后判断；**完整 `user_prompts` 列表**；全量差异摘要（硬同步/裁定 diverged 计数基于当前两棵工作树对比）。默认零写盘。
 
-**缺源或缺 state 且无法初始化 → 停止并报告。**
+### 2. 计算变更（plan，零写盘）
 
-### 1. 解析模板工作树
+`repo_sync.py plan` 输出完整预览，覆盖：
 
-`SRC` = 模板根，`T_HEAD` = `git rev-parse HEAD`。
+- **站立指令 user_prompts**（裁定优先）：未 revoked 条全列（空则「无」）。
+- **强制覆盖**：硬同步清单（write/delete/same）、模板侧 skill 强制覆盖、消费侧独有 skill 保留。
+- **裁定同步**：`AGENTS.md`、`conventions.md`、`.gitignore` 的分类（`template_only` / `consumer_only` / `both_identical` / `both_differ`）与建议 disposition。**有 diff 的单元必出现**。
+- **软链**状态与需修项。
+- **state 推进预期**（SRC dirty → 不推进 `last_synced_commit`）。
 
-- `kind=path`：
-  1. 目录存在且含 `scripts/repo_template/task.py`。
-  2. dirty 检查硬同步 + 裁定相关路径；有输出 → `SRC_DIRTY=true`。
-  3. dirty 时 apply 可写已确认项，**禁止**推进 `last_synced_commit`。
-- `kind=url`：缓存 `.scratch/repo_template_sync_src/`；clone/fetch + reset tip。diff 全量基于该工作树与消费项目当前工作树的对比，**不依赖任何旧 commit 对象**——浅克隆只有 tip 也足够，无需 `last_synced_commit` 作基线，不失败退出。
-- **同一性**：`realpath` 相同 → 拒绝。
+预览展示后，agent 把 plan 输出整理为最终预览呈现给用户（见「汇报」）。
 
-### 2. 现状（status）
+### 3. 裁定（非机械化，agent 判断）
 
-源、T_HEAD、dirty；`last_synced_commit` 仅作审计展示，**不参与**落后判断；**完整 `user_prompts` 列表**；全量差异摘要（硬同步/裁定 diverged 计数基于当前两棵工作树对比，缺 state 基线信息时同样照报）。默认同步零写盘。
+对 `AGENTS.md` / `conventions.md` 等语义合并单元，agent 依据 plan 的分类**读 diff 后裁定**：
 
-### 3. 计算变更（dry-run）
+| disposition | 含义 | apply 行为 |
+| --- | --- | --- |
+| `update_from_template` | 整单元以模板为准 | `--decision U:update`，脚本整文件覆盖 |
+| `merge_into_consumer` | **智能合并**：模板增量并入消费侧，保留消费定制 | agent **手动编辑**消费文件（补表行、补约定条…）；apply 时传 `--decision U:merge` 提示脚本不整文件覆盖 |
+| `keep_consumer` | 明确保留消费侧 | `--decision U:keep`；rationale 说明「为何不用模板」 |
+| `ask_user` | 无法独断 | 不写该单元；预览写清冲突要点，等用户逐项答复 |
 
-**先加载 `user_prompts`，再做 3a/3b。** 预览置顶「生效的站立指令」。
+**偏见**（优先级从高到低）：
 
-**3a. 强制覆盖清单**（同步分类）
+1. **`user_prompts` 站立指令** — 与指令冲突的模板增量一律不并入；rationale 写「遵循 user_prompts#N」。
+2. 不确定 → `ask_user`（优先）或 `keep_consumer`，**绝不**默认整文件 `update_from_template`。
+3. 模板有清晰增量、消费有清晰定制、且可机械/语义合并 → 优先 `merge_into_consumer`。
+4. `keep_consumer` 用于「模板侧无值得并入的增量」或「并入会破坏项目语义 / 违反 prompt」。
 
-- 硬同步：**每轮全量重算**写/删列表（模板当前工作树 ↔ 消费当前工作树逐路径比对，不因上次同步过而跳过任何路径）。硬同步一般不直接改 `.gitignore`；若硬同步间接冲突极少见——仍以 prompt 为准在裁定段处理共享文件。
-- skill：枚举模板侧存在的 skill 与仅消费侧存在的 skill，分别标「强制覆盖」/「保留」。
+**各资产裁定要点**
 
-**3b. 裁定同步清单**（**禁止省略有 diff 的单元**）
-
-1. 枚举裁定范围全部单元（`AGENTS.md`、`conventions.md`、`.gitignore`、MCP…）。
-2. 对 `both_differ` / `template_only`：**读具体 diff**，给 disposition + rationale；**每条相关 `user_prompts` 必须体现在 rationale 或拟操作里**（引用 `user_prompts[i].text` 或序号）。
-3. 对 `merge_into_consumer`：预览中写清**拟改操作**（补哪几行/哪一节/哪几个 ignore 模式），不得只写「有 252 行差异」；若某模板行被 prompt 禁止并入，单列「因 prompt 跳过：…」。
-4. 汇总建议写入 / 合并 / 保留 / 待决 / **本轮拟新登记的 prompt**。
-
-**3c. 模板 commit 摘要**（信息）
-
-可缺。**仅信息展示**（模板自上次同步后的演进，若可读 commit range）；**禁止**代替 3a/3b，也**不**作为 diff 来源或跳过依据——差异永远以 3a/3b 当前两棵工作树全量对比为准。
-
-预览模板：
-
-```markdown
-## repo-template-sync 预览
-
-（本轮同步将写入什么）
-…
-
-### 站立指令 user_prompts（裁定优先）
-|#|at|text|
-|------|------|------|
-|0|2026-08-08T15:30:00+08:00|.env 在消费项目里不要 ignore|
-
-（无则写「无」；本轮将新登记：…）
-
-### 强制覆盖（同步分类）
-|单元|分类|处置|
-|------|------|------|
-|scripts/repo_template/|both_differ|树对树覆盖|
-|.agents/skills/task-integrate|both_differ|强制覆盖；模板无 `disable-model-invocation`，消费侧不得保留/新增|
-|.agents/skills/my-proj|consumer_only|保留（禁止删）|
-
-### 裁定同步 — 逐项（有 diff 必出现）
-|单元|分类|disposition|rationale / 拟操作|
-|------|------|------|------|
-|AGENTS.md|both_differ|merge_into_consumer|保留首行；并入 skill 路由 2 行|
-|.gitignore|both_differ|merge_into_consumer|追加模板独有（**跳过 .env 相关，遵循 prompt#0**）；保留消费 node_modules|
-
-### 软链
-…
-
-### state 推进预期
-…
-
-下一步：确认后写盘。`ask_user` 须逐项答复。
-```
-
-**禁止**再输出名为「只 diff（未写入）」且暗示「这些永远不动」的分区。
+- **`AGENTS.md`**：保留消费侧项目一句话介绍（首段/首行）；模板新增的目录权责表行、开发工作流、skill 路由表 → 通常 `merge`。预览写明补哪些表行/段落、不动哪段项目介绍。
+- **`docs/blueprint/conventions.md`**：统计模板独有 vs 消费独有行/节；模板独有且属通用命名/流程 → `merge`；消费大段项目约定 → `keep` 那些节，不要整文件覆盖。
+- **`.gitignore`**：脚本自动 `merge`（追加模板独有、去重、保留消费独有）；**先套 `user_prompts`**：指令禁止 ignore 某路径 → 模板对应规则不并入、消费侧误有该规则会被脚本删除。agent 核对 plan 中的 added/removed 是否合规。
+- **MCP / settings**：`.mcp.json` 等由脚本按键合并（禁冲密钥）。宿主 settings 片段（`.claude/settings.json` 等）脚本不自动合并 → agent 按键合并，禁冲密钥、token、本机路径。
 
 ### 4. `apply`（写盘）
 
 1. 用户确认本轮预览。`ask_user` 未答复的单元不写。
-2. **强制覆盖**：
-   - 硬同步：目录 `rsync -a --delete` + 噪声 exclude；单文件 `sync_file`（有则拷、无则删）。
-   - skill：整 skill 目录 rsync/拷贝（含 front matter），**不读 diff 合并**；不对 `skills/` 整树 `--delete`；`repo-template-sync` 排除 `sync_state.json`。
-3. **裁定同步**：
-   - `update_from_template`：整文件 rsync/拷贝。
-   - `merge_into_consumer`：**编辑**消费文件完成合并（补行/补节/去重），禁止整文件盖掉消费定制。
-   - `keep_consumer` / 未确认 `ask_user`：跳过。
-4. 软链建/修。
-5. `pytest tests/repo_template/ -q`；失败不推进 state。
-6. 干净 SRC + 验证通过（或用户跳过测试）→ **字段级**更新 `last_synced_commit` / `last_synced_at`；本轮新 prompt **字段级** supersede（同 tag 旧条 `revoked`）+ append。**禁止**整文件重建 state。
-7. **进入审批门禁（强制，不可跳过）** — 见下节。工作区可有未提交变更；**尚未 commit**。
 
-### 5. 审批门禁（apply 之后）
+2. 组装裁定决策，调用：
+
+    ```bash
+    python3 scripts/repo_template/repo_sync.py apply \
+      --decision AGENTS.md:update \
+      --decision conventions.md:merge \
+      # ... 仅已确认的单元；未确认不传
+    ```
+
+    apply 执行：硬同步树对树 → skill 整目录覆盖 → 软链建/修 → .gitignore/MCP 机械合并 → 裁定单元按决策写盘（`merge` 由 agent 先前手动编辑，脚本跳过）→ `pytest tests/repo_template/ -q`（`--skip-tests` 可跳过）→ 字段级更新 state（干净 SRC + 测试通过才推进 `last_synced_commit`）→ 输出**改动路径清单**。
+
+3. 测试失败 → 不推进 state；agent 汇报并停，不 commit。
+
+4. apply 后工作区有未提交变更；**尚未 commit**。
+
+### 5. 审批门禁（apply 之后，强制）
 
 apply 写盘结束后**必须**停下来问用户，不得默认提交。
 
 1. 输出「结果汇报」+ 变更摘要：
 
-   ```bash
-   git -C "$CONSUMER" status --short
-   git -C "$CONSUMER" diff --stat
-   ```
+    ```bash
+    git status --short
+    git diff --stat
+    ```
 
-2. 列出**拟提交路径清单**（仅本轮同步触碰的路径，含变更的 `sync_state.json` 若有）。
+2. 用 apply 输出的**改动路径清单**列出**拟提交路径**（仅本轮同步触碰的路径，含变更的 `sync_state.json`）。
+
 3. **明确询问**：
 
-   > 同步已写入工作区（尚未 commit）。请审批：回复「审批通过」后才会提交；拒绝或其它表述则保持未提交。
+    > 同步已写入工作区（尚未 commit）。请审批：回复「审批通过」后才会提交；拒绝或其它表述则保持未提交。
 
 4. **等待用户本轮明确答复**：
-   - **通过**：「审批通过」/「approve」/「可以 commit」/「同意提交」等无歧义同意 → 步骤 5。
-   - **不通过**：拒绝、再改、沉默、仅「ok/好/收到」→ **不 commit**。
+
+    - **通过**：「审批通过」/「approve」/「可以 commit」/「同意提交」等无歧义同意 → 步骤 5。
+    - **不通过**：拒绝、再改、沉默、仅「ok/好/收到」→ **不 commit**。
+
 5. 审批通过后——**只点名 add 清单内路径**（**禁止** `git add -A` / `git add .`）：
 
-   ```bash
-   git -C "$CONSUMER" add -- \
-     scripts/repo_template \
-     tests/repo_template \
-     .agents/skills/task-run \
-     .agents/skills/repo-template-sync/SKILL.md \
-     .agents/skills/repo-template-sync/sync_state.json \
-     # …预览/status 中本轮实际改动的每一路径
-   git -C "$CONSUMER" commit -m "chore: sync repo_template @ <T_HEAD 短 SHA>"
-   ```
+    ```bash
+    git add -- scripts/repo_template \
+      tests/repo_template \
+      .agents/skills/task-run \
+      .agents/skills/repo-template-sync/SKILL.md \
+      .agents/skills/repo-template-sync/sync_state.json \
+      # …apply 输出的每一改动路径
+    git commit -m "chore: sync repo_template @ <T_HEAD 短 SHA>"
+    ```
 
-   - 路径以本轮真实 diff 为准，上表仅为形状示例。
-   - **不** `git push`，除非用户另说。
-   - 无关脏文件不得进 stage。
+    - 路径以 apply 实际改动清单为准，上表仅为形状示例。
+    - **不** `git push`，除非用户另说。
+    - 无关脏文件不得进 stage。
+
 6. 无任何可提交 diff → 说明无需 commit。
+
+## state 与站立指令
+
+- state 骨架与字段见 `sync_state.json`；字段级更新纪律由 `repo_sync.py` 内部保证（读盘 → 改指定键 → 写回，未知键保留），**agent 禁止手工编辑 state 文件**。
+- 登记站立指令：`repo_sync.py prompt add --text "..." --tags a,b`；同 tag 旧条自动 `revoked`（后出优先）。作废：`prompt revoke --id N`。查看：`prompt list`。
+- 一次性「这次先别动」且用户说「不用记住」→ 不写入；未说明则默认记住。
+- 每轮同步**先读 `prompt list`** 未 revoked 条再裁定；未撤销的 `user_prompts` **优先于**模板默认；rationale 引用序号或 `text`。
+- `link-skills`：软链校验/修复。悬空链清理仅在用户确认删除对应 skill 后手动处理；非本机制管理链接由脚本报告、agent 不碰。
 
 ## 汇报
 
@@ -415,6 +199,6 @@ diff stat：…
 
 ## 完成条件
 
-- **计算变更**：加载并展示未撤销 `user_prompts`；**强制覆盖全量列出并标注处置**；每个有 diff 的裁定单元有 disposition + rationale；不违反 prompt；**diff 全量基于当前两棵工作树，不依赖 `last_synced_*` 作基线**。
-- **写盘**：强制覆盖完成；裁定遵守 prompt；state **仅字段级**更新；未知字段仍在；本轮 prompt 已 append 且同 tag 旧条已 revoked；已展示待审批清单并询问。
-- **commit**：仅「审批通过」后、且**点名 add** 本轮路径；否则不提交。
+- **计算变更**：`prompt list` 未 revoked 条已加载并展示；plan 强制覆盖全量列出并标注处置；每个有 diff 的裁定单元有 disposition + rationale；不违反 prompt；diff 全量基于当前两棵工作树，不依赖 `last_synced_*` 作基线。
+- **写盘**：机械化部分全部由 `repo_sync.py apply` 完成（不手动拼 rsync/jq）；裁定遵守 prompt；state 仅字段级更新（脚本保证）；已展示待审批清单并询问。
+- **commit**：仅「审批通过」后、且**点名 add** apply 输出的改动路径；否则不提交。
