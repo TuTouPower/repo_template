@@ -42,6 +42,12 @@ reviewed_scope: {review_scope_fingerprint}
 - clean review（0 finding）是有效输出；**禁止凑数**。
 - 范围内问题进 finding 表；范围外问题仅在结论段提示，**不进** finding 表。
 
+### 穷尽与零漏报
+
+- 全量报告，不丢弃低置信度 finding；误报用置信度与严重度区分，不做阈值过滤隐藏。
+- 覆盖 7 视角正交体检时，每视角独立出 finding（安全/正确性/契约·Breaking/性能·资源/架构·可维护性/健壮性·可观测/测试·文档·规格）；未命中也需确认已扫过，而非跳过。
+- 每条 finding 须含 `file:line`、证据片段或可复现路径、与 AC/规则的锚定，及最小修复建议。
+
 ### blocking 硬阈值
 
 标 `critical` / `important`（即 blocking）的 finding，必须满足以下**至少一条**，否则降为 `minor` 或只写进结论段：
@@ -56,6 +62,7 @@ reviewed_scope: {review_scope_fingerprint}
 - 「未知契约清单」仍含 `UNVERIFIED-BLOCKING`、`UNVERIFIED-SPIKE` 或裸 `UNVERIFIED` → 最低 `important`；说明实施前严格门禁未完成，当前实现无法证明满足相关外部契约
 - 风格、命名、注释、文件组织偏好 → `minor`
 - 实现合理但与 spec 描述不符（spec 过时）→ 在 finding 里说明，处置为改 spec，不计 FAIL
+- 规模启发式（文件过大/圈复杂度/单 task 改动面大）本身不 blocking，仅作结论段提示；仅当已产出可观测缺陷时按缺陷本身定级
 
 ### Pre-Report Gate（每条 finding 报前自问）
 
