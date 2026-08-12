@@ -15,7 +15,7 @@ SPEC_TEMPLATE = (REPO_ROOT / "docs/tasks/task_template/spec.md").read_text(encod
 _, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / "docs/tasks/task_template/task.md")
 
 
-def _filled_spec() -> str:
+def _fill_spec_text(text: str) -> str:
     replacements = {
         "{为什么需要此变更。}": "测试背景。",
         "{本 task 包含什么。}": "测试范围。",
@@ -31,10 +31,13 @@ def _filled_spec() -> str:
         "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
         "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
     }
-    text = SPEC_TEMPLATE
     for old, new in replacements.items():
         text = text.replace(old, new)
     return text
+
+
+def _filled_spec() -> str:
+    return _fill_spec_text(SPEC_TEMPLATE)
 
 
 def test_template_documents_pass_with_placeholders_allowed():
@@ -123,18 +126,37 @@ def test_heading_order_change_fails():
 
 
 def test_missing_fixed_guidance_fails():
-    # 删掉带 `<!-- 规范 -->` 标记的就近规范块，门禁应失败
-    spec = _filled_spec().replace(
-        "<!-- 规范（门禁必留，不得删除） -->\n"
-        "只写用户或调用方可观察行为，每条可独立验证。普通版本号、底层库和目录结构不作为验收标准；需要长期约束后续工作的技术选择写入 `docs/blueprint/decisions.md`。\n"
-        "<!-- /规范 -->\n",
-        "",
-        1,
-    )
+    # 从原始模板删除第一个 `<!-- 规范 -->` 块，门禁应失败。
+    # 按原始文本行扫描删除（含空行），不硬编码块格式，模板空行变化不影响本测试。
+    lines = SPEC_TEMPLATE.splitlines()
+    out, in_block, skipped = [], False, False
+    for line in lines:
+        if not skipped and line.strip() == "<!-- 规范（门禁必留，不得删除） -->":
+            in_block, skipped = True, True
+            continue
+        if in_block:
+            if line.strip() == "<!-- /规范 -->":
+                in_block = False
+            continue
+        out.append(line)
+    spec = _fill_spec_text("\n".join(out))
 
     problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
 
     assert any("规范块" in problem for problem in problems)
+
+
+def test_guide_block_blank_line_insensitive():
+    # prettier 会在 `<!-- 规范 -->` 后插空行；块内空行属格式噪音，
+    # 模板与提交 spec 之间空行差异不得误报「缺规范块」。
+    spec = _filled_spec().replace(
+        "<!-- 规范（门禁必留，不得删除） -->\n\n",
+        "<!-- 规范（门禁必留，不得删除） -->\n",
+    )
+
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+
+    assert problems == []
 
 
 def test_template_placeholder_fails_after_creation():

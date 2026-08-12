@@ -287,8 +287,9 @@ def extract_ac_ids(spec_text: str) -> list[str]:
 def _extract_guide_blocks(text: str) -> list[str]:
     """提取 spec 中所有 `<!-- 规范（门禁必留，不得删除） -->...<!-- /规范 -->` 块。
 
-    返回按出现顺序排列的块列表，每块含标记行与正文（行级 strip）。
+    返回按出现顺序排列的块列表，每块含标记行与正文（行级 strip，跳过空行）。
     规范块是门禁必留的就近规范，agent 只能替换块外占位符。
+    空行由格式器（prettier 等）控制，属格式噪音，不参与逐字比对。
     """
     blocks = []
     current = None
@@ -297,10 +298,12 @@ def _extract_guide_blocks(text: str) -> list[str]:
         if stripped == ctx.SPEC_GUIDE_OPEN:
             current = [stripped]
         elif current is not None:
-            current.append(stripped)
             if stripped == ctx.SPEC_GUIDE_CLOSE:
+                current.append(stripped)
                 blocks.append("\n".join(current))
                 current = None
+            elif stripped:
+                current.append(stripped)
     return blocks
 
 

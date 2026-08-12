@@ -975,16 +975,20 @@ def test_preflight_can_check_backlog_from_main_and_chain_ref(git_repo):
 
 def test_start_rejects_missing_scaffold_before_mutation(git_repo):
     spec = git_repo / "docs/tasks/t001_alpha/spec.md"
-    spec.write_text(
-        spec.read_text(encoding="utf-8").replace(
-            "<!-- 规范（门禁必留，不得删除） -->\n"
-            "只写用户或调用方可观察行为，每条可独立验证。普通版本号、底层库和目录结构不作为验收标准；需要长期约束后续工作的技术选择写入 `docs/blueprint/decisions.md`。\n"
-            "<!-- /规范 -->\n",
-            "",
-            1,
-        ),
-        encoding="utf-8",
-    )
+    # 按原始行扫描删除第一个 `<!-- 规范 -->` 块（含空行），
+    # 不硬编码块格式，模板空行变化不影响本测试。
+    lines = spec.read_text(encoding="utf-8").splitlines()
+    out, in_block, skipped = [], False, False
+    for line in lines:
+        if not skipped and line.strip() == "<!-- 规范（门禁必留，不得删除） -->":
+            in_block, skipped = True, True
+            continue
+        if in_block:
+            if line.strip() == "<!-- /规范 -->":
+                in_block = False
+            continue
+        out.append(line)
+    spec.write_text("\n".join(out), encoding="utf-8")
     _git(git_repo, "add", str(spec.relative_to(git_repo)))
     _git(git_repo, "commit", "-m", "break task scaffold")
     initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
