@@ -1,5 +1,7 @@
 # 工作流反思：并行 task 的分支/worktree 纪律缺失
 
+> **状态（2026-08-12 核对）**：本文建议已大部分落地——`task.py start` 现实际创建 worktree 并记录路径（`repo_task/integration.py` `create_worktree`）；`tasks_index.json` 改派生缓存（decision_log L1）；「main 直改」禁令由 worktree 隔离规则覆盖（L4）。文末「经验固化情况」仍为当时快照。
+
 源自 2026-07-28 在 omni_media 项目并行执行 6 个 backlog task（t116–t130，pending f004–f015 拆分）时的实际阻塞事件。前序反思见 `workflow_reflection_1.md` 至 `_5.md`。
 
 ## 约定与现实的落差

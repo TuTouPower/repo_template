@@ -1,11 +1,11 @@
 # 审阅结果决策
 
 ## 目录
-docs/reviews/review_20260805_133245
+docs_repo/reviews/review_20260805_133245
 
 ## 报告来源
 - 已读：review_claude_haiku, review_claude_sonnet, review_grok_grok_4_5, review_kimi_kimi_code_k3_256k
-- 缺失：无
+- 缺失：review_kimi_gpt_5_6_luna, review_kimi_gemini_3_6_flash（selection 期待 6 份，实际产出 4 份）
 
 ## 统计
 - 采纳：26 项

@@ -1,8 +1,10 @@
 # docs_repo 综合审阅报告与评估意见
 
-**审阅日期**：2026-07-27  
+**审阅日期**：2026-07-27（UTC+8）  
 **审阅范围**：[docs_repo/](file:///home/karon/karson_ubuntu/repo_template/docs_repo) 下所有文件（包含 6 份主文档与 `archive/` 历史文档）  
 **审阅者**：Antigravity AI (Gemini 3.6 Flash)
+
+> **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
 ---
 

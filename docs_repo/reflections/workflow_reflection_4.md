@@ -1,8 +1,8 @@
 # 工作流实战复盘
 
-> 落地状态见 `decision_log.md`。§1 方案 C（不切分支、全在 main 上做）未被采纳为全局教条——它与 `incident_t071_worktree_loss.md` 回答的不是同一问题，当前规则是默认 worktree 隔离（L4/L30）。
+> 落地状态见 `decision_log.md`。§1 方案 C（不切分支、全在 main 上做）未被采纳为全局教条——它与 `workflow_reflection_2.md`（原 `incident_t071_worktree_loss.md`）回答的不是同一问题，当前规则是默认 worktree 隔离（L4/L30）。
 
-基于 omni_media 项目执行 21 个 task（t041-t061）的完整记录复盘。与 `workflow_feedback.md`（理论分析）互补，本文聚焦**实战中暴露的、之前未预测到的问题**。
+基于 omni_media 项目执行 21 个 task（t041-t061）的完整记录复盘。与 `workflow_reflection_1.md`（原 `workflow_feedback.md`，理论分析）互补，本文聚焦**实战中暴露的、之前未预测到的问题**。
 
 ## 执行概况
 

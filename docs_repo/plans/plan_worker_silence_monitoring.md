@@ -1,5 +1,7 @@
 # Worker 静默监控权威设计
 
+> **过时（2026-08-12 标注）**：本文描述的 agent executor 静默监控 / coordinator / `host_worker_id` 查询机制已于 [`decision_log.md`](../decision_log.md) L35 随 dispatch 退役。executor 仅 `inline`，无 agent 宿主静默监控。当前执行架构权威见 `../../docs/blueprint/architecture_repo_template.md`。
+
 本文是 agent executor 静默监控的当前权威设计。调度控制面的总体 reconcile 架构见 [`plan_dispatch_control_plane.md`](plan_dispatch_control_plane.md)；attempt identity 与生命周期见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)。
 
 ## 目标与边界

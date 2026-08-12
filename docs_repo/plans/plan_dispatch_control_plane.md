@@ -1,5 +1,7 @@
 # 调度控制面：统一 attempt + 水位触发 reconcile
 
+> **过时（2026-08-12 标注）**：本文描述的 coordinator / reconcile / 扇出 dispatch / 5 分钟 cron 机制已于 [`decision_log.md`](../decision_log.md) L35 退役。并发只保留用户手动多会话 `task-run`。当前执行架构权威见 `../../docs/blueprint/architecture_repo_template.md`；`task.py view --serve` 是现行只读看板入口。
+
 全部执行拓扑共用统一 attempt 控制面。`task-run` 使用链式 branch topology 与 inline executor；`task-dispatch` 使用扇出 branch topology 与 agent executor。本文重点描述 coordinator 在扇出调度中的 reconcile 行为；attempt 生命周期权威定义见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)，静默算法见 [`plan_worker_silence_monitoring.md`](plan_worker_silence_monitoring.md)。
 
 ## Reconcile 是并行动作来源

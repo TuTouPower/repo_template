@@ -88,7 +88,7 @@ Kimi (kimi-code/k3-256k)
 
 ### M8. 文档术语 `redispatch` 与实现不符
 
-- 位置：`.agents/skills/task-dispatch/SKILL.md:85-86`、`docs_repo/plan_dispatch_control_plane.md:35`
+- 位置：`.agents/skills/task-dispatch/SKILL.md:85-86`、`docs_repo/plans/plan_dispatch_control_plane.md:35`
 - 现象：文档把 `redispatch mode=resume|restart` 列为独立 action；实现（`monitoring.py:461-462`）只输出 `action: "dispatch"` 带 `mode` 字段，从不输出 `"redispatch"`。
 - 影响：coordinator 按 skill 表匹配 action 名永远命不中，可能把重试误当新 dispatch 或漏处理。
 - 建议：文档改为「`dispatch` 动作 + `mode=resume|restart` 字段」。
@@ -134,8 +134,8 @@ Kimi (kimi-code/k3-256k)
 
 ### L4. 文档细节漂移
 
-- `docs_repo/plan_worker_silence_task_modularization.md:196` 写 `dispatched(未观察)` vs 权威 `plan_worker_silence_monitoring.md:76` 写「未观察」 vs 实现 `monitoring.py:383` 为 `running(未观察)`（实施计划为历史文档，影响有限）。置信度：高；优先级：低
-- `docs_repo/plan_worker_silence_task_modularization.md:26-41` 目录树漏列实际存在的 `attempts.py`。置信度：高；优先级：低
+- `docs_repo/plans/plan_worker_silence_task_modularization.md:196` 写 `dispatched(未观察)` vs 权威 `plans/plan_worker_silence_monitoring.md:76` 写「未观察」 vs 实现 `monitoring.py:383` 为 `running(未观察)`（实施计划为历史文档，影响有限）。置信度：高；优先级：低
+- `docs_repo/plans/plan_worker_silence_task_modularization.md:26-41` 目录树漏列实际存在的 `attempts.py`。置信度：高；优先级：低
 - `.agents/skills/task-run/SKILL.md` 恢复指引默认走 cleanup，但 cleanup 只接受 terminal completed；terminal=failed/stopped 的中断场景指引不可达，未覆盖该分支。置信度：中；优先级：低
 - `.agents/skills/task-dispatch/SKILL.md:113` infra 行「不降档」相对已删除的 model ladder 无操作含义。置信度：中；优先级：低
 - `test_dispatch_control.py:894-903` 把同 identity 重复 reserved 事件固化为期望的 overlap；建议加注释标明这是保守降级设计。置信度：中；优先级：低

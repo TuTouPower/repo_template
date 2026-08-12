@@ -10,7 +10,7 @@ Agent 友好的通用仓库模板。面向需要结构化 task、review、handof
    ```
    或 `git clone` / `cp -a` 后再**立刻删掉** `docs_repo/`。**禁止** `cp -r`（会把软链展开成副本，导致 `.agents/skills/` 与 `.claude/skills/` 分叉）。
 2. 初始化版本控制。
-3. 全局替换 `{project_name}`，填写项目一句话介绍。
+3. 全局替换 `AGENTS.md` 首行 `{一句话介绍：这个项目是什么、给谁用。}` 占位符，填写项目一句话介绍。
 4. 保持全部软链：`CLAUDE.md -> AGENTS.md`，以及 `.claude/skills/* -> ../../.agents/skills/*`。
 5. 按技术栈补充依赖文件、工具配置和 `.gitignore`。
 6. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md`、`testing.md` 初稿；`decisions.md` 初始可为空。

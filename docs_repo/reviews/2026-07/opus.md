@@ -2,6 +2,8 @@
 
 审阅范围：`workflow_feedback.md`（omni_media 理论）、`workflow_retrospective.md`（omni_media 实战 21 task）、`workflow_retrospective_0.md`（omni_media t001-t007）、`workflow_session_analysis_2026-07.md`（omni_usage 会话实证 80MB 日志）、`workflow_record.md`（worktree 事故）、`11111.md`（遗留备忘）、`archive/workflow_skill_split_proposal.md`（skill 拆分方案）。
 
+> **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`。`archive/workflow_skill_split_proposal.md` 未改名。
+
 现状基线：AGENTS.md + 9 个 skill + task.py + review prompt 模板 + task_template，skill 拆分提案已落地。以下按主题对照笔记结论与当前状态。
 
 ---

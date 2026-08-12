@@ -1,5 +1,7 @@
 # Attempt 生命周期闭环
 
+> **过时（2026-08-12 标注）**：本文描述 attempt 生命周期早期形态。其中 `task-dispatch` / agent executor / `bind` / `escalate` / `observe` 等机制已于 [`decision_log.md`](../decision_log.md) L35 退役，executor 收为仅 `inline`。当前执行架构权威见 `../../docs/blueprint/architecture_repo_template.md`；attempt 生命周期命令以 `task.py attempt --help` 为准。
+
 本文描述已实施的统一 attempt 生命周期。串行 `task-run` 与并行 `task-dispatch` 共用同一控制面；两者只在 branch topology、executor 与合并时机上不同。
 
 ## Exact identity 与 provenance

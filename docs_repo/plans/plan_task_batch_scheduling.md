@@ -2,6 +2,8 @@
 
 2026-07-30 用户提出，审阅决策已通过。实施按用户特批直接修改 main，保持未提交。
 
+> **已落地，本文设计已被 `task.py plan` 取代（2026-08-12 核对）**：调度图落 task front matter（`depends_on` / `conflicts_with` / `schedule_status`）+ `task.py plan` 推本波链（decision_log L21）。文中 `next-batch` 命令设计已演化为 `plan`。正文保留方案推导。
+
 ## 需求
 
 `tasks-parallel` 现状：每次调用都由 Agent 重新读取全部 backlog task 的 spec，分析依赖与改动面冲突，只输出当时第一批可并发 task。用户完成一个或多个 task 后，要获取下一批时必须重新调用 Agent，速度慢且结论可能漂移。

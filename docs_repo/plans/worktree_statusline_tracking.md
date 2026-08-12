@@ -2,6 +2,8 @@
 
 多会话并发跑 task（多会话各执行 `task-run`）时，每个 Claude Code 会话的工作目录都是主仓根目录。状态栏的目录字段若不区分会话，无法看出该会话当前落在哪个 task worktree。本机制在状态栏显示各会话实际关联的 task worktree 名。
 
+> **状态（2026-08-12 核对）**：本文为现行机制文档，与实现一致（`scripts/repo_template/track_worktree.py` + PostToolUse hook；ledger 事件类型与 `repo_task/attempts.py` 对齐）。
+
 ## 数据流
 
 ```

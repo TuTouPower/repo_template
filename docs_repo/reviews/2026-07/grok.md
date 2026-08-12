@@ -2,8 +2,10 @@
 
 - **范围**：`docs_repo/` 下全部文件（含 `archive/`）
 - **对照基线**：当前 `repo_template` 的 `AGENTS.md` / `CLAUDE.md`、`.agents/skills/*`、`docs/tasks/task_template/*`、`docs/reviews/prompts/*`
-- **日期**：2026-07-27
+- **日期**：2026-07-27（UTC+8）
 - **目的**：判断这批笔记对模板演进的价值、哪些结论已落地、哪些仍是开放债、建议优先动哪几刀
+
+> **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`；中间命名 `retro_t001_t007.md` / `retro_t041_t061.md` / `incident_t071_worktree_loss.md` 同归于 `workflow_reflection_3.md` / `_4.md` / `_2.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
 ---
 

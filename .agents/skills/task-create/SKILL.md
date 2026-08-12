@@ -41,7 +41,7 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
       - **契约区**：范围、非范围、行为 AC（非空）、可测试性声明。版本号/库/目录不进 AC；需部署或人工验证的 AC 加 `[deploy]`。
       - **上下文区**：有意不测、测试策略、未知契约清单、风险与回退、依赖与约束、finalization 更新的 blueprint。未知契约须分类（见第 6 步）。
       - 契约区执行期不改；上下文区执行期可补。
-   4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 留空（`task-work` Step 1 实写）。
+   4. `task.md`：只填正文能填的部分。front matter 由脚本维护，**不手改**；`diff_anchor` 由 `task.py start` 实写（创建 worktree 时写入 base SHA）。
       **不预测实施步骤**——创建期未读代码，写出来的步骤执行时必然失准；步骤由 `task-work` 边做边记进「实施笔记」。
 
 5. **逐 task 自检**：

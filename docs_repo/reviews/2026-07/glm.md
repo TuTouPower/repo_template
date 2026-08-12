@@ -2,8 +2,10 @@
 
 - **范围**：`docs_repo/` 下全部文件（含 `archive/` 与 `review/`）
 - **已读对照**：`review/gemini.md`、`review/grok.md`、`review/k3.md`——本文不重复三者已建立的共识，仅在其基础上补充分歧、被忽略的盲点，以及更具体的落地形态。
-- **日期**：2026-07-27
+- **日期**：2026-07-27（UTC+8）
 - **立场**：以"工程落地"为优先——审阅的对象是工作流，而工作流的目标是可重复执行，不是自洽的论文。
+
+> **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`；中间命名 `retro_t001_t007.md` / `retro_t041_t061.md` / `incident_t071_worktree_loss.md` 同归于 `workflow_reflection_3.md` / `_4.md` / `_2.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
 ---
 

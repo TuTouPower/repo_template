@@ -8,7 +8,7 @@
 - **时间范围**：2026-07-23 ~ 2026-07-26（自然 4 天，跨 `~56h` + `~18h` 两条主线）
 - **样本**：16 个有意义会话，含两个 19MB 大会话（`6cc03e0d` / `af3dbbf3`），日志总量 `> 80MB`
 - **方法**：6 路并行 subagent 按文件分组抽样（`jq` / `grep`，禁全量 `cat`），主任务整合
-- **与现有报告关系**：`workflow_feedback.md`（omni_media 理论）+ `workflow_retrospective.md`（omni_media 实战）已覆盖 spec/plan 模板字段重叠、`tasks_index.json` 多分支 merge 冲突等结构性问题。**本报告聚焦本轮会话新暴露的运行态问题**，不重复上述内容，仅在文末对照表标注交集。
+- **与现有报告关系**：`workflow_reflection_1.md`（原 `workflow_feedback.md`，omni_media 理论）+ `workflow_reflection_4.md`（原 `workflow_retrospective.md`，omni_media 实战）已覆盖 spec/plan 模板字段重叠、`tasks_index.json` 多分支 merge 冲突等结构性问题。**本报告聚焦本轮会话新暴露的运行态问题**，不重复上述内容，仅在文末对照表标注交集。
 
 ## TL;DR（按严重度）
 
@@ -208,8 +208,8 @@ reviewer 提示词没要求"只报 AC 阻塞级"。于是"风格建议 / 边界�
 |subagent 失控 + 503 无出口|否（新）|
 |TDD 顺序违规|否（新）|
 |原生模块 ABI 脚本|否（新，Electron 特有）|
-|spec/plan 模板字段重叠|是 → `workflow_feedback.md` §1|
-|`tasks_index.json` 多分支 merge 冲突|是 → `workflow_retrospective.md` §1|
+|spec/plan 模板字段重叠|是 → `workflow_reflection_1.md` §1|
+|`tasks_index.json` 多分支 merge 冲突|是 → `workflow_reflection_4.md` §1|
 
 ## 亮点（值得保留的做法）
 

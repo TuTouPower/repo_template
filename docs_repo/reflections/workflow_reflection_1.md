@@ -190,7 +190,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 ## spec/plan 边界的再评估（2026-07 补充）
 
-> 基于 omni_usage 会话实证（`workflow_session_analysis_2026-07.md`）对 §1 与改进建议 A 的发展，非否定。
+> 基于 omni_usage 会话实证（`workflow_reflection_5.md`，原 `workflow_session_analysis_2026-07.md`）对 §1 与改进建议 A 的发展，非否定。
 
 §1 已诊断"模板按 WHAT/HOW 切导致字段重叠"，改进建议 A 的方向是 plan 模板分级、承载真正的设计细节。omni_usage 会话分析暴露了另一条线索：**审阅 reviewer 只读 spec 不读 plan**，但 reviewer 最需要的"决策上下文"（哪些分支有意不测）和"测试策略"（哪些 AC 不可单测）当前写在 plan 里——造成 reviewer 信息不对称，撤回率与遗留堆积（详见 session 分析报告 §1 根因 b/c）。
 

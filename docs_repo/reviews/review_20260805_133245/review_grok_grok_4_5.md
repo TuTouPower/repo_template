@@ -23,7 +23,7 @@ Grok 4.5
 
 ### H1. `terminal=failed/stopped` 无 report 即可机械 redispatch，旧 identity 的 report 窗口被关闭
 
-- **位置**：`scripts/repo_template/repo_task/attempts.py` `reserve_attempt`（retryable 条件）；`scripts/repo_template/repo_task/monitoring.py` `compute_reconcile_plan` 失败分支；对照 `docs_repo/plan_dispatch_control_plane.md` 行动表 `redispatch` 行与 cron 顺序
+- **位置**：`scripts/repo_template/repo_task/attempts.py` `reserve_attempt`（retryable 条件）；`scripts/repo_template/repo_task/monitoring.py` `compute_reconcile_plan` 失败分支；对照 `docs_repo/plans/plan_dispatch_control_plane.md` 行动表 `redispatch` 行与 cron 顺序
 - **现象**：
   1. `reserve_attempt` 将 `terminal_status in {failed, stopped}` 单独视为可 retry，**不要求**已有 report。
   2. `reconcile` 对 terminal failed/stopped（无 report）直接走 `_retry_or_escalate_action`，默认 `fail_class="task"`，可输出 `dispatch` 新 attempt。

@@ -4,6 +4,8 @@
 
 本文是 L35 的实施设计。实施时按仓库标准 task 流程拆分执行。
 
+> **已落地（2026-08-12 核对）**：手动并发已实施——`task.py plan`（本波并发链）、`task.py view --serve`（只读看板）、AGENTS「多会话并发」、`architecture_repo_template.md`「手动并发」节。本文为实施设计，正文保留。
+
 ## 目标形态
 
 ```text

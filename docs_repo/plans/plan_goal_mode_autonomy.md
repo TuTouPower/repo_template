@@ -2,6 +2,8 @@
 
 来源：参考项目 supergoal（github.com/robzilla1738/supergoal，本地 ~/github_repo/supergoal）的机制分析。本仓已有 script 控制面（ledger / exact identity / worktree 拓扑），不引入 supergoal 的 prompt-as-program 骨架，只移植其防自欺机制，并解决 goal 模式「提示词非强约束、频繁中断等输入」的实测痛点。
 
+> **已落地（2026-08-12 核对）**：goal 模式已实现为 `task.py goal` / `goal-check`（见 AGENTS「skill 调用」goal 模式、`task-run`「goal 模式」节）。本文为方案推导，正文保留。
+
 ## 问题
 
 用户以 `/goal 请你按照 task run 工作流执行所有 task` 驱动队列，三个结构性弱点：
