@@ -79,6 +79,10 @@ def tid_sort_key(tid: str) -> int:
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
     return int(match.group(1))
 
+def tid_sort_key_or_zero(tid: str) -> int:
+    """排序键；非规范 tid 排 0，避免 tid_sort_key raise（plan 容错用）。"""
+    return tid_sort_key(tid) if ctx.TID_RE.fullmatch(tid) else 0
+
 def parse_tid_list(value: str, *, field: str, allow_empty: bool = True) -> list[str]:
     """解析 front matter/严格 CLI 使用的逗号分隔规范 tid。"""
     if value == "" and allow_empty:

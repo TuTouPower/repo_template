@@ -47,6 +47,7 @@ HARD_SYNC_FILES = (
     "docs/spikes/report_template.md",
     "docs/blueprint/architecture_repo_template.md",
     ".claude/hooks/merge_guard.py",
+    ".github/workflows/repo-template-ci.yml",
 )
 NOISE_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
 
@@ -63,6 +64,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30,
     )
 
 
@@ -467,6 +469,7 @@ def _run_tests(consumer: Path) -> bool:
     r = subprocess.run(
         ["pytest", "tests/repo_template/", "-q"], cwd=str(consumer),
         capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=300,
     )
     if r.returncode != 0:
         print(r.stdout[-2000:] if r.stdout else "", file=sys.stderr)

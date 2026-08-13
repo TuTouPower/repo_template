@@ -50,6 +50,7 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
             encoding="utf-8",
             errors="replace",
             check=True,
+            timeout=30,
         )
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()

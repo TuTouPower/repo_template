@@ -14,7 +14,7 @@ from typing import Any
 
 import repo_task.context as ctx
 
-from .documents import tid_sort_key
+from .documents import tid_sort_key_or_zero
 from .scheduling import compute_schedule
 
 CHAIN_COLORS = [
@@ -60,11 +60,6 @@ def chain_of_map(chains: list[dict]) -> dict[str, str]:
 
 def chain_text(chain: dict) -> str:
     return f"{chain_letter(chain['name'])}: {' '.join(chain['taskIds'])}"
-
-
-def _tid_key(tid: str) -> int:
-    """排序键；非规范 tid 排 0，避免 tid_sort_key raise。"""
-    return tid_sort_key(tid) if ctx.TID_RE.fullmatch(tid) else 0
 
 
 def _task_run_line(task_ids: list[str]) -> str:
@@ -173,8 +168,8 @@ def compute_crossings(chains: list[dict], data: dict) -> list[dict]:
         })
     crossings.sort(
         key=lambda item: (
-            _tid_key(item["dependsOnNodeId"]),
-            _tid_key(item["nodeId"]),
+            tid_sort_key_or_zero(item["dependsOnNodeId"]),
+            tid_sort_key_or_zero(item["nodeId"]),
         )
     )
     return crossings
@@ -189,7 +184,7 @@ def _build_subgraph(data: dict) -> dict:
             id_set.add(node["id"])
             cat_of[node["id"]] = node["category"]
             sched_of[node["id"]] = node.get("schedule_status") or ""
-    ids = sorted(id_set, key=_tid_key)
+    ids = sorted(id_set, key=tid_sort_key_or_zero)
 
     upstream: dict[str, list[str]] = {tid: [] for tid in ids}
     downstream: dict[str, list[str]] = {tid: [] for tid in ids}
@@ -213,7 +208,7 @@ def _build_subgraph(data: dict) -> dict:
                     conflict_of[b].append(a)
 
     for tid in ids:
-        downstream[tid].sort(key=_tid_key)
+        downstream[tid].sort(key=tid_sort_key_or_zero)
     return {
         "ids": ids,
         "id_set": id_set,
@@ -301,7 +296,7 @@ def compute_batch_plan(data: dict) -> dict:
     for tid in rest:
         partners = sorted(
             (peer for peer in sub["conflict_of"].get(tid, []) if peer in active_set),
-            key=_tid_key,
+            key=tid_sort_key_or_zero,
         )
         if partners:
             deferred_list.append({"taskId": tid, "partners": partners})
@@ -323,18 +318,18 @@ def compute_batch_plan(data: dict) -> dict:
             break
         victims = sorted(
             (tid for tid in remaining if degree.get(tid, 0) == max_deg),
-            key=_tid_key,
+            key=tid_sort_key_or_zero,
         )
         victim = victims[0]
         partners = sorted(
             (peer for peer in sub["conflict_of"].get(victim, []) if peer in remaining),
-            key=_tid_key,
+            key=tid_sort_key_or_zero,
         )
         deferred_list.append({"taskId": victim, "partners": partners})
         deferred_set.add(victim)
 
     winners = [tid for tid in rest if tid not in deferred_set]
-    heads = sorted(active_heads + winners, key=_tid_key)
+    heads = sorted(active_heads + winners, key=tid_sort_key_or_zero)
     head_set = set(heads)
     assigned: set[str] = set()
     chains: list[dict] = []
@@ -380,7 +375,7 @@ def compute_batch_plan(data: dict) -> dict:
                 cands.append(tid)
             if not cands:
                 break
-            cands.sort(key=_tid_key)
+            cands.sort(key=tid_sort_key_or_zero)
             nxt = cands[0]
             task_ids.append(nxt)
             chain_set.add(nxt)
@@ -414,7 +409,7 @@ def compute_batch_plan(data: dict) -> dict:
                 f"与 {'、'.join(shown)} 冲突,本轮暂缓(优先让可并行的链最多)"
             ),
         })
-    deferred.sort(key=lambda item: _tid_key(item["taskId"]))
+    deferred.sort(key=lambda item: tid_sort_key_or_zero(item["taskId"]))
 
     plan = {
         "chains": chains,
@@ -457,9 +452,9 @@ def compute_serial_plan(data: dict) -> dict:
         a, b = edge["from"], edge["to"]
         if a not in eligible_set or b not in eligible_set:
             continue
-        if _tid_key(a) < _tid_key(b):
+        if tid_sort_key_or_zero(a) < tid_sort_key_or_zero(b):
             deps[b].add(a)
-        elif _tid_key(b) < _tid_key(a):
+        elif tid_sort_key_or_zero(b) < tid_sort_key_or_zero(a):
             deps[a].add(b)
 
     remaining = set(eligible)
@@ -470,11 +465,11 @@ def compute_serial_plan(data: dict) -> dict:
                 tid for tid in remaining
                 if all(dep not in remaining for dep in deps.get(tid, ()))
             ),
-            key=_tid_key,
+            key=tid_sort_key_or_zero,
         )
         if not ready:
             # 环或异常：退化为 tid 序
-            ready = sorted(remaining, key=_tid_key)
+            ready = sorted(remaining, key=tid_sort_key_or_zero)
         pick = ready[0]
         ordered.append(pick)
         remaining.remove(pick)
@@ -529,7 +524,7 @@ def _unlock_rows(plan: dict, data: dict) -> list[dict]:
         targets.add(crossing["nodeId"])
 
     rows = []
-    for tid in sorted(targets, key=_tid_key):
+    for tid in sorted(targets, key=tid_sort_key_or_zero):
         if tid in assigned or tid in deferred_set:
             continue
         parents = [
@@ -538,7 +533,7 @@ def _unlock_rows(plan: dict, data: dict) -> list[dict]:
         ]
         if not parents:
             continue
-        parents = sorted(parents, key=_tid_key)
+        parents = sorted(parents, key=tid_sort_key_or_zero)
         parent_desc = []
         for parent in parents:
             if parent in chain_of:

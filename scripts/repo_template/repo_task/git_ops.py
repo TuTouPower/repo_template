@@ -13,6 +13,7 @@ def _git(args: list, *, root: Path | None = None) -> subprocess.CompletedProcess
         ["git", "-C", str(root or ctx.REPO_ROOT), *args],
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
+        timeout=60,
     )
 
 
@@ -21,6 +22,7 @@ def _git_bytes(args: list[str], *, root: Path | None = None) -> subprocess.Compl
     return subprocess.run(
         ["git", "-C", str(root or ctx.REPO_ROOT), *args],
         capture_output=True,
+        timeout=60,
     )
 
 def default_branch() -> str:

@@ -89,7 +89,6 @@ from repo_task.attempts import (
     current_attempt_record,
     current_identity,
     in_flight_attempts,
-    invalid_overlapping_attempts,
     overlapping_attempts,
     project_attempts,
     require_exact_terminal,

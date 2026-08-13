@@ -65,7 +65,7 @@ BUG_TEMPLATE = """# {id} {一句话简述}
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
+        encoding="utf-8", errors="replace", timeout=30,
     )
 
 

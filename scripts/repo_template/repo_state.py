@@ -45,6 +45,7 @@ def _git(args: list[str], *, check: bool = False) -> subprocess.CompletedProcess
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=30,
     )
     if check and result.returncode != 0:
         sys.exit(f"git {' '.join(args)} 失败：{result.stderr.strip()}")

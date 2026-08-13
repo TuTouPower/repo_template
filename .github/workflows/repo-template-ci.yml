@@ -1,0 +1,23 @@
+name: repo-template
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure git identity
+        run: |
+          git config --global user.email "repo-template-ci@example.com"
+          git config --global user.name "repo-template CI"
+      - name: Run toolchain tests
+        run: pytest tests/repo_template/ -q

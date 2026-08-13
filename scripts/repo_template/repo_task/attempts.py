@@ -143,10 +143,6 @@ def overlapping_attempts(tid: str, events: list[dict]) -> set[int]:
     return invalid
 
 
-def invalid_overlapping_attempts(tid: str, events: list[dict]) -> set[int]:
-    return overlapping_attempts(tid, events)
-
-
 def _require_exact_current(
     tid: str,
     attempt: int,

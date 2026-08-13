@@ -29,6 +29,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from repo_task.context import TaskDataError
+from repo_task.documents import parse_front_matter as _parse_front_matter
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
 # 行首容忍照抄环节常见的轻量 markdown 修饰（反引号 / 加粗 / 列表前缀），
@@ -82,25 +85,11 @@ def extract_verdicts(path: Path) -> list[str]:
 
 
 def parse_front_matter(path: Path) -> dict:
-    """简化版 front matter 解析（task.py / render_review_prompts.py 各有副本，改规则需三处同步）。"""
-    fm = {}
-    if not path.is_file():
-        return fm
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---"):
-        return fm
-    end = text.find("\n---", 3)
-    if end == -1:
-        return fm
-    for line in text[3:end].splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        v = v.strip()
-        if v and v[0] not in ("\"", "'"):
-            v = v.split(" #", 1)[0].rstrip()
-        fm[k.strip()] = v.strip('"').strip("'")
+    """front matter 解析统一委托 repo_task.documents；缺失或非法返回 {}（宽容语义）。"""
+    try:
+        fm, _ = _parse_front_matter(path)
+    except (OSError, TaskDataError):
+        return {}
     return fm
 
 

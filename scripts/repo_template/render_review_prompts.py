@@ -24,6 +24,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from repo_task.context import TaskDataError
+from repo_task.documents import parse_front_matter as _parse_front_matter
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
 PLACEHOLDER_RE = re.compile(
@@ -37,23 +40,11 @@ FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
 def parse_front_matter(task_path: Path) -> dict:
-    """简化版 front matter 解析（task.py / check_review_status.py 各有副本，改规则需三处同步）。"""
-    text = task_path.read_text(encoding="utf-8")
-    if not text.startswith("---"):
-        sys.exit(f"{task_path}: must start with YAML front matter (---)")
-    end = text.find("\n---", 3)
-    if end == -1:
-        sys.exit(f"{task_path}: front matter not terminated")
-    fm = {}
-    for line in text[3:end].splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or ":" not in line:
-            continue
-        key, _, val = line.partition(":")
-        val = val.strip()
-        if val and val[0] not in ("\"", "'"):
-            val = val.split(" #", 1)[0].rstrip()
-        fm[key.strip()] = val.strip('"').strip("'")
+    """front matter 解析统一委托 repo_task.documents；格式非法以 sys.exit 终止。"""
+    try:
+        fm, _ = _parse_front_matter(task_path)
+    except TaskDataError as error:
+        sys.exit(f"{task_path}: {error}")
     return fm
 
 

@@ -54,7 +54,7 @@ def cmd_new(args: argparse.Namespace) -> None:
 
 
 def _run_git(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
 
 
 def cmd_rename(args: argparse.Namespace) -> None:
