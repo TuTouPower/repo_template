@@ -6,117 +6,68 @@ disable-model-invocation: true
 
 # repo-cleanup
 
-删仓库内**明确无用**的文件系统垃圾（缓存、OS/编辑器垃圾、点名的运行产物）。默认只列清单；确认后再删。文档归档用 `repo-hygiene`，不用本 skill。
+删仓库内**明确无用**的文件系统垃圾（缓存、OS/编辑器垃圾、点名的运行产物）。扫描、类别匹配、保护名单过滤、dry-run 预览与删除全部由脚本 `scripts/repo_template/repo_cleanup.py` 执行；本 skill 只留裁定：scratch 活跃引用收集（`--keep`）、审批 commit 门禁、需用户决定项。文档归档用 `repo-hygiene`，不用本 skill。
 
-## 输入
+## 脚本能力映射
 
-|用户输入|行为|
-|---|---|
-|无参数 / `dry-run`|只扫只列，不删|
-|`apply`|删**默认类别**命中项|
-|`apply` + 类别名（可多个）|只删这些类别|
+`repo_cleanup.py` 在 `scripts/repo_template/` 下（随模板演进同步）。子命令见 `--help`。
 
-模式解析见「步骤 1」；类别见下。
-
-## 类别
-
-**默认**（`apply` 未点名时）：`pycache` / `pytest` / `logs` / `os` / `editor`。
-
-|类别|匹配|
-|---|---|
-|`pycache`|`__pycache__/`、`*.pyc` / `*.pyo` / `*.pyd`|
-|`pytest`|`.pytest_cache/`|
-|`logs`|仓库内 `*.log`（保护路径除外）|
-|`os`|`.DS_Store`、`Thumbs.db`、`desktop.ini`|
-|`editor`|`*~`、`*.swp`、`*.swo`、`.*.swp`|
-
-**点名才清**（不在默认集合）：
-
-|类别|匹配|处理|
+|能力|命令|说明|
 |---|---|---|
-|`node`|`node_modules/`|直接删；汇报提示重装依赖|
-|`scratch`|`.scratch/` **内**草稿|清内容、保留目录；跳过活跃 task 引用路径|
-|`artifacts`|`artifacts/` 内容|清内容、保留目录|
-|`data`|`data/` 内容|清内容、保留目录|
+|扫描预览（只读）|`repo_cleanup.py scan [类别...] [--keep REL...]`|列出命中项与保护/keep 跳过；零删除|
+|删除|`repo_cleanup.py apply [类别...] [--keep REL...]`|只删列表内路径；scratch/artifacts/data 清内容保留目录|
 
-## 保护（永不删）
+类别：默认 `pycache / pytest / logs / os / editor`；`node / scratch / artifacts / data` 须点名。保护与类别匹配规则以脚本为准（`.git/`、`AGENTS.md` 等硬保护；`docs/` 下仅 os/editor 类放行）。
 
-- `.git/`
-- **业务与契约正文**：`src/`、`tests/`、`schemas/`、`config/` 下的源码、测试、契约与配置（**不是**类别表里的垃圾名）。\
-    类别表命中的垃圾**可清**，即使落在这些目录下（如 `src/**/__pycache__/`、`tests/**/.pytest_cache/`）。
-- `docs/` 下除 OS/编辑器垃圾文件名以外的一切（含 task 文档、specs、handoff/pending/findings）
-- `scripts/` 与 `scripts/repo_template/` 入库脚本；`.agents/`、`.claude/` skill 与软链
-- `AGENTS.md`、`README.md`、`CLAUDE.md`、`.gitignore`
-- `docs/archive/tasks_audit.log`
-- task worktree（`../{repo}_tNNN`）在仓库外，本 skill 不扫不删；正常完成后由 `task.py cleanup-worktree` 从主仓清理，active/blocked worktree 保留
-- 不确定是否垃圾 → **不删**，列入「需用户决定」
+## 流程
 
-## 步骤
+1. **解析模式与类别**：无 `apply` → 走 scan（只读）；有 `apply` → 删除。类别：未点名 = 默认五类；`node / scratch / artifacts / data` 须点名。
 
-1. **解析模式**：无 `apply` → dry-run；有 `apply` → 删除。类别：无点名 = 默认五类；`node` / `scratch` / `artifacts` / `data` 须点名。
-
-2. **扫描**：在仓库根（`git rev-parse --show-toplevel`）按类别找命中项；对照保护名单过滤。示例：
+2. **扫描预览**：
 
     ```bash
-    find . -type d -name '__pycache__' -not -path './.git/*'
-    find . -type d -name '.pytest_cache' -not -path './.git/*'
-    find . -type f \( -name '.DS_Store' -o -name 'Thumbs.db' -o -name '*.log' -o -name '*~' -o -name '*.swp' \) -not -path './.git/*'
+    python3 scripts/repo_template/repo_cleanup.py scan [类别...]
     ```
 
-3. **dry-run 输出**（到此结束，不删）：
+    零写盘。输出命中项表、合计与 keep 跳过。**不确定是否垃圾 → 不删**，列入「需用户决定」。
+
+3. **scratch 引用裁定**（仅点名 `apply scratch` 时必做）：
+
+    - 按 `scripts/repo_template/task.py effective-status` 确定 backlog/active/blocked task 的有效来源与读取位置（`source=worktree` / `branch` → 在 `read_at` 处读 `spec.md` 上下文区与 `task.md` 实施笔记；`source=main` → 读主干）。主干中被 worktree 或未合并分支覆盖的旧状态不重复计。
+    - 收集提及的 `.scratch/` 相对路径 → 用 `--keep <REL>` 排除，不删（含该路径的祖先目录，避免 `rmtree` 父目录把引用文件一并清掉）。
+    - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
+
+4. **删除**：
+
+    ```bash
+    python3 scripts/repo_template/repo_cleanup.py apply [类别...] --keep <REL>...
+    ```
+
+    只删脚本列出路径。重复应用前先重跑 scan（干净工作树命中可能已变）。
+
+5. **汇报与 commit 门禁**：
 
     ```markdown
-    ## repo-cleanup 预览（未删除）
+    ## repo-cleanup 结果
 
-    模式：dry-run
-    类别：…
-
+    模式：apply / scan
+    已删除：
+    - …
+    跳过（保护/被引用/不存在）：
+    - …
+    需用户决定：
+    - …
     ```
 
-|路径|类别|说明|
-|---|---|---|
-|./tests/repo_template/__pycache__/|pycache|目录|
-
-合计：N 项
-下一步：确认后 `/repo-cleanup apply`（或带类别）。
-
-````
-
-4. **apply 删除**（仅本次调用含 `apply`）：
-1. 再扫一遍，与 dry-run 同规则。
-2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
-3. **`scratch`**（仅点名 `apply scratch`）：
-   - 按 `AGENTS.md`「task 状态读取优先级」确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。主干中被 worktree 或未合并分支覆盖的旧状态不重复计。
-   - 其余 `.scratch/` 内容删掉，保留空目录。
-   - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
-4. `artifacts` / `data`：清内容、保留目录。
-
-5. **汇报**：
-
-```markdown
-## repo-cleanup 结果
-
-模式：apply / dry-run
-已删除：
-- …
-
-跳过（保护/被引用/不存在）：
-- …
-
-需用户决定：
-- …
-
-默认不 commit（见边界）。
-````
+    默认不 commit。纯 gitignore 产物清理无跟踪 diff → 不 commit；仅当产生可跟踪 diff（如误提交的 `__pycache__`）且用户同意 → 单独维护期 commit；**不**擅自 commit。
 
 ## 边界
 
 - 不替代 `repo-hygiene`；不改业务逻辑；不手改 task front matter / audit log。
-- 派生 index JSON **不列入清理类别**（误删只需重跑 `task.py list --rebuild`）。
+- 派生 index JSON 不列入清理类别（误删只需重跑 `task.py list --rebuild`）。
 - 不把「好久没动的源码/文档」当垃圾。
-- **commit**：默认不 commit。纯 gitignore 产物清理无跟踪 diff → 不 commit。仅当产生可跟踪 diff（如误提交的 `__pycache__`）且用户同意 → 单独维护期 commit；**不**擅自 commit。
-- 与 `repo-hygiene` 分工：本 skill = 文件系统垃圾；hygiene = handoff/pending/过时文档迁 archive。
+- 脚本是模板工具链的一部分，随 `repo-template-sync` 硬同步。
 
 ## 完成
 
-输出预览或删除结果：已删 / 跳过 / 需用户决定。
+输出预览或删除结果：已删 / 跳过 / 需用户决定；未获批不 commit。

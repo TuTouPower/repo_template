@@ -6,26 +6,36 @@ disable-model-invocation: true
 
 # repo-hygiene
 
-把**已闭环 / 已过时**内容迁入 `docs/archive/`，`docs/` 只保留**未闭环 / 暂搁**与**整理后的最新**。
+把**已闭环 / 已过时**内容迁入 `docs/archive/`，`docs/` 只保留**未闭环 / 暂搁**与**整理后的最新**。机械迁移动作（handoff 分段、spike/review 目录 git mv）由脚本 `scripts/repo_template/repo_hygiene.py` 执行；本 skill 只留裁定：哪些确认完结 / 过时、task 状态不一致处置、commit 门禁。
 
 ## 目标视图
 
 |路径|只保留|迁 archive|
 |---|---|---|
-|`docs/pending/todo/`|未闭环待办|已闭环条目 → `docs/archive/pending/`（整文件迁移）|
+|`docs/pending/todo/`|未闭环待办|已闭环条目 → `docs/archive/pending/`（`pending.py archive`）|
 |`docs/pending/parked/`|用户确认暂搁的条目|**不迁**：暂搁非闭环|
 |`docs/findings/`|全部已验证发现|**不迁**：发现是长期资产，失效时就地改写「现状」并注明日期|
-|`docs/handoff.md`|最新一版交接|过时段落 → `docs/archive/handoff.md`（整段追加）|
+|`docs/handoff.md`|最新一版交接|过时段落 → `docs/archive/handoff.md`（`repo_hygiene.py archive-handoff`）|
 |`docs/tasks/{tid}_{slug}/task.md`|活跃 task 状态（经 `task.py`）|已由 `finish`/`drop` 处理，本 skill 不手改|
-|`docs/spikes/{sid}_{slug}/`|进行中的 spike|完结 spike 整目录迁 `docs/archive/spikes/`（迁移细节见步骤 4）|
-|`docs/reviews/review_*/`|报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库|用户确认过时 → 整目录迁 `docs/archive/reviews/`（迁移细节见步骤 4）|
+|`docs/spikes/{sid}_{slug}/`|进行中的 spike|完结 spike 整目录迁 `docs/archive/spikes/`（`repo_hygiene.py archive-spike`）|
+|`docs/reviews/review_*/`|报告 `review_*.md` 入库保留，`_meta/` 本地保留但不入库|用户确认过时 → 整目录迁 `docs/archive/reviews/`（`repo_hygiene.py archive-review`）|
 |其它过时文档|仍生效的说明|明确过时且有历史价值 → `docs/archive/` 镜像路径|
+
+## 脚本能力映射
+
+`repo_hygiene.py` 在 `scripts/repo_template/` 下（随模板演进同步）。全部默认 dry-run，`--write` 才落盘。
+
+|能力|命令|说明|
+|---|---|---|
+|handoff 分段迁 archive|`repo_hygiene.py archive-handoff [--write]`|除最新一节外整段 append 到 archive；保留最新节|
+|spike 目录迁移|`repo_hygiene.py archive-spike sNNN [--write]`|`git mv` 整目录，再搬 gitignore 残留；目标存在报错不覆盖|
+|review 目录迁移|`repo_hygiene.py archive-review review_xxx [--write]`|`git mv` 整目录，再搬 `_meta/` 等残留；目录名须 `review_` 前缀|
 
 ## 步骤
 
 1. **盘点**（只读）：
 
-    - 按 `AGENTS.md`「task 状态读取优先级」盘点 task 状态：用 `git worktree list --porcelain`、`git branch --no-merged <default> --list 't[0-9]*_*'`、`scripts/repo_template/task.py list/show --ref` 只读核对有效状态与目录。主干中被 worktree 或未合并分支覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应主干已合并状态；内容错误时留到步骤 5 处理。
+    - 用 `scripts/repo_template/task.py effective-status` 盘点 task 有效状态与读取位置：`source=worktree` / `branch` 的 tid 在其 `read_at` 处（worktree 路径或 `--ref`）核对状态与目录；`source=main` 读主干。主干中被 worktree 或未合并分支覆盖的旧 backlog 不算状态不一致。两个派生 index 只对应主干已合并状态；内容错误时留到步骤 5 处理。
     - **list↔目录对照时排除模板**（非工作项，`task.py` 扫描时已跳过，**禁止**当残留报告或删除）：
         - `docs/tasks/task_template/`
         - `docs/spikes/report_template.md`
@@ -52,8 +62,11 @@ disable-model-invocation: true
 
 3. **handoff**：
 
-    - `docs/handoff.md` 只留**当前有效**一节（或整理后的最新摘要）。
-    - 更早段落整段迁入 `docs/archive/handoff.md`（append）；不截断 archive。
+    - `docs/handoff.md` 只留**当前有效**一节（或整理后的最新摘要）。**机械迁段用脚本，但先整理顺序**：若需保留的当前有效节不在最后，先在 `docs/handoff.md` 中把要保留的节挪到末尾，再：
+        ```bash
+        python3 scripts/repo_template/repo_hygiene.py archive-handoff --write
+        ```
+        脚本将末尾节以外的全部 H2 节整段 append 到 `docs/archive/handoff.md`（只追加、不截断 archive），handoff.md 只留末尾节。先不带 `--write` 看 dry-run 列出的迁移节，确认后再落盘。
     - 若整理时需刷新近况：可在 `docs/handoff.md` 写/替换「当前」节（UTC+8 日期、branch、head、活跃 tid 摘要）；被替换的旧「当前」先入 archive 再写新内容。
 
 4. **其它过时文档**：
@@ -61,8 +74,16 @@ disable-model-invocation: true
     - 仍生效 → 留原位，必要时改一句过时表述（最小块）。
     - 明确过时且有历史价值 → 迁 `docs/archive/` 镜像路径。
     - 无价值草稿且用户确认 → 可删；未确认不删。
-    - **spike 迁移**：`docs/spikes/{sid}_{slug}/` 报告已写且结论已入 `docs/findings/` → 整目录迁 `docs/archive/spikes/`；拿不准是否完结则报告用户，不擅自迁。
-    - **review 迁移**：逐个检查 `docs/reviews/review_*/`；用户已确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`，保留目录名与全部内容。`review_*.md` 继续入库，`_meta/` 在 archive 路径继续 gitignore。目标目录同名项已存在时停止并报告，不覆盖或合并。
+    - **spike 迁移**：`docs/spikes/{sid}_{slug}/` 报告已写且结论已入 `docs/findings/` → 确认完结后：
+        ```bash
+        python3 scripts/repo_template/repo_hygiene.py archive-spike {sid} --write
+        ```
+        先不带 `--write` 看 dry-run；sid 匹配多个或目标已存在时报错。拿不准是否完结则报告用户，不擅自迁。
+    - **review 迁移**：逐个检查 `docs/reviews/review_*/`；用户已确认过时 → 包含 `_meta/` 的整目录迁 `docs/archive/reviews/`，保留目录名与全部内容。`review_*.md` 继续入库，`_meta/` 在 archive 路径继续 gitignore：
+        ```bash
+        python3 scripts/repo_template/repo_hygiene.py archive-review {目录名} --write
+        ```
+        目标目录同名项已存在时脚本停止并报告，不覆盖或合并。
     - **不**把上述模板路径当过时文档归档或删除。
 
 5. **task 状态一致性**：按步骤 1 的有效来源发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
@@ -79,6 +100,7 @@ disable-model-invocation: true
 - 不借机改 `src/` 业务逻辑；不批量 `finish` 未完成 task；不 `purge` 有目录/有 commit 的项。
 - 不把 skill / AGENTS 正文当「过时」误归档。
 - **`docs_repo/`**：仅本模板仓维护笔记；本 skill 不整理、不迁 archive、不要求新项目保留（新项目本就不该有该目录）。
+- 脚本是模板工具链的一部分，随 `repo-template-sync` 硬同步。
 
 ## 完成
 
