@@ -49,6 +49,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (src / "docs/blueprint/architecture_repo_template.md").write_text("# arch\n")
     (src / ".claude/hooks").mkdir(parents=True)
     (src / ".claude/hooks/merge_guard.py").write_text("print('guard')\n")
+    (src / ".md_kx.toml").write_text("table_mode = \"compact\"\n", encoding="utf-8")
     (src / ".agents/skills/task-run").mkdir(parents=True)
     (src / ".agents/skills/task-run/SKILL.md").write_text(
         "---\nname: task-run\ndescription: none\ndisable-model-invocation: true\n---\nrun\n"

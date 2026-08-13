@@ -48,6 +48,7 @@ HARD_SYNC_FILES = (
     "docs/blueprint/architecture_repo_template.md",
     ".claude/hooks/merge_guard.py",
     ".github/workflows/repo-template-ci.yml",
+    ".md_kx.toml",
 )
 NOISE_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
 

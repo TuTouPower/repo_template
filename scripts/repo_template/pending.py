@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate, id_lock
+from md_format import format_new_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "p"
@@ -137,6 +138,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         slug=args.slug,
         body=body,
     )
+    format_new_file(path.relative_to(REPO_ROOT).as_posix())
     print(_rel(path))
 
 
