@@ -170,13 +170,14 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
         for path, target, note in actions:
             sys.stderr.write(f"  {_rel(path)} → {_rel(target)}/  {note}\n")
         return
-    migrated: list[tuple[Path, Path]] = []
+    migrated: list[tuple[Path, Path, bytes]] = []
     try:
         with id_lock(REPO_ROOT):
             for index, (path, target, note) in enumerate(actions, 1):
                 try:
+                    orig_bytes = path.read_bytes()
                     destination = move_entry(path, target)
-                    migrated.append((path, destination))
+                    migrated.append((path, destination, orig_bytes))
                     if note.startswith("处理"):
                         set_field(destination, HANDLE_RE, f"- {note}")
                     elif note.startswith("暂搁"):
@@ -200,18 +201,22 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                             raise IdScanError(f"git add 失败：{_rel(destination)}")
                     sys.stderr.write(f"已迁移：{_rel(destination)}\n")
                 except IdScanError as error:
-                    # 失败时回滚已成功的 git mv，避免部分迁移残留（F19/RT-010）
-                    for src, dst in reversed(migrated):
+                    # 失败时回滚已成功的 git mv + 恢复被 set_field 改过的正文（F19/RT-010）
+                    for src, dst, orig_bytes in reversed(migrated):
                         try:
                             if _git(["ls-files", "--error-unmatch", _rel(dst)]).returncode == 0:
                                 _git(["mv", _rel(dst), _rel(src)])
                             else:
                                 dst.rename(src)
+                            # 恢复原正文；已跟踪文件 git add 使 index 回到原内容
+                            src.write_bytes(orig_bytes)
+                            if _git(["ls-files", "--error-unmatch", _rel(src)]).returncode == 0:
+                                _git(["add", _rel(src)])
                         except Exception:
                             pass
                     sys.stderr.write(
                         f"迁移失败于第 {index} 条（{_rel(path)}）：{error}；"
-                        f"已回滚 {len(migrated)} 条已迁移条目\n"
+                        f"已回滚 {len(migrated)} 条已迁移条目（含正文）\n"
                     )
                     raise
     except IdScanError:

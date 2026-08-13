@@ -33,6 +33,57 @@ def _hash_part(digest, label: bytes, value: bytes) -> None:
     digest.update(value)
 
 
+# 被审 diff 指纹排除的任务流程文件：check_review_status / render_review_prompts 共用（单一真相源）。
+SCOPE_FINGERPRINT_EXCLUDES = (
+    ":(exclude)docs/pending", ":(exclude)docs/findings",
+    ":(exclude)docs/archive", ":(exclude)docs/tasks_index.json",
+    ":(exclude)docs/archive/tasks_index.json", ":(exclude)docs/spikes",
+    ":(exclude).scratch",
+)
+
+
+def review_scope_fingerprint(
+    diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None
+) -> str:
+    """被审 diff 指纹：`git diff {diff_anchor}` 排除 task 流程文件后的内容摘要。
+
+    未跟踪文件（未 `git add -N` 的新源码）对 `git diff <anchor>` 不可见，会静默绕过
+    review 门禁；把 `git ls-files --others` 内容一并纳入哈希，与 repository_fingerprint
+    口径一致（RT-002）。git 失败返回 ""。check_review_status / render_review_prompts
+    共用本实现，防口径漂移。
+    """
+    root = (repo_root or ctx.REPO_ROOT).resolve()
+    excludes = [
+        f":(exclude){rel_task_dir}/task.md",
+        f":(exclude){rel_task_dir}/review_code.md",
+        f":(exclude){rel_task_dir}/review_test.md",
+        f":(exclude){rel_task_dir}/review_general.md",
+        f":(exclude){rel_task_dir}/handoff.json",
+        *SCOPE_FINGERPRINT_EXCLUDES,
+    ]
+    try:
+        diff = _git_bytes(["diff", "--binary", diff_anchor, "--", ".", *excludes], root=root)
+        untracked = _git_bytes(
+            ["ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
+            root=root,
+        )
+    except (ctx.TaskDataError, OSError):
+        return ""
+    if diff.returncode != 0 or untracked.returncode != 0:
+        return ""
+    digest = hashlib.sha1()
+    digest.update(diff.stdout)
+    for raw in untracked.stdout.split(b"\0"):
+        if not raw:
+            continue
+        digest.update(b"U" + raw)
+        try:
+            digest.update((root / os.fsdecode(raw)).read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:16]
+
+
 def _required_git_bytes(args: list[str], root: Path) -> bytes:
     result = _git_bytes(args, root=root)
     if result.returncode != 0:

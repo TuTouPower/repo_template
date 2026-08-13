@@ -293,6 +293,35 @@ def test_missing_entry_reports_error(tmp_path, monkeypatch):
         pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
 
 
+def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypatch):
+    """F19：批量迁移第二条失败时，第一条已迁移条目回滚位置并恢复被 set_field 改过的正文。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "one"])
+    pending_mod.main(["new", "--slug", "two"])
+    one = repo / "docs/pending/todo/p001_one.md"
+    two = repo / "docs/pending/todo/p002_two.md"
+    orig_one = one.read_bytes()
+    assert one.exists() and two.exists()
+
+    real_move = pending_mod.move_entry
+    calls = {"n": 0}
+
+    def flaky(path, target):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise IdScanError("模拟第二条迁移失败")
+        return real_move(path, target)
+
+    monkeypatch.setattr(pending_mod, "move_entry", flaky)
+    with pytest.raises(SystemExit, match="模拟第二条迁移失败"):
+        pending_mod.main(["archive", "p001", "p002", "--fix-ref", "t001", "--write"])
+    # p001 已移回 todo，且正文恢复（未被 set_field 改成「处理：t001」）
+    assert one.exists()
+    assert one.read_bytes() == orig_one
+    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+
+
 # ---------- CLI ----------
 
 

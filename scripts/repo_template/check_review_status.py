@@ -23,7 +23,6 @@
 """
 
 import argparse
-import hashlib
 import re
 import subprocess
 import sys
@@ -31,6 +30,7 @@ from pathlib import Path
 
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter as _parse_front_matter
+from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
@@ -279,26 +279,11 @@ def reviewed_scope_hint(path: Path) -> bool:
     return REVIEW_SCOPE_HINT_RE.search(read(path)) is not None
 
 
-SCOPE_EXCLUDES = [
-    # 只排除处置过程产生的具体文件/目录；行为文件（hooks/skills/review prompts/
-    # blueprint/specs/guides/README 等）计入指纹，改之则 PASS 失效。
-    ":(exclude)docs/pending",
-    ":(exclude)docs/findings",
-    ":(exclude)docs/archive",
-    ":(exclude)docs/tasks_index.json",
-    ":(exclude)docs/archive/tasks_index.json",
-    ":(exclude)docs/spikes",
-    ":(exclude).scratch",
-]
-
-
 def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
-    """当前被审 diff 指纹；与 render_review_prompts.review_scope_fingerprint 同口径。
+    """当前被审 diff 指纹；委托 monitoring.review_scope_fingerprint（单一真相源）。
 
-    未跟踪文件（未 `git add -N` 的新源码）对 `git diff <anchor>` 不可见，会静默
-    绕过 review 门禁；把 `git ls-files --others` 内容一并纳入哈希，与
-    monitoring.repository_fingerprint 口径一致（RT-002）。
-    缺 diff_anchor 返回 None；git 失败返回 None 并打印 WARNING（F39）。
+    缺 diff_anchor 返回 None；git 失败返回 None 并打印 WARNING（F39），
+    与「无 diff_anchor」区分。
     """
     if not diff_anchor:
         return None
@@ -306,53 +291,16 @@ def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
         rel = task_dir.resolve().relative_to(REPO_ROOT.resolve())
     except ValueError:
         return None
-    rel_posix = rel.as_posix()
-    excludes = SCOPE_EXCLUDES + [
-        f":(exclude){rel_posix}/task.md",
-        f":(exclude){rel_posix}/review_code.md",
-        f":(exclude){rel_posix}/review_test.md",
-        f":(exclude){rel_posix}/review_general.md",
-        f":(exclude){rel_posix}/handoff.json",
-    ]
-    try:
-        diff = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
-            capture_output=True, timeout=30,
-        )
-        untracked = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
-            capture_output=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
+    fingerprint = monitoring_scope_fingerprint(
+        diff_anchor, rel.as_posix(), repo_root=REPO_ROOT
+    )
+    if not fingerprint:
         print(
-            f"WARNING: review scope 指纹无法计算（{error}）；按不可验证处理",
+            "WARNING: review scope 指纹无法计算（git 失败或 anchor 无效）；按不可验证处理",
             file=sys.stderr,
         )
         return None
-    if diff.returncode != 0:
-        print(
-            f"WARNING: review scope 指纹 git diff 失败：{diff.stderr.strip()}；按不可验证处理",
-            file=sys.stderr,
-        )
-        return None
-    if untracked.returncode != 0:
-        print(
-            f"WARNING: review scope 指纹 git ls-files 失败：{untracked.stderr.strip()}；按不可验证处理",
-            file=sys.stderr,
-        )
-        return None
-    digest = hashlib.sha1()
-    digest.update(diff.stdout)
-    for raw in untracked.stdout.split(b"\0"):
-        if not raw:
-            continue
-        rel_utf8 = raw.decode("utf-8", errors="replace")
-        digest.update(b"U" + raw)
-        try:
-            digest.update((REPO_ROOT / rel_utf8).read_bytes())
-        except OSError:
-            pass  # 读文件竞态（文件刚消失）跳过
-    return digest.hexdigest()[:16]
+    return fingerprint
 
 
 def resolve_task_dir(value: str) -> Path:

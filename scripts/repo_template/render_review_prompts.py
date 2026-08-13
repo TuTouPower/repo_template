@@ -18,7 +18,6 @@ reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 pr
 
 import argparse
 import difflib
-import hashlib
 import re
 import subprocess
 import sys
@@ -26,6 +25,7 @@ from pathlib import Path
 
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter as _parse_front_matter
+from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
@@ -118,50 +118,12 @@ def validate_diff_anchor(diff_anchor: str) -> str:
 
 
 def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
-    """被审 diff 指纹：`git diff {diff_anchor}` 排除 task 流程文件后的内容摘要。
+    """被审 diff 指纹：委托 monitoring.review_scope_fingerprint（单一真相源）。
 
     reviewer 把本值写回报告 `reviewed_scope:`；checker 重算当前指纹比对。
     review 后改动代码/测试/spec 会改变指纹，PASS 随即失效（防「PASS 后继续改」）。
-    未跟踪文件对 diff 不可见，纳入 `git ls-files --others` 内容（RT-002，与
-    monitoring.repository_fingerprint 口径一致）。
     """
-    excludes = [
-        f":(exclude){rel_task_dir}/task.md",
-        f":(exclude){rel_task_dir}/review_code.md",
-        f":(exclude){rel_task_dir}/review_test.md",
-        f":(exclude){rel_task_dir}/review_general.md",
-        f":(exclude){rel_task_dir}/handoff.json",
-        # 只排除处置过程产生的具体文件/目录；行为文件（hooks/skills/review
-        # prompts/blueprint/specs/guides/README 等）计入指纹，改之则 PASS 失效。
-        ":(exclude)docs/pending", ":(exclude)docs/findings",
-        ":(exclude)docs/archive", ":(exclude)docs/tasks_index.json",
-        ":(exclude)docs/archive/tasks_index.json", ":(exclude)docs/spikes",
-        ":(exclude).scratch",
-    ]
-    try:
-        diff = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
-            capture_output=True, timeout=30,
-        )
-        untracked = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
-            capture_output=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    if diff.returncode != 0 or untracked.returncode != 0:
-        return ""
-    digest = hashlib.sha1()
-    digest.update(diff.stdout)
-    for raw in untracked.stdout.split(b"\0"):
-        if not raw:
-            continue
-        digest.update(b"U" + raw)
-        try:
-            digest.update((REPO_ROOT / raw.decode("utf-8", errors="replace")).read_bytes())
-        except OSError:
-            pass
-    return digest.hexdigest()[:16]
+    return monitoring_scope_fingerprint(diff_anchor, rel_task_dir, repo_root=REPO_ROOT)
 
 
 def apply_placeholders(template: str, values: dict) -> str:
