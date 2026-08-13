@@ -16,7 +16,7 @@ disable-model-invocation: true
 
     - `docs/pending/todo/` 中 `- 处理：未开` 的待办条目——**主要来源**（bug 条目走第 2 步分诊；`docs/pending/parked/` 用户已确认暂搁，不自动捞，见边界）。用 `scripts/repo_template/pending.py list` 列举。
     - 补扫尚未登记进总账的项（登记本应由 `task-work` 收尾完成，此处扫漏）：
-        - 按 `AGENTS.md`「task 状态读取优先级」读取 task；检查各有效来源 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
+        - 先用 `scripts/repo_template/task.py effective-status` 确定每 tid 的有效来源（`worktree` / `branch` / `main`）与读取位置；再在各 `read_at` 处读 `task.md` 的 `## Review 处置`，找 `status=遗留` 但 `fix_ref` 为空的行
         - `review_code.md` / `review_test.md` / `review_general.md` 中仍开放的 important/critical
         - `docs/handoff.md` 末段待办
         - 用户点名的目录或 diff
@@ -39,7 +39,7 @@ disable-model-invocation: true
 
 4. **合并与去重**：
 
-    - 查重按 `AGENTS.md`「task 状态读取优先级」判断有效状态；主干中被未合并分支覆盖的旧 backlog 不当新候选
+    - 用 `scripts/repo_template/task.py effective-status` 判断有效状态；`source != main`（被 worktree / 未合并分支覆盖）的旧 backlog 不当新候选
     - 已有等价 backlog/active task → 不新建，把该 tid 写进条目 `- 处理：`，汇报已有 tid
     - 同主题的多个条目 → **合并成一个 task**；跨条目的同一系统性缺口 → 一个 follow-up task
     - minor 品味项默认不建，除非用户要求或累积为明确债务包

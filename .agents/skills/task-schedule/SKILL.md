@@ -22,12 +22,10 @@ disable-model-invocation: true
 1. **建有效状态基线**。
 
     ```bash
-    scripts/repo_template/task.py list --status backlog
-    git worktree list --porcelain
-    git branch --no-merged <default> --list 't[0-9]*_*'
+    scripts/repo_template/task.py effective-status
     ```
 
-    `<default>` 与 `scripts/repo_template/task.py` 的 `default_branch()` 一致。有效状态按 `AGENTS.md`「task 状态读取优先级」判定（archive 仅作历史回溯，不参与有效状态判定）。对登记 worktree 读取其中 task 状态与 diff；对未合并分支用 `scripts/repo_template/task.py list/show --ref {branch}` 读取。主干中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
+    输出每 tid 的 `status` / `source`（`worktree` / `branch` / `main`）/ `read_at`（worktree 绝对路径或未合并分支名）。有效状态按 `AGENTS.md`「task 状态读取优先级」判定（archive 仅作历史回溯，不参与有效状态判定；`default_branch` 口径由脚本统一）。`source=worktree` → 在 `read_at` 目录读 task 状态与 diff；`source=branch` → 用 `task.py list/show --ref {branch}` 读取。主干中已被 worktree/ref 覆盖的 backlog 不进入分析范围。
 
     ```bash
     git diff --name-status -M -C <default>...{branch}

@@ -21,18 +21,13 @@ disable-model-invocation: true
 
 ## 步骤
 
-1. **建立状态视图**。task 完成后才合并主干，因此主干中的状态可能滞后于进行中的 task；按以下优先级确定每个 tid 的有效状态与读取位置：
-
-    1. 登记 worktree：进入该 worktree，`scripts/repo_template/task.py show {tid}`。
-    2. 未合并 task 分支：`scripts/repo_template/task.py show/list --ref {branch}`。
-    3. 主干：代表尚未启动的 task 与已合并归档状态。
+1. **建立状态视图**。task 完成后才合并主干，因此主干中的状态可能滞后于进行中的 task；用脚本统一按优先级确定每个 tid 的有效状态、来源与读取位置：
 
     ```bash
-    scripts/repo_template/task.py list --status backlog
-    git worktree list --porcelain
-    git branch --no-merged <default> --list 't[0-9]*_*'
-    scripts/repo_template/task.py list --ref {branch}
+    scripts/repo_template/task.py effective-status [--status backlog] [--status active] ...
     ```
+
+    输出每 tid 的 `status` / `source`（`worktree` / `branch` / `main`）/ `read_at`（worktree 绝对路径或未合并分支名）。`source=worktree` → 进 `read_at` 目录执行；`source=branch` → `task.py show/list/preflight --ref {branch}`；`source=main` → 主干文档即权威。
 
     同一 tid 在 worktree 与分支中状态互不相容时列为阻塞性状态冲突，不猜。按输入范围合并去重、tid 升序；effective status 为 `done` / `dropped` 的记「跳过」。清单空且无跳过：回复「当前没有待做 task 需要 preflight」，结束。
 

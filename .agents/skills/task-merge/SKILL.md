@@ -18,7 +18,13 @@ disable-model-invocation: true
 
 1. **确认范围**。用户点名 tid 时用其列表；未点名时 `scripts/repo_template/task.py list --status backlog`，读各 `docs/tasks/{tid}_{slug}/spec.md` 找范围重叠候选，向用户提出合并建议并等确认。不得自行决定合并哪些。
 
-2. **校验有效状态**。先查 `git worktree list --porcelain` 与 `git branch --no-merged <default> --list 't[0-9]*_*'`；对未合并分支用 `scripts/repo_template/task.py show {tid} --ref {branch}`。仅无 worktree/分支覆盖且主干中 `scripts/repo_template/task.py show {tid}` 为 `backlog` 时合规。任一不合规即停止，报告 tid、有效状态与来源，不做部分合并。`<default>` 口径同 `default_branch()`。
+2. **校验有效状态**。用脚本读取每 tid 的有效状态与来源：
+
+    ```bash
+    scripts/repo_template/task.py effective-status --status backlog
+    ```
+
+    仅当该 tid 的 `source=main`（未被任何登记 worktree / 未合并分支覆盖）且主干中状态为 `backlog` 时合规。任一源被覆盖（`source=worktree` / `branch`）即不合规——停止，报告 tid、有效状态与来源，不做部分合并。`source=branch` 时用 `task.py show {tid} --ref {read_at}` 核对该分支状态。
 
 3. **定目标**：
 

@@ -16,7 +16,27 @@ from .ledger import ledger_append, ledger_read
 from .monitoring import compute_ps_rows
 from .plan import build_board_model, chain_letter, compute_batch_plan
 from .scheduling import compute_schedule
-from .store import discover_effective_tasks, scan_tasks
+from .store import discover_effective_sources, discover_effective_tasks, scan_tasks
+
+
+def cmd_effective_status(args):
+    """只读输出每个有效 task 的状态与读取来源（worktree / branch / main）。"""
+    require_primary_worktree()
+    entries = discover_effective_sources()
+    rows = [
+        e for e in entries.values()
+        if not getattr(args, "status", None) or e["status"] in args.status
+    ]
+    if not rows:
+        print("(no effective tasks)")
+        return
+    print("| tid    | status    | source  | read_at                           | note |")
+    print("|--------|-----------|---------|-----------------------------------|------|")
+    for e in sorted(rows, key=lambda r: tid_sort_key(r["tid"])):
+        read_at = e["read_at"] or "main"
+        print(
+            f"| {e['tid']:<6} | {e['status']:<8} | {e['source']:<7} | {read_at:<33} | {(e['note'] or '')[:40]} |"
+        )
 
 
 def cmd_view(args):

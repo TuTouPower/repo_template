@@ -1841,3 +1841,50 @@ def test_cleanup_and_integrate_require_identity_at_parse_time(git_repo):
     assert integrate.returncode != 0
     assert "--attempt" in cleanup.stderr and "--execution-id" in cleanup.stderr
     assert "--attempt" in integrate.stderr and "--execution-id" in integrate.stderr
+
+
+# --------------------------------------------------------------------------
+# effective-status：有效状态与读取来源（worktree / branch / main）
+# --------------------------------------------------------------------------
+
+
+def test_effective_sources_all_backlog_main(git_repo):
+    sources = store.discover_effective_sources()
+    assert set(sources) == {"t001", "t002", "t003"}
+    for tid in ("t001", "t002", "t003"):
+        assert sources[tid]["status"] == "backlog"
+        assert sources[tid]["source"] == "main"
+        assert sources[tid]["read_at"] is None
+
+
+def test_effective_sources_active_worktree(git_repo):
+    _start(git_repo, "t001")
+    sources = store.discover_effective_sources()
+    assert sources["t001"]["status"] == "active"
+    assert sources["t001"]["source"] == "worktree"
+    assert sources["t001"]["read_at"] == str(_worktree_path(git_repo, "t001"))
+    # 未 start 的 task 仍从主干读
+    assert sources["t002"]["source"] == "main"
+
+
+def test_effective_sources_completed_branch_after_cleanup(git_repo):
+    _start(git_repo, "t001")
+    _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
+    sources = store.discover_effective_sources()
+    assert sources["t001"]["status"] == "done"
+    assert sources["t001"]["source"] == "branch"
+    assert sources["t001"]["read_at"] == branch
+
+
+def test_effective_status_cli_output(git_repo, capsys):
+    from repo_task.control import cmd_effective_status
+    import argparse
+    cmd_effective_status(argparse.Namespace(status=None))
+    out = capsys.readouterr().out
+    assert "t001" in out and "backlog" in out and "main" in out
+
+    _start(git_repo, "t001")
+    cmd_effective_status(argparse.Namespace(status=None))
+    out = capsys.readouterr().out
+    assert "worktree" in out
+    assert str(_worktree_path(git_repo, "t001")) in out

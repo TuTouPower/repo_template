@@ -236,8 +236,39 @@ def _local_task_branches() -> list[str]:
 
 def discover_effective_tasks() -> dict[str, dict]:
     """按 worktree → 未合并 task 分支 → main 发现每个 task 的有效状态。"""
+    return {tid: task for tid, task, _, _ in _discover_effective_entries()}
+
+
+def discover_effective_sources() -> dict[str, dict]:
+    """每个有效 task 的状态 + 读取来源与位置。
+
+    返回 tid -> {tid, slug, title, status, note, source, read_at}：
+    - source="worktree"：read_at=worktree 绝对路径（在其中读 task.md / 跑 show）
+    - source="branch"：read_at=未合并分支 short name（用 show/list/preflight --ref）
+    - source="main"：read_at=None（主干文档即权威）
+    只读；供 skill 依「task 状态读取优先级」在正确位置读取 task。
+    """
+    out: dict[str, dict] = {}
+    for tid, task, source, read_at in _discover_effective_entries():
+        out[tid] = {
+            "tid": tid,
+            "slug": task.get("slug", ""),
+            "title": task.get("title", ""),
+            "status": task.get("status", ""),
+            "note": task.get("note", ""),
+            "source": source,
+            "read_at": read_at,
+        }
+    return out
+
+
+def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
+    """(tid, task, source, read_at) 列表，按 worktree → 未合并分支 → main 优先级。"""
     require_primary_worktree()
     effective = {task["tid"]: task for task in scan_tasks()}
+    sources: dict[str, tuple[str, str | None]] = {
+        tid: ("main", None) for tid in effective
+    }
 
     for branch in _local_task_branches():
         if not has_unmerged_commits(branch):
@@ -258,6 +289,7 @@ def discover_effective_tasks() -> dict[str, dict]:
         ):
             continue
         effective[owner_tid] = branch_task
+        sources[owner_tid] = ("branch", branch)
 
     primary = primary_worktree_path()
     for path_text, branch in worktree_paths().items():
@@ -281,6 +313,7 @@ def discover_effective_tasks() -> dict[str, dict]:
                 "status": "blocked",
                 "note": f"登记 worktree {path} 的 task.md 无法解析",
             }
+            sources[owner_tid] = ("worktree", str(path))
             continue
         if task is None:
             effective[owner_tid] = {
@@ -290,9 +323,11 @@ def discover_effective_tasks() -> dict[str, dict]:
                 "status": "blocked",
                 "note": f"登记 worktree {path} 缺自身 task {owner_tid}",
             }
+            sources[owner_tid] = ("worktree", str(path))
             continue
         effective[owner_tid] = task
-    return effective
+        sources[owner_tid] = ("worktree", str(path))
+    return [(tid, task, *sources[tid]) for tid, task in effective.items()]
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
     """返回 (索引记录, task.md 路径, front matter, 正文)。"""

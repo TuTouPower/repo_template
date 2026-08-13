@@ -9,6 +9,7 @@ from .control import (
     cmd_attempt_report,
     cmd_attempt_reserve,
     cmd_attempt_terminal,
+    cmd_effective_status,
     cmd_ledger_record,
     cmd_ledger_tail,
     cmd_ps,
@@ -112,6 +113,11 @@ def main():
     listing.add_argument("--ref")
     listing.add_argument("--rebuild", action="store_true")
     listing.set_defaults(func=cmd_list)
+
+    eff = sub.add_parser("effective-status", help="有效 task 状态与读取来源（worktree/branch/main，只读）")
+    eff.add_argument("--status", action="append", choices=ctx.VALID_STATUSES,
+                     help="只列这些状态（可重复）")
+    eff.set_defaults(func=cmd_effective_status)
 
     show = sub.add_parser("show", help="显示 task front matter")
     show.add_argument("tid")
