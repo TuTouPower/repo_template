@@ -183,7 +183,13 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
     """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。"""
     path = (ctx.REPO_ROOT / rel).resolve()
     if str(path) not in worktree_paths():
-        _git(["worktree", "prune"])
+        prune = _git(["worktree", "prune"])
+        if prune.returncode != 0:
+            return (
+                False,
+                f"git worktree prune 失败（{prune.stderr.strip()}）；"
+                f"无法确认 {rel} 清理状态",
+            )
         return True, f"worktree 不在登记表，已 prune：{rel}"
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 回主仓"
@@ -191,7 +197,12 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
     r = _git(["worktree", "remove", "--force", str(path)])
     if r.returncode != 0:
         return False, f"git worktree remove --force 失败（{r.stderr.strip()}）"
-    _git(["worktree", "prune"])
+    prune = _git(["worktree", "prune"])
+    if prune.returncode != 0:
+        return (
+            False,
+            f"worktree 已移除但 prune 失败（{prune.stderr.strip()}）；请手动 prune {rel}",
+        )
     return True, f"worktree 已强制移除：{rel}"
 
 def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bool, str]:
@@ -205,7 +216,13 @@ def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bo
     path = (ctx.REPO_ROOT / rel).resolve()
     registered_branch = worktree_paths().get(str(path))
     if registered_branch is None:
-        _git(["worktree", "prune"])
+        prune = _git(["worktree", "prune"])
+        if prune.returncode != 0:
+            return (
+                False,
+                f"git worktree prune 失败（{prune.stderr.strip()}）；"
+                f"无法确认 {rel} 清理状态",
+            )
         return True, f"worktree 不在登记表，已 prune：{rel}"
     if expected_branch and registered_branch != expected_branch:
         return False, (
@@ -218,5 +235,10 @@ def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bo
     r = _git(["worktree", "remove", str(path)])
     if r.returncode != 0:
         return False, f"git worktree remove 失败（{r.stderr.strip()}）；请手动处理 {rel}"
-    _git(["worktree", "prune"])
+    prune = _git(["worktree", "prune"])
+    if prune.returncode != 0:
+        return (
+            False,
+            f"worktree 已移除但 prune 失败（{prune.stderr.strip()}）；请手动 prune {rel}",
+        )
     return True, f"worktree 已移除：{rel}"

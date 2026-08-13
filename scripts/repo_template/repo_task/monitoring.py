@@ -89,7 +89,13 @@ def repository_fingerprint(root: Path) -> dict:
                     f"large:{info.st_size}:{info.st_mtime_ns}:".encode("ascii") + prefix
                 )
             else:
-                content = path.read_bytes()
+                try:
+                    content = path.read_bytes()
+                except OSError:
+                    # lstat 后 read 前文件被并发删除/截断：视为消失，避免裸抛（F38）
+                    raise ctx.TaskDataError(
+                        f"计算仓库状态指纹时文件消失：{os.fsdecode(raw_path)}"
+                    ) from None
         else:
             kind = f"special:{file_type:o}".encode("ascii")
             content = b""

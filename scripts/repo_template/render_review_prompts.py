@@ -122,6 +122,8 @@ def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
 
     reviewer 把本值写回报告 `reviewed_scope:`；checker 重算当前指纹比对。
     review 后改动代码/测试/spec 会改变指纹，PASS 随即失效（防「PASS 后继续改」）。
+    未跟踪文件对 diff 不可见，纳入 `git ls-files --others` 内容（RT-002，与
+    monitoring.repository_fingerprint 口径一致）。
     """
     excludes = [
         f":(exclude){rel_task_dir}/task.md",
@@ -137,13 +139,29 @@ def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
         ":(exclude).scratch",
     ]
     try:
-        result = subprocess.run(
+        diff = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
+            capture_output=True, timeout=30,
+        )
+        untracked = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
             capture_output=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    return hashlib.sha1(result.stdout).hexdigest()[:16]
+    if diff.returncode != 0 or untracked.returncode != 0:
+        return ""
+    digest = hashlib.sha1()
+    digest.update(diff.stdout)
+    for raw in untracked.stdout.split(b"\0"):
+        if not raw:
+            continue
+        digest.update(b"U" + raw)
+        try:
+            digest.update((REPO_ROOT / raw.decode("utf-8", errors="replace")).read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:16]
 
 
 def apply_placeholders(template: str, values: dict) -> str:
@@ -313,6 +331,12 @@ def main():
         out_dir = Path(args.out_dir)
         if not out_dir.is_absolute():
             out_dir = REPO_ROOT / out_dir
+        try:
+            out_dir.resolve().relative_to(REPO_ROOT.resolve())
+        except ValueError:
+            sys.exit(
+                f"--out-dir 必须在仓库内（收到 {args.out_dir!r}）；拒绝越界写入"
+            )
         out_dir.mkdir(parents=True, exist_ok=True)
         for filename, prompt in prompts.items():
             path = out_dir / filename

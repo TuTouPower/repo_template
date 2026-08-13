@@ -295,7 +295,10 @@ SCOPE_EXCLUDES = [
 def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
     """当前被审 diff 指纹；与 render_review_prompts.review_scope_fingerprint 同口径。
 
-    缺 diff_anchor 或 git 失败返回 None（保守视为不可验证）。
+    未跟踪文件（未 `git add -N` 的新源码）对 `git diff <anchor>` 不可见，会静默
+    绕过 review 门禁；把 `git ls-files --others` 内容一并纳入哈希，与
+    monitoring.repository_fingerprint 口径一致（RT-002）。
+    缺 diff_anchor 返回 None；git 失败返回 None 并打印 WARNING（F39）。
     """
     if not diff_anchor:
         return None
@@ -312,15 +315,44 @@ def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
         f":(exclude){rel_posix}/handoff.json",
     ]
     try:
-        result = subprocess.run(
+        diff = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "diff", "--binary", diff_anchor, "--", ".", *excludes],
             capture_output=True, timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+        untracked = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
+            capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(
+            f"WARNING: review scope 指纹无法计算（{error}）；按不可验证处理",
+            file=sys.stderr,
+        )
         return None
-    if result.returncode != 0:
+    if diff.returncode != 0:
+        print(
+            f"WARNING: review scope 指纹 git diff 失败：{diff.stderr.strip()}；按不可验证处理",
+            file=sys.stderr,
+        )
         return None
-    return hashlib.sha1(result.stdout).hexdigest()[:16]
+    if untracked.returncode != 0:
+        print(
+            f"WARNING: review scope 指纹 git ls-files 失败：{untracked.stderr.strip()}；按不可验证处理",
+            file=sys.stderr,
+        )
+        return None
+    digest = hashlib.sha1()
+    digest.update(diff.stdout)
+    for raw in untracked.stdout.split(b"\0"):
+        if not raw:
+            continue
+        rel_utf8 = raw.decode("utf-8", errors="replace")
+        digest.update(b"U" + raw)
+        try:
+            digest.update((REPO_ROOT / rel_utf8).read_bytes())
+        except OSError:
+            pass  # 读文件竞态（文件刚消失）跳过
+    return digest.hexdigest()[:16]
 
 
 def resolve_task_dir(value: str) -> Path:

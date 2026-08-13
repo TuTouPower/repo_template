@@ -406,7 +406,9 @@ def test_integrate_appends_integrated_with_merge_sha(git_repo):
 def test_integrate_skip_merge_also_appends_integrated(git_repo):
     identity, branch, branch_head = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
-    manual = _git(git_repo, "merge", "--no-ff", "-m", "test: premerge task", branch)
+    # RT-003 后 skip-merge 须解析真实 merge({tid}) commit（不再无条件取当前 HEAD）；
+    # 预 merge 用工具链规范 message，使新实现可识别该 merge commit。断言语义不变。
+    manual = _git(git_repo, "merge", "--no-ff", "-m", "merge(t001): t001_alpha", branch)
     assert manual.returncode == 0, manual.stderr
     preintegrate_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 
@@ -422,6 +424,20 @@ def test_integrate_skip_merge_also_appends_integrated(git_repo):
     assert integrated[0]["merge_sha"] == preintegrate_head
     assert integrated[0]["attempt"] == identity["attempt"]
     assert integrated[0]["execution_id"] == identity["execution_id"]
+
+
+def test_integrate_skip_merge_rejects_foreign_head(git_repo):
+    """崩溃窗口：分支已合入但 HEAD 被无关 commit 推进，skip-merge 拒绝以 HEAD 冒充 merge_sha（RT-003）。"""
+    identity, branch, branch_head = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", identity)
+    _git(git_repo, "merge", "--no-ff", "-m", "test: premerge task", branch)
+    _git(git_repo, "commit", "--allow-empty", "-m", "test: unrelated advance after premerge")
+
+    result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+
+    assert result.returncode != 0
+    assert "找不到对应 merge(t001)" in result.stderr
+    assert not [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
 
 
 def test_integrate_continue_rejects_foreign_merge_head(git_repo):

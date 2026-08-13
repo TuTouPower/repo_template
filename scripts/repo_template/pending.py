@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _id_scan import IdScanError, allocate
+from _id_scan import IdScanError, allocate, id_lock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "p"
@@ -170,30 +170,43 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
         for path, target, note in actions:
             sys.stderr.write(f"  {_rel(path)} → {_rel(target)}/  {note}\n")
         return
-    for path, target, note in actions:
-        destination = move_entry(path, target)
-        if note.startswith("处理"):
-            set_field(destination, HANDLE_RE, f"- {note}")
-        elif note.startswith("暂搁"):
-            set_field(destination, PARKED_RE, f"- {note}")
-            set_field(destination, HANDLE_RE, "- 处理：不办")
-        elif note == "revive":
-            set_field(destination, HANDLE_RE, "- 处理：未开")
-            lines = [
-                line
-                for line in destination.read_text(encoding="utf-8").splitlines()
-                if not PARKED_RE.match(line)
-            ]
-            destination.write_text(
-                "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
-            )
-        # git mv 已 staged；正文状态字段随后变更未入索引，直接 commit 会留下旧状态。
-        # 对已跟踪文件 add，登记内容改动（未入库条目退化为普通 rename，由用户自行 add）。
-        if _git(["ls-files", "--error-unmatch", _rel(destination)]).returncode == 0:
-            add_result = _git(["add", _rel(destination)])
-            if add_result.returncode != 0:
-                raise IdScanError(f"git add 失败：{_rel(destination)}")
-        sys.stderr.write(f"已迁移：{_rel(destination)}\n")
+    # 批量迁移整体持 id_lock：防并发 cmd_new 扫描取号时观察到移动中间态（RT-010）
+    try:
+        with id_lock(REPO_ROOT):
+            for index, (path, target, note) in enumerate(actions, 1):
+                try:
+                    destination = move_entry(path, target)
+                    if note.startswith("处理"):
+                        set_field(destination, HANDLE_RE, f"- {note}")
+                    elif note.startswith("暂搁"):
+                        set_field(destination, PARKED_RE, f"- {note}")
+                        set_field(destination, HANDLE_RE, "- 处理：不办")
+                    elif note == "revive":
+                        set_field(destination, HANDLE_RE, "- 处理：未开")
+                        lines = [
+                            line
+                            for line in destination.read_text(encoding="utf-8").splitlines()
+                            if not PARKED_RE.match(line)
+                        ]
+                        destination.write_text(
+                            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+                        )
+                    # git mv 已 staged；正文状态字段随后变更未入索引，直接 commit 会留下旧状态。
+                    # 对已跟踪文件 add，登记内容改动（未入库条目退化为普通 rename，由用户自行 add）。
+                    if _git(["ls-files", "--error-unmatch", _rel(destination)]).returncode == 0:
+                        add_result = _git(["add", _rel(destination)])
+                        if add_result.returncode != 0:
+                            raise IdScanError(f"git add 失败：{_rel(destination)}")
+                    sys.stderr.write(f"已迁移：{_rel(destination)}\n")
+                except IdScanError as error:
+                    # 报告进度：已完成 N 条、失败于第 M 条（F19）
+                    sys.stderr.write(
+                        f"已迁移 {index - 1} 条，失败于第 {index} 条"
+                        f"（{_rel(path)}）：{error}\n"
+                    )
+                    raise
+    except IdScanError:
+        raise
 
 
 def cmd_archive(args: argparse.Namespace) -> None:

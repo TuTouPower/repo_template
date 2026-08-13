@@ -1,6 +1,7 @@
 """Canonical store implementation for the task toolchain."""
 
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -166,10 +167,13 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
             "workspace": ctx._rel(ctx.REPO_ROOT) or str(ctx.REPO_ROOT),
             "tasks": rows,
         }
-        path.write_text(
+        # 临时文件 + os.replace：并发/崩溃下不落盘截断 JSON（RT-007）
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(
             json.dumps(payload, ensure_ascii=False, indent=4) + "\n",
             encoding="utf-8", newline="\n",
         )
+        os.replace(temporary, path)
     return tasks
 
 def find_task(tid: str, tasks: list[dict] | None = None) -> dict | None:
@@ -335,5 +339,12 @@ def append_audit(action: str, *, tid: str, fr: str, to: str, reason: str,
     if title:
         parts.append(f"title={clean(title)}")
     parts.append(f"reason={clean(reason)}")
-    with ctx.AUDIT_PATH.open("a", encoding="utf-8") as f:
-        f.write(" | ".join(parts) + "\n")
+    try:
+        with ctx.AUDIT_PATH.open("a", encoding="utf-8") as f:
+            f.write(" | ".join(parts) + "\n")
+    except OSError as error:
+        # fail-closed：审计失败抛 TaskDataError，调用方据此决定回滚/中止，
+        # 避免「状态已迁移、审计缺失、不可重试」（F15）
+        raise ctx.TaskDataError(
+            f"审计写入失败（{action} tid={tid}）：{error}"
+        ) from error

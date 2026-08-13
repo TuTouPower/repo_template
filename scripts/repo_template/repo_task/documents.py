@@ -71,7 +71,12 @@ def dump_front_matter(fm: dict) -> str:
     return "\n".join(lines) + "\n"
 
 def write_front_matter(path: Path, fm: dict, body: str) -> None:
-    path.write_text(dump_front_matter(fm) + "\n" + body, encoding="utf-8", newline="\n")
+    text = dump_front_matter(fm) + "\n" + body
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 临时文件 + os.replace：崩溃/并发下不留下截断半写，降低状态权威文件损坏风险
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(temporary, path)
 
 def tid_sort_key(tid: str) -> int:
     match = ctx.TID_RE.fullmatch(tid)

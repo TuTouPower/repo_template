@@ -9,6 +9,7 @@ import repo_task.context as ctx
 
 from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter
 from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
+from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
@@ -34,15 +35,6 @@ def cmd_add(args):
         sys.exit(f"slug 须匹配 {ctx.SLUG_RE.pattern}（收到 {args.slug!r}）")
     if not args.title.strip():
         sys.exit("title 不能为空")
-    tasks = scan_tasks()
-    for t in tasks:
-        if t["slug"] == args.slug:
-            sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
-    n = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0) + 1
-    tid = f"t{n:03d}"
-    task_dir = ctx.TASKS_DIR / f"{tid}_{args.slug}"
-    if task_dir.exists():
-        sys.exit(f"{ctx._rel(task_dir)} 已存在；请提示用户处理")
     if not ctx.TEMPLATE_DIR.is_dir():
         sys.exit(f"缺模板目录 {ctx._rel(ctx.TEMPLATE_DIR)}")
     template_spec = ctx.TEMPLATE_DIR / "spec.md"
@@ -58,25 +50,40 @@ def cmd_add(args):
     if template_problems:
         sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
-    shutil.copytree(ctx.TEMPLATE_DIR, task_dir)
-    task_md = task_dir / "task.md"
-    fm, body = parse_front_matter(task_md)
-    fm.update({
-        "tid": tid,
-        "slug": args.slug,
-        "title": args.title.strip(),
-        "status": "backlog",
-        "branch": "",
-        "worktree": "",
-        "review_level": args.review_level,
-        "diff_anchor": "",
-        "depends_on": "",
-        "conflicts_with": "",
-        "note": args.note or "",
-    })
-    fm.pop("schedule_status", None)
-    write_front_matter(task_md, fm, body)
-    rebuild_index()
+    # 取号 + 建目录持 git 公共锁，与 pending/findings 取号互斥，防并发撞号（RT-009）
+    with git_common_lock(ctx.REPO_ROOT, TASK_ID_LOCK_NAME):
+        tasks = scan_tasks()
+        for t in tasks:
+            if t["slug"] == args.slug:
+                sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
+        n = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0) + 1
+        tid = f"t{n:03d}"
+        task_dir = ctx.TASKS_DIR / f"{tid}_{args.slug}"
+        if task_dir.exists():
+            sys.exit(f"{ctx._rel(task_dir)} 已存在；请提示用户处理")
+        shutil.copytree(ctx.TEMPLATE_DIR, task_dir)
+        task_md = task_dir / "task.md"
+        fm, body = parse_front_matter(task_md)
+        fm.update({
+            "tid": tid,
+            "slug": args.slug,
+            "title": args.title.strip(),
+            "status": "backlog",
+            "branch": "",
+            "worktree": "",
+            "review_level": args.review_level,
+            "diff_anchor": "",
+            "depends_on": "",
+            "conflicts_with": "",
+            "note": args.note or "",
+        })
+        fm.pop("schedule_status", None)
+        write_front_matter(task_md, fm, body)
+        try:
+            rebuild_index()
+        except (OSError, ctx.TaskDataError) as error:
+            shutil.rmtree(task_dir, ignore_errors=True)
+            sys.exit(f"add 失败（{error}）；已回滚新建目录 {ctx._rel(task_dir)}")
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
     print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 spec.md / task.md）")
 
@@ -594,7 +601,12 @@ def cmd_rewind(args):
         if not removed:
             sys.exit(f"{wt_msg}\nrewind 中止：worktree 未清理时不能回到 backlog")
         if branch and not own_commits:
-            _git(["branch", "-D", branch])
+            result = _git(["branch", "-D", branch])
+            if result.returncode != 0:
+                print(
+                    f"WARNING: 删除分支 {branch!r} 失败（{result.stderr.strip()}）；"
+                    f"请手动执行 git branch -D {branch}", file=sys.stderr
+                )
         fm = primary_fm
         body = primary_body
         fm["branch"] = ""
@@ -613,10 +625,12 @@ def cmd_rewind(args):
             f"effective={effective} -> {target}（main 记录为 {recorded}）"
         )
     append_note(fm, f"rewound: {transition}; {args.reason}")
+    # 审计前移：audit 失败则状态未写（task.md 仍 active），rewind 可重试。
+    # 若先写 front matter 再审计，失败后「状态已迁 + 审计缺失 + 不可重试」（F15）。
+    append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
     write_front_matter(path, fm, body)
     if target == "backlog":
         rebuild_index()
-    append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
     print(f"{args.tid} status={target} (rewound from {effective}){'; ' + wt_msg if wt_msg else ''}")
 
 def cmd_purge(args):

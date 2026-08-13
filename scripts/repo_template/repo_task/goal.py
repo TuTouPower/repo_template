@@ -15,6 +15,7 @@ goal 模式的提示词必须是可机器判定的终态，而不是过程指令
 """
 
 import json
+import os
 import sys
 from datetime import datetime
 
@@ -92,9 +93,12 @@ def cmd_goal(args) -> None:
         "created_at": datetime.now(ctx.TZ_CN).isoformat(timespec="seconds"),
         "queue": queue,
     }
-    QUEUE_PATH.write_text(
+    # 临时文件 + os.replace 原子写，防并发/崩溃截断（F41/RT-007）
+    temporary = QUEUE_PATH.with_name(QUEUE_PATH.name + ".tmp")
+    temporary.write_text(
         json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    os.replace(temporary, QUEUE_PATH)
     print(f"队列已冻结：{', '.join(queue)}")
     print(f"快照：{ctx._rel(QUEUE_PATH)}（覆盖式；goal 模式同时只服务一个队列）")
     print()

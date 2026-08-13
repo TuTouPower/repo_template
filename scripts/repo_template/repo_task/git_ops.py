@@ -88,10 +88,14 @@ def tracked_anywhere(rel_path: str) -> bool:
     return r.returncode == 0 and bool(r.stdout.strip())
 
 def porcelain_entries(root: Path | None = None) -> list[str]:
-    """`git status --porcelain -z` 的路径列表，避免引号与转义带来的解析错误。"""
+    """`git status --porcelain -z` 的路径列表，避免引号与转义带来的解析错误。
+
+    git 失败时抛 TaskDataError（fail-closed）：调用方把空集合理解为「干净」，
+    若静默降级会在 merge/rewind 时带着未提交改动继续。
+    """
     r = _git(["status", "--porcelain", "-z"], root=root)
     if r.returncode != 0:
-        return []
+        raise ctx.TaskDataError(f"git status --porcelain 失败：{r.stderr.strip()}")
     out, fields, i = [], r.stdout.split("\0"), 0
     while i < len(fields):
         entry = fields[i]
@@ -108,7 +112,9 @@ def tracked_dirty_entries(root: Path | None = None) -> list[str]:
     """只含已跟踪文件的未提交改动；未跟踪文件不影响 merge 结果，不计入。"""
     r = _git(["status", "--porcelain", "-z", "--untracked-files=no"], root=root)
     if r.returncode != 0:
-        return []
+        raise ctx.TaskDataError(
+            f"git status --porcelain (tracked) 失败：{r.stderr.strip()}"
+        )
     out, fields, i = [], r.stdout.split("\0"), 0
     while i < len(fields):
         entry = fields[i]
@@ -126,11 +132,13 @@ def worktree_paths() -> dict[str, str]:
 
     键统一为 Path.resolve() 后的字符串，与所有调用方 str(path) 比较对齐。
     git 输出正斜杠路径，Path.resolve() 在 Windows 给反斜杠——规范化消除差异。
+    git 失败时抛 TaskDataError（fail-closed）：空 dict 会让 discard/remove_worktree
+    误报「已清理」。
     """
     result, current = {}, None
     r = _git(["worktree", "list", "--porcelain"])
     if r.returncode != 0:
-        return result
+        raise ctx.TaskDataError(f"git worktree list 失败：{r.stderr.strip()}")
     for line in r.stdout.splitlines():
         if line.startswith("worktree "):
             raw = line[len("worktree "):].strip()

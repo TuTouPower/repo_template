@@ -171,8 +171,12 @@ def _ledger_append_safely(event: dict) -> None:
             return
         ledger_append(event)
     except (OSError, ctx.TaskDataError) as error:
-        # TaskDataError：ledger 损坏 fail-closed；写失败也不阻断主流程，仅记录
+        # TaskDataError：ledger 损坏 fail-closed；写失败也不阻断主流程，仅记录。
+        # 事件上下文（tid/attempt/execution_id）进 WARNING，便于事后定位缺口（F34）
         print(
-            f"WARNING: 调度账本写入失败（{error}）；{event.get('event')} 事件未记录",
+            f"WARNING: 调度账本写入失败（{error}）；"
+            f"event={event.get('event')} tid={event.get('tid')} "
+            f"attempt={event.get('attempt')} "
+            f"execution_id={event.get('execution_id')} 事件未记录",
             file=sys.stderr,
         )

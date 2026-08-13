@@ -122,6 +122,8 @@ def main():
     view.add_argument("--serve", action="store_true", help="启动本地只读看板服务并打开浏览器")
     view.add_argument("--host", default="127.0.0.1")
     view.add_argument("--port", type=int, default=0)
+    view.add_argument("--allow-non-loopback", action="store_true",
+                      help="允许绑定非 loopback 主机（默认拒绝，防暴露 task 文档）")
     view.set_defaults(func=cmd_view)
 
     plan = sub.add_parser(
@@ -219,3 +221,6 @@ def main():
         args.func(args)
     except ctx.TaskDataError as error:
         sys.exit(f"{error}\n数据不一致；请提示用户处理。")
+    except OSError as error:
+        # 磁盘/权限等系统错误统一入口，避免多步命令中途裸 traceback（F20）
+        sys.exit(f"{args.cmd} 失败（{error}）")

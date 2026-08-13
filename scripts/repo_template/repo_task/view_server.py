@@ -230,18 +230,27 @@ def _is_loopback_host(host: str) -> bool:
     return normalized in {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
 
 
-def serve(host="127.0.0.1", port=0):
+def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
     port = port or _find_free_port(host)
     # ThreadingHTTPServer 对 IPv6 字面量需要方括号才能当 URL host
     url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     url = f"http://{url_host}:{port}/"
     if not _is_loopback_host(host):
+        if not allow_non_loopback:
+            sys.exit(
+                f"看板拒绝绑定非 loopback 主机 {host!r}"
+                "（只读但暴露 task spec/task 正文）；确认网络边界后加"
+                " --allow-non-loopback，或改用默认 127.0.0.1"
+            )
         print(
             f"WARNING: 看板绑定 {host!r}（非 loopback）；"
             "只读但会暴露 task spec/task 正文，确认网络边界后再用",
             file=sys.stderr,
         )
-    httpd = ThreadingHTTPServer((host, port), _Handler)
+    try:
+        httpd = ThreadingHTTPServer((host, port), _Handler)
+    except OSError as error:
+        sys.exit(f"看板端口 {port} 绑定失败（{error}）；改用 --port 0 自动选空闲端口")
     print(f"task 看板已启动：{url}")
     print("只读服务；Ctrl+C 退出。")
     _open_browser(url)

@@ -195,6 +195,9 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
 
     monkeypatch.setattr(lifecycle.shutil, "move", boom)
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
+    # fake_repo 非 git 仓库，worktree_paths 会抛 fail-closed；模拟无登记 worktree
+    monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
+    monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
     with pytest.raises(SystemExit, match="归档移动失败"):
         lifecycle._close_task(argparse.Namespace(tid="t001"), "done", None)
     fm, _ = parse_front_matter(d / "task.md")

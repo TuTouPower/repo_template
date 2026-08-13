@@ -351,6 +351,13 @@ def shared_status(src: Path) -> list[dict]:
 def src_dirty(src: Path) -> bool:
     paths = list(HARD_SYNC_DIRS) + list(HARD_SYNC_FILES) + list(SHARED_FILES)
     r = _git(src, "status", "--porcelain", "--", *paths)
+    if r.returncode != 0:
+        # git 失败时按 dirty 处理并打 WARNING，避免误推进 last_synced_commit（F36）
+        print(
+            f"WARNING: 无法判断模板源是否干净（{r.stderr.strip()}）；按 dirty 处理",
+            file=sys.stderr,
+        )
+        return True
     return bool(r.stdout.strip())
 
 
@@ -411,7 +418,8 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             continue
         try:
             sdata = json.loads(sp.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"WARNING: 模板侧 {rel} 无法解析，跳过 MCP 合并（{e}）", file=sys.stderr)
             continue
         if not dp.exists():
             dp.parent.mkdir(parents=True, exist_ok=True)
@@ -421,7 +429,8 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             continue
         try:
             ddata = json.loads(dp.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"WARNING: 消费侧 {rel} 无法解析，跳过 MCP 合并（{e}）", file=sys.stderr)
             continue
         dservers = ddata.setdefault("mcpServers", {})
         touched = False
@@ -766,6 +775,10 @@ def main(argv: list[str] | None = None) -> None:
     try:
         sys.exit(args.func(args))
     except SyncError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        # 文件系统错误统一入口：裸 OSError 会中断多步写盘且无友好消息（F16）
         print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
 

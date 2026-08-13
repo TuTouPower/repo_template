@@ -225,12 +225,25 @@ def cmd_start(args):
         rollback_error = rollback_start(
             base_sha=base_sha, branch=branch, worktree_rel=worktree_rel
         )
+        # reserve 先于 start 是受支持顺序；start 失败会留下孤儿 running identity，
+        # 提示清理路径避免阻塞该 tid 后续执行（RT-006）
+        record = current_attempt_record(args.tid, ledger_read())
+        orphan_hint = ""
+        if record and record["state"] in ("reserved", "running"):
+            orphan_hint = (
+                f"；已存在 attempt={record['attempt']} "
+                f"execution_id={record['execution_id']} 的 running identity，"
+                "若不再继续可用 task.py attempt terminal 清理"
+            )
         if rollback_error:
             sys.exit(
                 f"start 失败（{error}）；自动补偿不完整：{rollback_error}。"
                 f"请检查 {worktree_rel}、分支 {branch!r} 与主仓 HEAD 后手动恢复"
             )
-        sys.exit(f"start 失败（{error}）；已清理本次新建分支与 worktree，主仓未修改")
+        sys.exit(
+            f"start 失败（{error}）；已清理本次新建分支与 worktree，"
+            f"主仓未修改{orphan_hint}"
+        )
     print(
         f"{args.tid} status=active branch={branch} base={base_branch} "
         f"diff_anchor={fm['diff_anchor']}"
@@ -391,6 +404,29 @@ def _delete_branches(branches: list[str]) -> None:
         print(f"分支已删除：{branch}")
 
 
+def _find_merge_commit(tid: str, branch_sha: str) -> str | None:
+    """找 `merge({tid}):` commit 且其 second parent 恰为 branch tip。
+
+    崩溃重入/手动预 merge 场景下，skip-merge 不得把当前 HEAD 原样当 merge_sha
+    （HEAD 可能已被无关 commit 推进，RT-003）。解析不到或双亲不符返回 None。
+    """
+    base = default_branch()
+    result = _git([
+        "rev-list", "--merges", "--max-count=1", "--grep",
+        f"merge({tid}):", f"refs/heads/{base}",
+    ])
+    if result.returncode != 0:
+        return None
+    candidates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not candidates:
+        return None
+    candidate = candidates[0]
+    second = _git(["rev-parse", f"{candidate}^2"])
+    if second.returncode != 0 or second.stdout.strip() != branch_sha:
+        return None
+    return candidate
+
+
 def cmd_integrate(args):
     """Integrate exactly one terminal attempt."""
     require_primary_worktree()
@@ -434,8 +470,14 @@ def cmd_integrate(args):
         except ctx.TaskDataError as error:
             sys.exit(str(error))
         if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
-            print(f"{branch} 已合入 {default_branch()}，跳过 merge")
-            merge_sha = _get_head()
+            merge_sha = _find_merge_commit(args.tid, sha)
+            if merge_sha is None:
+                sys.exit(
+                    f"{branch} 已合入 {default_branch()}，但找不到对应 merge({args.tid}) "
+                    "commit，或当前 HEAD 并非该分支的真实 merge 结果；"
+                    "拒绝把当前 HEAD 记为 merge_sha，请人工核对后处理"
+                )
+            print(f"{branch} 已合入 {default_branch()}（merge={merge_sha[:12]}），跳过 merge")
         else:
             result = _git(["merge", "--no-ff", "-m", f"merge({args.tid}): {branch}", branch])
             if result.returncode != 0:
@@ -698,6 +740,31 @@ def _record_prepared_merge(payload: dict) -> dict:
     raise ctx.TaskDataError("prepared transaction 无对应 merge 状态或 merge commit")
 
 
+_INDEX_COMMIT_SUBJECT = "chore(task): rebuild task indexes"
+_INDEX_COMMIT_PATHS = frozenset({
+    ctx._rel(ctx.ACTIVE_PATH),
+    ctx._rel(ctx.ARCHIVE_PATH),
+})
+
+
+def _require_index_commit(rev: str) -> None:
+    """校验 rev 是工具链 index 维护 commit（subject + 路径集合），防误认领无关 commit（RT-005）。"""
+    subject = _git(["show", "-s", "--format=%s", rev]).stdout.strip()
+    files = [
+        line.strip()
+        for line in _git(
+            ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]
+        ).stdout.splitlines()
+    ]
+    if subject != _INDEX_COMMIT_SUBJECT or any(
+        path not in _INDEX_COMMIT_PATHS for path in files
+    ):
+        raise ctx.TaskDataError(
+            f"HEAD 是 chain merge 的紧邻 commit 但非工具链 index 维护 commit"
+            f"（subject={subject!r} files={files}）；拒绝认领，请人工核对"
+        )
+
+
 def _record_index_phase(payload: dict) -> dict:
     merge_sha = payload.get("merge_sha")
     if not isinstance(merge_sha, str) or not merge_sha:
@@ -710,6 +777,8 @@ def _record_index_phase(payload: dict) -> dict:
         index_skipped = head == merge_sha
     elif _git(["rev-parse", "HEAD^1"]).stdout.strip() != merge_sha:
         raise ctx.TaskDataError("当前 HEAD 既非 merge_sha，也非其紧邻 index 维护 commit")
+    else:
+        _require_index_commit("HEAD")
     return _update_chain_tx(payload, "indexed", index_sha=head, index_skipped=index_skipped)
 
 
@@ -818,6 +887,16 @@ def cmd_integrate_chain(args):
     }
     tx_path = _write_chain_tx(payload)
     tail = members[-1]
+    # 并发 single integrate 若推进了主干，base_head 快照即失效，恢复路径 _record_prepared_merge
+    # 会拒绝——在 merge 前检测漂移并中止，避免走到不可恢复状态（RT-004）
+    current_head = _get_head()
+    if current_head != payload["base_head"]:
+        sys.exit(
+            f"chain transaction 创建后主干 HEAD 被推进"
+            f"（{payload['base_head'][:12]} -> {current_head[:12]}）；"
+            "拒绝 chain merge 以免 base_head 快照失效。请先处理并发的 single integrate，"
+            f"再按原 tail_tid --continue 或清理 transaction={tx_path}"
+        )
     result = _git([
         "merge", "--no-ff", "-m", f"merge-chain({args.tail_tid}): {tail['branch']}",
         tail["branch"],
@@ -832,8 +911,17 @@ def cmd_integrate_chain(args):
                 f"解决后 git add，再执行 integrate-chain {args.tail_tid} --continue；"
                 f"transaction={tx_path}"
             )
-        tx_path.unlink(missing_ok=True)
-        sys.exit(f"chain merge 失败：{result.stderr.strip()}")
+        if _merge_in_progress():
+            sys.exit(
+                f"chain merge 失败（{result.stderr.strip()}）且存在 MERGE_HEAD；"
+                f"修复后执行 integrate-chain {args.tail_tid} --continue；"
+                f"transaction={tx_path}"
+            )
+        # 非冲突失败但 merge 未发生：保留 tx 供人工修复后 --continue（F37）
+        sys.exit(
+            f"chain merge 失败（{result.stderr.strip()}）；"
+            f"transaction 保留于 {tx_path}，修复后执行 integrate-chain {args.tail_tid} --continue"
+        )
     payload = _update_chain_tx(payload, "merged", merge_sha=_get_head())
     try:
         payload = _resume_chain_to_verification(payload)

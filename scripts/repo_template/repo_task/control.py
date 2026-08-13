@@ -22,7 +22,11 @@ from .store import discover_effective_tasks, scan_tasks
 def cmd_view(args):
     if getattr(args, "serve", False):
         from .view_server import serve
-        serve(host=args.host, port=args.port)
+        serve(
+            host=args.host,
+            port=args.port,
+            allow_non_loopback=bool(getattr(args, "allow_non_loopback", False)),
+        )
         return
     try:
         schedule = compute_schedule()

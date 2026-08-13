@@ -234,7 +234,27 @@ def test_serve_warns_non_loopback(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
     monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8765)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
-    view_server.serve(host="0.0.0.0", port=8765)
+    # RT-013 后非 loopback 须显式 allow_non_loopback 才绑定；绑定后仍打 WARNING
+    view_server.serve(host="0.0.0.0", port=8765, allow_non_loopback=True)
     err = capsys.readouterr().err
     assert "WARNING" in err
     assert "0.0.0.0" in err
+
+
+def test_serve_rejects_non_loopback_without_allow(monkeypatch, capsys):
+    """非 loopback 绑定需显式 --allow-non-loopback，否则拒绝（RT-013）。"""
+    class FakeServer:
+        def __init__(self, addr, handler):
+            self.addr = addr
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
+    monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8766)
+    monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
+    with pytest.raises(SystemExit, match="拒绝绑定非 loopback"):
+        view_server.serve(host="0.0.0.0", port=8766)

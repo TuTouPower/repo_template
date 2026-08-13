@@ -21,19 +21,15 @@ pending.py / findings.py 共用。条目以「一条目一文件」形式存放�
 释放锁时新条目已落盘，后续扫描必然可见，不存在两个进程取到同号的窗口。
 """
 
-import os
 import re
 import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
+from repo_task.locks import TASK_ID_LOCK_NAME, git_common_lock
 
-LOCK_NAME = "repo_template_id.lock"
+LOCK_NAME = TASK_ID_LOCK_NAME
 
 
 class IdScanError(ValueError):
@@ -60,44 +56,18 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
     return result.stdout
 
 
-def git_common_dir(repo_root: Path) -> Path:
-    """返回所有 worktree 共享的 git 公共目录绝对路径。"""
-    text = _run_git(repo_root, ["rev-parse", "--git-common-dir"]).strip()
-    if not text:
-        raise IdScanError("无法解析 git 公共目录")
-    path = Path(text)
-    return path if path.is_absolute() else (repo_root / path).resolve()
-
-
-def _lock_fh(fh) -> None:
-    """对文件句柄取排他锁。Windows 走 msvcrt，Unix 走 fcntl。"""
-    fh.seek(0)
-    if os.name == "nt":
-        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-    else:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-
-
-def _unlock_fh(fh) -> None:
-    """释放排他锁。"""
-    fh.seek(0)
-    if os.name == "nt":
-        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        fcntl.flock(fh, fcntl.LOCK_UN)
-
-
 @contextmanager
 def id_lock(repo_root: Path):
-    """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。"""
-    lock_path = git_common_dir(repo_root) / LOCK_NAME
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w", encoding="utf-8") as fh:
-        _lock_fh(fh)
-        try:
+    """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。
+
+    委托 repo_task.locks.git_common_lock：锁文件先写 1 字节再锁，兼容 Windows
+    msvcrt（空文件锁 1 字节超 EOF 抛 OSError，RT-011）。git 失败包装为 IdScanError。
+    """
+    try:
+        with git_common_lock(repo_root, LOCK_NAME):
             yield
-        finally:
-            _unlock_fh(fh)
+    except OSError as error:
+        raise IdScanError(str(error)) from error
 
 
 def local_branches(repo_root: Path) -> list[str]:
