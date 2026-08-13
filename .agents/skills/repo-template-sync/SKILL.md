@@ -28,7 +28,7 @@ disable-model-invocation: true
 - **禁止自动 commit**。apply 写盘与 state 更新完成后，必须进入「审批门禁」：展示变更摘要，**询问用户是否审批通过**；仅当用户明确表示审批通过（如「审批通过」「approve」「可以 commit」）后才可 `git add` + `git commit`。用户未表态、只说「好的/继续/知道了」、或明确拒绝 → **不 commit**。
 - **不碰业务与项目状态**：`src/`、`assets/`、`schemas/`、`config/`、非 `repo_template` 的 `scripts/`、`docs/tasks/{tid}_*`、`docs/archive/`、`docs/pending/{todo,parked}/`、`docs/findings/dNNN_*`、`docs/specs*`、`docs/handoff.md`、`docs/runtime/`、`docs/reviews/review_*/`、`docs/spikes/{sid}_*`、`docs_repo/`、`README.md`（业务介绍）。硬同步只动脚本声明的清单路径，不越界。
 - **不静默硬盖可定制的共享资产**：`AGENTS.md`、`conventions.md`、`.gitignore`、MCP、宿主 settings 等必须走「裁定」，逐项裁定。模板资产（工具链、模板侧存在的 skill）归「强制覆盖」。
-- **合并共享文稿禁止格式化**：合并 `AGENTS.md`、`conventions.md` 等共享文稿时，禁止运行任何 Markdown 格式化 / 表格对齐工具（prettier 等），保持模板原格式（紧凑表格，单元格不做空格 pad 填充）。
+- **合并共享文稿先禁 prettier/pad，语义合并后用 md_kx 收尾**：合并 `AGENTS.md`、`conventions.md` 等共享文稿时，合并过程禁止运行 prettier / 按列 pad 类格式化（防把 compact 表撑成宽列）；语义合并结束后用 `scripts/repo_template/md_format.py` 做最终格式化。模板侧这些文件须已是 md_kx 输出，否则消费侧一 format，下次同步又整表噪声。
 - **有差异就必须处理并报告**。不存在「只展示 diff、默认可永久不处理」的桶：模板资产 → 强制覆盖；裁定单元 → 要么写入（`update` / `merge`）、要么明确 `keep_consumer`（写清为什么保留）、要么 `ask_user`。禁止用「只 diff」当借口跳过该更新的模板演进。
 - 消费侧 `sync_state.json` **永不**被模板侧文件覆盖或删除（模板本就不带该文件；`repo_sync.py` 的 skill 覆盖天然排除它）。
 - **每次同步全量对比，不信任上一次同步**：diff 一律基于「模板当前工作树 ↔ 消费项目当前工作树」逐路径重新对比；`last_synced_commit` / `last_synced_at` 仅作审计记录，**绝不**作为对比基线、跳过依据或增量范围。
@@ -37,18 +37,18 @@ disable-model-invocation: true
 
 `repo_sync.py` 在消费项目 `scripts/repo_template/` 下（硬同步清单路径，随模板演进同步）。子命令见 `repo_sync.py --help`。
 
-| 能力 | 命令 | 说明 |
-| --- | --- | --- |
-| 初始化 template_source | `repo_sync.py init --source <path\|url>` | 首次接入；仅字段级写 state |
-| 状态与差异 | `repo_sync.py status` | 源、HEAD、dirty、user_prompts、差异摘要（零写盘） |
-| 差异预览 | `repo_sync.py plan` | 输出 markdown 预览表（强制覆盖/裁定/软链/state 预期），零写盘 |
-| 硬同步强制覆盖 | `repo_sync.py apply` | 硬同步清单树对树（含多余删除）；噪声忽略 |
-| skill 整目录覆盖 | `repo_sync.py apply` | 含 front matter；保护 `sync_state.json`；不做整树 `--delete` |
-| 软链建/修 | `repo_sync.py apply` / `link-skills` | `.claude/skills/<name>` → `.agents/skills/<name>`；非本机制链接报告不碰 |
-| .gitignore / MCP 机械合并 | `repo_sync.py apply` | 追加去重、按键合并、禁冲密钥；遵从 `user_prompts` 拦截 |
-| 裁定单元写盘 | `repo_sync.py apply --decision U:D` | `update` / `keep`；`merge` 提示后由 agent 手动编辑 |
-| state 字段级更新 | `apply` / `prompt` 内部 | 原子写盘，未知键保留（脚本保证纪律） |
-| user_prompts 管理 | `repo_sync.py prompt add\|revoke\|list` | 同 tag 自动 supersede（后出优先） |
+|能力|命令|说明|
+|---|---|---|
+|初始化 template_source|`repo_sync.py init --source <path\|url>`|首次接入；仅字段级写 state|
+|状态与差异|`repo_sync.py status`|源、HEAD、dirty、user_prompts、差异摘要（零写盘）|
+|差异预览|`repo_sync.py plan`|输出 markdown 预览表（强制覆盖/裁定/软链/state 预期），零写盘|
+|硬同步强制覆盖|`repo_sync.py apply`|硬同步清单树对树（含多余删除）；噪声忽略|
+|skill 整目录覆盖|`repo_sync.py apply`|含 front matter；保护 `sync_state.json`；不做整树 `--delete`|
+|软链建/修|`repo_sync.py apply` / `link-skills`|`.claude/skills/<name>` → `.agents/skills/<name>`；非本机制链接报告不碰|
+|.gitignore / MCP 机械合并|`repo_sync.py apply`|追加去重、按键合并、禁冲密钥；遵从 `user_prompts` 拦截|
+|裁定单元写盘|`repo_sync.py apply --decision U:D`|`update` / `keep`；`merge` 提示后由 agent 手动编辑|
+|state 字段级更新|`apply` / `prompt` 内部|原子写盘，未知键保留（脚本保证纪律）|
+|user_prompts 管理|`repo_sync.py prompt add\|revoke\|list`|同 tag 自动 supersede（后出优先）|
 
 agent 不手动用 rsync / jq / sed 重写脚本已覆盖的机械化路径；脚本不覆盖的部分（AGENTS.md 语义合并、settings 片段合并、悬空链清理）由 agent 处理。
 
@@ -83,12 +83,12 @@ agent 不手动用 rsync / jq / sed 重写脚本已覆盖的机械化路径；�
 
 对 `AGENTS.md` / `conventions.md` 等语义合并单元，agent 依据 plan 的分类**读 diff 后裁定**：
 
-| disposition | 含义 | apply 行为 |
-| --- | --- | --- |
-| `update_from_template` | 整单元以模板为准 | `--decision U:update`，脚本整文件覆盖 |
-| `merge_into_consumer` | **智能合并**：模板增量并入消费侧，保留消费定制 | agent **手动编辑**消费文件（补表行、补约定条…）；apply 时传 `--decision U:merge` 提示脚本不整文件覆盖 |
-| `keep_consumer` | 明确保留消费侧 | `--decision U:keep`；rationale 说明「为何不用模板」 |
-| `ask_user` | 无法独断 | 不写该单元；预览写清冲突要点，等用户逐项答复 |
+|disposition|含义|apply 行为|
+|---|---|---|
+|`update_from_template`|整单元以模板为准|`--decision U:update`，脚本整文件覆盖|
+|`merge_into_consumer`|**智能合并**：模板增量并入消费侧，保留消费定制|agent **手动编辑**消费文件（补表行、补约定条…）；apply 时传 `--decision U:merge` 提示脚本不整文件覆盖|
+|`keep_consumer`|明确保留消费侧|`--decision U:keep`；rationale 说明「为何不用模板」|
+|`ask_user`|无法独断|不写该单元；预览写清冲突要点，等用户逐项答复|
 
 **偏见**（优先级从高到低）：
 

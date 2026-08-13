@@ -17,7 +17,7 @@ disable-model-invocation: true
 主会话维护两张表（内存即可，不必落盘）：
 
 |表|内容|
-|------|------|
+|---|---|
 |**in-flight**|已派未终态的 worker：`worker_id`、类型（entry/bug/update/park）、主题摘要、拟 slug、确认要点|
 |**session ledger**|已终态项：`pNNN`、路径、动作（新建/更新/复用未改/park/失败）、worker 结论摘要|
 
@@ -36,7 +36,7 @@ disable-model-invocation: true
 先判定类型；说不清就问一句，不默认：
 
 |类型|判定|落盘|
-|------|------|------|
+|---|---|---|
 |**bug**|已有行为与期望不符 / 回归 / 假绿|子代理走 `task-bug` 第 1–6 步后 `--kind bug` 登记；用户同时明确「现在不办」→ 登记后再 `park`（须理由）|
 |**普通**|新功能、遗留、技术债、该做未做|子代理 `pending.py new`（默认 entry）填字段|
 |**不办/暂搁**|用户明确现在不办（含 bug 暂搁）|先按上表完成登记（或复用已有 `pNNN`），再 `pending.py park {pNNN} --reason "..." --write`|
@@ -79,7 +79,7 @@ disable-model-invocation: true
 
 ### 4. 派子代理登记（后台，主会话不阻塞）
 
-确认且未与 in-flight 冲突后：登记 in-flight → 立刻派子代理；prompt 只含**已确认事实**、**in-flight 中其它主题摘要（防重复）**与下列指令，不塞未确认猜测。
+确认且未与 in-flight 冲突后：登记 in-flight → 立刻派子代理；prompt 只含**已确认事实**、\*\*in-flight 中其它主题摘要（防重复）\*\*与下列指令，不塞未确认猜测。
 
 #### 4a 普通条目（新建）
 
@@ -87,12 +87,12 @@ disable-model-invocation: true
 
 1. 再查 `pending.py list`（防与其它会话竞态）；`todo/` / `parked/` 已有等价条目 → **不新建**，回报 `action=reuse`、已有 `pNNN`、路径、建议是否更新及建议改哪些字段。
 2. 无等价则：
-   ```bash
-   python3 scripts/repo_template/pending.py new --slug <snake_case主题>
-   ```
+    ```bash
+    python3 scripts/repo_template/pending.py new --slug <snake_case主题>
+    ```
 3. 填写模板字段（替换占位，删花括号说明）：
-   - H1：`# pNNN {一句话简述}`
-   - `- 来源：` / `- 内容：` / `- 处理：未开`
+    - H1：`# pNNN {一句话简述}`
+    - `- 来源：` / `- 内容：` / `- 处理：未开`
 4. 用户确认暂搁：`pending.py park {pNNN} --reason "..." --write`，回报 `action=park`
 5. **禁止** commit、`task.py add`、改 `src/` `tests/` 生产树、手写创建 `pNNN_*.md`（必须经 `pending.py new`）。
 
@@ -108,9 +108,9 @@ disable-model-invocation: true
 4. 同类位点扫描：同机制是否在其他路径复现；已确认的合并进影响/根因/补测，默认一条 pending
 5. 测试缺口分析（为何没盖住 + 覆盖各已确认位点的补测方向）
 6. 登记或更新：
-   - 查重后无等价：`pending.py new --slug <主题> --kind bug`，填全字段
-   - 已有等价 bug 条目：**就地更新**该文件，保留 `pNNN`（`action=update`）
-   - 字段：现象 / 影响 / 根因（含同类清单或已扫无）/ 测试缺口 / 线索 / 处理：未开
+    - 查重后无等价：`pending.py new --slug <主题> --kind bug`，填全字段
+    - 已有等价 bug 条目：**就地更新**该文件，保留 `pNNN`（`action=update`）
+    - 字段：现象 / 影响 / 根因（含同类清单或已扫无）/ 测试缺口 / 线索 / 处理：未开
 7. 用户确认暂搁：登记/更新成功后 `pending.py park {pNNN} --reason "..." --write`
 
 子代理边界：
@@ -136,8 +136,8 @@ disable-model-invocation: true
 
 - **create / update / park 成功**：记入 session ledger；告知 `pNNN` + 类型 + 一句话；bug 附根因与同类位点摘要。提醒「未建 task；要修走 `task-from-pending` / 批准后的 `task-bug` 立项」。
 - **reuse（发现已有、未改）**：记入 ledger（reuse）；告知已有 `pNNN`，问是否改写。
-  - 用户同意改写 → 派 **4c** worker（写入 in-flight），主会话继续。
-  - 用户拒绝 → ledger 保持 reuse，不再动文件。
+    - 用户同意改写 → 派 **4c** worker（写入 in-flight），主会话继续。
+    - 用户拒绝 → ledger 保持 reuse，不再动文件。
 - **失败**：记入 ledger（failed）；原样转述卡点，问用户补信息后重新澄清，或改记普通条目 / 暂搁。
 
 ### 6. 会话收尾（含 worker 完成屏障）
@@ -145,9 +145,9 @@ disable-model-invocation: true
 用户结束记录或要求提交时：
 
 1. **屏障**：列出全部 in-flight worker。有运行中项时：
-   - 默认：**等待全部进入成功/失败终态**后再继续；
-   - 或请用户二选一：**(a) 等待全部完成** / **(b) 只提交已完成项，其余继续跟踪**（选 b 则 commit 范围仅 session ledger 已终态且有文件变更的项；in-flight 保留到后续会话或继续等）。
-   - **存在运行中 worker 且用户未选 b 时，禁止进入 commit 确认。**
+    - 默认：**等待全部进入成功/失败终态**后再继续；
+    - 或请用户二选一：**(a) 等待全部完成** / **(b) 只提交已完成项，其余继续跟踪**（选 b 则 commit 范围仅 session ledger 已终态且有文件变更的项；in-flight 保留到后续会话或继续等）。
+    - **存在运行中 worker 且用户未选 b 时，禁止进入 commit 确认。**
 2. 全部相关 worker 终态后（或用户选 b）：列本次 **create/update/park** 的 `docs/pending/todo|parked/pNNN_*.md`（reuse 未改与 failed 不列入 commit）。
 3. 询问是否 commit；同意则只提交这些 pending 文件（可含用户明确要求的相关 docs 改动）。`.scratch/` 已 ignore，不入 commit。
 4. 未同意 → 文件留工作区，汇报路径与未完成 worker。

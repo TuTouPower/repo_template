@@ -9,7 +9,7 @@
 实证数据（2026-07-29 于 omni_media 主仓 main 分支实跑）：
 
 |命令|当前状态|是否在红/绿门禁|
-|------|------|------|
+|---|---|---|
 |`npm test`（vitest）|通过|是|
 |`npm run typecheck`（生产代码 tsc）|通过|是|
 |`npm run typecheck:test`（测试代码 tsc）|**失败**（十几个文件数十处错误）|**否**|
@@ -35,7 +35,7 @@ npm run smoke:*       # 按需
 `npm run typecheck:test` 当前失败，错误集中在：
 
 |文件|错误数|主要类别|
-|------|------|------|
+|---|---|---|
 |`tests/unit/xhs/tikhub_client.test.ts`|17|`FetchLike` mock 缺 `ok/statusText/body` 字段|
 |`tests/unit/t071_rate_limit_hardening.test.ts`|12|速率限制 mock 类型不匹配|
 |`tests/unit/xhs/parse_note.test.ts`|9|mock 类型|
@@ -89,6 +89,7 @@ eslint 从未进入红/绿门禁。task.md 中仅 9 个提到 eslint/lint，且�
 `npm run lint` 当前：**15857 problems**（1225 errors / 14632 warnings）。其中 475 errors 可 `--fix` 修复。
 
 关键记录：
+
 - t029 task.md：「`npm run lint` 失败，项目存量 16 个 error；本 task 前已有，未扩大」
 - t074 task.md：「`npm run lint` 在 main 基线即有项目级违规，本 task 新增代码 lint-clean」
 - t076 task.md：「既有全库 `npm run lint` 存在大量与本 task 无关的既有失败，未在本 task 修改」
@@ -127,6 +128,7 @@ npm run smoke:*             # 按需
 ### 方案 B：lint 基线快照（应对存量）
 
 lint 不强制全过，改为「不得新增」：
+
 - 维护一份 `.lint-baseline`（当前存量违规清单，格式 lint 支持）
 - 门禁跑 `npm run lint` 后与 baseline diff，新增违规才 FAIL
 - 存量逐步清理，每清一批更新 baseline
@@ -137,6 +139,7 @@ lint 不强制全过，改为「不得新增」：
 ### 方案 C：build 强制 + worktree 环境修复
 
 build 作为门禁，但需先解决 worktree 下 build 环境问题：
+
 - Turbopack root 推断：worktree 在仓库外导致 root 误判（t080/t088 实证）
 - 方案：worktree 内 `NEXT_DIST_DIR` 隔离构建产物（t129 已部分做）+ 文档说明 worktree build 注意事项
 
@@ -146,7 +149,7 @@ build 作为门禁，但需先解决 worktree 下 build 环境问题：
 ## 与现有裁决的关系
 
 |裁决|关系|
-|------|------|
+|---|---|
 |L11（TDD 顺序违规）|互补。L11 管「改测试适配实现」的方向；本议题管「测试代码本身类型正确」|
 |L2（finding 锚 AC）|互补。typecheck:test 失败是可观测行为缺陷，reviewer 应出 finding，但门禁缺位致 reviewer 也看不到|
 |L14（一 task 一 commit）|相关。build/lint 缺门禁时，task 收尾质量靠 agent 自觉，与 L14「commit 须可独立验证」矛盾|

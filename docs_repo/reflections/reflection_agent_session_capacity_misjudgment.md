@@ -40,6 +40,7 @@ agent 把"规模大 + SPIKE 含外部依赖"打包成"做不了",忽略了已有
 spec 的 4 个 UNVERIFIED-SPIKE 都标了"agent 可在执行期 Step 1 实验核实"(UNVERIFIED-SPIKE,非 BLOCKING)。其中 Groq url 可达性确实需要真实 Groq 账号 + 真实小红书 CDN URL。
 
 agent 把这个"需要实测"夸大为"worktree 环境难完整验证",但事实是:
+
 - GROQ_API_KEY 已在 `.env`(d017 记录)
 - 项目有住宅代理(SPIKE 明确说 SSR 解析走代理)
 - 既有解析链路可抓新 masterUrl

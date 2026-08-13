@@ -12,7 +12,7 @@ Claude Sonnet
 - `e1ea9d9` refactor: remove dead 'resource' fail class
 - `d927df6` refactor: remove model ladder and circuit breaker
 
-已全量审阅：`repo_task/{attempts,control,ledger,monitoring,integration,context,store,git_ops,scheduling,documents,lifecycle,worktrees,cli}.py`、`task.py`、4 个 SKILL.md、4 个 docs_repo/plan、test_dispatch_{control,integration}.py、test_task_{modularization,start_flow,archive_dir,save,scheduling,document_validation,unverified}.py。
+已全量审阅：`repo_task/{attempts,control,ledger,monitoring,integration,context,store,git_ops,scheduling,documents,lifecycle,worktrees,cli}.py`、`task.py`、4 个 SKILL.md、4 个 docs_repo/plan、test_dispatch\_{control,integration}.py、test_task\_{modularization,start_flow,archive_dir,save,scheduling,document_validation,unverified}.py。
 
 # 高优先级
 
@@ -20,13 +20,13 @@ Claude Sonnet
 
 - **位置**：`scripts/repo_template/repo_task/monitoring.py:569-572`
 - **现象**：
-  ```python
-  if (
-      report and report.get("status") == "blocked"
-      or effective_tasks.get(tid, {}).get("status") == "blocked"
-  ):
-  ```
-  Python 中 `and` 优先于 `or`，实际等价于 `(report and report.get("status") == "blocked") or (effective_tasks.get(...))`。当前恰好符合意图，但缺括号，后续维护改 `==` 链或加第三项即出错。
+    ```python
+    if (
+        report and report.get("status") == "blocked"
+        or effective_tasks.get(tid, {}).get("status") == "blocked"
+    ):
+    ```
+    Python 中 `and` 优先于 `or`，实际等价于 `(report and report.get("status") == "blocked") or (effective_tasks.get(...))`。当前恰好符合意图，但缺括号，后续维护改 `==` 链或加第三项即出错。
 - **影响**：低（当前行为正确），但属易触雷的代码气味。
 - **建议**：补括号：`if (report and report.get("status") == "blocked") or (effective_tasks.get(tid, {}).get("status") == "blocked"):`。
 - **置信度**：高
@@ -159,9 +159,9 @@ Claude Sonnet
 2. **exact identity `(tid, attempt, execution_id)` 的引入解决了原 attempt 复用混乱**，`_require_exact_current` 在每个 mutation 前做 identity 校验，配合 ledger 锁，正确性高。
 3. **3fdd454 的 9 项修复质量高**，特别是 escalated 死闩与 `append_integrated` 死代码——后者若保留会导致 silent corruption。
 4. **建议补充**：
-   - 增加 `attempt doctor` 子命令，自动检测并报告：a) overlapping_attempts 中的 tid；b) 残留 worktree 但无 active task 的情况；c) ledger 行解析失败的行号。当前这些只能靠 ps/reconcile 间接观察。
-   - SKILL.md 中补一张「attempt state 机状态转移图」（reserved→running→terminal→integrated/escalated；reserved→running→terminal→escalated→integrated 这种 H2 关注的边），让 reviewer/agent 一致理解。
-   - `repo_task/__init__.py` 当前只导出 5 个名字（test 验证），考虑显式 `__all__` 防止意外 re-export。
+    - 增加 `attempt doctor` 子命令，自动检测并报告：a) overlapping_attempts 中的 tid；b) 残留 worktree 但无 active task 的情况；c) ledger 行解析失败的行号。当前这些只能靠 ps/reconcile 间接观察。
+    - SKILL.md 中补一张「attempt state 机状态转移图」（reserved→running→terminal→integrated/escalated；reserved→running→terminal→escalated→integrated 这种 H2 关注的边），让 reviewer/agent 一致理解。
+    - `repo_task/__init__.py` 当前只导出 5 个名字（test 验证），考虑显式 `__all__` 防止意外 re-export。
 
 ## 测试
 

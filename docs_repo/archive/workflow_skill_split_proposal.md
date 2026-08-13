@@ -120,9 +120,9 @@ AGENTS.md
 4. 对每个 task 运行 `scripts/task.py add`。
 5. 创建 `docs/tasks/{tid}_{slug}/`。
 6. 从模板复制并填写：
-   - `spec.md`
-   - `plan.md`
-   - `task.md`
+    - `spec.md`
+    - `plan.md`
+    - `task.md`
 7. 检查行为 AC 非空、范围明确、依赖和验证方式可执行。
 8. 汇报新建 tid、依赖和待执行顺序。
 
@@ -173,17 +173,17 @@ task 已创建，spec/plan/task.md 已填写，尚未 start。
 
 `/task_run` 按 `AGENTS.md` 状态机推进：
 
-1. start、分支和 `diff_anchor` 校验。
-2. doctor 前置检查或必要 spike。
-3. TDD 红灯。
-4. 实现和绿灯。
-5. 黑盒验证循环。
-6. 固定派两个独立 reviewer 并行完成：
-   - code review
-   - test review
-7. finding 处置。
-8. 必要的修复、测试、黑盒和下一 review 轮。
-9. 最终轮新 blocker 的同轮复核。
+01. start、分支和 `diff_anchor` 校验。
+02. doctor 前置检查或必要 spike。
+03. TDD 红灯。
+04. 实现和绿灯。
+05. 黑盒验证循环。
+06. 固定派两个独立 reviewer 并行完成：
+    - code review
+    - test review
+07. finding 处置。
+08. 必要的修复、测试、黑盒和下一 review 轮。
+09. 最终轮新 blocker 的同轮复核。
 10. spec、blueprint、指南和 `task.md` 收尾。
 11. `scripts/task.py finish`。
 12. task 目录归档。
@@ -212,7 +212,7 @@ skill 内的循环必须以文件和命令结果为依据：
 ## 权威来源划分
 
 |内容|权威位置|
-|------|------|
+|---|---|
 |目录用途和写入责任|`AGENTS.md`|
 |task 状态和门禁语义|`AGENTS.md`|
 |hard constraints 和安全规则|`AGENTS.md`|
@@ -228,7 +228,7 @@ skill 内的循环必须以文件和命令结果为依据：
 ## 与当前方案对比
 
 |维度|当前全部写在 `AGENTS.md`|拆分后的混合方案|
-|------|------|------|
+|---|---|---|
 |初始上下文|每次加载完整操作流程|始终加载核心规则，按需加载操作步骤|
 |全局状态机|集中完整|继续集中在 `AGENTS.md`|
 |操作入口|需要从长文判断|`/task_create`、`/task_run` 明确|
@@ -276,11 +276,11 @@ skill 内的循环必须以文件和命令结果为依据：
 3. 精简 `AGENTS.md`，保留规则、状态机、门禁、blocked 和 skill 路由。
 4. 搜索并清理重复规则和矛盾表述。
 5. 用临时 task 验证：
-   - 只创建不执行。
-   - backlog task 从 start 执行。
-   - active task 中途恢复。
-   - review FAIL 后续跑。
-   - blocked 时停止。
+    - 只创建不执行。
+    - backlog task 从 start 执行。
+    - active task 中途恢复。
+    - review FAIL 后续跑。
+    - blocked 时停止。
 6. 确认旧的 `scripts/task.py`、review prompt 和归档结构保持兼容。
 
 ## 实施判定标准

@@ -7,7 +7,7 @@
 一条目一文件，文件名 `pNNN_{slug}.md`；三态由所在目录表达：
 
 |目录|语义|
-|------|------|
+|---|---|
 |`docs/pending/todo/`|未闭环、待启动|
 |`docs/pending/parked/`|用户显式确认暂搁（不办）；不等于闭环|
 |`docs/archive/pending/`|已闭环|

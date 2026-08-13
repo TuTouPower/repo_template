@@ -17,7 +17,7 @@
 ## 范围
 
 |做|不做|
-|------|------|
+|---|---|
 |front matter 增加调度字段|修改 `tasks-run` 或 `task.py start`|
 |`tasks-parallel` 改名 `/tasks-schedule`，分析并落盘调度图|新增执行层 skill|
 |`task.py next-batch` 纯脚本命令|自动启动 Agent、worktree、分支或合并|
@@ -54,7 +54,7 @@ schedule_status: "scheduled"
 字段定义：
 
 |字段|值|语义|
-|------|------|------|
+|---|---|---|
 |`depends_on`|逗号分隔 `tNNN`，空字符串表示无依赖|依赖 DAG 入边|
 |`conflicts_with`|逗号分隔 `tNNN`，空字符串表示无冲突|无向互斥边|
 |`schedule_status`|`scheduled`|已完成调度分析；即使两张边表都为空，也可进入算法|
@@ -83,8 +83,8 @@ disable-model-invocation: true
 3. 推导代码路径、共享契约和显式顺序依赖。
 4. 生成 `depends_on` DAG 和 `conflicts_with` 无向图，校验悬空引用与环。
 5. 对每个分析范围内 task 写入：
-   - 判断完整：依赖/冲突字段 + `schedule_status=scheduled`；
-   - 无法判断：`schedule_status=pending_clarification`，不猜测。
+    - 判断完整：依赖/冲突字段 + `schedule_status=scheduled`；
+    - 无法判断：`schedule_status=pending_clarification`，不猜测。
 6. 调用 `task.py next-batch` 输出第一批。
 
 无参数时分析全部 backlog；指定 tid 时补充或重算指定 task，但判断冲突时仍须与全部已调度和进行中 task 比较。
@@ -140,7 +140,7 @@ alias 属用户环境配置，不进仓库。Claude Code 不支持固定逻辑�
 示例：
 
 |输入|规范化结果|
-|------|------|
+|---|---|
 |`t11` / `T11`|`t011`|
 |`13`|`t013`|
 |`t0015`|`t015`|
@@ -197,7 +197,7 @@ next-batch=FAIL：invalid_graph: depends_on cycle t003 -> t005 -> t003
 ### 依赖字段
 
 |参数|语义|
-|------|------|
+|---|---|
 |`--depends-on t001,t003`|整体覆盖；`""` 清空|
 |`--depends-append t004`|追加单值，幂等去重|
 |`--depends-remove t001`|移除单值；不存在时报错|
@@ -205,7 +205,7 @@ next-batch=FAIL：invalid_graph: depends_on cycle t003 -> t005 -> t003
 ### 冲突字段
 
 |参数|语义|
-|------|------|
+|---|---|
 |`--conflicts-with t006,t008`|整体覆盖；`""` 清空|
 |`--conflicts-append t009`|追加单值，幂等去重|
 |`--conflicts-remove t006`|移除单值；不存在时报错|
@@ -224,7 +224,7 @@ python3 scripts/task.py edit t005 --schedule-status pending_clarification
 ## 调度数据生命周期
 
 |操作|处理|
-|------|------|
+|---|---|
 |add|新 task 无 `schedule_status`，由 `next-batch` 列为 unscheduled|
 |rewind 到 backlog|自动置 `pending_clarification`，保留旧边供重新分析参考，但不参与批次|
 |tasks-merge|不猜测合并后的图；目标 task 和所有引用源 tid 的 backlog task 置 `pending_clarification`，重跑 `/tasks-schedule`|
@@ -251,7 +251,7 @@ tasks-run t006
 ## 改动面
 
 |文件|改动|
-|------|------|
+|---|---|
 |`scripts/task.py`|新增三个 front matter key、列表 edit 参数、冲突边对称维护、调度数据生命周期、状态基线共用函数、`next-batch` 子命令与宽松 `--done` 解析|
 |`docs/tasks/task_template/task.md`|增加空 `depends_on` / `conflicts_with`；不预填 `schedule_status`|
 |`.agents/skills/tasks-parallel/`|改名 `tasks-schedule`，只经 `task.py edit` 写图并调用 `next-batch`|
@@ -265,15 +265,15 @@ tasks-run t006
 
 正常状态测试通过 `task.py` 命令构造；悬空引用、非法状态和历史单向冲突等兼容/损坏场景可直接构造 front matter fixture。
 
-1. 调度状态：scheduled、pending_clarification、unscheduled 三类准确过滤。
-2. DAG：无依赖、链式、菱形、环、悬空引用、引用 dropped task。
-3. 冲突图：候选间冲突、与 active/blocked 冲突、单向旧数据归一化、贪心顺序稳定。
-4. 状态来源：主仓、登记 worktree、未合并 ref、archive 混合状态遵循优先级。
-5. `--done`：逐一覆盖 `t11 t012 13 t0015 T14 T00025`、逗号/空格混合、未来四位规范 tid、无匹配和非法输入。
-6. assumed done：参数覆盖仓库 active/blocked 后正确解锁下游，且磁盘状态不变。
-7. edit：依赖/冲突覆盖、追加、移除、清空、去重、反向边同步和不可编辑引用拒绝。
-8. 生命周期：add、rewind、tasks-merge、drop、finish 后调度状态符合表格。
-9. 输出：固定段落、空段省略、错误前缀稳定；不依赖 Agent。
+01. 调度状态：scheduled、pending_clarification、unscheduled 三类准确过滤。
+02. DAG：无依赖、链式、菱形、环、悬空引用、引用 dropped task。
+03. 冲突图：候选间冲突、与 active/blocked 冲突、单向旧数据归一化、贪心顺序稳定。
+04. 状态来源：主仓、登记 worktree、未合并 ref、archive 混合状态遵循优先级。
+05. `--done`：逐一覆盖 `t11 t012 13 t0015 T14 T00025`、逗号/空格混合、未来四位规范 tid、无匹配和非法输入。
+06. assumed done：参数覆盖仓库 active/blocked 后正确解锁下游，且磁盘状态不变。
+07. edit：依赖/冲突覆盖、追加、移除、清空、去重、反向边同步和不可编辑引用拒绝。
+08. 生命周期：add、rewind、tasks-merge、drop、finish 后调度状态符合表格。
+09. 输出：固定段落、空段省略、错误前缀稳定；不依赖 Agent。
 10. 回归：无调度字段的旧 task 仍可由既有 `tasks-run` 正常执行；`task.py start` 行为不变。
 
 ## 实施拆分

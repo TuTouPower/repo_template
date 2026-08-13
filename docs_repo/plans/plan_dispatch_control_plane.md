@@ -29,11 +29,11 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 ## 扇出调度动作
 
 |action|coordinator 动作|
-|------|------|
-|`dispatch`|`task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。失败重试也走本动作，带 `mode=resume|restart` 字段。|
+|---|---|
+|`dispatch`|`task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。失败重试也走本动作，带 \`mode=resume|
 |`observe`|对宿主仍 running 的 current identity 执行 `observe TID --attempt N --execution-id ID`。|
-|`terminal`|宿主进入 `completed|failed|stopped` 后，以 exact identity 执行 `attempt terminal`。|
-|`report`|terminal 后，根据 handoff 与宿主结果执行 `attempt report --status done|blocked|failed`。|
+|`terminal`|宿主进入 \`completed|
+|`report`|terminal 后，根据 handoff 与宿主结果执行 \`attempt report --status done|
 |`await-report`|`terminal failed/stopped` 且尚无 report 时输出：先写 report 再进入 dispatch/escalate，禁止 report 落账前自动重派（否则新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失）。|
 |`integrate`|terminal completed 且 refs/handoff ready 后，exact cleanup，再 exact 单 task integrate；正常调度仍先按同一 identity 写 report；完成后同回合再次 reconcile。|
 |`escalate`|对已 terminal identity 执行 `attempt escalate` 并请求用户裁决。reconcile 输出 escalate 即释放该 tid 并发槽（等待用户期间不阻塞其他 task）；`reserved` 悬挂超过 silent 阈值同样输出 escalate。|
@@ -46,11 +46,11 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 控制面记录以下事实：
 
 |类别|关键字段|写入入口|
-|------|------|------|
+|---|---|---|
 |reserve|tid, attempt, execution_id, executor, model?, state|`attempt reserve`|
 |bind|exact identity, host_worker_id?, state=running|`attempt bind`|
-|terminal|exact identity, status=`completed|failed|stopped`|`attempt terminal`|
-|report|exact identity, status=`done|blocked|failed`, sha?, class?, reason?|`attempt report`|
+|terminal|exact identity, status=\`completed|failed|
+|report|exact identity, status=\`done|blocked|
 |observation|exact identity, fingerprint, head, worktree, dirty|`observe`|
 |silent alert|exact identity, fingerprint|`attempt silent-alert`|
 |escalated|exact identity, reason|`attempt escalate`|
@@ -95,7 +95,7 @@ python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 ## 失败与重试
 
 |类别|来源|自动策略|升级条件|
-|------|------|------|------|
+|---|---|---|---|
 |infra|provider/API/宿主错误的 terminal/report failed|同模型重试一次（按现场 resume/restart）；不降档|额度用尽|
 |contract|failed/stopped identity 的 refs/handoff/identity 验证失败|同模型 resume 补契约|completed identity、重犯或无安全现场|
 |task|黑盒/review 等显式失败或 blocked|按既有额度处理|blocked 总是升级|

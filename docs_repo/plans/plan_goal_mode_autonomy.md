@@ -15,7 +15,7 @@
 ## 设计总览
 
 |#|机制|落点|来源|
-|------|------|------|------|
+|---|---|---|---|
 |A1|`task.py goal`：冻结队列快照 + 打印 ready-to-paste `/goal` 行（含机器终态判定）|`repo_task/goal.py`|supergoal Stage 7|
 |A2|`task.py goal-check`：只读判定器，ledger + worktree 登记为权威，输出 marker|`repo_task/goal.py`|supergoal transcript marker 的机器化替代|
 |A3|task-run skill「goal 模式」节|`.agents/skills/task-run/SKILL.md`|—|
@@ -42,7 +42,7 @@
 只读、幂等。逐 tid 判定（权威 = ledger 投影 + worktree 登记，不看 transcript）：
 
 |状态|判据|
-|------|------|
+|---|---|
 |`integrated`|主干已 done 或 attempt state=integrated|
 |`closed`|terminal completed + report done + `verify_integrate_ready` ready + worktree 未登记（exact cleanup 完成）|
 |`cleanup_pending`|业务闭环但 worktree 仍登记|

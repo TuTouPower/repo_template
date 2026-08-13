@@ -21,15 +21,18 @@ CLAUDE.md 定义的开发工作流基于五条核心假设：
 ### 1. spec 与 plan 的字段重叠（模板层设计缺陷）
 
 CLAUDE.md 模板：
+
 - `spec.md`：背景 / 范围 / 非范围 / 验收标准 / 依赖与约束
 - `plan.md`：步骤与验证 / 风险与回退 / Finalization 时更新的 blueprint
 
 实际写作时：
+
 - "验收标准" ≈ "步骤与验证"（每条步骤对应一个验收）
 - "依赖与约束" ≈ "风险与回退"（约束即风险）
 - "范围" 已隐含 "步骤"
 
 **根本原因**：模板没有区分两者的视角。
+
 - spec 是**契约**（对 reviewer / 用户）——问"做完什么样"
 - plan 应该是**设计**（对实施者）——问"具体怎么实现、文件级改动是什么、关键技术决策的细节是什么"
 
@@ -38,11 +41,13 @@ CLAUDE.md 模板：
 ### 2. task 粒度"独立可验证 + 一个 commit"是模糊的
 
 实际批量创建 task 时，多个 task 都明显超出"一个 commit"：
+
 - 安全整改 task 实际包含 6 个独立修复点（DB / 限流 / HTML / 代理池 / 跳转 / 鉴权）
 - 前端守卫 task 含 10+ 个独立前端问题
 - 文档清理 task 含 10+ 个文档点
 
 按"一个 task 一个 commit"原则，这些都应该继续拆。但拆到什么粒度没指引：
+
 - 单文件单改动？（粒度太细，task 数量爆炸，spec/plan 模板成本被放大）
 - 单功能主题？（"太大"问题不解决）
 - 单 PR？（项目没有 PR 流程）
@@ -62,6 +67,7 @@ CLAUDE.md 审阅机制（max_review_round=5，code reviewer + test reviewer 各�
 ### 4. 索引文件是高成本同步点
 
 tasks_index.json 必须由 task.py 维护（agent 禁止手改）。但：
+
 - agent 直接 grep `docs/tasks/` 能得到同样信息
 - task.py 自身存在 bug（finish/drop 三次落盘非原子，已发现）
 - 索引的真正价值（快速查全局状态）被同步维护成本抵消
@@ -75,6 +81,7 @@ N 个 task 各自在 spec 里写"建议在 tXXX 之后做"。实施时回答"现
 ### 6. plan 的"风险与回退"对 agent 实施时几乎无用
 
 agent 实施一个 task 时，影响决策的实际信息是：
+
 - 当前代码状态
 - 测试失败的错误信息
 - spec 的验收标准
@@ -84,6 +91,7 @@ agent 实施一个 task 时，影响决策的实际信息是：
 ### 7. spec 的稳定性假设不成立
 
 CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认 spec 会变。但流程里没有"修订 spec"的明确环节。实际开干后发现 spec 假设错了：
+
 - 硬干 → 违背 spec 契约
 - 改 spec → 没有专门的 commit 类型，混在代码 commit 里，难追溯
 
@@ -108,17 +116,20 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 把单一的 `plan.md` 模板拆三套：
 
 **`plan_code.md`**（适用于代码 task）：
+
 - 文件级改动清单（动哪个文件、新增还是修改、大致行数）
 - 关键技术决策细节（不是 A/B/C 的方案选型——那属于 spec 待决定项——而是 A 路线下具体的实现路径，如"用 try/catch 还是 Result 类型"、"JSON5 选哪个 npm 包"）
 - 实施顺序（多文件改动时的先后，含中间状态设计）
 - 测试策略（mock 哪一层、用什么 fixture、断言什么）
 
 **`plan_doc.md`**（适用于文档 task）：
+
 - 受影响文档清单
 - grep 自洽检查项（如"`grep TikHub` 应返回 0 处"）
 - 不重复 spec 已有的"范围"
 
 **`plan_style.md`**（适用于风格 / 配置 / lint task）：
+
 - 实施顺序（避免文件重命名引发 import 失败的连锁）
 - 自动化验证命令
 - 兼容性影响面（如重命名是否触及外部 API）
@@ -139,7 +150,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 #### C. 审阅按 task 风险等级
 
 |Task 类型|流程|
-|------|------|
+|---|---|
 |CRITICAL / HIGH 资金 / 安全 / 并发|审阅 + e2e|
 |MEDIUM 代码|单审（code 或 test 二选一）+ 单测|
 |LOW / 文档 / 风格 / 配置|lint 通过 + 自验收（无 reviewer）|
@@ -151,6 +162,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 #### D. 依赖图集中化
 
 `tasks_index.json` 加 `depends_on: [tids]` 字段：
+
 - task.py 启动时校验前置 task 状态（未 done 则提示）
 - `scripts/task.py deps` 输出依赖图（命令行 dot / mermaid）
 - spec 里的"建议在前置之后做"全部迁移到该字段
@@ -174,6 +186,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 #### G. plan 的"风险与回退"改为"已知坑位"
 
 不是泛泛风险（"代码可能错"），而是基于代码现状的具体坑：
+
 - "prisma findFirst 在 cursor 非法时抛 P2009，需 try/catch"
 - "next 16.x 的 Route Handler formData() 在 chunked 请求下缓冲行为未确认，需实测"
 
@@ -182,6 +195,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 #### H. blocked 决策模板
 
 给用户提供结构化决策模板：
+
 - 业务影响（不修会怎样）
 - 回退成本（修一半回滚要做什么）
 - 加轮收益（多花一轮预期能解决什么）
@@ -204,7 +218,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 ### 按读者重新归位
 
 |信息|读者|稳定性|归属|
-|------|------|------|------|
+|---|---|---|---|
 |范围 / AC|reviewer|契约|spec|
 |可测试性声明|reviewer|契约|spec（新增）|
 |决策上下文（有意不测的分支）|reviewer|契约|spec（从 plan 收编）|
@@ -228,6 +242,7 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 把决策上下文 / 测试策略并入 spec 的唯一真实风险：AC（契约区）被实现细节（上下文区）污染，reviewer 难定位。
 
 对策：spec 内部分区——
+
 - **契约区**：范围 / 非范围 / 验收标准（含可测试性声明）
 - **上下文区**：决策依据 / 测试策略 / 未知契约清单
 
@@ -240,6 +255,7 @@ reviewer 提示词明确"判 AC 时只看契约区；判测试覆盖时核对上
 对一个不信任 agent 的随机调用者，这套流程合理。对长期使用的私人 agent，可以更信任一些——把流程成本转移到真正需要把关的地方（CRITICAL 安全 / 资金 / 并发），其他地方放手。
 
 具体到 omni_media 的 15 个新 task：
+
 - t041 / t043 / t044 / t045 / t046 / t047 真正需要审阅 + e2e（安全 / 资金 / 关键前端 / e2e 基础设施）
 - t048-t055 走简化流程（lint + spot check）就够
 

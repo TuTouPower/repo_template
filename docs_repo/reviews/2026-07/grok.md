@@ -7,7 +7,7 @@
 
 > **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`；中间命名 `retro_t001_t007.md` / `retro_t041_t061.md` / `incident_t071_worktree_loss.md` 同归于 `workflow_reflection_3.md` / `_4.md` / `_2.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
----
+______________________________________________________________________
 
 ## 1. 总评
 
@@ -28,12 +28,12 @@
 
 **一句话**：证据强于方案；方案强于落地跟踪。下一刀应是「裁决冲突 + 标已落地 + 只推 3 个 P0」，而不是再写第 N 份反思。
 
----
+______________________________________________________________________
 
 ## 2. 文件清单与角色
 
 |文件|角色|质量|与当前模板关系|
-|------|------|------|------|
+|---|---|---|---|
 |`workflow_retrospective_0.md`|t001–t007 初跑复盘（痛点 1–7 + 横向缺口根因）|高：例子具体、ROI 表清晰|部分已吸收（AC 行为化、round 默认 4）；横向开 task / doctor / 审阅分级未制度化|
 |`workflow_retrospective.md`|t041–t061 实战（merge 灾难、跳过审阅、plan 无用）|高：P0=merge 冲突判断准确|分支策略仍默认 task branch；worktree 仅在 `tasks-parallel` 提示|
 |`workflow_feedback.md`|结构假设 + plan/spec/粒度/审阅/索引 设计债|高；后半「按读者切」是升级版|plan 模板仍旧；无 risk/review_level；无 depends_on|
@@ -42,14 +42,14 @@
 |`archive/workflow_skill_split_proposal.md`|AGENTS 与 skill 拆分方案|高且**基本已实现**|现状 skill 表比提案更细（create/run/bug/debt/merge/parallel/preflight/hygiene/clean）；archive 合理|
 |`11111.md`|三条碎片备忘|低：无日期、无上下文|内容仍有效（遗留清单、禁 plan mode、并发索引冲突）但应并入正式笔记|
 
----
+______________________________________________________________________
 
 ## 3. 已落地 vs 仍开放（对照模板）
 
 ### 3.1 已吸收（不必再论证）
 
 |历史建议|当前落点|
-|------|------|
+|---|---|
 |skill 从 AGENTS 拆出|`.agents/skills/*` + CLAUDE 路由表；`disable-model-invocation`|
 |创建 / 执行边界|`task-create` vs `tasks-run`|
 |AC 不写版本号/库/目录|`task_template/spec.md` + code_prompt 技术约束判断|
@@ -64,9 +64,9 @@
 ### 3.2 仍开放（高价值未落地）
 
 |议题|来源|现状缺口|建议优先级|
-|------|------|------|------|
+|---|---|---|---|
 |审阅 finding **AC 硬边界**（只报阻塞级）|session §1|Gate 有，但无「无界覆盖建议 → non-blocking」硬规则；无撤回率监控|**P0**|
-|review prompt **注入决策上下文 / 有意不测清单**|feedback 补充 + session §1b|`render_review_prompts`  predominantly 仍以 spec 为中心；plan 上下文未强制进 reviewer|**P0**|
+|review prompt **注入决策上下文 / 有意不测清单**|feedback 补充 + session §1b|`render_review_prompts` predominantly 仍以 spec 为中心；plan 上下文未强制进 reviewer|**P0**|
 |**branch ≠ worktree** 隔离|record + retrospective merge|`tasks-run` 未强制 worktree；并行只「提示」不创建|**P0**（并发/多会话场景）|
 |`tasks_index.json` **跨分支 merge 冲突**|retrospective §1 + 11111|仍 JSON 权威 + 每分支改 index；无 main-only / derived / 服务端方案|**P0**（若保留多分支）|
 |**审阅分级**（full/single/none）|feedback + retrospective|仍「固定审阅」；文档/格式 task 成本未制度化|**P1**|
@@ -80,31 +80,34 @@
 
 ### 3.3 未裁决冲突（必须先拍板再改代码）
 
-1. **隔离策略**  
-   - retrospective：推荐 **不切分支、直接 main**（方案 C）  
-   - record：必须 **独立 worktree**，仅 branch 不够  
-   - 11111 / parallel：并发会撞 `tasks_index.json`  
-   **意见**：两者回答不同问题。  
-   - 单会话串行 → main 直做 **可行**，且最省 merge 税。  
-   - 多会话 / 并行 / 长未提交窗口 → **必须 worktree**（或至少 WIP commit）。  
-   模板应写成：**默认 main 串行；一旦可能共享目录被切走，强制 worktree；禁止「有 branch 无 worktree 且长期 uncommitted」**。不要二选一写成全局教条。
+1. **隔离策略**
 
-2. **plan 的命运**  
-   - feedback A：plan 分三套、承载设计细节  
-   - feedback 补充：按读者切，测试策略进 **spec**，plan 可省  
-   - retrospective：实战 plan 几乎未读  
-   **意见**：采纳「按读者」——spec = 契约+可测试性+有意不测；plan = 可选实施笔记。**不要**再做三套 plan 模板（维护成本 > 收益）。简单 task 无 plan 合法。
+    - retrospective：推荐 **不切分支、直接 main**（方案 C）
+    - record：必须 **独立 worktree**，仅 branch 不够
+    - 11111 / parallel：并发会撞 `tasks_index.json`\
+        **意见**：两者回答不同问题。
+    - 单会话串行 → main 直做 **可行**，且最省 merge 税。
+    - 多会话 / 并行 / 长未提交窗口 → **必须 worktree**（或至少 WIP commit）。\
+        模板应写成：**默认 main 串行；一旦可能共享目录被切走，强制 worktree；禁止「有 branch 无 worktree 且长期 uncommitted」**。不要二选一写成全局教条。
 
-3. **一 task 一 commit**  
-   实战已反复打破。  
-   **意见**：保留「一个 task 一个可 review 的交付单元」，commit 数放开为 **≥1 个原子 commit**，收尾仍 `finish` 一次。若坚持单 commit，则必须允许 WIP commit 或 worktree，否则 record 类事故会重演。
+2. **plan 的命运**
 
-4. **索引权威**  
-   - feedback E：archive-only 或放开手改  
-   - 当前：`task.py` 唯一写 JSON  
-   **意见**：唯一写权保留（防手贱），但 **状态落点改为 per-task 文件（front matter）+ 派生 index**，从根上消 merge 冲突。这比「禁止并行」或「手改 JSON」都干净。
+    - feedback A：plan 分三套、承载设计细节
+    - feedback 补充：按读者切，测试策略进 **spec**，plan 可省
+    - retrospective：实战 plan 几乎未读\
+        **意见**：采纳「按读者」——spec = 契约+可测试性+有意不测；plan = 可选实施笔记。**不要**再做三套 plan 模板（维护成本 > 收益）。简单 task 无 plan 合法。
 
----
+3. **一 task 一 commit**\
+    实战已反复打破。\
+    **意见**：保留「一个 task 一个可 review 的交付单元」，commit 数放开为 **≥1 个原子 commit**，收尾仍 `finish` 一次。若坚持单 commit，则必须允许 WIP commit 或 worktree，否则 record 类事故会重演。
+
+4. **索引权威**
+
+    - feedback E：archive-only 或放开手改
+    - 当前：`task.py` 唯一写 JSON\
+        **意见**：唯一写权保留（防手贱），但 **状态落点改为 per-task 文件（front matter）+ 派生 index**，从根上消 merge 冲突。这比「禁止并行」或「手改 JSON」都干净。
+
+______________________________________________________________________
 
 ## 4. 分文件意见
 
@@ -150,9 +153,9 @@
 
 **挑剔**
 
-- `/goal` hook、Electron ABI 是**宿主/项目特有**，不应原样写进通用模板；应抽象为：  
-  - 单会话 task 上限 / finish 后停  
-  - 原生模块/平台陷阱 → `known_pitfalls` 或 doctor  
+- `/goal` hook、Electron ABI 是**宿主/项目特有**，不应原样写进通用模板；应抽象为：
+    - 单会话 task 上限 / finish 后停
+    - 原生模块/平台陷阱 → `known_pitfalls` 或 doctor
 - 「撤回率 >30% 强制复盘提示词」好，但缺脚本钩子设计，易成空话。
 - subagent 回显改文件路径：与当前 render 脚本方向一致，应明确为工程任务而非口号。
 
@@ -170,9 +173,9 @@
 
 **建议动作**：改写成 `docs_repo` 标准事故卡（现象 / 根因 / 防护 / 是否已进 skill），并推动 `tasks-run` Step 1：
 
-1. `git status` 干净或仅本 task 文件  
-2. 当前 branch 匹配 tid  
-3. 非独占仓库 → 创建 worktree 再改代码  
+1. `git status` 干净或仅本 task 文件
+2. 当前 branch 匹配 tid
+3. 非独占仓库 → 创建 worktree 再改代码
 4. 禁止在共享目录长期 uncommitted 实现
 
 ### 4.6 `archive/workflow_skill_split_proposal.md`
@@ -194,11 +197,11 @@
 
 **建议动作**：删除或并入正式笔记：
 
-- 遗留总账 → 产品决策：扩展 `bugs.md` 或新建 `docs/followups.md`（仅未关闭项）  
-- plan mode 禁令 → 已在用户习惯/agent 规则，不必单独文件  
-- 统一 task 服务 → 记入「未决：index 并发」与 P0 状态存储改造绑定  
+- 遗留总账 → 产品决策：扩展 `bugs.md` 或新建 `docs/followups.md`（仅未关闭项）
+- plan mode 禁令 → 已在用户习惯/agent 规则，不必单独文件
+- 统一 task 服务 → 记入「未决：index 并发」与 P0 状态存储改造绑定
 
----
+______________________________________________________________________
 
 ## 5. 对整库结构的意见
 
@@ -216,57 +219,57 @@ docs_repo/
 
 ### 5.2 命名与生命周期
 
-- `workflow_retrospective_0` vs `workflow_retrospective`：编号语义不明，建议改 `..._t001_t007` / `..._t041_t061` 或保留并在标题写清范围。  
-- `11111.md`：应消亡。  
+- `workflow_retrospective_0` vs `workflow_retrospective`：编号语义不明，建议改 `..._t001_t007` / `..._t041_t061` 或保留并在标题写清范围。
+- `11111.md`：应消亡。
 - `review/`：适合放对照审阅；约定命名 `{author}.md` 或 `{date}_{author}.md`。
 
 ### 5.3 与 CLAUDE「docs_repo 可删」的关系
 
-CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**笔记，不应进业务 clone 的必读路径。  
+CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**笔记，不应进业务 clone 的必读路径。\
 但模板仓自身应把**已裁决结论**搬进 `AGENTS` / skill / prompt / conventions，而不是让维护者每次重读 1200+ 行复盘。
 
----
+______________________________________________________________________
 
 ## 6. 建议的落地优先级（仅模板仓）
 
-面向 `repo_template` 本身，而不是 omni_* 业务仓：
+面向 `repo_template` 本身，而不是 omni\_\* 业务仓：
 
 ### P0（直接减事故 / 减噪音）
 
-1. **Reviewer 有界**  
-   - share/code/test prompt：blocking finding 必须锚定 AC 或可观测行为缺陷；「可以再测更细」→ 备注或 minor，且默认不撑 FAIL。  
-   - `render_review_prompts`：注入 spec 上下文区 + 「有意不测」清单（无则写「无」）。  
-2. **工作区隔离写进 `tasks-run` Step 1**  
-   - status 检查 + 共享目录风险 → worktree 或拒绝开干。  
-3. **状态存储消 merge 冲突**  
-   - 设计：task 状态写 `task.md` front matter（或 per-task json）；`tasks_index.json` 由 `task.py list --rebuild` 派生；finish 在 merge 到集成线后于主线执行，或仅主线 touch 派生 index。
+1. **Reviewer 有界**
+    - share/code/test prompt：blocking finding 必须锚定 AC 或可观测行为缺陷；「可以再测更细」→ 备注或 minor，且默认不撑 FAIL。
+    - `render_review_prompts`：注入 spec 上下文区 + 「有意不测」清单（无则写「无」）。
+2. **工作区隔离写进 `tasks-run` Step 1**
+    - status 检查 + 共享目录风险 → worktree 或拒绝开干。
+3. **状态存储消 merge 冲突**
+    - 设计：task 状态写 `task.md` front matter（或 per-task json）；`tasks_index.json` 由 `task.py list --rebuild` 派生；finish 在 merge 到集成线后于主线执行，或仅主线 touch 派生 index。
 
 ### P1（降成本）
 
-4. `review_level: full|single|none`（或 risk）写进 spec front matter；`tasks-run` 分支流程。  
-5. spec 增加：未知契约清单、可测试性 / `[deploy]` AC、有意不测。  
-6. TDD 硬句：旧绿测只删不改预期；改测必须新红测覆盖新语义。  
+4. `review_level: full|single|none`（或 risk）写进 spec front matter；`tasks-run` 分支流程。
+5. spec 增加：未知契约清单、可测试性 / `[deploy]` AC、有意不测。
+6. TDD 硬句：旧绿测只删不改预期；改测必须新红测覆盖新语义。
 7. blocked 增加 `--reason infra`。
 
 ### P2
 
-8. `depends_on` 进 index 或 task front matter。  
-9. 遗留统一登记（bugs 或 followups）。  
+08. `depends_on` 进 index 或 task front matter。
+09. 遗留统一登记（bugs 或 followups）。
 10. `known_pitfalls.md` 模板（可选）。
 
 ### 明确不建议
 
-- 放开 agent 手改 `tasks_index.json`  
-- 为 plan 维护三套永久模板  
-- 把 `/goal`、Electron ABI 等宿主细节写进通用 AGENTS  
-- 用「换 reviewer 模型」当审阅信噪比主修复  
+- 放开 agent 手改 `tasks_index.json`
+- 为 plan 维护三套永久模板
+- 把 `/goal`、Electron ABI 等宿主细节写进通用 AGENTS
+- 用「换 reviewer 模型」当审阅信噪比主修复
 
----
+______________________________________________________________________
 
 ## 7. 文档本身的写法评价
 
 |维度|评价|
-|------|------|
+|---|---|
 |实证性|强；session 分析可作范本|
 |可执行性|中；动作表有，缺「已落地 / 负责人 / 验收」|
 |去重|弱；审阅分级等主题 ≥3 处全文重述|
@@ -276,14 +279,14 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 
 **推荐阅读顺序（后人）**
 
-1. `workflow_session_analysis_2026-07.md`（运行态 P0）  
-2. `workflow_retrospective.md`（merge / 分级）  
-3. `workflow_feedback.md` 后半「按读者切」（文档模型）  
-4. `workflow_record.md`（隔离事故）  
-5. `workflow_retrospective_0.md`（历史噪音分类，可选）  
+1. `workflow_session_analysis_2026-07.md`（运行态 P0）
+2. `workflow_retrospective.md`（merge / 分级）
+3. `workflow_feedback.md` 后半「按读者切」（文档模型）
+4. `workflow_record.md`（隔离事故）
+5. `workflow_retrospective_0.md`（历史噪音分类，可选）
 6. `archive/workflow_skill_split_proposal.md`（已落地背景，可选）
 
----
+______________________________________________________________________
 
 ## 8. 结论
 
@@ -291,9 +294,9 @@ CLAUDE 写新项目可删 `docs_repo`。正确——这些是**模板维护者**
 
 再写复盘的边际收益已低。维护动作应转为：
 
-1. 裁决 §3.3 四个冲突；  
-2. 执行 §6 的 P0；  
-3. 给 `docs_repo` 加索引与「落地状态」列；  
+1. 裁决 §3.3 四个冲突；
+2. 执行 §6 的 P0；
+3. 给 `docs_repo` 加索引与「落地状态」列；
 4. 消化 `11111.md`，避免碎片继续增生。
 
 **对这批文档的采用态度**：当**证据与问题清单**保留；当**未裁决设计草案**时，以本审阅 §3.3 / §6 为收敛意见，而不是并行维护多套互相打架的「推荐方案」。

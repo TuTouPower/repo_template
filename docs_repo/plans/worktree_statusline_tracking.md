@@ -45,7 +45,7 @@ statusline.py resolve_workdir()   ← 按 (agent, session_id) 逆序取记录，
 `resolve_worktree()`（`track_worktree.py:38`）顺序读 `docs/runtime/dispatch_ledger.jsonl`，只取该 tid 的记录，按事件推进状态：
 
 |事件|窗口|说明|
-|------|------|------|
+|---|---|---|
 |`start`|开|记录 worktree 相对路径并置 active（`integration.py` 写入，字段 `branch`/`worktree`）|
 |`attempt_reserved` 且 `state=running`|保持|attempt 生命周期内窗口维持|
 |`report` / `integrated` / `drop` / `attempt_terminal` / `attempt_report`|关|终态事件，worktree 不再有效（已合并或删除）|
@@ -71,7 +71,7 @@ append 前与 jsonl 末行比较（`track_worktree.py:77` `append_record`），�
 ## 配置落点
 
 |位置|作用|
-|------|------|
+|---|---|
 |项目 `.claude/settings.json` `hooks.PostToolUse`（matcher=Bash）|每次 Bash 调用后执行 `track_worktree.py --write --agent claude-code`，timeout 2s|
 |全局 `~/.claude/settings.json` `statusLine.command`|指向 `statusline.py`，状态栏刷新时执行|
 

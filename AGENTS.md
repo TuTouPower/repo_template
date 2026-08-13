@@ -9,7 +9,7 @@
 写权归属列声明路径的写入责任与时机；具体步骤见对应 skill 或文件内注释。
 
 |路径|用途|写权归属|
-|------|------|------|
+|---|---|---|
 |`docs/specs_index.md`|当前生效 spec 清单（在表即生效）|task 收尾时更新；废弃删除行|
 |`docs/specs/<slug>.md`|需求级 spec（按已完成 task 累积）|task 收尾时累积更新；废弃移入 `docs/archive/specs/`|
 |`docs/tasks/{tid}_{slug}/`|task 工作区兼**状态权威**（backlog 起即存在）|`spec.md` / `task.md` 正文由实现侧写；`task.md` front matter 只经 `scripts/repo_template/task.py`；reviewer 写 `review_code.md` / `review_test.md`（`single` 级写 `review_general.md`）；`finish`/`drop` 由脚本移入 archive|
@@ -64,7 +64,7 @@
 用户入口：
 
 |skill|职责|
-|------|------|
+|---|---|
 |`task-create`|按需求拆 backlog task，批量落盘后统一创建 commit|
 |`task-schedule`|分析依赖/冲突并落盘；可跑集由 `task.py view` 计算；本波链由 `task.py plan` 重算|
 |`task-run`|链式串行跑 task，链尾 `integrate-chain` 合主干|
@@ -82,7 +82,7 @@
 内部调用：
 
 |skill|职责|
-|------|------|
+|---|---|
 |`task-work`|在 task worktree 实施并写 `handoff.json`（由 `task-run` 调用）|
 |`task-integrate`|单 task 或链式合并回主干（由 `task-run` 调用）|
 

@@ -7,26 +7,26 @@
 
 > **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`；中间命名 `retro_t001_t007.md` / `retro_t041_t061.md` / `incident_t071_worktree_loss.md` 同归于 `workflow_reflection_3.md` / `_4.md` / `_2.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
----
+______________________________________________________________________
 
 ## 0. 与已有三份审阅的关系
 
 |已有审阅|做对了什么|我补充什么|
-|------|------|------|
+|---|---|---|
 |gemini|概括了证据强度与主结论，结构清晰|末尾的"落地到 AGENTS"建议过简，未指出落地时的操作冲突；对 `11111.md` 与 `workflow_record.md` 的改造停留在"归档/整理"层，不够|
 |grok|"证据强于方案、方案强于落地跟踪"的核心判断准确；§3.3 的冲突裁决到位|§6 的 P0/P1 行动项与 CLAUDE.md 现行字段未做逐条映射，可执行性仍偏弱；"裁决 §3.3"未给出裁决格式|
 |k3|跨文档总账意识最强；"缺的是总账而非复盘"这一元判断最锋利|提出了 `decision_log.md` 但没定义它；"建议落地率存疑"是断言但未做盘点|
 
 本文做三件事：(1) 一张落地状态总账，终结"已改/仍缺/已否决"三态不明；(2) 一组裁决表，收敛 grok §3.3 的四个冲突；(3) 一组被三份审阅漏掉但应该单独提出的文档级与流程级问题。
 
----
+______________________________________________________________________
 
 ## 1. 一张落地状态总账（回答 k3 提出但未建立的缺口）
 
 > 表格只列**被两份以上复盘诊断过**的议题。单文档独有意见不进总账，避免再增噪。
 
 |#|议题|出处（≥2 份）|当前模板状态|建议裁决|
-|------|------|------|------|------|
+|---|---|---|---|---|
 |L1|`tasks_index.json` 多分支 merge 冲突|feedback §4/E、retrospective §1、11111#3、session §12|JSON 仍是唯一权威；task.py 仍是唯一写者|**P0**：状态写 per-task front matter，index 改 derived；见 §3.1|
 |L2|审阅 finding 无界 / 信噪比低|session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3|share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控|**P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2|
 |L3|reviewer 缺决策上下文 → 撤回率堆积|session §1b、feedback 再评估节|render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt|**P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无"|
@@ -46,7 +46,7 @@
 
 共 16 条。**已吸收 3 条**（L7/L9/L10），**P0 共 4 条**（L1-L4），**P1 共 7 条**，**P2 共 2 条**，**待裁决 1 条**。这就是四份复盘 1200+ 行换来的全部共识，可以收敛。
 
----
+______________________________________________________________________
 
 ## 2. 三份审阅漏掉的问题
 
@@ -55,6 +55,7 @@
 retrospective_0 把 39 条 finding 分成五类（真 bug 28% / spec 过时 10% / 重复模式 10% / nitpick 15% / 测试缺口 36%）。k3 正确指出"这个分类方法应沉淀为 review 报告标准字段"，但三份审阅都没提下一步：
 
 **建议**：在 `review_code.md` / `review_test.md` 的 finding 表强制加 `category: bug\|spec_drift\|duplicate\|nitpick\|coverage_gap` 列。这样：
+
 - 撤回率与噪音率可由脚本实时统计，不必等复盘人工分类
 - `spec_drift` 类 finding 处置 = 改 spec 不计 FAIL，直接消除 retrospective_0 痛点 1 的循环
 - `duplicate` 类可自动与 follow-up tid 联动
@@ -86,7 +87,7 @@ k3 指出"方案从 2 skill 膨胀到 9 skill 无记录"。但更关键的是：
 
 **建议**：做一次 skill 间规则重叠审计（grep 同名硬约束在几个 skill 出现），若 >3 处重复，引入 skill 间的"base rules" include 机制或显式"本条以 AGENTS §X 为准"引用。这是防止下一次复盘发现"skill 体系自身成了新的同步税"的预防性动作。
 
----
+______________________________________________________________________
 
 ## 3. P0/P1 的具体落地形态（回答 grok §6 与 k3 §跨文档总评的"怎么改"层）
 
@@ -141,6 +142,7 @@ reviewer 提示词对应改两句：判 AC 只读契约区；判覆盖核对上�
 session §3 的建议"旧绿测只删不改"略粗。准确版：
 
 > 实现变更导致旧测试语义失效时：
+>
 > - 禁止就地改旧测试的预期以适配新实现
 > - 必须新增红测覆盖新语义
 > - 旧绿测只允许删除（标注删除理由）或原样保留（若语义仍成立）
@@ -161,7 +163,7 @@ feedback B 与 retrospective §7 都建议改"一主题 N commit"。但直接放
 
 这样既不违反"可 review 的交付单元"，又不强制单 commit。比 feedback B 的"一主题 N commit"语义更清楚——交付单元是 review 的锚，commit 是实施的原子。
 
----
+______________________________________________________________________
 
 ## 4. 文档级意见（被三份审阅部分覆盖，这里收敛）
 
@@ -195,7 +197,7 @@ feedback §"spec/plan 边界的再评估"用"本文 §X 已被 YYY 发展"标注
 - 所有被后续文档修正的结论，在原文段落首行加 `> 本文 §X 已被 [YYY] §Z 发展/否定，当前立场见 decision_log.md#Lxxx`
 - 静默的多版本并存是 k3 指出的"分析充分、决策缺席"的文档层症状——标注是治本的最低成本动作
 
----
+______________________________________________________________________
 
 ## 5. 一句话结论
 

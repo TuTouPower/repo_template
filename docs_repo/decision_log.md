@@ -9,7 +9,7 @@
 ## 总账
 
 |#|议题|出处|裁决|落点|状态|
-|------|------|------|------|------|------|
+|---|---|---|---|---|---|
 |L1|`tasks_index.json` 跨分支 merge 冲突|feedback §4/E、retro_t041_t061 §1、analysis §12|状态权威下沉到各 task 的 `task.md` front matter；index 改派生缓存并 gitignore|`scripts/task.py`、`.gitignore`|已落地|
 |L2|审阅 finding 无界、信噪比低|analysis §1、feedback §3/C、retro_t041_t061 §2、retro_t001_t007 痛点 3|blocking 必须锚 AC **或**可观测行为缺陷；「建议加测」「覆盖可更广」降 minor|`share_prompt.txt`「blocking 硬阈值」|已落地|
 |L3|reviewer 缺决策上下文致撤回率高|analysis §1b、feedback 再评估节|spec 契约区与上下文区正文直接注入 prompt，reviewer 不再自行读 spec|`render_review_prompts.py`、`share_prompt.txt`|已落地|
@@ -49,6 +49,6 @@
 ## 未闭环
 
 |议题|卡在哪|
-|------|------|
+|---|---|
 |统一 task 服务（跨仓库/跨会话的状态服务）|11111#3 提出，等用户决定。L1 已消除并发写冲突，该诉求优先级下降|
 |分级效果复测|analysis 的 PASS 率与遗留数来自单一项目（Electron + 弱测试基础设施）样本。L2/L5 落地后应在非 Electron 项目复测，确认数值而非仅方向|

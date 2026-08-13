@@ -2,7 +2,7 @@
 
 模板仓默认门禁命令（复制新项目后按实际工具链替换）：
 
-- doctor：环境前置检查 → `python3 -m pytest tests -q --collect-only`（依赖可导入即视为就绪）
+- doctor：环境前置检查 → `python3 -m pytest tests -q --collect-only`（依赖可导入即视为就绪）+ `md_kx` 在 PATH（Markdown 格式化用，见 `scripts/repo_template/md_format.py`）
 - test：日常测试（红/绿）→ `python3 -m pytest tests -q`
 - blackbox：黑盒验证 → 无（模板仓无对外服务；task 工具链行为已由 tests/ 覆盖）
 
@@ -23,7 +23,7 @@
 填 test 命令时按本节逐类覆盖；项目不适用某类写「无」并说明理由。运行时通过 ≠ 类型 / 构建正确，每类须有独立验证。
 
 |类别|必须覆盖|常见盲区|
-|------|------|------|
+|---|---|---|
 |单元测试|单测框架运行通过|mock 掉被测逻辑、断言过弱（假绿）|
 |生产代码类型检查|全仓静态类型检查通过|类型错误被测试框架转译忽略|
 |测试代码类型检查|测试文件独立类型检查通过|测试 mock 类型不匹配、长期积累无人修|

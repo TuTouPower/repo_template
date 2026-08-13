@@ -14,10 +14,10 @@
 - 运行当前 `tests/repo_template`，记录拆分前基线。
 - 盘点所有 `import task`、`from task import ...`、对 `task_mod` 的 monkeypatch 以及临时仓库中“只复制 task.py”的 fixture。
 - 保持以下外部契约不变：
-  - `python3 scripts/repo_template/task.py <command>`；
-  - 当前 CLI 子命令、参数、退出码和关键错误文本；
-  - task 状态机、worktree/merge/index 语义；
-  - `task.py` 对现有测试和潜在脚本使用者的常用函数 re-export。
+    - `python3 scripts/repo_template/task.py <command>`；
+    - 当前 CLI 子命令、参数、退出码和关键错误文本；
+    - task 状态机、worktree/merge/index 语义；
+    - `task.py` 对现有测试和潜在脚本使用者的常用函数 re-export。
 
 ## 2. 建立包化结构
 
@@ -222,10 +222,10 @@ CLI：
 
 - cron 从每 10 分钟改为每 5 分钟。
 - 每次唤醒：
-  1. 根据 current agent attempt 的 `host_worker_id` 查询宿主后台任务状态；
-  2. 对仍为 running 的 exact identity 执行带 `--execution-id` 的 `observe`；
-  3. 宿主终态后先执行 exact `attempt terminal`，再执行 exact `attempt report`；
-  4. 再运行 reconcile。
+    1. 根据 current agent attempt 的 `host_worker_id` 查询宿主后台任务状态；
+    2. 对仍为 running 的 exact identity 执行带 `--execution-id` 的 `observe`；
+    3. 宿主终态后先执行 exact `attempt terminal`，再执行 exact `attempt report`；
+    4. 再运行 reconcile。
 - worker 不写 heartbeat/progress，也不写 attempt 控制面，只写 handoff。
 - `alert-silent` 时报告：tid、attempt、execution_id、静默时长、`host_worker_id` 与宿主状态、最后变化时间、HEAD、worktree、dirty 摘要。
 - 报告后暂停/注销 cron，不取消、不重派、不 reserve 同 tid 新 attempt，等待用户。
@@ -236,9 +236,9 @@ CLI：
 - 新建 `docs_repo/plan_worker_silence_monitoring.md`，作为静默监控权威设计。
 - 更新 `docs_repo/plan_dispatch_control_plane.md`，删除 stalled 自动重派、20 分钟、10 分钟 cron 的旧语义并链接新设计。
 - 更新 `AGENTS.md`：
-  - 增加 `task.py observe` 示例；
-  - `scripts/repo_template/task.py` 是 façade，`repo_task/` 是实现包；
-  - 模板复制和维护必须保留整个工具链。
+    - 增加 `task.py observe` 示例；
+    - `scripts/repo_template/task.py` 是 façade，`repo_task/` 是实现包；
+    - 模板复制和维护必须保留整个工具链。
 - 更新 `README.md` 中工具链复制/入口说明；不再暗示 `task.py` 可作为单文件独立复制。
 - 扫描注释、docstring、测试名称，清除旧 `stalled → 自动 redispatch` 和“单文件可复制”表述。
 

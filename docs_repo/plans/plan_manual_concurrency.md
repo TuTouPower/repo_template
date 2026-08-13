@@ -26,7 +26,7 @@ task-create → task-schedule（依赖/冲突落盘）
 `start` 目前只校验 spec/task 文档与分支/worktree 占用，不看 `depends_on` / `conflicts_with`。新增：
 
 |检查|不满足时|口径|
-|------|------|------|
+|---|---|---|
 |`depends_on` 全部前置|**硬拒**，列出未满足 tid|**完成口径**：前置 `done`（有执行 commit + `handoff.json`），**不要求已合并主干**。判据 = 未合并 task 分支 ref 上的 front matter `status=done`（状态读取优先级：登记 worktree → 未合并分支 ref → 主干）|
 |`conflicts_with` 对方正在运行|**警告后放行**，列出冲突 tid|「正在运行」= 登记 worktree 存在 且 task front matter `status=active`（`git worktree list` + task.md，不查 ledger）|
 
@@ -44,7 +44,7 @@ task-create → task-schedule（依赖/冲突落盘）
 ### 3. 退役拆除
 
 |对象|处置|
-|------|------|
+|---|---|
 |`.agents/skills/task-dispatch/`|删除目录及 `.claude/skills/` 对应软链|
 |dispatch cron 节拍（`task-dispatch` 内 cron 兜底）|随 skill 删除一并拆除|
 |`docs_repo/plan_worker_silence_monitoring.md` 等 dispatch 专属 plan|不动（docs_repo 是历史证据，只准新增；在 L35 行已标明被替代）|
@@ -55,7 +55,7 @@ task-create → task-schedule（依赖/冲突落盘）
 ### 4. 文档同步
 
 |文件|改动|
-|------|------|
+|---|---|
 |`CLAUDE.md` 工作流表|删 `task-dispatch` 行；`task-run` 职责改为「链式串行；多会话手动并发时各跑用户指定段」；典型路径改为 `task-create → task-schedule → task.py view --serve → 一个或多个会话 task-run`|
 |`docs/blueprint/architecture_repo_template.md`|「执行拓扑」删扇出段落，补手动并发模型：每会话一条链、coordinator 唯一写者假设解除、撞车靠 git；「执行角色」保留 worker/coordinator 但注明并发发生在用户维度|
 |`docs_repo/decision_log.md` L35|实施完成后状态改「已落地」|

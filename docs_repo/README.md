@@ -7,7 +7,7 @@
 ## 目录
 
 |路径|内容|
-|------|------|
+|---|---|
 |`README.md` / `decision_log.md`|入口与跨文档裁决总账（唯一权威状态表）|
 |`plans/`|方案与设计推导（`plan_*`；以文档内状态标注区分已落地/已退役）|
 |`reflections/`|实战复盘、会话反思与实证分析（`workflow_reflection_*` / `reflection_*` / `analysis_*`）|
@@ -18,7 +18,7 @@
 ## 推荐阅读顺序
 
 |顺序|文件|覆盖范围|为什么读|
-|------|------|------|------|
+|---|---|---|---|
 |1|`decision_log.md`|全部|议题 → 各文档结论 → 当前裁决与落点。改流程从这里开始|
 |2|`reflections/workflow_reflection_5.md`|omni_usage，t041–t121，80MB 会话日志|运行态实证：审阅信噪比、context 溢出、TDD 违规。根因分析质量最高|
 |3|`reflections/analysis_omni_gate_gaps_2026_07.md`|omni_media，150 归档 task 审计|门禁缺口：typecheck:test/build/lint 未全覆盖的实证与推荐|
@@ -31,7 +31,7 @@
 ## 命名
 
 |前缀|文体|
-|------|------|
+|---|---|
 |`workflow_reflection_*`|按 task 区间或主题的实战复盘（原 `retro_*` / `workflow_feedback` / `incident_*` 改名合并）|
 |`analysis_*`|会话或日志实证分析|
 |`plan_*`|方案与设计笔记（部分已退役，以文档内状态标注为准）|

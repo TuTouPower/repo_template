@@ -6,12 +6,12 @@
 
 > **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`。`archive/workflow_skill_split_proposal.md` 未改名。
 
----
+______________________________________________________________________
 
 ## 文件概览
 
 |文件|来源|核心贡献|
-|------|------|------|
+|---|---|---|
 |`11111.md`|随笔|并发 task 索引冲突的初步观察|
 |`workflow_feedback.md`|omni_media 理论分析|spec/plan 边界、审阅分级、索引简化|
 |`workflow_record.md`|t071 事故复盘|branch ≠ worktree 的血泪教训|
@@ -21,7 +21,7 @@
 |`archive/workflow_skill_split_proposal.md`|方案设计|AGENTS.md + skill 拆分的完整提案|
 |`review/gemini.md`|Gemini 审阅|总结 + 补充建议|
 
----
+______________________________________________________________________
 
 ## 审阅意见
 
@@ -30,6 +30,7 @@
 #### 1. 交叉引用混乱，缺乏统一入口
 
 6 份文档各自独立，无 README 或索引。读者要拼凑完整画面需要：
+
 - `workflow_retrospective_0.md` 覆盖 t001-t007
 - `workflow_feedback.md` 覆盖 t041-t055（理论）
 - `workflow_retrospective.md` 覆盖 t041-t061（实战）
@@ -48,6 +49,7 @@
 #### 3. 改进建议重复度高
 
 "审阅分级"至少出现在 4 个文件中，每次措辞略有不同：
+
 - `workflow_feedback.md`：C 项，按 risk_level 分级
 - `workflow_retrospective_0.md`：建议 #3，复杂逻辑审阅/基础设施单审
 - `workflow_retrospective.md`：P1 项，full/single/none
@@ -57,20 +59,23 @@
 
 **建议**：所有已反复出现的改进建议只保留一份权威定义（放在 `workflow_feedback.md` 或新建 `workflow_decisions.md`），其他文档用链接引用。
 
----
+______________________________________________________________________
 
 ### 二、分析质量评估
 
 #### 1. 根因分析深度不均
 
 **高质量**：
+
 - `workflow_session_analysis_2026-07.md` §1 对"审阅信噪比"的四层根因拆解（角色框架→信息不对称→finding 无界→同模型盲区）是整套文档中分析质量最高的段落。结论"换模型不解决问题，根因在 prompt + 上下文 + 阈值设计"有说服力。
 - `workflow_retrospective_0.md` §根因 对"横向缺口不开 task 根治"的归因（scope 守过头 / goal 推进压力 / 未识别系统性）诚实且可操作。
 
 **中等**：
+
 - `workflow_record.md` 的事故复盘事实清晰，但止于"以后用 worktree"，未追问"为什么 agent 没在 Step 1 检查 worktree 需求"——这指向 skill 层的流程缺陷，不只是个人失误。
 
 **薄弱**：
+
 - `workflow_retrospective.md` §5（批量缩进破坏测试）归因为"手写 Python 脚本不能处理对齐空格"，但没追问：为什么 agent 选了手写脚本而非 eslint/prettier？是工具链缺位还是判断失误？根因停在技术层，没触及决策层。
 
 #### 2. 数据使用不一致
@@ -85,7 +90,7 @@
 
 `workflow_feedback.md` §末尾列了 6 个待决策项，`workflow_retrospective.md` §末尾列了 P0-P3 优先级，`workflow_session_analysis_2026-07.md` §末尾列了 P0-P2 优先级——三套决策清单互不关联。项目需要一个统一的决策追踪机制，否则"待决策"永远是"待决策"。
 
----
+______________________________________________________________________
 
 ### 三、内容评估
 
@@ -94,7 +99,7 @@
 以下发现值得固化进项目规则：
 
 |发现|来源|价值|
-|------|------|------|
+|---|---|---|
 |spec 不写技术选型（版本号/库/目录），只写行为 AC|retrospective_0 §1|消除 spec 过时循环|
 |横向系统性缺口立即开 task 根治，不在业务 task 打补丁|retrospective_0 §根因|消除 ~60% 噪音 turn|
 |branch ≠ worktree，多分支并行需 worktree 隔离|record 全文|防止代码丢失|
@@ -106,7 +111,7 @@
 #### 2. 存疑或过时的观点
 
 |观点|来源|存疑原因|
-|------|------|------|
+|---|---|---|
 |"plan 模板拆三套（plan_code/doc/style）"|feedback §A|引入三套模板增加维护成本，不如按 complexity 可选|
 |"一个 task 一个主题，N 个 commit"|feedback §B、retrospective §7|模糊了 task 的原子性定义，可能退化为"一个 task 什么都做"|
 |"不切分支，所有 task 直接在 main 上做"|retrospective §P0|对长期多人项目不可行，短期单人项目可接受|
@@ -128,7 +133,7 @@
 
 所有文档假设 agent 能力恒定，但实际 agent 在不同模型、不同 context 大小下表现差异显著。`session_analysis` 提到 19MB 会话 context 溢出，但没讨论：如果 context 窗口缩小（换模型或压缩），工作流哪些环节最先崩溃？
 
----
+______________________________________________________________________
 
 ### 四、对 Gemini 审阅的补充与分歧
 
@@ -142,12 +147,12 @@
 
 - Gemini 总结说"极其优秀的工作流演进档案"。我的评价更审慎：文档质量参差不齐（`11111.md` vs `session_analysis`），重复内容多，缺乏收敛。作为"演进记录"是合格的，但作为"可执行的改进方案"还需要大幅收敛。
 
----
+______________________________________________________________________
 
 ### 五、优先行动建议
 
 |优先级|行动|原因|
-|------|------|------|
+|---|---|---|
 |**立即**|创建 `docs_repo/README.md`，建立时间线索引 + 文档状态标记|解决当前最大的可读性障碍|
 |**立即**|删除或归档 `11111.md`|临时草稿无保留价值|
 |**短期**|合并改进建议，产出一份统一的"工作流 v2 改进清单"|结束四份文档各自列待决策项的混乱状态|
@@ -155,7 +160,7 @@
 |**中期**|实施 `archive/workflow_skill_split_proposal.md` 的 skill 拆分|解决 AGENTS.md 职责过重问题|
 |**中期**|建立 review prompt 版本管理|防止 prompt 变更导致审查标准漂移|
 
----
+______________________________________________________________________
 
 ## 总结
 

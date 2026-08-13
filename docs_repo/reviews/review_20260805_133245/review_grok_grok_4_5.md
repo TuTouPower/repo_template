@@ -8,16 +8,16 @@ Grok 4.5
 
 - 范围：`git diff 90b2387~1..HEAD`（5 commit / 34 files）
 - 提交：
-  - `90b2387` feat(task): close attempt lifecycle and modularize task tool
-  - `f7437a2` feat(task): unify attempt lifecycle with execution_id identity
-  - `3fdd454` fix(task): address review findings across attempt lifecycle
-  - `e1ea9d9` refactor(task): remove dead 'resource' fail class
-  - `d927df6` refactor(task): remove model ladder and circuit breaker
+    - `90b2387` feat(task): close attempt lifecycle and modularize task tool
+    - `f7437a2` feat(task): unify attempt lifecycle with execution_id identity
+    - `3fdd454` fix(task): address review findings across attempt lifecycle
+    - `e1ea9d9` refactor(task): remove dead 'resource' fail class
+    - `d927df6` refactor(task): remove model ladder and circuit breaker
 - 覆盖：`scripts/repo_template/task.py` façade、`repo_task/*` 全模块、四份 skill、`AGENTS.md`/`README.md`、`docs_repo` 计划文档、相关 tests
 - 方式：全量只读 diff/源码；未跑构建与测试
 - 时限：15 分钟内完成
 
----
+______________________________________________________________________
 
 ## 高优先级
 
@@ -25,14 +25,14 @@ Grok 4.5
 
 - **位置**：`scripts/repo_template/repo_task/attempts.py` `reserve_attempt`（retryable 条件）；`scripts/repo_template/repo_task/monitoring.py` `compute_reconcile_plan` 失败分支；对照 `docs_repo/plans/plan_dispatch_control_plane.md` 行动表 `redispatch` 行与 cron 顺序
 - **现象**：
-  1. `reserve_attempt` 将 `terminal_status in {failed, stopped}` 单独视为可 retry，**不要求**已有 report。
-  2. `reconcile` 对 terminal failed/stopped（无 report）直接走 `_retry_or_escalate_action`，默认 `fail_class="task"`，可输出 `dispatch` 新 attempt。
-  3. 一旦新 attempt 成为 current，旧 identity 的 `report_attempt` 被 `_require_exact_current` 拒绝（测试亦覆盖该门禁）。
+    1. `reserve_attempt` 将 `terminal_status in {failed, stopped}` 单独视为可 retry，**不要求**已有 report。
+    2. `reconcile` 对 terminal failed/stopped（无 report）直接走 `_retry_or_escalate_action`，默认 `fail_class="task"`，可输出 `dispatch` 新 attempt。
+    3. 一旦新 attempt 成为 current，旧 identity 的 `report_attempt` 被 `_require_exact_current` 拒绝（测试亦覆盖该门禁）。
 - **影响**：cron/多唤醒交错或 coordinator 在 terminal 后、report 前崩溃/被抢跑时：自动 redispatch 会**永久丢掉**应写在 report 的 `class`/`reason`；且与文档「先 terminal 再 report 再 reconcile」「redispatch 在 report failed 后」的纪律不完全可机械保证。控制面只靠 skill 顺序，脚本层可被计划抢先。
 - **建议**：
-  1. `reconcile`：terminal failed/stopped 且无 report → `await-report`（或 escalate），**禁止**自动 dispatch。
-  2. 或 `reserve_attempt`：仅当 `report.status==failed` 或 `state==escalated` 才允许新 reserve；裸 terminal failed 只允许 escalate，不允许机械 retry。
-  3. 补测试：terminal failed、无 report 时 plan 不得 dispatch。
+    1. `reconcile`：terminal failed/stopped 且无 report → `await-report`（或 escalate），**禁止**自动 dispatch。
+    2. 或 `reserve_attempt`：仅当 `report.status==failed` 或 `state==escalated` 才允许新 reserve；裸 terminal failed 只允许 escalate，不允许机械 retry。
+    3. 补测试：terminal failed、无 report 时 plan 不得 dispatch。
 - **置信度**：高
 - **优先级**：高
 
@@ -40,17 +40,17 @@ Grok 4.5
 
 - **位置**：`monitoring.py` `compute_reconcile_plan`；skill `task-dispatch`「并行纪律」；`plan_dispatch_control_plane.md`「并发与闩锁」；测试 `test_reconcile_effective_blocked_escalates_without_retry_budget`（断言 `used==0`）
 - **现象**：
-  - 文档/skill 写：`reserved`/`running`/待 terminal/**待 report**/待 cleanup/待 integrate/待 retry 都占槽，**escalate 才释放**。
-  - 实现：terminal 后若走 escalate 建议（blocked、completed 未 integrate-ready、额度用尽），**不增加 occupancy**；测试明确接受 `used==0`。
-  - 无 `await-report`：terminal completed 且 refs 未 ready → 直接 `escalate` 而非等待 handoff/report。
+    - 文档/skill 写：`reserved`/`running`/待 terminal/**待 report**/待 cleanup/待 integrate/待 retry 都占槽，**escalate 才释放**。
+    - 实现：terminal 后若走 escalate 建议（blocked、completed 未 integrate-ready、额度用尽），**不增加 occupancy**；测试明确接受 `used==0`。
+    - 无 `await-report`：terminal completed 且 refs 未 ready → 直接 `escalate` 而非等待 handoff/report。
 - **影响**：同一 reconcile 回合可在「建议 escalate 旧 task」的同时对空槽补 `dispatch` 新 task；若 escalate 未立即执行，并发水位会短暂超过「未 escalate 前仍占槽」的语义。completed 但 handoff 稍晚可见时，易被误判为 contract escalate 而非短暂 await。
 - **建议**：
-  1. 明确权威语义：要么改 skill/文档为「reconcile 输出 escalate 即释放水位」，要么改实现使 terminal 未 escalate/未 integrate 前一律 `occupancy+=1`。
-  2. 对 `terminal=completed` 且 `verdict=incomplete`（非 contract）保留 `await-handoff`/`await-report`，仅 contract/blocked/额度用尽才 escalate。
+    1. 明确权威语义：要么改 skill/文档为「reconcile 输出 escalate 即释放水位」，要么改实现使 terminal 未 escalate/未 integrate 前一律 `occupancy+=1`。
+    2. 对 `terminal=completed` 且 `verdict=incomplete`（非 contract）保留 `await-handoff`/`await-report`，仅 contract/blocked/额度用尽才 escalate。
 - **置信度**：中高（文档与测试/实现三方不一致已核实；生产是否踩坑取决于 coordinator 是否同回合执行 escalate）
 - **优先级**：高（契约权威不一致，调度水位可被误解）
 
----
+______________________________________________________________________
 
 ## 中低优先级
 
@@ -126,7 +126,7 @@ Grok 4.5
 - **置信度**：高
 - **优先级**：低
 
----
+______________________________________________________________________
 
 ## 改进建议
 
@@ -135,14 +135,14 @@ Grok 4.5
 3. **领域层门禁优先于 CLI**：tid 存在性、archived 拒绝、host 必填等放进 `attempts.py`，CLI 变薄。
 4. **拆分卫生**：清理未用 import；考虑 `ruff`/`pyflakes` 进 doctor。
 5. **已做得好的部分**（保持）：
-   - exact identity `(tid, attempt, execution_id)` 投影与迟到事件隔离清晰；
-   - ledger 锁内 allocate/batch integrated；
-   - integrate-chain 事务 phase + MERGE_HEAD 恢复；
-   - handoff base_sha/diff_anchor/first-parent 单执行 commit 门禁严格；
-   - 删除 model ladder / `resource` fail class 后失败面更干净；
-   - `3fdd454` 对 escalated 可手动 integrate、report=done 与 terminal 匹配、CLI 主仓限制等修复方向正确。
+    - exact identity `(tid, attempt, execution_id)` 投影与迟到事件隔离清晰；
+    - ledger 锁内 allocate/batch integrated；
+    - integrate-chain 事务 phase + MERGE_HEAD 恢复；
+    - handoff base_sha/diff_anchor/first-parent 单执行 commit 门禁严格；
+    - 删除 model ladder / `resource` fail class 后失败面更干净；
+    - `3fdd454` 对 escalated 可手动 integrate、report=done 与 terminal 匹配、CLI 主仓限制等修复方向正确。
 
----
+______________________________________________________________________
 
 ## 不确定项
 
@@ -152,7 +152,7 @@ Grok 4.5
 4. **未执行测试套件**：结论来自静态阅读；`3fdd454` 声称 376 passed，本路未复跑验证。
 5. **`.old_task_for_review.py`** 仍含 resource/阶梯逻辑：若不在交付面可忽略；若会被误用为参考实现，建议标废弃或移出树。
 
----
+______________________________________________________________________
 
 ## 总结
 

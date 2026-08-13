@@ -49,7 +49,7 @@ reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符
 有 finding 时用本表；每条 finding 一行。
 
 |finding_id|severity|status|rationale|fix_ref|
-|------|------|------|------|------|
+|---|---|---|---|---|
 |t000_code_f001|critical/important/minor|已修|一句话|文件:行|
 |t000_test_f002|minor|遗留|一句话|pNNN|
 

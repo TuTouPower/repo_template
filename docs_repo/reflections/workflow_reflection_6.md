@@ -18,8 +18,8 @@
 1. **`task.py start` 制造「分支已建」的错觉**。它只是把 JSON 里的 `branch` 字段填成 `{tid}_{slug}`，并不执行 `git checkout -b`。工作流 Step 1 把建分支+校验交给 agent 自觉，没有任何强制。
 2. **worktree 不是「切换」语义**。它是独立目录（`.claude/worktrees/xxx`），agent 必须进入该目录工作才算用上；在主目录敲命令永远在 main 上。这对人和 agent 都是易错点。
 3. **`tasks_index.json` 是并行写的共享热点**。每个 task 的 start/finish/drop 都改同一个 JSON，导致：
-   - 每个 task 分支都携带对它的修改，合并时**必然冲突**（本轮 4 次合并次次中）；
-   - 诱发手工编辑——本次还发生了文件被清空后手工「恢复」但 status 被伪造成 active 的事故，而 `task.py` 没有 active→backlog 的回退命令，只能靠授权手修。
+    - 每个 task 分支都携带对它的修改，合并时**必然冲突**（本轮 4 次合并次次中）；
+    - 诱发手工编辑——本次还发生了文件被清空后手工「恢复」但 status 被伪造成 active 的事故，而 `task.py` 没有 active→backlog 的回退命令，只能靠授权手修。
 4. **合并带 migration 的分支有隐藏动作**：t128 合入后 4 个旧测试报 `prisma.note undefined`，原因是 prisma client 未随新 schema 重新生成，`npx prisma generate` 后恢复。该步骤不在任何清单里。
 
 ## 改进建议

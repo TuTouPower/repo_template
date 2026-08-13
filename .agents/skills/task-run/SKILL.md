@@ -31,7 +31,7 @@ description: none
 goal 会话内的执行行为与本 skill 队列循环完全一致，固定队列以快照为准（不得变更成员）。终态由 `task.py goal-check` 只读判定：
 
 |marker|exit|语义|
-|------|------|------|
+|---|---|---|
 |`GOAL_QUEUE_COMPLETE`|0|全部成员 closed（terminal+report+handoff+cleanup）或 integrated；goal 结束|
 |`GOAL_QUEUE_STOPPED: <tid>=<state>`|3|任一成员 blocked/failed；合法停止，按「停止条件」汇报后 goal 结束|
 |`GOAL_QUEUE_INCOMPLETE: x/y closed`|2|继续执行|
@@ -43,7 +43,7 @@ goal 模式同时只服务一个队列（快照覆盖式）；多会话手动并
 ## 输入与固定队列
 
 |用户输入|队列|
-|------|------|
+|---|---|
 |无参数|`backlog` ∪ `active`（tid 升序）；不含 blocked / done / dropped|
 |一个或多个 `tNNN`|严格按用户输入顺序，只跑这些（须 backlog/active；含 blocked 则停止，请用户选择加轮/dropped）|
 |状态词 `backlog` 和/或 `active`|只跑这些状态的全部，tid 升序|

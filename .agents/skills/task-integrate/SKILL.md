@@ -152,7 +152,7 @@ scripts/repo_template/task.py integrate-chain {TAIL_TID} --continue
 ## 冲突处置
 
 |冲突位置|处置|
-|------|------|
+|---|---|
 |`docs/blueprint/`|真语义冲突。读双方意图后合成一致表述，不叠加两段|
 |`docs/specs_index.md`|两侧各加一行；保留双方，按 slug 排序|
 |`docs/tasks_index.json`|派生缓存。先解决为可继续状态，成功后由脚本重建覆盖|

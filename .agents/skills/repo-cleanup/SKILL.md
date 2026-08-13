@@ -11,7 +11,7 @@ disable-model-invocation: true
 ## 输入
 
 |用户输入|行为|
-|------|------|
+|---|---|
 |无参数 / `dry-run`|只扫只列，不删|
 |`apply`|删**默认类别**命中项|
 |`apply` + 类别名（可多个）|只删这些类别|
@@ -23,7 +23,7 @@ disable-model-invocation: true
 **默认**（`apply` 未点名时）：`pycache` / `pytest` / `logs` / `os` / `editor`。
 
 |类别|匹配|
-|------|------|
+|---|---|
 |`pycache`|`__pycache__/`、`*.pyc` / `*.pyo` / `*.pyd`|
 |`pytest`|`.pytest_cache/`|
 |`logs`|仓库内 `*.log`（保护路径除外）|
@@ -33,7 +33,7 @@ disable-model-invocation: true
 **点名才清**（不在默认集合）：
 
 |类别|匹配|处理|
-|------|------|------|
+|---|---|---|
 |`node`|`node_modules/`|直接删；汇报提示重装依赖|
 |`scratch`|`.scratch/` **内**草稿|清内容、保留目录；跳过活跃 task 引用路径|
 |`artifacts`|`artifacts/` 内容|清内容、保留目录|
@@ -42,8 +42,8 @@ disable-model-invocation: true
 ## 保护（永不删）
 
 - `.git/`
-- **业务与契约正文**：`src/`、`tests/`、`schemas/`、`config/` 下的源码、测试、契约与配置（**不是**类别表里的垃圾名）。  
-  类别表命中的垃圾**可清**，即使落在这些目录下（如 `src/**/__pycache__/`、`tests/**/.pytest_cache/`）。
+- **业务与契约正文**：`src/`、`tests/`、`schemas/`、`config/` 下的源码、测试、契约与配置（**不是**类别表里的垃圾名）。\
+    类别表命中的垃圾**可清**，即使落在这些目录下（如 `src/**/__pycache__/`、`tests/**/.pytest_cache/`）。
 - `docs/` 下除 OS/编辑器垃圾文件名以外的一切（含 task 文档、specs、handoff/pending/findings）
 - `scripts/` 与 `scripts/repo_template/` 入库脚本；`.agents/`、`.claude/` skill 与软链
 - `AGENTS.md`、`README.md`、`CLAUDE.md`、`.gitignore`
@@ -57,54 +57,57 @@ disable-model-invocation: true
 
 2. **扫描**：在仓库根（`git rev-parse --show-toplevel`）按类别找命中项；对照保护名单过滤。示例：
 
-   ```bash
-   find . -type d -name '__pycache__' -not -path './.git/*'
-   find . -type d -name '.pytest_cache' -not -path './.git/*'
-   find . -type f \( -name '.DS_Store' -o -name 'Thumbs.db' -o -name '*.log' -o -name '*~' -o -name '*.swp' \) -not -path './.git/*'
-   ```
+    ```bash
+    find . -type d -name '__pycache__' -not -path './.git/*'
+    find . -type d -name '.pytest_cache' -not -path './.git/*'
+    find . -type f \( -name '.DS_Store' -o -name 'Thumbs.db' -o -name '*.log' -o -name '*~' -o -name '*.swp' \) -not -path './.git/*'
+    ```
 
 3. **dry-run 输出**（到此结束，不删）：
 
-   ```markdown
-   ## repo-cleanup 预览（未删除）
+    ```markdown
+    ## repo-cleanup 预览（未删除）
 
-   模式：dry-run
-   类别：…
+    模式：dry-run
+    类别：…
+
+    ```
 
 |路径|类别|说明|
-   |------|------|------|
+|---|---|---|
 |./tests/repo_template/__pycache__/|pycache|目录|
 
-   合计：N 项
-   下一步：确认后 `/repo-cleanup apply`（或带类别）。
-   ```
+合计：N 项
+下一步：确认后 `/repo-cleanup apply`（或带类别）。
+
+````
 
 4. **apply 删除**（仅本次调用含 `apply`）：
-   1. 再扫一遍，与 dry-run 同规则。
-   2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
-   3. **`scratch`**（仅点名 `apply scratch`）：
-      - 按 `AGENTS.md`「task 状态读取优先级」确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。主干中被 worktree 或未合并分支覆盖的旧状态不重复计。
-      - 其余 `.scratch/` 内容删掉，保留空目录。
-      - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
-   4. `artifacts` / `data`：清内容、保留目录。
+1. 再扫一遍，与 dry-run 同规则。
+2. 文件 `rm`；目录 `rm -rf`（**仅列表内路径**）。禁止 `rm -rf` 仓库根或保护路径。
+3. **`scratch`**（仅点名 `apply scratch`）：
+   - 按 `AGENTS.md`「task 状态读取优先级」确定 backlog/active/blocked task；读各有效来源中的 `spec.md` 上下文区与 `task.md` 实施笔记，收集提及的 `.scratch/` 相对路径 → **跳过不删**。主干中被 worktree 或未合并分支覆盖的旧状态不重复计。
+   - 其余 `.scratch/` 内容删掉，保留空目录。
+   - 无法解析引用 → **不删** `.scratch/`，列入「需用户决定」。
+4. `artifacts` / `data`：清内容、保留目录。
 
 5. **汇报**：
 
-   ```markdown
-   ## repo-cleanup 结果
+```markdown
+## repo-cleanup 结果
 
-   模式：apply / dry-run
-   已删除：
-   - …
+模式：apply / dry-run
+已删除：
+- …
 
-   跳过（保护/被引用/不存在）：
-   - …
+跳过（保护/被引用/不存在）：
+- …
 
-   需用户决定：
-   - …
+需用户决定：
+- …
 
-   默认不 commit（见边界）。
-   ```
+默认不 commit（见边界）。
+````
 
 ## 边界
 

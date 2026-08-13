@@ -7,7 +7,7 @@
 ## 执行概况
 
 |指标|数据|
-|------|------|
+|---|---|
 |task 总数|21（20 done + 1 dropped 后拆为 6 个子 task 全 done）|
 |审阅 task|10 个走了完整审阅（t041-t046）；其余 11 个直接收尾|
 |审阅轮次|t041: 3 轮, t042: 4 轮, t043: 4 轮, t044: 5 轮, t045: 4 轮, t046: 3 轮|
@@ -20,6 +20,7 @@
 ### 1. 多分支 merge 冲突是灾难（最大问题）
 
 **现象**：11 个分支从同一 main base 切出，每个分支的 task.py finish 都改了 `tasks_index.json` + `archive/tasks_index.json`。merge 时这两个 JSON 文件**必然冲突**。用 `-X theirs` 策略批量合并后，main 上已 finish 的状态被分支的旧版本（backlog）覆盖，导致：
+
 - tasks_index.json 显示已完成 task 仍为 backlog
 - archive/tasks_index.json 缺失大量归档条目
 - docs/tasks/ 里残留已归档的旧目录
@@ -29,6 +30,7 @@
 **根因**：task.py 把状态存在 JSON 文件里，每个分支独立修改，git 无法智能合并 JSON 内容变更。
 
 **改进方向**：
+
 - **方案 A（推荐）**：tasks_index.json 只在 main 上维护，分支不修改。task.py finish 改为在 merge 后统一执行（类似 `git rebase --autosquash`）。
 - **方案 B**：task.py finish 时把状态写入 task.md front matter（每个文件独立，不冲突），tasks_index.json 由脚本扫描 task.md 生成（derived data）。
 - **方案 C**：不切分支，所有 task 直接在 main 上做（t048/t049/t051 验证了这种方式无冲突）。
@@ -36,6 +38,7 @@
 ### 2. 审阅对低风险 task 是纯浪费
 
 **现象**：21 个 task 中 11 个直接收尾（跳过审阅），包括：
+
 - 纯文档 task（t052-t054）
 - 纯配置 task（t055-t056）
 - 纯格式 task（t057-t061）
@@ -43,6 +46,7 @@
 这些 task 改动无业务逻辑，reviewer 能审出的 finding 极少（多为"文档元引用"等 minor），但流程仍要求派 2 个 sub agent。
 
 **改进方向**：按 task 类型分级：
+
 - **关键代码**（安全/资金/并发/鉴权）：完整审阅 + e2e
 - **普通代码**（API/前端/测试）：单审 + 单测
 - **文档/配置/格式**：build + test 通过即可，无 reviewer
@@ -54,6 +58,7 @@
 **根因**：spec 写了 6 项 AC，但测试覆盖是渐进式的——第一轮发现缺口→补→第二轮发现新缺口→补。这种"剥洋葱"式收敛在复杂 task 上无法在 2 轮内完成。
 
 **改进方向**：
+
 - 复杂 task（spec 验收标准 ≥ 5 条或跨 ≥ 3 个文件）默认 max_review_round=5
 - 简单 task（单文件或纯文档）max_review_round=1
 - 在 spec front matter 加 `complexity: high|medium|low` 字段，task.py 根据它推荐 max
@@ -63,6 +68,7 @@
 **现象**：21 个 task 的 plan.md 从未被实施时参考。agent 实施时直接读 spec（验收标准）+ 代码现状。plan 里写的"步骤与验证"和 spec 的"验收标准"高度重复。
 
 **改进方向**：
+
 - 简单 task 不要求 plan.md（spec 验收标准已足够）
 - 复杂 task 的 plan.md 改为"实施设计笔记"（文件级改动清单 + 关键技术决策 + 踩坑预判），不复述 spec
 
@@ -73,6 +79,7 @@
 **根因**：缩进转换不是简单的"行首空格除以 2"，需要理解语义（缩进 vs 对齐）。ESLint/Prettier 能正确处理，手写脚本不能。
 
 **改进方向**：
+
 - 缩进统一用 `npx eslint --fix` 或 `npx prettier --write`（确保规则配对）
 - 不用手写 Python 脚本做缩进转换
 
@@ -81,12 +88,14 @@
 **现象**：多个 task 的验收标准写了"smoke 通过"或"e2e 不退化"，但 agent 在 WSL 环境无法运行 smoke/e2e（需要 DB + Auth + Storage + server）。这些 AC 实际无法在开发时验证。
 
 **改进方向**：
+
 - spec 验收标准区分"agent 可验证"（npm test / npm run build）与"部署侧验证"（smoke / e2e）
 - 后者标为 `[deploy]` 前缀，agent 实施时跳过，部署时执行
 
 ### 7. "一个 task 一个 commit"与实际脱节
 
 **现象**：
+
 - t041 内含 6 个独立修复点，最终一个 commit 打包
 - t048+t049+t051 合并成一个 commit
 - t053+t054 合并成一个 commit
@@ -94,6 +103,7 @@
 实际执行中 commit 粒度由"方便 merge"驱动，不是由"一个 task 一个 commit"规则驱动。
 
 **改进方向**：把"一个 task 一个 commit"改为"一个 task 一个主题，N 个 commit"：
+
 - task = 一组逻辑相关改动
 - commit = task 内的原子提交
 - merge 到 main 时保留 commit 历史
@@ -114,6 +124,7 @@
 **推荐方案 C**：不切分支，所有 task 直接在 main 上做。
 
 理由：
+
 - t048/t049/t051/t056-t061 共 10 个 task 在 main 上直接做，零冲突
 - 11 个分支 merge 时大量冲突 + 3 次修复 commit
 - 分支的唯一好处是"隔离实验"，但 task.py 已提供 status 管理（backlog/active/blocked/done）
@@ -124,6 +135,7 @@
 ### P1：审阅分级
 
 在 task spec front matter 加 `review_level: full|single|none`：
+
 - `full`：审阅 + e2e（安全/资金/并发/鉴权）
 - `single`：单审 + 单测（普通 API/前端/测试）
 - `none`：build + test（文档/配置/格式）

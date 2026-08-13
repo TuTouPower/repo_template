@@ -47,7 +47,7 @@ flowchart TD
 开始或继续时，先确认当前目录就是 tid 登记的 worktree，且调用参数中的 `attempt` / `execution_id` 是本次 handoff 目标；再读 `scripts/repo_template/task.py show <tid>`、task 目录下 `spec.md` / `task.md` / `review_*.md`、分支、`git status`、`diff_anchor`、测试与实施笔记判断入口：
 
 |状态 / 证据|从哪继续|
-|------|------|
+|---|---|
 |无 task worktree，或当前目录/分支不归属 tid|停止，回到 task-run 修复 start/ownership；本 skill 不自行 start|
 |`active`，无 preflight/红灯证据|Step 1|
 |红已有、实现未完|Step 3|
@@ -63,8 +63,8 @@ flowchart TD
 2. 记录本次必填 identity `(tid, attempt, execution_id)`；后续生成的 `handoff.json` 必须逐字段使用这组值，不得用旧 handoff 或“当前最新 attempt”替代。
 3. 有 `{doctor_cmd}` 则跑；无则实施笔记写「无」。失败：停止，先解决环境或走 spike。
 4. 执行 `scripts/repo_template/task.py preflight <tid>`：状态、spec 完整、工作区一致性与未知契约分类。
-   - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
-   - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
+    - `UNVERIFIED-BLOCKING` 或裸 `UNVERIFIED` → FAIL，必须停止。
+    - `UNVERIFIED-SPIKE` → WARN；当前只可继续 Step 1 实验，不得进入 Step 2。
 5. spec 契约区行为 AC 非空再继续（preflight 已查）。
 6. spec 上下文区有 `UNVERIFIED-SPIKE`：先做实验，文档查询不能替代兼容实验。需外部环境的 SPIKE 先查环境齐备性（key、代理、夹具）并做最小实测；未实测不得以「难验证」上报阻断，实测失败须附输出证据；优先走 spec 预留的保守回退方案，而非中断。用 `scripts/repo_template/spikes.py new --slug <主题>` 建 `docs/spikes/{sid}_{slug}/`（锁内取号并从模板生成 `report.md`）；有实验代码自行加 `code/`。结论用 `scripts/repo_template/findings.py new` 建条目写入，报告留在 spike 目录。
 7. 将全部 `UNVERIFIED-SPIKE` 改写为验证结论与验证方式，再运行 `scripts/repo_template/task.py preflight <tid> --require-verified`。严格门禁 PASS 后才可进入 Step 2。
@@ -91,11 +91,11 @@ flowchart TD
 
 - 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
 - 渲染 prompt：
-  ```bash
-  python3 scripts/repo_template/render_review_prompts.py \
-    --task-dir docs/tasks/{tid}_{slug} \
-    --out-dir .scratch/review_prompts
-  ```
+    ```bash
+    python3 scripts/repo_template/render_review_prompts.py \
+      --task-dir docs/tasks/{tid}_{slug} \
+      --out-dir .scratch/review_prompts
+    ```
 - 派 subagent 时只传文件路径，不把 prompt 正文内联进派发消息。
 - `review_level=full`：code + test 两路并行；`single`：一路 general。
 - 报告写入 task 目录：`full` 写 `review_code.md` / `review_test.md`；`single` 写 `review_general.md`。多轮追加，不覆盖历史。
@@ -105,11 +105,11 @@ flowchart TD
 - 处置表唯一落点：`task.md` → `## Review 处置`。`status` 仅：`已修` / `遗留` / `撤回`。
 - `status=遗留` 的内容不写 task.md：用 `scripts/repo_template/pending.py new --slug <主题>` 建条目并填写；`fix_ref` 填该 `pNNN` 或已有 follow-up tid。
 - 运行：
-  ```bash
-  python3 scripts/repo_template/check_review_status.py \
-    --task-dir docs/tasks/{tid}_{slug} \
-    --max-review-round <N>
-  ```
+    ```bash
+    python3 scripts/repo_template/check_review_status.py \
+      --task-dir docs/tasks/{tid}_{slug} \
+      --max-review-round <N>
+    ```
 - `prompt_hint` 非空 → 下一轮派发附上轮撤回 finding_id 与理由。
 - reviewer 标注 spec 过时：改 spec 上下文区，不计 FAIL，不因此回 Step 3。
 - `overall=PASS` → Step 7。
@@ -145,26 +145,26 @@ grep -cE '\b(TODO|FIXME|XXX)\b' .scratch/added_lines.txt || true # 会话 TODO �
 - 用 `scripts/repo_template/findings.py new` 抽取可跨 task 复用的已验证事实。
 - 在执行 commit 前读取当前完整 `HEAD`，确认它仍等于 task front matter 的 `diff_anchor`，并记为 `base_sha`；该值就是稍后 branch tip 执行 commit 的 first parent。若两者不等，说明已产生额外 commit，停止而不是写一个“当前 HEAD”掩盖一 task 一 commit 违约。
 - 写交接单 `docs/tasks/{tid}_{slug}/handoff.json`（机器可读契约，随执行 commit 入库）：
-  ```json
-  {
-    "tid": "t001",
-    "attempt": 1,
-    "execution_id": "0123456789abcdef0123456789abcdef",
-    "status": "done",
-    "branch": "t001_example",
-    "base_sha": "0123456789abcdef0123456789abcdef01234567",
-    "tests": "pytest -q：120 passed",
-    "blackbox": "黑盒命令通过",
-    "review": "第 2 轮 PASS",
-    "ac_evidence": {
-      "AC-001": ["tests/test_x.py::test_y 通过"],
-      "AC-002": ["黑盒输出：返回 200"]
-    },
-    "pending": ["p047"],
-    "findings": ["d012"]
-  }
-  ```
-  `tid`、非 bool 的正整数 `attempt`、非空字符串 `execution_id` 必须逐字等于本 skill 输入；`status` 与 task 终态一致；`branch` 是当前 task 分支；`base_sha` 是执行 commit 前 HEAD 的完整 SHA，且必须等于 task `diff_anchor`。`tests`、`blackbox`、`review` 都必须是非空字符串；`ac_evidence` 是 JSON 对象，键必须精确等于 spec 验收标准节的全部 `AC-NNN` 编号（缺或多都会导致 integrate 门禁失败），值为非空字符串数组，每项是一条证据引用（测试用例/断言摘要、黑盒输出摘要、review 报告锚点）；`pending`、`findings` 必须是字符串数组，没有条目时写 `[]`。所有字段逐项必填。
+    ```json
+    {
+      "tid": "t001",
+      "attempt": 1,
+      "execution_id": "0123456789abcdef0123456789abcdef",
+      "status": "done",
+      "branch": "t001_example",
+      "base_sha": "0123456789abcdef0123456789abcdef01234567",
+      "tests": "pytest -q：120 passed",
+      "blackbox": "黑盒命令通过",
+      "review": "第 2 轮 PASS",
+      "ac_evidence": {
+        "AC-001": ["tests/test_x.py::test_y 通过"],
+        "AC-002": ["黑盒输出：返回 200"]
+      },
+      "pending": ["p047"],
+      "findings": ["d012"]
+    }
+    ```
+    `tid`、非 bool 的正整数 `attempt`、非空字符串 `execution_id` 必须逐字等于本 skill 输入；`status` 与 task 终态一致；`branch` 是当前 task 分支；`base_sha` 是执行 commit 前 HEAD 的完整 SHA，且必须等于 task `diff_anchor`。`tests`、`blackbox`、`review` 都必须是非空字符串；`ac_evidence` 是 JSON 对象，键必须精确等于 spec 验收标准节的全部 `AC-NNN` 编号（缺或多都会导致 integrate 门禁失败），值为非空字符串数组，每项是一条证据引用（测试用例/断言摘要、黑盒输出摘要、review 报告锚点）；`pending`、`findings` 必须是字符串数组，没有条目时写 `[]`。所有字段逐项必填。
 - 本 skill 不写 attempt 控制面，也不记录 terminal/report/integrated；task-run 读取已入库 handoff 后，以同一 exact identity 完成后续生命周期。
 - 其他 task 若受本 task 影响需改 spec，不在此直接改——手动并发下其他会话看不到本分支改动，且合并时制造冲突。列进交出汇报，由 task-run 处置。
 

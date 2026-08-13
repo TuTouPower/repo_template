@@ -6,7 +6,7 @@
 
 现状基线：AGENTS.md + 9 个 skill + task.py + review prompt 模板 + task_template，skill 拆分提案已落地。以下按主题对照笔记结论与当前状态。
 
----
+______________________________________________________________________
 
 ## 1. 元观察：四份笔记说的同一件事
 
@@ -23,7 +23,7 @@
 
 当前 AGENTS.md 已部分响应（`max_review_round` 从 2 提到 4、skill 拆分落地、task-bug/task-debt 路由补齐），但**最高 ROI 的三项未动**：审阅分级、reviewer 上下文注入、task 粒度量化。详见 §3/§4/§5。
 
----
+______________________________________________________________________
 
 ## 2. skill 拆分提案：已落地，但遗留两点
 
@@ -37,7 +37,7 @@
 
 提案 §「不解决的问题」有先见之明：skill 无程序级强制力。session_analysis §4（subagent 失控 13→8→2、503 后不走 blocked）正是这一弱点的实证——**blocked 触发条件只覆盖黑盒满轮与审阅满轮两类，无基础设施失败路径**。AGENTS.md blocked 表至今只有两行。建议加第三行：基础设施失败（503/网络/subagent 启动失败 N 次）→ `block <tid> --reason infra`，禁止 agent 自定「容错上限」停手。
 
----
+______________________________________________________________________
 
 ## 3. 审阅信噪比：笔记诊断正确，但「按读者重划」方案只完成一半
 
@@ -61,7 +61,7 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 4. **AC 断言清单前置**：Step 2 红阶段产出「AC→断言映射表」，reviewer 只核对清单覆盖，不自由发挥「还可以测什么」。
 5. **撤回率 > 30% 强制 reviewer 复盘 prompt**：check_review_status.py 检测 `已修/(已修+撤回+遗留)` 比例，超阈值则下一轮 review prompt 注入「上轮撤回原因」。
 
----
+______________________________________________________________________
 
 ## 4. task 粒度与 commit 策略：笔记一致要求「一主题 N commit」，当前仍是「一 task 一 commit」
 
@@ -87,7 +87,7 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 
 同时落实 retrospective_0 痛点 7 的改进：AC 唯一源 = spec.md，task.md 收尾引用不复制。
 
----
+______________________________________________________________________
 
 ## 5. 审阅分级 + max_review_round：当前用「统一提高上限」回避了「分级」
 
@@ -111,7 +111,7 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 
 review_level 由 task-create 时 agent 推断 + 用户确认；task.py 按 review_level 提示对应流程。
 
----
+______________________________________________________________________
 
 ## 6. tasks_index.json merge 冲突：笔记给三方案，当前选了最弱的「不切分支」回避
 
@@ -134,7 +134,7 @@ workflow_retrospective §1（最大问题）：11 分支从同一 main 切出，
 - archive/tasks_index.json 同理派生。
 - 这样分支 merge 时 task.md 各文件独立不冲突，JSON 不再是同步点。
 
----
+______________________________________________________________________
 
 ## 7. /goal hook context 溢出：笔记 P0，当前无对应机制
 
@@ -146,7 +146,7 @@ session_analysis §2：/goal Stop hook 强制 8 task 串行同一会话 → 两�
 - 检测 task.py finish 后强制 stop 让用户重启。
 - subagent 派发 prompt 写 `.scratch/review_prompts/*.md`，prompt 内只传文件路径，不内联回显（86 subagent × 80K token 回显 ≈ 7MB，占 37% 会话体积——这条对当前 tasks-run Step 5 直接适用，render_review_prompts.py 已写 `.scratch/review_prompts`，方向对，但需确认 subagent prompt 本身不内联大段 spec/plan 正文）。
 
----
+______________________________________________________________________
 
 ## 8. TDD 顺序与测试断言：笔记 P0，当前无硬约束
 
@@ -156,7 +156,7 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 
 建议在 AGENTS.md 开发原则或 tasks-run Step 6 加：**实现变更导致旧测试语义失效时，必须新增红测覆盖新语义；旧绿测只允许删除，禁止就地改预期**。reviewer prompt 的 test 轴加复核项「改动是否在断言预期而非现状」。
 
----
+______________________________________________________________________
 
 ## 9. 各文档个别点评
 
@@ -174,12 +174,12 @@ session_analysis §3：t098 实现改测试适配新实现（非测试驱动实�
 
 **archive/workflow_skill_split_proposal.md**：已落地，质量高（职责表、权威来源划分、不解决的问题、风险与控制都清晰）。「skill 无程序级强制力，关键限制仍靠脚本或 hook」是对的——当前 blocked 无 infra 路径、worktree 无校验、/goal 无约束，都是「需要脚本/hook 兜底但还没有」的点。
 
----
+______________________________________________________________________
 
 ## 10. 改进优先级（综合四份笔记 + 当前现状）
 
 |优先级|项|来源|当前状态|动作|
-|------|------|------|------|------|
+|---|---|---|---|---|
 |P0|reviewer 注入决策上下文 + AC 硬阈值|session_analysis P0 / feedback 再评估|未做（render 无 plan 注入，prompt 无阈值）|改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区|
 |P0|审阅按 risk_level 分级|三份笔记一致|未做（仅统一抬 max 到 4）|spec front matter 加 review_level + complexity；task.py 按级提示|
 |P0|tasks_index merge 冲突|retrospective §1 / 11111|未做（仍分支+JSON 单点写）|状态写 task.md front matter，JSON 改 derived data|
