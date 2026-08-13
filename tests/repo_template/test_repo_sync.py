@@ -220,6 +220,52 @@ def test_repair_symlinks(env):
     assert not changed
 
 
+def test_prep_oneway_sync_tooling(env):
+    src, consumer = env["src"], env["consumer"]
+    # 模板侧 core skill 与工具链更新
+    core_src = src / ".agents/skills/repo-template-sync-core"
+    core_src.mkdir(parents=True)
+    (core_src / "SKILL.md").write_text(
+        "---\nname: repo-template-sync-core\ndescription: none\ndisable-model-invocation: true\n---\nnew core\n"
+    )
+    (src / "scripts/repo_template/repo_sync.py").write_text("new tool\n")
+
+    # 消费侧旧版工具 + 独有文件
+    dst_core = consumer / ".agents/skills/repo-template-sync-core"
+    dst_core.mkdir(parents=True)
+    (dst_core / "SKILL.md").write_text("---\nname: old\ndescription: old\n---\nold core\n")
+    (consumer / "scripts/repo_template").mkdir(parents=True)
+    (consumer / "scripts/repo_template/consumer_extra.py").write_text("extra\n")
+
+    rs.cmd_prep(Namespace())
+
+    # core skill 单向覆盖
+    assert (dst_core / "SKILL.md").read_text().endswith("new core\n")
+    # 工具链单向覆盖
+    assert (consumer / "scripts/repo_template/repo_sync.py").read_text() == "new tool\n"
+    # 消费独有文件不被删除
+    assert (consumer / "scripts/repo_template/consumer_extra.py").exists()
+    # 软链建好
+    link = consumer / ".claude/skills/repo-template-sync-core"
+    assert link.is_symlink()
+    assert link.resolve() == dst_core.resolve()
+    # 不写 state（不推进 last_synced_commit）
+    assert rs.read_state()["last_synced_commit"] is None
+
+
+def test_prep_idempotent_no_changes(env):
+    src, consumer = env["src"], env["consumer"]
+    core_src = src / ".agents/skills/repo-template-sync-core"
+    core_src.mkdir(parents=True)
+    (core_src / "SKILL.md").write_text(
+        "---\nname: repo-template-sync-core\ndescription: none\ndisable-model-invocation: true\n---\nsame\n"
+    )
+    rs.cmd_prep(Namespace())
+    rs.cmd_prep(Namespace())
+    assert (consumer / ".agents/skills/repo-template-sync-core/SKILL.md").read_text().endswith("same\n")
+
+
+
 # ---------------------------------------------------------------------------
 # .gitignore / MCP 机械合并
 # ---------------------------------------------------------------------------

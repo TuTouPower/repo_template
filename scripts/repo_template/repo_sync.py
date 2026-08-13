@@ -13,6 +13,7 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 scripts/repo_template/repo_sync.py init --source <path|url>
   python3 scripts/repo_template/repo_sync.py status
   python3 scripts/repo_template/repo_sync.py plan
+  python3 scripts/repo_template/repo_sync.py prep
   python3 scripts/repo_template/repo_sync.py apply [--decision AGENTS.md:update]... [--skip-tests]
   python3 scripts/repo_template/repo_sync.py prompt list
   python3 scripts/repo_template/repo_sync.py prompt add --text "..." [--tags a,b]
@@ -237,6 +238,25 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
             else:
                 entry.unlink()
             changed.add(entry)
+
+
+def sync_dir_oneway(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
+    """单向树同步：src 全量复制（含覆盖），不删 dst 中 src 没有的条目。"""
+    if not src_dir.exists():
+        return
+    if not dst_dir.exists():
+        dst_dir.mkdir(parents=True)
+    for entry in src_dir.iterdir():
+        if _is_noise(entry.name):
+            continue
+        target = dst_dir / entry.name
+        if entry.is_dir():
+            sync_dir_oneway(entry, target, changed)
+        else:
+            if not target.exists() or _file_differs(entry, target):
+                _stage_rollback(target)
+                shutil.copy2(entry, target)
+                changed.add(target)
 
 
 def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
@@ -790,6 +810,39 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prep(args: argparse.Namespace) -> int:
+    """同步工具自举：单向覆盖（新增+覆盖，不删除）core skill 与 scripts/repo_template，并建软链。
+
+    由 repo-template-sync 启动器在每轮同步前调用，保证随后执行的 core skill 与脚本能力
+    为模板源最新版。不写 state（不推进 last_synced_*）。
+    """
+    state = read_state()
+    if not state:
+        raise SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
+    src = resolve_src(state)
+    assert_not_self(src)
+    changed: set[Path] = set()
+
+    src_tool = src / "scripts/repo_template"
+    if src_tool.exists():
+        sync_dir_oneway(src_tool, CONSUMER / "scripts/repo_template", changed)
+
+    src_core = src / ".agents/skills/repo-template-sync-core"
+    if src_core.exists():
+        sync_skill(src_core, SKILLS_AGENTS / "repo-template-sync-core", changed)
+
+    reports = repair_symlinks(changed)
+    for r in reports:
+        print(f"提示: {r}")
+
+    print("=== prep 改动路径清单（单向覆盖，未删除）===")
+    for path in sorted(changed, key=str):
+        print(_rel(path))
+    if not changed:
+        print("（工具已是最新，无改动）")
+    return 0
+
+
 def cmd_link_skills(args: argparse.Namespace) -> int:
     changed: set[Path] = set()
     reports = repair_symlinks(changed)
@@ -827,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="读取状态与差异摘要").set_defaults(func=cmd_status)
     sub.add_parser("plan", help="计算差异预览（零写盘）").set_defaults(func=cmd_plan)
+    sub.add_parser("prep", help="同步工具自举：单向覆盖 core skill 与 scripts/repo_template，建软链").set_defaults(func=cmd_prep)
 
     apply = sub.add_parser("apply", help="执行对齐写盘")
     apply.add_argument("--decision", action="append", default=[], metavar="UNIT:DISP",
