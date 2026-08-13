@@ -76,6 +76,37 @@ def _is_noise(name: str) -> bool:
     return name in NOISE_NAMES or name.endswith(".pyc")
 
 
+# apply 中途失败的回滚栈：记录被覆盖/删除目标旧内容，OSError 时恢复（F16）
+_ROLLBACK: list[tuple[Path, bytes | None, str]] = []
+
+
+def _stage_rollback(path: Path) -> None:
+    """记录被覆盖/删除目标，供 apply 失败回滚。kind: file / dir / absent。"""
+    if path.is_dir() and not path.is_symlink():
+        _ROLLBACK.append((path, None, "dir"))
+    elif path.exists():
+        try:
+            _ROLLBACK.append((path, path.read_bytes(), "file"))
+        except OSError:
+            pass
+    else:
+        _ROLLBACK.append((path, None, "absent"))
+
+
+def _rollback_changes() -> None:
+    for path, old, kind in reversed(_ROLLBACK):
+        try:
+            if kind == "dir":
+                path.mkdir(parents=True, exist_ok=True)
+            elif kind == "file":
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(old)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _file_differs(a: Path, b: Path) -> bool:
     if a.is_symlink() or b.is_symlink():
         return a.resolve() != b.resolve()
@@ -168,12 +199,14 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
             sync_dir(entry, target, changed)
         else:
             if not target.exists() or _file_differs(entry, target):
+                _stage_rollback(target)
                 shutil.copy2(entry, target)
                 changed.add(target)
     for entry in dst_dir.iterdir():
         if _is_noise(entry.name):
             continue
         if not (src_dir / entry.name).exists():
+            _stage_rollback(entry)
             if entry.is_dir() and not entry.is_symlink():
                 shutil.rmtree(entry)
             else:
@@ -185,11 +218,13 @@ def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
     """单文件：src 有 → 拷贝（相同则不动）；src 无 → 删 dst。"""
     if not src.exists():
         if dst.exists():
+            _stage_rollback(dst)
             dst.unlink()
             changed.add(dst)
         return
     if not dst.exists() or _file_differs(src, dst):
         dst.parent.mkdir(parents=True, exist_ok=True)
+        _stage_rollback(dst)
         shutil.copy2(src, dst)
         changed.add(dst)
 
@@ -229,6 +264,7 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
         if link.is_symlink():
             if link.resolve() == expected:
                 continue
+            _stage_rollback(link)
             link.unlink()
             os.symlink(target_rel, link)
             changed.add(link)
@@ -404,6 +440,7 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
         if not text.endswith("\n"):
             text += "\n"
         dst.parent.mkdir(parents=True, exist_ok=True)
+        _stage_rollback(dst)
         dst.write_text(text, encoding="utf-8", newline="\n")
         changed.add(dst)
     return {"added": added, "removed": removed, "dst": _rel(dst)}
@@ -423,6 +460,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             continue
         if not dp.exists():
             dp.parent.mkdir(parents=True, exist_ok=True)
+            _stage_rollback(dp)
             shutil.copy2(sp, dp)
             changed.add(dp)
             merged.append(_rel(dp))
@@ -439,6 +477,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
                 dservers[key] = val
                 touched = True
         if touched:
+            _stage_rollback(dp)
             dp.write_text(json.dumps(ddata, ensure_ascii=False, indent=2) + "\n",
                           encoding="utf-8", newline="\n")
             changed.add(dp)
@@ -470,6 +509,7 @@ def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[
         return
     if not d.exists() or _file_differs(s, d):
         d.parent.mkdir(parents=True, exist_ok=True)
+        _stage_rollback(d)
         shutil.copy2(s, d)
         changed.add(d)
 
@@ -610,21 +650,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_apply(args: argparse.Namespace) -> int:
-    state = read_state()
-    if not state:
-        raise SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
-    src = resolve_src(state)
-    assert_not_self(src)
-    decisions = getattr(args, "decisions", None) or {}
-    changed: set[Path] = set()
-    blocked = prompt_substrings(state)
-
+def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str]) -> None:
+    """apply 的写盘主体；OSError 由调用方回滚（F16）。"""
     for rel in HARD_SYNC_DIRS:
         s, d = src / rel, CONSUMER / rel
         if s.exists():
             sync_dir(s, d, changed)
         elif d.exists():
+            _stage_rollback(d)
             shutil.rmtree(d)
             changed.add(d)
     for rel in HARD_SYNC_FILES:
@@ -652,6 +685,23 @@ def cmd_apply(args: argparse.Namespace) -> int:
             continue
         decision = decisions.get(unit)
         _apply_shared_unit(unit, decision, src, changed)
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    state = read_state()
+    if not state:
+        raise SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
+    src = resolve_src(state)
+    assert_not_self(src)
+    decisions = getattr(args, "decisions", None) or {}
+    changed: set[Path] = set()
+    blocked = prompt_substrings(state)
+
+    try:
+        _apply_sync_write(src, decisions, changed, blocked)
+    except OSError as error:
+        _rollback_changes()
+        raise SyncError(f"apply 中途失败，已回滚已覆盖文件（{error}）") from error
 
     if not args.skip_tests:
         if not _run_tests(CONSUMER):

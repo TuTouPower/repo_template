@@ -8,22 +8,33 @@ from pathlib import Path
 import repo_task.context as ctx
 
 
-def _git(args: list, *, root: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(root or ctx.REPO_ROOT), *args],
-        capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-        timeout=60,
-    )
+def _git(
+    args: list, *, root: Path | None = None, timeout: int = 60
+) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root or ctx.REPO_ROOT), *args],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired 非 OSError，CLI 捕不到会裸 traceback；统一包装（F22）
+        raise ctx.TaskDataError(f"git {' '.join(args)} 超时（{timeout}s）") from error
 
 
-def _git_bytes(args: list[str], *, root: Path | None = None) -> subprocess.CompletedProcess:
+def _git_bytes(
+    args: list[str], *, root: Path | None = None, timeout: int = 60
+) -> subprocess.CompletedProcess:
     """Run Git without text decoding for binary-safe snapshots and diffs."""
-    return subprocess.run(
-        ["git", "-C", str(root or ctx.REPO_ROOT), *args],
-        capture_output=True,
-        timeout=60,
-    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root or ctx.REPO_ROOT), *args],
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ctx.TaskDataError(f"git {' '.join(args)} 超时（{timeout}s）") from error
 
 def default_branch() -> str:
     """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → main。"""

@@ -225,25 +225,12 @@ def cmd_start(args):
         rollback_error = rollback_start(
             base_sha=base_sha, branch=branch, worktree_rel=worktree_rel
         )
-        # reserve 先于 start 是受支持顺序；start 失败会留下孤儿 running identity，
-        # 提示清理路径避免阻塞该 tid 后续执行（RT-006）
-        record = current_attempt_record(args.tid, ledger_read())
-        orphan_hint = ""
-        if record and record["state"] in ("reserved", "running"):
-            orphan_hint = (
-                f"；已存在 attempt={record['attempt']} "
-                f"execution_id={record['execution_id']} 的 running identity，"
-                "若不再继续可用 task.py attempt terminal 清理"
-            )
         if rollback_error:
             sys.exit(
                 f"start 失败（{error}）；自动补偿不完整：{rollback_error}。"
                 f"请检查 {worktree_rel}、分支 {branch!r} 与主仓 HEAD 后手动恢复"
             )
-        sys.exit(
-            f"start 失败（{error}）；已清理本次新建分支与 worktree，"
-            f"主仓未修改{orphan_hint}"
-        )
+        sys.exit(f"start 失败（{error}）；已清理本次新建分支与 worktree，主仓未修改")
     print(
         f"{args.tid} status=active branch={branch} base={base_branch} "
         f"diff_anchor={fm['diff_anchor']}"
@@ -371,7 +358,7 @@ def _commit_index() -> None:
     if _git(["diff", "--cached", "--quiet", "--", *paths]).returncode == 0:
         print("index 无变化，跳过维护 commit")
         return
-    result = _git(["commit", "-m", "chore(task): rebuild task indexes", "--", *paths])
+    result = _git(["commit", "-m", "chore(task): rebuild task indexes", "--", *paths], timeout=120)
     if result.returncode != 0:
         raise ctx.TaskDataError(f"index commit 失败：{result.stderr.strip()}")
     print(f"index 维护 commit：{_get_head_short()}")
@@ -395,9 +382,13 @@ def _ensure_primary_merge_ready() -> None:
 def _delete_branches(branches: list[str]) -> None:
     base = default_branch()
     for branch in branches:
+        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode != 0:
+            continue  # 分支已删（幂等重入）
         if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"]).returncode != 0:
             raise ctx.TaskDataError(f"分支 {branch!r} 未完全合入 {base}；保留分支")
     for branch in branches:
+        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode != 0:
+            continue
         result = _git(["branch", "-d", "--", branch])
         if result.returncode != 0:
             raise ctx.TaskDataError(f"删除分支 {branch!r} 失败：{result.stderr.strip()}；已保留")
@@ -427,8 +418,47 @@ def _find_merge_commit(tid: str, branch_sha: str) -> str | None:
     return candidate
 
 
+def _lock_fh(fh, *, unlock: bool) -> None:
+    """跨平台文件锁（Linux fcntl / Windows msvcrt）。"""
+    fh.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        if unlock:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_UN if unlock else fcntl.LOCK_EX)
+
+
+def _chain_locked(func):
+    """single integrate 与 integrate-chain 全程持同一持久锁，互斥主干写。
+
+    锁文件位于 git 公共目录 repo-task/integrate-chain.lock；single integrate 也
+    获取该锁，杜绝并发 single/chain 在事务窗口内顶掉主干 HEAD（RT-004）。
+    O_EXCL/.tmp 只挡「同时创建」；锁保证同一时刻只有一个会话操作 transaction。
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        lock_path = _integration_tx_path().parent / "integrate-chain.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_fh:
+            if lock_fh.tell() == 0:
+                lock_fh.write("\0")
+                lock_fh.flush()
+            _lock_fh(lock_fh, unlock=False)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _lock_fh(lock_fh, unlock=True)
+
+    return wrapper
+
+
+@_chain_locked
 def cmd_integrate(args):
-    """Integrate exactly one terminal attempt."""
+    """Integrate exactly one terminal attempt；持久 transaction + 主干写锁（RT-003/RT-004）。"""
     require_primary_worktree()
     if not ctx.TID_RE.fullmatch(args.tid):
         sys.exit(f"tid 非法：{args.tid!r}")
@@ -447,6 +477,9 @@ def cmd_integrate(args):
             f"先 cleanup-worktree {args.tid} --attempt {args.attempt} "
             f"--execution-id {args.execution_id}"
         )
+    tx_path = _single_tx_path(args.tid)
+
+    # --continue 独立处理：不要求 tx 存在（手动 merge 冲突恢复也能走）
     if args.continue_merge:
         if not _merge_in_progress():
             sys.exit("当前无进行中的 merge；--continue 只用于冲突解决后继续")
@@ -459,50 +492,225 @@ def cmd_integrate(args):
         merge_head = _git(["rev-parse", "MERGE_HEAD"])
         if merge_head.returncode != 0 or merge_head.stdout.strip() != sha:
             sys.exit("进行中的 MERGE_HEAD 与 exact task branch sha 不符；拒绝 --continue")
-        result = _git(["commit", "--no-edit"])
+        result = _git(["commit", "--no-edit"], timeout=120)
         if result.returncode != 0:
             sys.exit(f"merge commit 失败：{result.stderr.strip()}")
         merge_sha = _get_head()
         print(f"merge 已完成：{_get_head_short()}")
-    else:
+        if tx_path.exists():
+            try:
+                payload = _read_single_tx(args.tid)
+            except ctx.TaskDataError as error:
+                sys.exit(str(error))
+            payload = _update_single_tx(payload, "merged", merge_sha=merge_sha)
+        else:
+            payload = {
+                "version": 1, "phase": "merged",
+                "tid": args.tid, "attempt": record["attempt"],
+                "execution_id": record["execution_id"],
+                "branch": branch, "branch_sha": sha,
+                "base_head": _get_head(), "merge_sha": merge_sha, "index_sha": None,
+            }
+        _finalize_single(payload, args, branch)
+        return
+
+    # 崩溃恢复：transaction 已存在
+    if tx_path.exists():
         try:
-            _ensure_primary_merge_ready()
+            payload = _read_single_tx(args.tid)
         except ctx.TaskDataError as error:
             sys.exit(str(error))
-        if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
-            merge_sha = _find_merge_commit(args.tid, sha)
-            if merge_sha is None:
-                sys.exit(
-                    f"{branch} 已合入 {default_branch()}，但找不到对应 merge({args.tid}) "
-                    "commit，或当前 HEAD 并非该分支的真实 merge 结果；"
-                    "拒绝把当前 HEAD 记为 merge_sha，请人工核对后处理"
-                )
-            print(f"{branch} 已合入 {default_branch()}（merge={merge_sha[:12]}），跳过 merge")
-        else:
-            result = _git(["merge", "--no-ff", "-m", f"merge({args.tid}): {branch}", branch])
-            if result.returncode != 0:
-                conflicted = _conflicted_paths()
-                if conflicted:
-                    print(f"merge 冲突，共 {len(conflicted)} 个文件：", file=sys.stderr)
-                    for path in conflicted:
-                        print(f"  {path}", file=sys.stderr)
-                    sys.exit(
-                        f"解决后 git add，再执行 integrate {args.tid} --attempt {args.attempt} "
-                        f"--execution-id {args.execution_id} --continue"
-                    )
-                sys.exit(f"merge 失败：{result.stderr.strip()}")
-            merge_sha = _get_head()
-            print(f"merge 完成：{_get_head_short()}")
+        try:
+            payload = _resume_single_tx(payload, branch=branch, sha=sha)
+        except ctx.TaskDataError as error:
+            sys.exit(str(error))
+        _cleanup_single_branch(payload, args, branch)
+        return
+
+    # 全新 integrate
     try:
-        _commit_index()
-        if record["state"] != "integrated":
-            append_integrated(args.tid, args.attempt, args.execution_id, merge_sha)
-        if args.keep_branch:
-            print(f"分支 {branch!r} 按要求保留")
-        else:
-            _delete_branches([branch])
+        _ensure_primary_merge_ready()
     except ctx.TaskDataError as error:
         sys.exit(str(error))
+    if _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0:
+        # 分支已合入（手动预 merge 或历史遗留）：解析真实 merge commit 作锚点
+        merge_sha = _find_merge_commit(args.tid, sha)
+        if merge_sha is None:
+            sys.exit(
+                f"{branch} 已合入 {default_branch()}，但找不到对应 merge({args.tid}) "
+                "commit，或当前 HEAD 并非该分支的真实 merge 结果；"
+                "拒绝把当前 HEAD 记为 merge_sha，请人工核对后处理"
+            )
+        print(f"{branch} 已合入 {default_branch()}（merge={merge_sha[:12]}），跳过 merge")
+        if record["state"] == "integrated":
+            # 已 integrated 的幂等重入：只做分支清理，不重复 append（RT-003 收尾锚点已确认）
+            if not args.keep_branch:
+                try:
+                    _delete_branches([branch])
+                except ctx.TaskDataError as error:
+                    sys.exit(str(error))
+            return
+        payload = {
+            "version": 1, "phase": "merged",
+            "tid": args.tid, "attempt": record["attempt"],
+            "execution_id": record["execution_id"],
+            "branch": branch, "branch_sha": sha,
+            "base_head": _get_head(), "merge_sha": merge_sha, "index_sha": None,
+        }
+        _finalize_single(payload, args, branch)
+        return
+
+    payload = {
+        "version": 1, "phase": "prepared",
+        "tid": args.tid, "attempt": record["attempt"],
+        "execution_id": record["execution_id"],
+        "branch": branch, "branch_sha": sha,
+        "base_head": _get_head(), "merge_sha": None, "index_sha": None,
+    }
+    _write_single_tx(payload)
+    result = _git(
+        ["merge", "--no-ff", "-m", f"merge({args.tid}): {branch}", branch], timeout=120
+    )
+    if result.returncode != 0:
+        conflicted = _conflicted_paths()
+        if conflicted:
+            print(f"merge 冲突，共 {len(conflicted)} 个文件：", file=sys.stderr)
+            for path in conflicted:
+                print(f"  {path}", file=sys.stderr)
+            sys.exit(
+                f"解决后 git add，再执行 integrate {args.tid} --attempt {args.attempt} "
+                f"--execution-id {args.execution_id} --continue；tx={tx_path}"
+            )
+        if _merge_in_progress():
+            sys.exit(
+                f"merge 失败（{result.stderr.strip()}）且存在 MERGE_HEAD；"
+                f"修复后 --continue；tx={tx_path}"
+            )
+        sys.exit(
+            f"merge 失败（{result.stderr.strip()}）；tx 保留于 {tx_path}，修复后 --continue"
+        )
+    payload = _update_single_tx(payload, "merged", merge_sha=_get_head())
+    print(f"merge 完成：{_get_head_short()}")
+    _finalize_single(payload, args, branch)
+
+
+def _single_tx_path(tid: str) -> Path:
+    return _integration_tx_path().parent / f"integrate-{tid}.json"
+
+
+def _write_single_tx(payload: dict) -> Path:
+    return _write_tx_at(_single_tx_path(payload["tid"]), payload)
+
+
+def _read_single_tx(tid: str) -> dict:
+    path = _single_tx_path(tid)
+    if not path.is_file():
+        raise ctx.TaskDataError(f"不存在 integrate transaction（{tid}）；禁止恢复其他 merge")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ctx.TaskDataError(f"integrate transaction 无法读取：{error}") from None
+    if not isinstance(payload, dict) or payload.get("tid") != tid:
+        raise ctx.TaskDataError("integrate transaction 格式非法")
+    return payload
+
+
+def _update_single_tx(payload: dict, phase: str, **fields) -> dict:
+    updated = {**payload, **fields, "phase": phase}
+    _write_single_tx(updated)
+    return updated
+
+
+def _record_single_index(payload: dict) -> dict:
+    merge_sha = payload.get("merge_sha")
+    if not isinstance(merge_sha, str) or not merge_sha:
+        raise ctx.TaskDataError("merged transaction 缺 merge_sha")
+    head = _get_head()
+    index_skipped = False
+    if head == merge_sha:
+        _commit_index()
+        head = _get_head()
+        index_skipped = head == merge_sha
+    elif _git(["rev-parse", "HEAD^1"]).stdout.strip() != merge_sha:
+        raise ctx.TaskDataError("当前 HEAD 既非 merge_sha，也非其紧邻 index 维护 commit")
+    else:
+        _require_index_commit("HEAD")
+    return _update_single_tx(payload, "indexed", index_sha=head, index_skipped=index_skipped)
+
+
+def _record_single_integrated(payload: dict) -> None:
+    index_sha = payload.get("index_sha")
+    if _get_head() != index_sha:
+        raise ctx.TaskDataError("indexed transaction 的 index_sha 与当前 HEAD 不符")
+    append_integrated(
+        payload["tid"], payload["attempt"], payload["execution_id"], payload["merge_sha"]
+    )
+
+
+def _cleanup_single_branch(payload: dict, args, branch: str) -> None:
+    if args.keep_branch:
+        print(f"分支 {branch!r} 按要求保留")
+    else:
+        _delete_branches([branch])
+
+
+def _finalize_single(payload: dict, args, branch: str) -> None:
+    """事务收尾：index 阶段 → integrated → 删分支 → 删 tx。失败保留 tx 供重入。"""
+    tx_path = _single_tx_path(payload["tid"])
+    try:
+        payload = _record_single_index(payload)
+        _record_single_integrated(payload)
+        _cleanup_single_branch(payload, args, branch)
+        tx_path.unlink(missing_ok=True)
+    except ctx.TaskDataError as error:
+        sys.exit(str(error))
+
+
+def _resume_single_tx(payload: dict, *, branch: str, sha: str) -> dict:
+    """single integrate 崩溃重入：按 git 实际状态推进 tx 到收尾。
+
+    只有 phase=prepared/merged/indexed 且校验通过才推进；无法判定时拒绝，
+    防把被污染的 HEAD 记为 merge_sha（RT-003）。
+    """
+    tx_path = _single_tx_path(payload["tid"])
+    if payload["phase"] == "prepared":
+        head = _get_head()
+        if _merge_in_progress():
+            raise ctx.TaskDataError(
+                f"存在进行中的 merge（MERGE_HEAD）；"
+                f"先执行 integrate --continue 完成合并（tx={tx_path}）"
+            )
+        first = _git(["rev-parse", "HEAD^1"])
+        second = _git(["rev-parse", "HEAD^2"])
+        if (
+            first.returncode == 0 and second.returncode == 0
+            and first.stdout.strip() == payload["base_head"]
+            and second.stdout.strip() == sha
+        ):
+            payload = _update_single_tx(payload, "merged", merge_sha=head)
+        elif head == payload["base_head"]:
+            # merge 未发生：重新执行 merge
+            result = _git(
+                ["merge", "--no-ff", "-m", f"merge({payload['tid']}): {branch}", branch],
+                timeout=120,
+            )
+            if result.returncode != 0:
+                raise ctx.TaskDataError(
+                    f"崩溃恢复 merge 失败：{result.stderr.strip()}；tx 保留于 {tx_path}"
+                )
+            payload = _update_single_tx(payload, "merged", merge_sha=_get_head())
+        else:
+            raise ctx.TaskDataError(
+                f"prepared transaction 无对应 merge 状态且 HEAD 被推进"
+                f"（base={payload['base_head'][:12]} head={head[:12]}）；"
+                "拒绝恢复，请人工处理并清理 tx"
+            )
+    if payload["phase"] == "merged":
+        payload = _record_single_index(payload)
+    if payload["phase"] == "indexed":
+        _record_single_integrated(payload)
+        tx_path.unlink(missing_ok=True)
+    return payload
 
 
 def _integration_tx_path() -> Path:
@@ -512,44 +720,7 @@ def _integration_tx_path() -> Path:
     return Path(result.stdout.strip()) / "repo-task" / "integrate-chain.json"
 
 
-def _lock_fh(fh, *, unlock: bool) -> None:
-    """跨平台文件锁（Linux fcntl / Windows msvcrt）。"""
-    fh.seek(0)
-    if os.name == "nt":
-        import msvcrt
-        if unlock:
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fh, fcntl.LOCK_UN if unlock else fcntl.LOCK_EX)
-
-
-def _chain_locked(func):
-    """integrate-chain 全程持独立持久锁，覆盖预检、transaction 创建、merge 与 phase 更新。
-
-    O_EXCL/.tmp 只挡「同时创建」；两进程先后过 exists() 检查后仍会互相覆盖
-    transaction。锁保证同一时刻只有一个会话操作 chain transaction。
-    """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        lock_path = _integration_tx_path().parent / "integrate-chain.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+", encoding="utf-8") as lock_fh:
-            if lock_fh.tell() == 0:
-                lock_fh.write("\0")
-                lock_fh.flush()
-            _lock_fh(lock_fh, unlock=False)
-            try:
-                return func(*args, **kwargs)
-            finally:
-                _lock_fh(lock_fh, unlock=True)
-    return wrapper
-
-
-def _write_chain_tx(payload: dict) -> Path:
-    path = _integration_tx_path()
+def _write_tx_at(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     # 持久锁已挡并发；O_EXCL 只防御中断留下的 .tmp 残留（正常 replace 后消失）
@@ -557,12 +728,16 @@ def _write_chain_tx(payload: dict) -> Path:
         fd = os.open(str(temporary), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         raise ctx.TaskDataError(
-            "integrate-chain .tmp 残留：检查并清理该文件后重试"
+            "integrate .tmp 残留：检查并清理该文件后重试"
         ) from None
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     os.replace(temporary, path)
     return path
+
+
+def _write_chain_tx(payload: dict) -> Path:
+    return _write_tx_at(_integration_tx_path(), payload)
 
 
 def _read_chain_tx() -> tuple[Path, dict]:
@@ -723,7 +898,7 @@ def _record_prepared_merge(payload: dict) -> dict:
             raise ctx.TaskDataError(
                 f"仍有 {len(conflicted)} 个文件未解决冲突：{', '.join(conflicted[:5])}"
             )
-        result = _git(["commit", "--no-edit"])
+        result = _git(["commit", "--no-edit"], timeout=120)
         if result.returncode != 0:
             raise ctx.TaskDataError(f"chain merge commit 失败：{result.stderr.strip()}")
         return _update_chain_tx(payload, "merged", merge_sha=_get_head())
@@ -900,7 +1075,7 @@ def cmd_integrate_chain(args):
     result = _git([
         "merge", "--no-ff", "-m", f"merge-chain({args.tail_tid}): {tail['branch']}",
         tail["branch"],
-    ])
+    ], timeout=120)
     if result.returncode != 0:
         conflicted = _conflicted_paths()
         if conflicted:

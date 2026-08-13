@@ -189,17 +189,35 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
     if executor not in ctx.ATTEMPT_EXECUTORS:
         raise ctx.TaskDataError("executor 必须是 inline")
 
-    # 领域层门禁：task 目录存在时校验 tid 存在且未归档（done/dropped 不可再执行）。
-    # 目录不存在（库调用/测试场景）时跳过，CLI 层仍保留主仓限定。
+    # 领域层门禁：task 目录存在时校验 tid 存在、未归档，且必须已 start
+    # （effective active + worktree 已登记）。防孤儿 running identity（RT-006）：
+    # reserve 在 start 前执行会在 start 失败时留下无 worktree 的 running 记录，
+    # 阻塞该 tid 后续执行。effective 状态（登记 worktree / 未合并分支 / main）为
+    # active 即表示 start 已发生且 worktree 已登记——start 只写 worktree 副本，
+    # main 视角恒为 backlog，不能用 scan_tasks()。
     if ctx.TASKS_DIR.is_dir():
-        from .store import scan_tasks
-        known = {task["tid"]: task["status"] for task in scan_tasks()}
-        if tid not in known:
+        from .store import discover_effective_tasks
+        task = discover_effective_tasks().get(tid)
+        if task is None:
             raise ctx.TaskDataError(f"{tid} 不存在于 task 目录；拒绝 reserve 孤立 attempt")
-        if known[tid] in ctx.ARCHIVED_STATUSES:
+        status = task.get("status", "")
+        if status in ctx.ARCHIVED_STATUSES:
             raise ctx.TaskDataError(
-                f"{tid} 已归档（{known[tid]}）；拒绝 reserve 新 attempt，"
+                f"{tid} 已归档（{status}）；拒绝 reserve 新 attempt，"
                 "需先 rewind 或显式恢复"
+            )
+        if status != "active":
+            raise ctx.TaskDataError(
+                f"{tid} 有效状态为 {status}；reserve 须在 start 之后"
+                "（active + worktree 已登记）"
+            )
+        # worktree 必须真实登记：effective active 可能来自手改 main front matter
+        # （无 worktree），那种情况 reserve 会产生孤儿 running identity，同样拒绝
+        from .git_ops import worktree_paths
+        wt_rel = ctx.worktree_rel_path(tid)
+        if str((ctx.REPO_ROOT / wt_rel).resolve()) not in worktree_paths():
+            raise ctx.TaskDataError(
+                f"{tid} worktree {wt_rel} 未登记；reserve 须在 start 之后"
             )
 
     def build(attempt: int, events: list[dict]) -> dict:

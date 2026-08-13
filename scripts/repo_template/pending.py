@@ -170,12 +170,13 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
         for path, target, note in actions:
             sys.stderr.write(f"  {_rel(path)} → {_rel(target)}/  {note}\n")
         return
-    # 批量迁移整体持 id_lock：防并发 cmd_new 扫描取号时观察到移动中间态（RT-010）
+    migrated: list[tuple[Path, Path]] = []
     try:
         with id_lock(REPO_ROOT):
             for index, (path, target, note) in enumerate(actions, 1):
                 try:
                     destination = move_entry(path, target)
+                    migrated.append((path, destination))
                     if note.startswith("处理"):
                         set_field(destination, HANDLE_RE, f"- {note}")
                     elif note.startswith("暂搁"):
@@ -199,10 +200,18 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                             raise IdScanError(f"git add 失败：{_rel(destination)}")
                     sys.stderr.write(f"已迁移：{_rel(destination)}\n")
                 except IdScanError as error:
-                    # 报告进度：已完成 N 条、失败于第 M 条（F19）
+                    # 失败时回滚已成功的 git mv，避免部分迁移残留（F19/RT-010）
+                    for src, dst in reversed(migrated):
+                        try:
+                            if _git(["ls-files", "--error-unmatch", _rel(dst)]).returncode == 0:
+                                _git(["mv", _rel(dst), _rel(src)])
+                            else:
+                                dst.rename(src)
+                        except Exception:
+                            pass
                     sys.stderr.write(
-                        f"已迁移 {index - 1} 条，失败于第 {index} 条"
-                        f"（{_rel(path)}）：{error}\n"
+                        f"迁移失败于第 {index} 条（{_rel(path)}）：{error}；"
+                        f"已回滚 {len(migrated)} 条已迁移条目\n"
                     )
                     raise
     except IdScanError:

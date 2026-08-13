@@ -364,8 +364,8 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
 
 
 def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo)
+    identity = _reserve(git_repo, "t001")
     _terminal(git_repo, "t001", identity)
     # 未 finish 的 active worktree：task 终态校验先于 dirty 校验拒绝
     not_done = _task_cli(
@@ -405,8 +405,8 @@ def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
 
 
 def test_cleanup_worktree_rejects_wrong_registered_branch(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo)
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
@@ -515,8 +515,8 @@ def test_block_resume_preserves_worktree_notes_and_chain_can_continue(git_repo):
 
 
 def test_blocked_task_can_be_dropped_committed_and_cleaned(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo)
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     blocked = _task_cli(worktree, "block", "t001", "--reason", "infra")
     dropped = _task_cli(worktree, "drop", "t001", "--reason", "用户移出批次")
@@ -665,8 +665,8 @@ def test_parallel_tasks_integrate_independently_in_completion_order(git_repo):
 
 
 def test_integrate_rejects_unfinished_task(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
+    identity = _reserve(git_repo, "t001")
     _terminal(git_repo, "t001", identity)
 
     result = _task_cli(
@@ -678,8 +678,8 @@ def test_integrate_rejects_unfinished_task(git_repo):
 
 
 def test_integrate_rejects_registered_worktree(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
@@ -893,8 +893,8 @@ def test_chain_integrate_rejects_mid_chain_undone(git_repo):
     """链上有未完成的 task 时拒绝合并。"""
     _start(git_repo, "t001")
     _, first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    _reserve(git_repo, "t002")
     _start(git_repo, "t002", base=first_branch)  # t002 active 未 finish
+    _reserve(git_repo, "t002")
 
     result = _task_cli(git_repo, "integrate-chain", "t002")
 
@@ -906,8 +906,8 @@ def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
     """链上有 task 仍挂 worktree 时拒绝合并。"""
     _start(git_repo, "t001")
     _, first_branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    identity = _reserve(git_repo, "t002")
     _start(git_repo, "t002", base=first_branch)
+    identity = _reserve(git_repo, "t002")
     # t002 finish + handoff + commit + terminal，但不 cleanup-worktree
     worktree = _worktree_path(git_repo, "t002")
     assert _task_cli(worktree, "finish", "t002").returncode == 0
@@ -924,8 +924,8 @@ def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
 
 
 def test_integrate_requires_primary_worktree(git_repo):
-    identity = _reserve(git_repo, "t001")
     _start(git_repo, "t001")
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
 
     result = _task_cli(
@@ -1157,8 +1157,8 @@ def test_rewind_rejects_foreign_registered_branch(git_repo):
 
 def test_cleanup_worktree_rejects_active_even_when_clean(git_repo):
     """T2：active task 有 checkpoint commit 使 worktree clean 时，cleanup 仍拒绝。"""
-    identity = _reserve(git_repo, "t001")
     _start(git_repo)
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "checkpoint")
@@ -1176,8 +1176,8 @@ def test_cleanup_worktree_rejects_active_even_when_clean(git_repo):
 
 def test_cleanup_worktree_rejects_prefix_collision_branch(git_repo):
     """cleanup 拒绝 t001_scratch 这类仅共享前缀的非 task 分支。"""
-    identity = _reserve(git_repo, "t001")
     _start(git_repo)
+    identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
@@ -1797,18 +1797,24 @@ def test_start_only_writes_topology_event_and_does_not_create_attempt(git_repo):
     assert "execution_id" not in events[0]
 
 
-def test_attempt_reserve_and_start_are_separate_events(git_repo):
+def test_attempt_reserve_requires_start(git_repo):
+    """RT-006：reserve 须在 start 之后（active + worktree 已登记）。
+
+    原 test_attempt_reserve_and_start_are_separate_events 固化 reserve-before-start；
+    该顺序会在 start 失败时留下无 worktree 的孤儿 running identity，审查判定为 bug，
+    改写为门禁语义：reserve 在 start 前被拒，start 后成功。
+    """
+    reserved = _task_cli(
+        git_repo, "attempt", "reserve", "t001", "--executor", "inline", "--model", "opus"
+    )
+    assert reserved.returncode != 0
+    assert "reserve 须在 start 之后" in reserved.stderr
+    started = _task_cli(git_repo, "start", "t001")
+    assert started.returncode == 0, started.stderr
     reserved = _task_cli(
         git_repo, "attempt", "reserve", "t001", "--executor", "inline", "--model", "opus"
     )
     assert reserved.returncode == 0, reserved.stderr
-    identity = json.loads(reserved.stdout)
-    started = _task_cli(git_repo, "start", "t001")
-    assert started.returncode == 0, started.stderr
-    events = _ledger(git_repo)
-    assert [event["event"] for event in events] == ["attempt_reserved", "start"]
-    assert events[0]["execution_id"] == identity["execution_id"]
-    assert "execution_id" not in events[1]
 
 
 def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):

@@ -108,9 +108,9 @@ def _identity_args(identity):
 
 def _prepare_done(repo, tid, slug):
     """走完整执行流至 terminal completed + report done（不 cleanup）。"""
-    identity = _reserve(repo, tid)
     started = _cli(repo, "start", tid)
     assert started.returncode == 0, started.stderr
+    identity = _reserve(repo, tid)
     worktree = _worktree(repo, tid)
     finished = _cli(worktree, "finish", tid)
     assert finished.returncode == 0, finished.stderr
@@ -204,6 +204,7 @@ def test_goal_check_incomplete_then_complete(git_repo):
 
 def test_goal_check_stopped_on_blocked(git_repo):
     assert _cli(git_repo, "goal").returncode == 0
+    assert _cli(git_repo, "start", "t001").returncode == 0
     identity = _reserve(git_repo, "t001")
     terminal = _cli(
         git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
@@ -222,6 +223,7 @@ def test_goal_check_stopped_on_blocked(git_repo):
 
 def test_goal_check_running_counts_incomplete(git_repo):
     assert _cli(git_repo, "goal").returncode == 0
+    assert _cli(git_repo, "start", "t001").returncode == 0
     _reserve(git_repo, "t001")
     result = _cli(git_repo, "goal-check")
     assert result.returncode == 2
@@ -242,6 +244,7 @@ def test_goal_check_dropped_member_stops_instead_of_false_complete(git_repo):
 
 def test_goal_check_stopped_on_failed(git_repo):
     assert _cli(git_repo, "goal").returncode == 0
+    assert _cli(git_repo, "start", "t001").returncode == 0
     identity = _reserve(git_repo, "t001")
     terminal = _cli(
         git_repo, "attempt", "terminal", "t001", *_identity_args(identity),

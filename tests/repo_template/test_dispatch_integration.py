@@ -148,12 +148,12 @@ def _prepare_done(
     repo, tid, slug, *, base=None, handoff_overrides=None, mutate=None,
     terminal=True,
 ):
-    identity = _reserve(repo, tid)
     start_args = ["start", tid]
     if base:
         start_args += ["--base", base]
     started = _task_cli(repo, *start_args)
     assert started.returncode == 0, started.stderr
+    identity = _reserve(repo, tid)
     worktree = _worktree(repo, tid)
     if mutate:
         mutate(worktree)
@@ -226,9 +226,9 @@ def test_verify_ready_with_valid_handoff(git_repo):
 
 
 def test_verify_incomplete_when_tip_not_terminal(git_repo):
-    identity = _reserve(git_repo, "t001")
     started = _task_cli(git_repo, "start", "t001")
     assert started.returncode == 0, started.stderr
+    identity = _reserve(git_repo, "t001")
 
     verdict, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
@@ -239,11 +239,9 @@ def test_verify_incomplete_when_tip_not_terminal(git_repo):
 
 
 def test_verify_incomplete_without_branch(git_repo):
-    identity = _reserve(git_repo, "t001")
-
-    verdict, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
-    )
+    # verify_integrate_ready 只查分支/handoff/spec，不查 ledger；
+    # 直接传假 identity 验证「无本地分支 → incomplete」，无需真实 reserve（RT-006 门禁要求 start 后 reserve）
+    verdict, detail = monitoring.verify_integrate_ready("t001", 1, "fake-execution")
 
     assert verdict == "incomplete"
     assert "无本地 task 分支" in detail
@@ -732,3 +730,84 @@ def test_legacy_cli_paths_fail_explicitly(git_repo):
     no_identity = _task_cli(git_repo, "integrate", "t001")
     assert no_identity.returncode != 0
     assert "--attempt" in no_identity.stderr and "--execution-id" in no_identity.stderr
+
+
+# --------------------------------------------------------------------------
+# review 要求的回归：F03 fail-closed / RT-002 untracked 指纹 / RT-005 index 归属
+# / RT-004 锁装饰 / RT-009 并发取号
+# --------------------------------------------------------------------------
+
+
+def test_porcelain_entries_fails_closed_on_git_error(git_repo, monkeypatch):
+    """F03：git status 失败必须抛 TaskDataError，不得返回空集合被误判「干净」。"""
+    from repo_task import git_ops
+    from repo_task.context import TaskDataError
+
+    class Boom:
+        returncode = 1
+        stdout = ""
+        stderr = "fatal: test error"
+
+    monkeypatch.setattr(git_ops, "_git", lambda *a, **k: Boom())
+    with pytest.raises(TaskDataError, match="git status"):
+        git_ops.porcelain_entries()
+    with pytest.raises(TaskDataError, match="git status"):
+        git_ops.tracked_dirty_entries()
+
+
+def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
+    """RT-002：未跟踪文件（未 git add -N）加入后 scope 指纹必须变，防静默绕过 review 门禁。"""
+    import check_review_status as crs
+
+    monkeypatch.setattr(crs, "REPO_ROOT", git_repo)
+    anchor = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    task_dir = git_repo / "docs" / "tasks" / "t001_alpha"
+    before = crs.current_scope_fingerprint(task_dir, anchor)
+    assert before is not None
+    (git_repo / "src").mkdir(parents=True, exist_ok=True)
+    (git_repo / "src" / "new_impl.py").write_text("x = 1\n", encoding="utf-8")
+    after = crs.current_scope_fingerprint(task_dir, anchor)
+    assert after is not None
+    assert after != before
+
+
+def test_require_index_commit_rejects_foreign_commit(git_repo):
+    """RT-005：紧邻 merge 的 commit 若非工具链 index commit，恢复必须拒绝认领。"""
+    from repo_task import integration
+
+    _git(git_repo, "commit", "--allow-empty", "-m", "chore: not index commit")
+    with pytest.raises(ctx.TaskDataError, match="非工具链 index 维护 commit"):
+        integration._require_index_commit("HEAD")
+
+
+def test_cmd_integrate_uses_chain_lock(git_repo):
+    """RT-004：cmd_integrate 必须被 _chain_locked 装饰，single 与 chain 互斥主干写。"""
+    from repo_task import integration
+
+    wrapped = getattr(integration.cmd_integrate, "__wrapped__", None)
+    assert wrapped is not None, "cmd_integrate 未被 _chain_locked 包装（single 不拿主干写锁）"
+    assert wrapped.__name__ == "cmd_integrate"
+
+
+def _concurrent_add(repo, slug):
+    """模块级（可 pickle）：并发跑 task add，供 ProcessPoolExecutor。"""
+    result = _task_cli(repo, "add", "--title", f"task {slug}", "--slug", slug)
+    return result.returncode, result.stdout
+
+
+def test_concurrent_add_allocates_unique_tids(git_repo):
+    """RT-009：并发 task add 取号互斥，不撞号。"""
+    import re
+    from concurrent.futures import ProcessPoolExecutor
+    from functools import partial
+
+    runner = partial(_concurrent_add, git_repo)
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(runner, ["conc_a", "conc_b"]))
+    assert all(rc == 0 for rc, _ in results), results
+    tids = []
+    for _, stdout in results:
+        match = re.search(r"added (t\d+) ", stdout)
+        assert match, stdout
+        tids.append(match.group(1))
+    assert len(set(tids)) == 2, f"并发 add 撞号：{tids}"

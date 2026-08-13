@@ -7,7 +7,7 @@ from pathlib import Path
 
 import repo_task.context as ctx
 
-from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter
+from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
 from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
@@ -325,9 +325,14 @@ def cmd_edit(args):
                     "（依赖已蕴含串行）；请只保留依赖，删除冲突边"
                 )
 
-    for peer_path, (peer_fm, peer_body) in peer_updates.items():
-        write_front_matter(peer_path, peer_fm, peer_body)
-    write_front_matter(path, fm, body)
+    # 先在内存完成全部新 front matter，再批量落盘（owner 最后），
+    # 避免 peer 反向边与 owner 顺序写中途崩溃留单向残留（RT-008）
+    files = [
+        (peer_path, peer_fm, peer_body)
+        for peer_path, (peer_fm, peer_body) in peer_updates.items()
+    ]
+    files.append((path, fm, body))
+    write_front_matter_many(files)
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
 
@@ -627,7 +632,13 @@ def cmd_rewind(args):
     append_note(fm, f"rewound: {transition}; {args.reason}")
     # 审计前移：audit 失败则状态未写（task.md 仍 active），rewind 可重试。
     # 若先写 front matter 再审计，失败后「状态已迁 + 审计缺失 + 不可重试」（F15）。
-    append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
+    try:
+        append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
+    except ctx.TaskDataError as error:
+        sys.exit(
+            f"rewind 审计写入失败（{error}）；task.md 未写仍为 {effective}。"
+            "worktree/分支可能已清理；直接重试 rewind 将正常完成"
+        )
     write_front_matter(path, fm, body)
     if target == "backlog":
         rebuild_index()

@@ -78,6 +78,28 @@ def write_front_matter(path: Path, fm: dict, body: str) -> None:
     temporary.write_text(text, encoding="utf-8", newline="\n")
     os.replace(temporary, path)
 
+def write_front_matter_many(files: list[tuple[Path, dict, str]]) -> None:
+    """批量写 front matter：先全部写 .tmp，再逐个 os.replace（调用方保证 owner 最后）。
+
+    单个 write_front_matter 已原子，但多个文件顺序写中途崩溃仍会单向残留
+    （edit 的 peer 反向边）；两阶段把「部分更新」窗口缩到 replace 循环（RT-008）。
+    """
+    staged: list[tuple[Path, Path]] = []
+    for path, fm, body in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(
+            dump_front_matter(fm) + "\n" + body, encoding="utf-8", newline="\n"
+        )
+        staged.append((path, temporary))
+    try:
+        for path, temporary in staged:
+            os.replace(temporary, path)
+    except OSError:
+        for _, temporary in staged:
+            temporary.unlink(missing_ok=True)
+        raise
+
 def tid_sort_key(tid: str) -> int:
     match = ctx.TID_RE.fullmatch(tid)
     if not match:
