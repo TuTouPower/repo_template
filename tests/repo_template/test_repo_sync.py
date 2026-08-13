@@ -338,3 +338,45 @@ def test_resolve_src_rejects_invalid(env):
     state["template_source"]["value"] = "/nonexistent/not_a_template"
     with pytest.raises(rs.SyncError):
         rs.resolve_src(state)
+
+
+# ---------------------------------------------------------------------------
+# F16：apply 中途失败回滚（目录删除 / skill 覆盖须恢复内容）
+# ---------------------------------------------------------------------------
+
+def test_dir_delete_rollback_restores_content(env):
+    """F16：目录删除入回滚栈，回滚后内容完整恢复（非空壳 mkdir）。"""
+    import shutil
+
+    consumer = env["consumer"]
+    target = consumer / "docs" / "ext" / "sub"
+    target.mkdir(parents=True)
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    rs._ROLLBACK.clear()
+    rs._stage_rollback(consumer / "docs" / "ext")
+    shutil.rmtree(consumer / "docs" / "ext")
+    assert not (consumer / "docs" / "ext").exists()
+    rs._rollback_changes()
+    assert (consumer / "docs" / "ext" / "sub" / "keep.txt").read_text(encoding="utf-8") == "keep"
+    rs._ROLLBACK.clear()
+    rs._cleanup_rollback()
+
+
+def test_skill_overwrite_rollback_restores_old_file(env):
+    """F16：sync_skill 覆盖 skill 文件须入回滚栈，回滚后旧内容恢复。"""
+    consumer = env["consumer"]
+    src = env["src"]
+    dst_skill = consumer / ".agents" / "skills" / "task-run"
+    src_skill = src / ".agents" / "skills" / "task-run"
+    dst_skill.mkdir(parents=True)
+    (dst_skill / "SKILL.md").write_text("OLD CONTENT\n", encoding="utf-8")
+    assert (src_skill / "SKILL.md").read_text(encoding="utf-8") != "OLD CONTENT\n"
+
+    changed: set[Path] = set()
+    rs._ROLLBACK.clear()
+    rs.sync_skill(src_skill, dst_skill, changed)
+    assert (dst_skill / "SKILL.md").read_text(encoding="utf-8").startswith("---")
+    rs._rollback_changes()
+    assert (dst_skill / "SKILL.md").read_text(encoding="utf-8") == "OLD CONTENT\n"
+    rs._ROLLBACK.clear()
+    rs._cleanup_rollback()

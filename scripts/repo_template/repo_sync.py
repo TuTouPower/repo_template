@@ -76,35 +76,59 @@ def _is_noise(name: str) -> bool:
     return name in NOISE_NAMES or name.endswith(".pyc")
 
 
-# apply 中途失败的回滚栈：记录被覆盖/删除目标旧内容，OSError 时恢复（F16）
-_ROLLBACK: list[tuple[Path, bytes | None, str]] = []
+# apply 中途失败的回滚栈：备份被覆盖/删除目标的旧内容到独立回滚目录，OSError 时恢复（F16）。
+# 备份放 .scratch/（gitignore、不在同步树内），避免 sync_dir 的删除 pass 把备份当漂移删掉。
+# _ROLLBACK_DIR 动态求值：CONSUMER 可能被测试/调用方 monkeypatch。
+_ROLLBACK: list[tuple[Path, Path | None]] = []  # (目标路径, 备份路径)；None = 原不存在
+
+
+def _rollback_dir() -> Path:
+    return CONSUMER / ".scratch" / "repo_sync_rollback"
 
 
 def _stage_rollback(path: Path) -> None:
-    """记录被覆盖/删除目标，供 apply 失败回滚。kind: file / dir / absent。"""
-    if path.is_dir() and not path.is_symlink():
-        _ROLLBACK.append((path, None, "dir"))
-    elif path.exists():
-        try:
-            _ROLLBACK.append((path, path.read_bytes(), "file"))
-        except OSError:
-            pass
+    """记录被覆盖/删除目标。文件/目录/软链复制到回滚目录（含相对路径），原样保留原路径。"""
+    if path.exists() or path.is_symlink():
+        rel = _rel(path)
+        backup = _rollback_dir() / rel
+        if path.is_dir() and not path.is_symlink():
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            if backup.exists():
+                shutil.rmtree(backup, ignore_errors=True)
+            shutil.copytree(path, backup)
+        else:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup, follow_symlinks=False)
+        _ROLLBACK.append((path, backup))
     else:
-        _ROLLBACK.append((path, None, "absent"))
+        _ROLLBACK.append((path, None))
 
 
 def _rollback_changes() -> None:
-    for path, old, kind in reversed(_ROLLBACK):
+    for path, backup in reversed(_ROLLBACK):
         try:
-            if kind == "dir":
-                path.mkdir(parents=True, exist_ok=True)
-            elif kind == "file":
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(old)
+            if backup is None:
+                # 原不存在：删除 apply 创建的
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
             else:
-                path.unlink(missing_ok=True)
+                # 移除 apply 写入的，再从备份恢复
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path.is_symlink() or path.exists():
+                    path.unlink(missing_ok=True)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                backup.replace(path)
         except OSError:
             pass
+
+
+def _cleanup_rollback() -> None:
+    rollback_dir = _rollback_dir()
+    if rollback_dir.exists():
+        shutil.rmtree(rollback_dir, ignore_errors=True)
 
 
 def _file_differs(a: Path, b: Path) -> bool:
@@ -245,6 +269,7 @@ def sync_skill(src_skill: Path, dst_skill: Path, changed: set[Path]) -> None:
             sync_dir(entry, target, changed)
         else:
             if not target.exists() or _file_differs(entry, target):
+                _stage_rollback(target)
                 shutil.copy2(entry, target)
                 changed.add(target)
 
@@ -706,6 +731,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if not args.skip_tests:
         if not _run_tests(CONSUMER):
             print("pytest tests/repo_template/ 失败，不推进 state", file=sys.stderr)
+            _cleanup_rollback()
             return 1
     else:
         print("跳过测试验证（--skip-tests）")
@@ -724,6 +750,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print("（无改动）")
     print(f"\nstate 推进：last_synced_commit={'已更新' if not dirty else 'SRC dirty，未推进'}, "
           f"last_synced_at={state['last_synced_at']}")
+    _cleanup_rollback()
     return 0
 
 
