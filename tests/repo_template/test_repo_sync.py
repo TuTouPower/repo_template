@@ -388,6 +388,82 @@ def test_resolve_src_rejects_invalid(env):
 
 
 # ---------------------------------------------------------------------------
+# install-hooks：core.hooksPath 幂等设置
+# 旧测试 test_install_hooks_overwrites_stale_path 已删：一律覆盖会摘掉
+# husky/lefthook；现语义见 refuses_foreign_path / force_overwrites。
+# ---------------------------------------------------------------------------
+
+def _ensure_hook(consumer: Path, *, executable: bool = True) -> Path:
+    hook = consumer / "scripts/repo_template/hooks/pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755 if executable else 0o644)
+    return hook
+
+
+def test_install_hooks_sets_and_idempotent(tmp_path, monkeypatch, capsys):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    _ensure_hook(consumer)
+    monkeypatch.setattr(rs, "CONSUMER", consumer)
+
+    assert rs.cmd_install_hooks(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert "已设为" in out
+    assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
+        == "scripts/repo_template/hooks"
+
+    # 幂等：已指向目标 → no-op
+    assert rs.cmd_install_hooks(Namespace()) == 0
+    assert "无需改动" in capsys.readouterr().out
+
+
+def test_install_hooks_refuses_foreign_path(tmp_path, monkeypatch, capsys):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    _git(consumer, "config", "core.hooksPath", ".git/hooks")
+    _ensure_hook(consumer)
+    monkeypatch.setattr(rs, "CONSUMER", consumer)
+
+    assert rs.cmd_install_hooks(Namespace()) == 1
+    err = capsys.readouterr().err
+    assert "--force" in err
+    assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
+        == ".git/hooks"
+
+
+def test_install_hooks_force_overwrites(tmp_path, monkeypatch, capsys):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    _git(consumer, "config", "core.hooksPath", ".git/hooks")
+    _ensure_hook(consumer)
+    monkeypatch.setattr(rs, "CONSUMER", consumer)
+
+    assert rs.cmd_install_hooks(Namespace(force=True)) == 0
+    assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
+        == "scripts/repo_template/hooks"
+
+
+def test_install_hooks_rejects_missing_or_nonexec(tmp_path, monkeypatch, capsys):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    monkeypatch.setattr(rs, "CONSUMER", consumer)
+
+    assert rs.cmd_install_hooks(Namespace()) == 1
+    assert "缺 hook 脚本" in capsys.readouterr().err
+
+    _ensure_hook(consumer, executable=False)
+    assert rs.cmd_install_hooks(Namespace()) == 1
+    assert "不可执行" in capsys.readouterr().err
+    assert _git(consumer, "config", "--get", "core.hooksPath", check=False).stdout.strip() \
+        == ""
+
+
+# ---------------------------------------------------------------------------
 # F16：apply 中途失败回滚（目录删除 / skill 覆盖须恢复内容）
 # ---------------------------------------------------------------------------
 

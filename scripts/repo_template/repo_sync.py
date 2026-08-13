@@ -19,6 +19,7 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 scripts/repo_template/repo_sync.py prompt add --text "..." [--tags a,b]
   python3 scripts/repo_template/repo_sync.py prompt revoke --id N
   python3 scripts/repo_template/repo_sync.py link-skills
+  python3 scripts/repo_template/repo_sync.py install-hooks [--force]
 
 本脚本只处理模板工具链与模板侧资产，不碰业务代码与项目状态。禁止自动
 commit——写盘与 state 更新完成后由 agent 走审批门禁。
@@ -843,6 +844,39 @@ def cmd_prep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_hooks(args: argparse.Namespace) -> int:
+    """幂等设置 core.hooksPath 指向 scripts/repo_template/hooks。
+
+    git 对相对路径按仓库根解析；hooks 脚本随 HARD_SYNC_DIRS 分发，
+    消费仓复制后只需跑一次本命令。已有其它 hooksPath 时拒绝，须 --force。
+    """
+    hooks_rel = "scripts/repo_template/hooks"
+    hook_script = CONSUMER / hooks_rel / "pre-commit"
+    if not hook_script.is_file():
+        print(f"错误: 缺 hook 脚本 {hooks_rel}/pre-commit", file=sys.stderr)
+        return 1
+    if not os.access(hook_script, os.X_OK):
+        print(f"错误: {hooks_rel}/pre-commit 不可执行", file=sys.stderr)
+        return 1
+    current = _git(CONSUMER, "config", "--get", "core.hooksPath").stdout.strip()
+    if current == hooks_rel:
+        print(f"core.hooksPath 已指向 {hooks_rel}，无需改动")
+        return 0
+    if current and not getattr(args, "force", False):
+        print(
+            f"错误: core.hooksPath 已是 {current}；"
+            f"覆盖为 {hooks_rel} 须加 --force",
+            file=sys.stderr,
+        )
+        return 1
+    result = _git(CONSUMER, "config", "core.hooksPath", hooks_rel)
+    if result.returncode != 0:
+        print(f"错误: 设置 core.hooksPath 失败：{result.stderr.strip()}", file=sys.stderr)
+        return 1
+    print(f"core.hooksPath 已设为 {hooks_rel}")
+    return 0
+
+
 def cmd_link_skills(args: argparse.Namespace) -> int:
     changed: set[Path] = set()
     reports = repair_symlinks(changed)
@@ -896,6 +930,12 @@ def build_parser() -> argparse.ArgumentParser:
     prompt.set_defaults(func=cmd_prompt)
 
     sub.add_parser("link-skills", help="校验并修复 .claude/skills 软链").set_defaults(func=cmd_link_skills)
+    hooks = sub.add_parser(
+        "install-hooks",
+        help="幂等设置 core.hooksPath 指向 scripts/repo_template/hooks（已有其它值须 --force）",
+    )
+    hooks.add_argument("--force", action="store_true", help="覆盖已有的 core.hooksPath")
+    hooks.set_defaults(func=cmd_install_hooks)
     return parser
 
 

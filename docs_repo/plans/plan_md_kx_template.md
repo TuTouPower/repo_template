@@ -86,7 +86,7 @@ A–E、建议切分都默认门禁已过。文中「新 compact」= 本节的 `
 - 不改 md_kx、不发版、不塞源码进模板。
 - 不格式化 `docs/archive/**`。
 - 本轮不改消费仓工作树，不改消费仓 CI。
-- 不上 pre-commit：模板没有这套工具链，强加等于给所有消费仓多一个运行时。
+- 不上 pre-commit：模板没有这套工具链，强加等于给所有消费仓多一个运行时。**已推翻（2026-08-13，用户要求）**：改为 git pre-commit hook（`scripts/repo_template/hooks/pre-commit`）+ `repo_sync.py install-hooks` 幂等启用 `core.hooksPath`。理由：md_kx 已是消费仓必备运行时（README 初始化步骤 6），hook 脚本随 `HARD_SYNC_DIRS` 版本控制分发，仅配置需一次安装命令。
 - 不在 toml 写 `exclude`（3.13 门槛）。
 - 不把本议题写入 `decision_log.md`：那是「两份以上复盘诊断过的议题」总账，本条是单次设计。
 
