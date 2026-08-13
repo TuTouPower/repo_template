@@ -24,8 +24,5 @@ docs/archive/reviews/review_*/_meta/
 # 并行调度账本，运行态不入库
 docs/runtime/
 
-# 模板仓不入库：消费项目本地同步状态（init 生成；各消费仓自行跟踪）
-.agents/skills/repo-template-sync/sync_state.json
-
 # CommandCode local runtime state
 .commandcode/
