@@ -15,6 +15,7 @@ from render_review_prompts import (
     render_review_prompts,
 )
 
+REAL_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "docs" / "reviews" / "prompts"
 REAL_VALIDATE_DIFF_ANCHOR = rrp.validate_diff_anchor
 
 
@@ -99,13 +100,14 @@ def test_extract_section_ignores_shorter_fence_inside_block():
 # --- apply_placeholders ---
 
 def test_apply_placeholders_substitutes_all_keys():
-    template = "{tid} {slug} {spec_path} {task_dir} {diff_anchor} {review_level} {contract_section} {context_section}"
+    template = "{tid} {slug} {spec_path} {task_dir_rel} {task_dir} {repo_root} {diff_anchor} {review_level} {contract_section} {context_section}"
     values = {
         "tid": "t001", "slug": "foo", "spec_path": "s.md",
-        "task_dir": "d", "diff_anchor": "abc",
+        "task_dir_rel": "d", "task_dir": "/abs/d", "repo_root": "/abs",
+        "diff_anchor": "abc",
         "review_level": "full", "contract_section": "C", "context_section": "X",
     }
-    assert apply_placeholders(template, values) == "t001 foo s.md d abc full C X"
+    assert apply_placeholders(template, values) == "t001 foo s.md d /abs/d /abs abc full C X"
 
 
 def test_apply_placeholders_leaves_unknown_braces():
@@ -356,3 +358,45 @@ def test_parse_front_matter_strips_inline_comment(tmp_path):
         encoding="utf-8",
     )
     assert parse_front_matter(p)["diff_anchor"] == "abc1234"
+
+
+# --- 真实模板锁（防落点回退为相对路径 / 假防线复活） ---
+
+def _render_real_templates(tmp_path, monkeypatch, level="full"):
+    """真实 prompt 模板渲染：task_dir 必须展开为绝对路径、repo_root 阻断校验就位。"""
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", REAL_TEMPLATES_DIR)
+    task_dir = _make_task_dir(tmp_path, level=level)
+    return render_review_prompts(task_dir), str(tmp_path.resolve())
+
+
+def test_real_templates_cwd_probe_and_anchored_git(tmp_path, monkeypatch):
+    """首步须用不带 -C 的 rev-parse 探测会话 cwd（去空白精确比对）；后续 git 一律 -C 带引号锚定，不依赖 cd。"""
+    out, root = _render_real_templates(tmp_path, monkeypatch)
+    for content in out.values():
+        # 首步：无 -C 探测 cwd（-C 指定路径后恒真，探测不到 cwd 错位）
+        assert "不带" in content and "`git rev-parse --show-toplevel`" in content
+        assert f"git -C {root} rev-parse" not in content
+        # 去首尾空白后精确比对（rev-parse stdout 带末尾换行，字面相等恒假）
+        assert f"去掉首尾空白后必须精确等于 `{root}`" in content
+        # 审阅用 git 全部 -C '{repo_root}' 锚定（diff_anchor 为 stub 值 abc1234）
+        assert f"git -C '{root}' diff abc1234" in content
+        # 不得依赖 cd（bash cd 不改变后续工具工作根）
+        assert "随后 `cd" not in content
+        # 旧假防线不得复活
+        assert "所属仓库一致" not in content
+
+
+def test_real_templates_output_line_absolute_and_rel(tmp_path, monkeypatch):
+    """输出指令行：绝对落点 + 仓库内相对路径 task_dir_rel 一并展示。"""
+    out, root = _render_real_templates(tmp_path, monkeypatch)
+    assert f"输出到 `{root}/t001_foo/review_code.md`（仓库内相对路径 `t001_foo`）" in out["code_review_prompt.md"]
+    assert f"输出到 `{root}/t001_foo/review_test.md`（仓库内相对路径 `t001_foo`）" in out["test_review_prompt.md"]
+
+
+def test_real_templates_single_general_anchored(tmp_path, monkeypatch):
+    out, root = _render_real_templates(tmp_path, monkeypatch, level="single")
+    content = out["general_review_prompt.md"]
+    assert f"输出到 `{root}/t001_foo/review_general.md`（仓库内相对路径 `t001_foo`）" in content
+    assert "不带" in content and "`git rev-parse --show-toplevel`" in content
+    assert f"git -C '{root}' diff abc1234" in content

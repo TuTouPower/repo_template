@@ -96,6 +96,7 @@ flowchart TD
       --task-dir docs/tasks/{tid}_{slug} \
       --out-dir .scratch/review_prompts
     ```
+    prompt 内 `{task_dir}` 为绝对路径（落点锚定，与 reviewer cwd 无关）、`{repo_root}` 为 worktree 绝对根。reviewer 首步以**不带 -C** 的 `git rev-parse --show-toplevel` 探测会话 cwd，输出去掉首尾空白后须精确等于 `{repo_root}`，不符即停并报告「落点仓库校验失败」；此后所有 git 命令一律 `git -C '{repo_root}' ...`，不得依赖 cd（bash cd 不改变后续工具工作根）。派发后收到「落点仓库校验失败」报告说明派发会话 cwd 落错仓库：立即核对并重派，不得代写报告。
 - 派 subagent 时只传文件路径，不把 prompt 正文内联进派发消息。
 - `review_level=full`：code + test 两路并行；`single`：一路 general。
 - 报告写入 task 目录：`full` 写 `review_code.md` / `review_test.md`；`single` 写 `review_general.md`。多轮追加，不覆盖历史。

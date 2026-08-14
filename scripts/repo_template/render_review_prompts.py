@@ -30,7 +30,7 @@ from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fi
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "docs/reviews/prompts"
 PLACEHOLDER_RE = re.compile(
-    r"\{(tid|slug|spec_path|task_dir|diff_anchor|review_level|contract_section|context_section|review_scope_fingerprint)\}"
+    r"\{(tid|slug|spec_path|task_dir_rel|task_dir|repo_root|diff_anchor|review_level|contract_section|context_section|review_scope_fingerprint)\}"
 )
 CONTRACT_HEADING = "## 契约区"
 CONTEXT_HEADING = "## 上下文区"
@@ -221,11 +221,15 @@ def render_review_prompts(
         sys.exit(f"{spec_rel}: 缺「{CONTRACT_HEADING}」小节；reviewer 无 AC 锚点，拒绝渲染")
     context = extract_section(spec_text, CONTEXT_HEADING) or "（spec 未填上下文区）"
 
+    # task_dir 注入绝对路径（reviewer 写文件落点与 cwd 无关）；
+    # task_dir_rel 仓库内相对路径（模板在输出指令行展示，供报告引用与相对 git 路径）。
     values = {
         "tid": fm["tid"],
         "slug": fm["slug"],
         "spec_path": spec_rel,
-        "task_dir": rel_task_dir,
+        "task_dir": task_dir.as_posix(),
+        "task_dir_rel": rel_task_dir,
+        "repo_root": str(REPO_ROOT.resolve()),
         "diff_anchor": diff_anchor,
         "review_level": level,
         "contract_section": contract,
