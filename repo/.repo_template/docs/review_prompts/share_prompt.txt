@@ -1,0 +1,123 @@
+### review scope 指纹（PASS 有效性锚点）
+
+本报告必须含一行审查范围指纹，格式精确如下（整行照抄，禁止反引号、加粗或列表前缀等 markdown 修饰）：
+reviewed_scope: {review_scope_fingerprint}
+
+指纹由实施方渲染 prompt 时按 `git diff {diff_anchor}`（排除 task.md / 处置表 / pending / findings 等流程文件）计算。`check_review_status.py` 重算当前指纹比对：
+
+- 报告缺 `reviewed_scope` 行，或指纹与当前不一致 → 判定「审查后又改动，PASS 失效」，overall=INCOMPLETE，须重审。
+- 多轮追加时，`## Round N` 小节内写**本轮** reviewed_scope 行；脚本取全文最后一条与当前比对。
+
+### 共享规则（所有 reviewer 都遵守）
+
+## spec 契约区（判 AC 只看本区）
+
+{contract_section}
+
+## spec 上下文区（判测试覆盖核对本区）
+
+{context_section}
+
+上下文区是**已获批准的决策**，不是待商榷提案。「有意不测」列出的分支不出 finding。进入 review 前「未知契约清单」应已无 `UNVERIFIED-BLOCKING`、`UNVERIFIED-SPIKE` 或裸 `UNVERIFIED`；仍有任一标记说明实施前门禁被绕过，按 blocking finding 处理。上下文区写「无」或缺失时，按无特殊约定处理，不据此出 finding。
+
+### read-only 边界
+
+不改代码、不改测试、不改 `spec.md` / `task.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
+
+### 不信任 implementer 自述
+
+`task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以 `git -C '{repo_root}' diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
+
+### AC 复验披露（结论段必写）
+
+结论段必须含「AC 复验方式」小节：逐条 AC 标注复验类别——
+
+- `re_verified`：reviewer 独立复验（重跑命令、查证代码/测试断言本身），附一句证据。
+- `trust_prior`：无法独立复验（部署态、人工 UI、外部服务），只能依赖实施侧已产出的证据，注明依赖的是什么证据。
+
+小节末尾给覆盖率行：`coverage = re_verified / 总 AC 数`。`trust_prior` 占比 >30% 时加一行：「建议合并前人工抽查 trust_prior 项」。诚实披露哪些 AC 没有被 reviewer 真正复验，不允许默认全标 `re_verified`。
+
+### 零发现合法与 finding 边界
+
+- clean review（0 finding）是有效输出；**禁止凑数**。
+- 范围内问题进 finding 表；范围外问题仅在结论段提示，**不进** finding 表。
+
+### 穷尽与零漏报
+
+- 全量报告，不丢弃低置信度 finding；误报用置信度与严重度区分，不做阈值过滤隐藏。
+- 覆盖 7 视角正交体检时，每视角独立出 finding（安全/正确性/契约·Breaking/性能·资源/架构·可维护性/健壮性·可观测/测试·文档·规格）；未命中也需确认已扫过，而非跳过。
+- 每条 finding 须含 `file:line`、证据片段或可复现路径、与 AC/规则的锚定，及最小修复建议。
+
+### blocking 硬阈值
+
+标 `critical` / `important`（即 blocking）的 finding，必须满足以下**至少一条**，否则降为 `minor` 或只写进结论段：
+
+1. **锚定 AC**：指明违反了契约区哪一条验收标准，且说明观察到的行为与该 AC 的差距。
+2. **可观测行为缺陷**：给出输入/状态与坏结果（崩溃、错答案、数据丢失、安全越权、资源泄漏、协议不兼容）。无对应 AC 时仍可 blocking——真 bug 不因 spec 没写而降级。
+
+以下一律**不得** blocking：
+
+- 「建议再测更细」「覆盖可更广」「可以补一个 case」类扩展建议 → `minor`
+- spec 上下文区已列入「有意不测」的分支 → **不出 finding**（该决策已获批准）
+- 「未知契约清单」仍含 `UNVERIFIED-BLOCKING`、`UNVERIFIED-SPIKE` 或裸 `UNVERIFIED` → 最低 `important`；说明实施前严格门禁未完成，当前实现无法证明满足相关外部契约
+- 风格、命名、注释、文件组织偏好 → `minor`
+- 实现合理但与 spec 描述不符（spec 过时）→ 在 finding 里说明，处置为改 spec，不计 FAIL
+- 规模启发式（文件过大/圈复杂度/单 task 改动面大）本身不 blocking，仅作结论段提示；仅当已产出可观测缺陷时按缺陷本身定级
+
+### Pre-Report Gate（每条 finding 报前自问）
+
+任一「否」即降级或丢弃：
+
+1. 能否引精确 `file:line` 或测试名？
+2. 能否描述具体失败场景（输入 / 状态 / 坏结果）？
+3. 是否读了周边上下文？
+4. 严重度是否可辩护？
+5. 标 blocking 时，是否满足上面「blocking 硬阈值」的至少一条？
+
+### 重审追加
+
+Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `task-work` `max_review_round`。
+
+### 撤回配合
+
+若对某 finding 举证争议，你可在报告末尾追加撤回记录（`finding_id` + 撤回理由）。撤回后该 finding 不再强制改代码。
+
+
+### 系统性缺口去重
+
+发现跨 task 的测试基础设施、公共代码、环境或工具链缺口时，先只读运行 `.repo_template/scripts/task.py list`，必要时 `.repo_template/scripts/task.py show <tid>` 查找等价 follow-up。**仅允许** `list` / `show`（只读）；禁止 `add` / `start` / `finish` / `block` 等写命令。已有 task 时在结论引用 tid，不重复报告同一 finding；当前 diff 扩大问题或缺口直接影响当前正确性、安全、协议兼容、测试可信度时，仍报告本次新增影响。
+
+reviewer 只建议 follow-up 标题、slug 和阻断性。
+
+### verdict 判定（仅本报告）
+
+`critical` / `important` 为 blocking finding；`minor` 非阻断，但仍须由 implementer 写入 `task.md` 处置表。
+
+- **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `task.md` 处置表填写；task 是否 `blocked` 由 `.agents/skills/task-work/SKILL.md`「Step 6：处置」决定，不是你的 verdict 字段。
+- **PASS**：以 `git -C '{repo_root}' diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor）。
+- **FAIL**：仍存在未解决的 critical / important。
+- **Round N（N≥2）**：追加新 `## Round N` 小节并给**本轮** verdict（脚本取最后一条 `verdict`）。前轮 blocker 须用 diff/代码核实是否已消除或已按撤回流程作废，**不**采信处置表自称「已修」。前轮 blocker 仍在或本轮有新 blocker → FAIL；否则 PASS。
+- **禁止**在同一 round 内因 implementer 临时修复而覆盖或追加「复核翻 PASS」；修完代码后须走完整下一轮审阅（`.agents/skills/task-work/SKILL.md` Step 3→5）。
+
+权威流程见 `.agents/skills/task-work/SKILL.md`「Step 6：处置」。
+
+## 严重度三级（完整定义）
+
+严重度表示优先级。所有 finding 须在 adoption 阶段处置（已修 / 遗留 / 撤回）；只有 critical / important 阻断。
+
+### critical
+
+- 实现：bug / 安全 / 数据丢失 / broken functionality
+- 测试：测了假行为致 AC 看似覆盖但实际未验证；删除关键 AC 的测试；mock 掉被测逻辑本身
+
+### important
+
+本 task 在修复前不可信，例如：
+
+- 实现：swallowed errors、spec AC 缺失实现、违反 spec 不变量；重复逻辑已造成行为分叉、修复遗漏或状态不一致
+- 测试：恒真断言、弱化断言、删 expect、`.skip`、mock 误用、AC 缺测试、红灯未归因
+- 危险模式扫描命中项**最低 important**，不得标 minor：恒真断言（`expect(true).toBe(true)` / `assert True`）、删/反转 expect、注释掉断言、弱化断言（`toBe` → `toContain` / 正则 / `>=` / `toBeTruthy`）、`.skip` / `.only` / `@Ignore`、test 文件加 `eslint-disable` / `@ts-ignore` / `# type: ignore`、mock 关键副作用或被测逻辑本身、阈值（timeout/重试/容差）增大掩盖问题、条件跳过弱化断言（`if (cond) { expect(...) }`）、用 `.value =` 替代 AC 要求的拖拽/点击/键盘交互
+
+### minor
+
+风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。

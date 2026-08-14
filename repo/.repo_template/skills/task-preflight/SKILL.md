@@ -1,0 +1,103 @@
+---
+name: task-preflight
+description: none
+disable-model-invocation: true
+---
+
+# task-preflight
+
+只读，不修改任何文件。查待做 task 还需用户提供什么。
+
+## 输入
+
+|用户输入|检查范围|
+|---|---|
+|无参数|`backlog` ∪ `active` ∪ `blocked` 全部|
+|状态词（`backlog` / `active` / `blocked`，可组合）|这些状态的全部 task|
+|tid（`tNNN`，可多个）|这些 tid 中状态属于上述三态的；非待做记「跳过」|
+|状态词 + tid|两者并集|
+
+`done` / `dropped` 永不在范围。
+
+## 步骤
+
+1. **建立状态视图**。task 完成后才合并主干，因此主干中的状态可能滞后于进行中的 task；用脚本统一按优先级确定每个 tid 的有效状态、来源与读取位置：
+
+    ```bash
+    .repo_template/scripts/task.py effective-status [--status backlog] [--status active] ...
+    ```
+
+    输出每 tid 的 `status` / `source`（`worktree` / `branch` / `main`）/ `read_at`（worktree 绝对路径或未合并分支名）。`source=worktree` → 进 `read_at` 目录执行；`source=branch` → `task.py show/list/preflight --ref {branch}`；`source=main` → 主干文档即权威。
+
+    同一 tid 在 worktree 与分支中状态互不相容时列为阻塞性状态冲突，不猜。按输入范围合并去重、tid 升序；effective status 为 `done` / `dropped` 的记「跳过」。清单空且无跳过：回复「当前没有待做 task 需要 preflight」，结束。
+
+2. **跑机器门禁**（每个 task 各一次，只读，按有效状态与来源选择位置）：
+
+|有效状态 / 来源|命令|
+|---|---|
+|主干中尚未启动的 `backlog`|`.repo_template/scripts/task.py preflight {tid} --allow-backlog`|
+|未合并分支中的 `backlog`|`.repo_template/scripts/task.py preflight {tid} --allow-backlog --ref {branch}`|
+|登记 worktree 中的 `active`|在该 worktree 执行 `.repo_template/scripts/task.py preflight {tid}`|
+|登记 worktree 中的 `blocked`|在该 worktree 执行 `.repo_template/scripts/task.py preflight {tid}`，保留 blocked FAIL|
+
+`--ref` 只检查快照状态、spec 与 front matter，不检查 worktree 和当前脏改动；输出该警告属预期，不算用户缺口。机器门禁检查状态、spec 完整、工作区一致性与未知契约分类。`UNVERIFIED-BLOCKING`、裸 `UNVERIFIED` 和其它 FAIL 项直接进输出表，标「阻塞」；`UNVERIFIED-SPIKE` 只警告，属于执行期 Step 1 工作。
+
+3. **baseline 健康检查**（一次，主干）：从 `docs/blueprint/testing.md` 读 `{doctor_cmd}`（写「无」则跳过并注明），在主干跑一次。绿 → 输出表注明 baseline 绿。红 → 输出表加一行 `baseline`，标「阻塞」：先确认是「先修基线再跑队列」还是「队列首 task 的目的即修复基线」（后者用户在输出表结论处明确放行后才可执行）。不预检的后果是 attempt 对注定失败的基线空转。
+
+4. **逐 task 查用户侧缺口**。从上一步确定的有效来源读取 `spec.md` 与 `task.md`：worktree 直接读文件，分支中的 task 用 `--ref` 读取，主干 backlog 从主仓读取。检查契约区 AC、上下文区依赖与约束、未知契约清单、实施笔记与阻塞说明。对照 `.env.example`（若有）与 spec 点名的环境变量，列出指向密钥或外部服务的 key；本地是否已配置只查存在性（如 `grep -q '^KEY=' .env`），不读取值。
+
+    未知契约按 spec 标记处理：
+
+    - `UNVERIFIED-BLOCKING`：只有用户或外部环境能核实，属于阻塞缺口；核实并改写结论前不得 `start`。
+    - `UNVERIFIED-SPIKE`：agent 可自行实验，不算用户侧缺口；执行期 Step 1 完成实验后须删除标记并改写结论。
+    - 裸 `UNVERIFIED`：分类不明，属于阻塞性 spec 格式错误。
+
+    只记**必须用户提供、agent 不能编造**的缺口：
+
+|类型|举例|
+|---|---|
+|密钥|API token、DB 密码|
+|环境|需启动的服务、端口、平台限制|
+|账号权限|云控制台、第三方组织|
+|产品决策|方案 A/B、范围取舍、blocked 后加轮或 drop|
+|外部数据|样例文件、回调 URL|
+
+不算缺口：读代码/文档能搞定的；agent 可装可查且不违硬约束的。
+
+每条标严重度：**阻塞**（缺它执行跑不下去）/ **可后补**（能开干但某条 AC 或上线会缺）。
+
+5. **输出缺口表**：
+
+    ```markdown
+    ## Preflight 结果
+
+    范围：<实际查了什么>
+
+    ```
+
+|tid|标题|有效状态|来源|preflight|缺口|阻塞?|请用户做什么|
+|---|---|---|---|---|---|---|---|
+|t002|…|active|worktree `../repo_t002`|PASS|缺 OPENAI_API_KEY|是|写入本地 .env（勿提交）|
+|t003|…|backlog|ref `t002_xxx`|FAIL：spec 缺契约区|无|是|补全 spec 契约区|
+
+跳过：
+
+- t009：status=done，非待做
+
+结论：
+
+- 有阻塞：先补齐「是」的行，再执行
+- 或：无阻塞；执行请 /task-run（可多会话手动并发各跑一段）
+
+```
+
+## 边界
+
+- 只读：不改代码、测试、task 状态、环境。`task.py preflight`、`list/show --ref` 只读不写；baseline 检查的 `{doctor_cmd}` 限无副作用的环境/编译/收集类命令，有写副作用的命令不代入。
+- 不把主干中被 worktree 或未合并分支覆盖的旧 backlog 当成待启动 task。
+- 不自动执行 task；无阻塞时只**提示**用户可自行 `/task-run`（多会话手动并发各跑一段）。
+
+## 完成
+
+输出缺口表 + 结论。有阻塞→先补齐再执行；无→提示 `/task-run`（多会话手动并发各跑一段）。
+```

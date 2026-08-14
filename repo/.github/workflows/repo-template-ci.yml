@@ -1,4 +1,4 @@
-name: repo-template-factory
+name: repo-template
 
 on:
   push:
@@ -20,4 +20,4 @@ jobs:
           git config --global user.email "repo-template-ci@example.com"
           git config --global user.name "repo-template CI"
       - name: Run toolchain tests
-        run: pytest repo/.repo_template/tests -q
+        run: pytest .repo_template/tests/ -q

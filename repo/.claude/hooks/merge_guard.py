@@ -1,0 +1,1 @@
+../../.repo_template/hooks/merge_guard.py
