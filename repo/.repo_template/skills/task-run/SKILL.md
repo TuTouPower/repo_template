@@ -26,7 +26,7 @@ description: none
 
 ## goal 模式
 
-用 goal 模式自治跑队列时，`task.py goal` 是唯一入口；它冻结队列快照到 `docs/runtime/goal_queue.json` 并打印 ready-to-paste 的 `/goal` 行（含机器终态判定）。手写 `/goal 请按 task-run 执行所有 task` 是反模式：终态不可判定，evaluator 无依据反驳中途停止。
+用 goal 模式自治跑队列时，`task.py goal` 是唯一入口；它把队列快照落到 `docs/runtime/goal_queue.json` 并打印 ready-to-paste 的 `/goal` 行（含机器终态判定）。无参且已有快照时只读展示队列顺序与冻结时间，不得改写。重建须显式 tid 或 `--reset`；覆盖且与旧队列不一致时须确认（非交互加 `--yes`）。手写 `/goal 请按 task-run 执行所有 task` 是反模式：终态不可判定，evaluator 无依据反驳中途停止。
 
 goal 会话内的执行行为与本 skill 队列循环完全一致，固定队列以快照为准（不得变更成员）。终态由 `task.py goal-check` 只读判定：
 
@@ -36,9 +36,9 @@ goal 会话内的执行行为与本 skill 队列循环完全一致，固定队�
 |`GOAL_QUEUE_STOPPED: <tid>=<state>`|3|任一成员 blocked/failed；合法停止，按「停止条件」汇报后 goal 结束|
 |`GOAL_QUEUE_INCOMPLETE: x/y closed`|2|继续执行|
 
-逐 tid 状态行里 `pending` / `running` / `cleanup_pending` / `unverified`（handoff/refs 校验未过）/ `incomplete` 均归入 INCOMPLETE；`dropped` 意味着快照过期（成员在 goal 期间被 drop），按 STOPPED 处理，由用户决策后重新 `task.py goal`。
+逐 tid 状态行里 `pending` / `running` / `cleanup_pending` / `unverified`（handoff/refs 校验未过）/ `incomplete` 均归入 INCOMPLETE；`dropped` 意味着快照过期（成员在 goal 期间被 drop），按 STOPPED 处理，由用户决策后重新 `task.py goal --reset` 或显式 tid。
 
-goal 模式同时只服务一个队列（快照覆盖式）；多会话手动并发各跑普通 task-run，不用 goal 生成器。合并授权语义不变：整链完成后询问一次，merge 是 goal 判定范围外的人工步骤。
+goal 模式同时只服务一个队列；已冻结快照不得被无参 `task.py goal` 静默重置。多会话手动并发各跑普通 task-run，不用 goal 生成器。合并授权语义不变：整链完成后询问一次，merge 是 goal 判定范围外的人工步骤。
 
 ## 输入与固定队列
 

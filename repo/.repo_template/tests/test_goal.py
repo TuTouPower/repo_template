@@ -82,10 +82,11 @@ def git_repo(tmp_path):
     return repo
 
 
-def _cli(repo, *args):
+def _cli(repo, *args, stdin=""):
     return subprocess.run(
         [sys.executable, str(repo / ".repo_template" / "scripts" / "task.py"), *args],
         cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        input=stdin,
     )
 
 
@@ -263,16 +264,109 @@ def test_goal_check_stopped_on_failed(git_repo):
     assert "GOAL_QUEUE_STOPPED: t001=failed" in result.stdout
 
 
-def test_goal_empty_queue_clears_stale_snapshot(git_repo):
+def test_goal_empty_queue_view_keeps_snapshot_reset_clears(git_repo):
     assert _cli(git_repo, "goal").returncode == 0
     snapshot = git_repo / "docs" / "runtime" / "goal_queue.json"
     assert snapshot.is_file()
+    before = _snapshot(git_repo)
     for tid in ("t001", "t002"):
         dropped = _cli(git_repo, "drop", tid, "--reason", "不再需要")
         assert dropped.returncode == 0, dropped.stderr
-    result = _cli(git_repo, "goal")
+    viewed = _cli(git_repo, "goal")
+    assert viewed.returncode == 0, viewed.stderr
+    assert "当前冻结队列：t001, t002" in viewed.stdout
+    assert "队列含已归档或不存在成员（t001, t002）" in viewed.stdout
+    assert "/goal 行不可直接执行" in viewed.stdout
+    assert snapshot.is_file()
+    assert _snapshot(git_repo) == before
+    refused = _cli(git_repo, "goal", "--reset")
+    assert refused.returncode != 0
+    assert snapshot.is_file()
+    result = _cli(git_repo, "goal", "--reset", "--yes")
     assert result.returncode == 0, result.stderr
     assert "队列为空" in result.stdout
     assert not snapshot.exists()
     # 旧快照已被清除：goal-check 报缺快照而不是粘过期队列
     assert _cli(git_repo, "goal-check").returncode == 1
+
+
+def test_goal_no_args_views_existing_snapshot_without_rewrite(git_repo):
+    first = _cli(git_repo, "goal")
+    assert first.returncode == 0, first.stderr
+    before = _snapshot(git_repo)
+    result = _cli(git_repo, "goal")
+    assert result.returncode == 0, result.stderr
+    assert "当前冻结队列：t001, t002" in result.stdout
+    assert f"冻结时间：{before['created_at']}" in result.stdout
+    assert "只读展示" in result.stdout
+    assert _snapshot(git_repo) == before
+
+
+def test_goal_accidental_no_args_keeps_custom_order(git_repo):
+    first = _cli(git_repo, "goal", "t002", "t001")
+    assert first.returncode == 0, first.stderr
+    before = _snapshot(git_repo)
+    assert before["queue"] == ["t002", "t001"]
+    assert _cli(git_repo, "start", "t001").returncode == 0
+    _reserve(git_repo, "t001")
+    result = _cli(git_repo, "goal")
+    assert result.returncode == 0, result.stderr
+    assert "当前冻结队列：t002, t001" in result.stdout
+    assert _snapshot(git_repo) == before
+
+
+def test_goal_reset_and_explicit_tids_require_confirm_when_order_differs(git_repo):
+    assert _cli(git_repo, "goal", "t002", "t001").returncode == 0
+    before = _snapshot(git_repo)
+
+    refused = _cli(git_repo, "goal", "--reset")
+    assert refused.returncode != 0
+    assert "确认覆盖请加 --yes" in refused.stderr
+    assert "已冻结" in refused.stderr
+    assert _snapshot(git_repo) == before
+
+    reset = _cli(git_repo, "goal", "--reset", "--yes")
+    assert reset.returncode == 0, reset.stderr
+    assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
+    assert "队列已重新冻结：t001, t002" in reset.stdout
+
+    custom = _cli(git_repo, "goal", "t002", "t001", "--yes")
+    assert custom.returncode == 0, custom.stderr
+    assert _snapshot(git_repo)["queue"] == ["t002", "t001"]
+
+    same = _cli(git_repo, "goal", "t002", "t001")
+    assert same.returncode == 0, same.stderr
+    assert _snapshot(git_repo)["queue"] == ["t002", "t001"]
+
+
+def test_goal_reset_rejects_explicit_tids(git_repo):
+    result = _cli(git_repo, "goal", "--reset", "t001")
+    assert result.returncode != 0
+    assert "互斥" in result.stderr or "互斥" in result.stdout
+    assert not (git_repo / "docs" / "runtime" / "goal_queue.json").exists()
+
+
+def test_goal_no_args_does_not_reset_corrupt_snapshot(git_repo):
+    assert _cli(git_repo, "goal").returncode == 0
+    path = git_repo / "docs" / "runtime" / "goal_queue.json"
+    path.write_text("{not json", encoding="utf-8")
+    result = _cli(git_repo, "goal")
+    assert result.returncode != 0
+    assert "损坏" in result.stderr or "损坏" in result.stdout
+    assert path.read_text(encoding="utf-8") == "{not json"
+    rebuilt = _cli(git_repo, "goal", "--reset", "--yes")
+    assert rebuilt.returncode == 0, rebuilt.stderr
+    assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
+
+
+def test_goal_no_args_reports_binary_snapshot_as_corrupt(git_repo):
+    assert _cli(git_repo, "goal").returncode == 0
+    path = git_repo / "docs" / "runtime" / "goal_queue.json"
+    payload = b"\xff\xfe{not utf8"
+    path.write_bytes(payload)
+    result = _cli(git_repo, "goal")
+    assert result.returncode != 0
+    text = result.stderr + result.stdout
+    assert "损坏" in text
+    assert "Traceback" not in text
+    assert path.read_bytes() == payload

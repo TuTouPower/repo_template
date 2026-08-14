@@ -62,7 +62,7 @@ task 图的两类边各司其职，不可混用：
 
 `task-run` 每个 task 依次 `start → attempt reserve --executor inline → task-work → attempt terminal → attempt report → cleanup-worktree`，后继以当前分支作 `--base`，全链最终一次 `integrate-chain` merge；merge/index/integrated 后保留 transaction 与链分支，合并后验证通过再以同一命令 `--continue` 完成删除。`start` 加调度门：`depends_on` 未完成（完成口径=`done`，不要求已合并主干；`dropped` 已归档不产出代码，引用 dropped 的边非法）硬拒，最新前置未合并主干时 base 自动落到其分支 tip；`conflicts_with` 对方正在运行（登记 worktree 存在 且 `status=active`）只警告后放行。
 
-goal 模式是队列循环的自治外壳，不改变执行语义：`task.py goal` 按 task-run 入队规则冻结队列快照（`docs/runtime/goal_queue.json`，覆盖式，同时只服务一个队列）并打印 ready-to-paste 的 `/goal` 行；goal 会话内行为与 task-run 队列循环一致，终态由 `task.py goal-check` 只读判定——权威为 ledger 投影、主干状态与 worktree 登记，输出 `GOAL_QUEUE_COMPLETE`（全闭环）/ `GOAL_QUEUE_STOPPED`（含 blocked/failed，合法停止）/ `GOAL_QUEUE_INCOMPLETE`（继续）三个 marker。合并授权在 goal 判定范围外，仍是整链完成后的人工步骤。
+goal 模式是队列循环的自治外壳，不改变执行语义：`task.py goal` 管理 `docs/runtime/goal_queue.json`（同时只服务一个队列）并打印 ready-to-paste 的 `/goal` 行——无快照时按 task-run 入队规则首次冻结；已有快照时无参只读展示（队列顺序、冻结时间），不改写；重建须显式 tid 或 `--reset`，覆盖且顺序不一致时须确认（或 `--yes`）。goal 会话内行为与 task-run 队列循环一致，终态由 `task.py goal-check` 只读判定——权威为 ledger 投影、主干状态与 worktree 登记，输出 `GOAL_QUEUE_COMPLETE`（全闭环）/ `GOAL_QUEUE_STOPPED`（含 blocked/failed，合法停止）/ `GOAL_QUEUE_INCOMPLETE`（继续）三个 marker。合并授权在 goal 判定范围外，仍是整链完成后的人工步骤。
 
 ## 合并授权
 

@@ -203,8 +203,25 @@ def main():
     ps_parser.add_argument("--all", action="store_true")
     ps_parser.set_defaults(func=cmd_ps)
 
-    goal = sub.add_parser("goal", help="冻结 goal 模式队列并打印 ready-to-paste /goal 行")
-    goal.add_argument("tids", nargs="*", help="显式队列（严格按输入顺序）；缺省 = backlog ∪ active")
+    goal = sub.add_parser(
+        "goal",
+        help="查看或冻结 goal 模式队列，并打印 ready-to-paste /goal 行",
+    )
+    goal.add_argument(
+        "tids",
+        nargs="*",
+        help="显式队列（严格按输入顺序）；与 --reset 互斥",
+    )
+    goal.add_argument(
+        "--reset",
+        action="store_true",
+        help="按 backlog ∪ active 升序重建默认队列并覆盖已有快照",
+    )
+    goal.add_argument(
+        "--yes",
+        action="store_true",
+        help="覆盖已有快照且顺序不一致时跳过确认",
+    )
     goal.set_defaults(func=cmd_goal)
 
     goal_check = sub.add_parser("goal-check", help="只读判定 goal 队列终态 marker")

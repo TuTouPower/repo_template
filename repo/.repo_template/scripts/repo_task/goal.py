@@ -2,8 +2,9 @@
 
 goal 模式的提示词必须是可机器判定的终态，而不是过程指令。本模块提供一对命令：
 
-- ``goal``：按 task-run 入队规则冻结队列到 ``docs/runtime/goal_queue.json``
-  （已 gitignore，仅主仓），打印 ready-to-paste 的 ``/goal`` 行。
+- ``goal``：查看或冻结 ``docs/runtime/goal_queue.json``（已 gitignore，仅主仓）。
+  无参且已有快照时只读展示，不改顺序；首次无快照才按 backlog ∪ active 升序冻结。
+  重建须显式 tid 或 ``--reset``；覆盖且与旧队列不一致时须确认（或 ``--yes``）。
 - ``goal-check``：只读判定器。权威 = ledger 投影 + 主干状态 + worktree 登记，
   不看 transcript。输出逐 tid 状态行与一个总结 marker：
 
@@ -75,38 +76,179 @@ def _compute_queue(args) -> list[str]:
     return sorted(queue, key=tid_sort_key)
 
 
-def cmd_goal(args) -> None:
-    require_primary_worktree()
-    try:
-        queue = _compute_queue(args)
-    except ctx.TaskDataError as error:
-        sys.exit(str(error))
-    if not queue:
-        if QUEUE_PATH.exists():
-            QUEUE_PATH.unlink()
-            print("旧队列快照已清除。")
-        print("队列为空：没有 backlog/active task；不生成 goal。")
-        return
-    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _format_queue(queue: list[str]) -> str:
+    return ", ".join(queue)
+
+
+def _print_goal_line(queue: list[str]) -> None:
+    print("粘贴以下 /goal 行启动自治执行：")
+    print()
+    print("```text")
+    print(GOAL_LINE_TEMPLATE.format(queue=_format_queue(queue)))
+    print("```")
+
+
+def _stale_members(queue: list[str]) -> list[str]:
+    statuses = {task["tid"]: task["status"] for task in scan_tasks()}
+    stale = []
+    for tid in queue:
+        status = statuses.get(tid)
+        if status is None or status in ctx.ARCHIVED_STATUSES:
+            stale.append(tid)
+    return stale
+
+
+def _show_snapshot(snapshot: dict) -> None:
+    queue = snapshot["queue"]
+    created_at = snapshot.get("created_at") or "未知"
+    print(f"当前冻结队列：{_format_queue(queue)}")
+    print(f"冻结时间：{created_at}")
+    print(f"快照：{ctx._rel(QUEUE_PATH)}（只读展示；重建默认队列用 --reset，指定顺序用显式 tid）")
+    stale = _stale_members(queue)
+    if stale:
+        print(
+            f"注意：队列含已归档或不存在成员（{_format_queue(stale)}），"
+            "/goal 行不可直接执行"
+        )
+    print()
+    _print_goal_line(queue)
+
+
+def _write_snapshot(queue: list[str]) -> dict:
     snapshot = {
         "version": 1,
         "created_at": datetime.now(ctx.TZ_CN).isoformat(timespec="seconds"),
         "queue": queue,
     }
+    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
     # 临时文件 + os.replace 原子写，防并发/崩溃截断（F41/RT-007）
     temporary = QUEUE_PATH.with_name(QUEUE_PATH.name + ".tmp")
     temporary.write_text(
         json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     os.replace(temporary, QUEUE_PATH)
-    print(f"队列已冻结：{', '.join(queue)}")
-    print(f"快照：{ctx._rel(QUEUE_PATH)}（覆盖式；goal 模式同时只服务一个队列）")
+    return snapshot
+
+
+def _confirm_overwrite(
+    old_queue: list[str],
+    new_queue: list[str],
+    created_at: str,
+    yes: bool,
+) -> None:
+    if old_queue == new_queue:
+        return
+    frozen_at = created_at or "未知"
+    print(
+        "WARNING: 新队列与已冻结快照不一致，覆盖将丢失当前顺序。\n"
+        f"  已冻结（{frozen_at}）：{_format_queue(old_queue)}\n"
+        f"  新队列：{_format_queue(new_queue) or '（空）'}\n"
+        "覆盖？(y/N)",
+        file=sys.stderr,
+    )
+    if yes:
+        return
+    if not sys.stdin.isatty():
+        sys.exit("新队列与已冻结快照不一致；确认覆盖请加 --yes")
+    try:
+        answer = input()
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        sys.exit("goal aborted: 保留已冻结队列")
+
+
+def _clear_snapshot() -> None:
+    if QUEUE_PATH.exists():
+        QUEUE_PATH.unlink()
+        print("旧队列快照已清除。")
+    print("队列为空：没有 backlog/active task；不生成 goal。")
+
+
+def cmd_goal(args) -> None:
+    require_primary_worktree()
+    reset = bool(getattr(args, "reset", False))
+    yes = bool(getattr(args, "yes", False))
+    explicit = bool(args.tids)
+    if reset and explicit:
+        sys.exit("goal --reset 与显式 tid 互斥")
+
+    existing = None
+    if QUEUE_PATH.is_file():
+        try:
+            existing = _read_snapshot()
+        except ctx.TaskDataError as error:
+            if not reset and not explicit:
+                sys.exit(str(error))
+            existing = None
+
+    if not reset and not explicit:
+        if existing is not None:
+            _show_snapshot(existing)
+            return
+
+    try:
+        queue = _compute_queue(args)
+    except ctx.TaskDataError as error:
+        sys.exit(str(error))
+
+    if existing is not None:
+        _confirm_overwrite(
+            existing["queue"],
+            queue,
+            existing.get("created_at") or "",
+            yes,
+        )
+
+    if not queue:
+        _clear_snapshot()
+        return
+
+    snapshot = _write_snapshot(queue)
+    action = "队列已重新冻结" if existing is not None else "队列已冻结"
+    print(f"{action}：{_format_queue(queue)}")
+    print(f"冻结时间：{snapshot['created_at']}")
+    print(f"快照：{ctx._rel(QUEUE_PATH)}（goal 模式同时只服务一个队列）")
     print()
-    print("粘贴以下 /goal 行启动自治执行：")
-    print()
-    print("```text")
-    print(GOAL_LINE_TEMPLATE.format(queue=", ".join(queue)))
-    print("```")
+    _print_goal_line(queue)
+
+
+def _parse_snapshot(data: object) -> dict:
+    if not isinstance(data, dict):
+        raise ctx.TaskDataError(
+            f"队列快照 {ctx._rel(QUEUE_PATH)} 结构非法；重新运行 task.py goal --reset"
+        )
+    queue = data.get("queue")
+    if (
+        not isinstance(queue, list)
+        or not queue
+        or not all(isinstance(tid, str) and ctx.TID_RE.fullmatch(tid) for tid in queue)
+    ):
+        raise ctx.TaskDataError(
+            f"队列快照 {ctx._rel(QUEUE_PATH)} 结构非法；重新运行 task.py goal --reset"
+        )
+    created_at = data.get("created_at")
+    if created_at is not None and not isinstance(created_at, str):
+        created_at = None
+    return {
+        "version": data.get("version", 1),
+        "created_at": created_at or "",
+        "queue": queue,
+    }
+
+
+def _read_snapshot() -> dict:
+    try:
+        data = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ctx.TaskDataError(
+            f"队列快照 {ctx._rel(QUEUE_PATH)} 不存在；先运行 task.py goal 冻结队列"
+        ) from None
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+        raise ctx.TaskDataError(
+            f"队列快照 {ctx._rel(QUEUE_PATH)} 损坏（{error}）；重新运行 task.py goal --reset"
+        ) from None
+    return _parse_snapshot(data)
 
 
 def _load_snapshot() -> list[str]:
@@ -114,22 +256,7 @@ def _load_snapshot() -> list[str]:
         raise ctx.TaskDataError(
             f"队列快照 {ctx._rel(QUEUE_PATH)} 不存在；先运行 task.py goal 冻结队列"
         )
-    try:
-        snapshot = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ctx.TaskDataError(
-            f"队列快照 {ctx._rel(QUEUE_PATH)} 损坏（{error}）；重新运行 task.py goal"
-        ) from None
-    queue = snapshot.get("queue")
-    if (
-        not isinstance(queue, list)
-        or not queue
-        or not all(isinstance(tid, str) and ctx.TID_RE.fullmatch(tid) for tid in queue)
-    ):
-        raise ctx.TaskDataError(
-            f"队列快照 {ctx._rel(QUEUE_PATH)} 结构非法；重新运行 task.py goal"
-        )
-    return queue
+    return _read_snapshot()["queue"]
 
 
 def _worktree_registered(tid: str, registered: dict[str, str]) -> bool:
@@ -147,7 +274,7 @@ def _classify(
     if main_status == "done":
         return "integrated", "主干已归档"
     if main_status == "dropped":
-        return "dropped", "已 dropped；队列快照过期，重新 task.py goal"
+        return "dropped", "已 dropped；队列快照过期，重新 task.py goal --reset"
     records = attempts_for_tid(tid, events)
     record = records[-1] if records else None
     if record is None:
