@@ -2,7 +2,7 @@
 
 **仅本模板仓**的流程设计笔记与实战复盘。不是业务文档，复制成新项目时不得带入。
 
-裁决结论落在 `repo/AGENTS.md`、`repo/.repo_template/skills/`、`repo/.repo_template/docs/`；本目录只保留证据与推导过程。改流程前读 `decision_log.md`，不必重读全部复盘。
+裁决结论落在 `repo/AGENTS.md`（项目骨架 / 状态机）、`repo/.repo_template/docs/usage.md`（用法 / 工具链写权 / skill 调用）、`repo/.repo_template/skills/`、`repo/.repo_template/docs/`；本目录只保留证据与推导过程。改流程前读 `decision_log.md`，不必重读全部复盘。
 
 ## 目录
 

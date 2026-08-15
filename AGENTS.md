@@ -4,7 +4,8 @@
 
 - 未点名禁止走 `/task-create`、`/task-run`、`/task-schedule` 等消费仓流程。
 - 要验消费体验：把工作区切到 `repo/`，或把 `repo/` 复制成独立消费仓。
-- 消费仓完整状态机与写权表只在 `repo/AGENTS.md`。不要把那份链到工厂根。
+- 消费仓项目骨架与状态机只在 `repo/AGENTS.md`。不要把那份链到工厂根。
+- 消费仓用法、工具链写权与 skill 调用只在 `repo/.repo_template/docs/usage.md`。
 - 工厂根不放业务骨架。`docs_repo/` 不进产物。
 
 命令：

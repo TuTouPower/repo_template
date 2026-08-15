@@ -18,7 +18,8 @@ rsync -a --exclude .git/ --exclude .scratch/ --exclude .pytest_cache/ --exclude 
 ## 开发本仓
 
 - 工厂规则：[`AGENTS.md`](AGENTS.md)
-- 消费流程权威：[`repo/AGENTS.md`](repo/AGENTS.md)
+- 消费仓骨架 / 状态机：[`repo/AGENTS.md`](repo/AGENTS.md)
+- 消费仓用法 / 工具链写权 / skill 调用：[`repo/.repo_template/docs/usage.md`](repo/.repo_template/docs/usage.md)
 - 工具链：`repo/.repo_template/`
 - 测试：`pytest repo/.repo_template/tests -q`
 
