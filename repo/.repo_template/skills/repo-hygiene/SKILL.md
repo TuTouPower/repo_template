@@ -88,7 +88,7 @@ disable-model-invocation: true
 
 5. **task 状态一致性**：按步骤 1 的有效来源发现 front matter 与目录不一致时**报告用户**，用 `drop` / `finish` / `purge` / `rewind` 等合法命令修。对照目录时**跳过**步骤 1 列出的模板路径。
 
-    派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）只反映主干已合并状态。内容与主干不符时可跑 `task.py list --rebuild`；存在未合并 task 分支时不得用分支中状态改写主干 index。权责见 `AGENTS.md` 目录权责表。
+    派生 index（`docs/tasks_index.json`、`docs/archive/tasks_index.json`）只反映主干已合并状态。内容与主干不符时可跑 `task.py list --rebuild`；存在未合并 task 分支时不得用分支中状态改写主干 index。权责见 `.repo_template/docs/usage.md`「工具链路径与写权」。
 
 6. **提交**：改动做一个 hygiene commit（或按用户要求不提交）；subject 如 `docs: repo hygiene`。
 

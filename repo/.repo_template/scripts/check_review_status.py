@@ -208,7 +208,7 @@ def _parse_disposition_rows(task_md: Path) -> tuple[dict[str, int], set[str]]:
                 raise ReviewDataError(
                     f"finding_id 非法：{finding_id!r}。"
                     f"格式：full 级 {task_tid}_code_fNNN / {task_tid}_test_fNNN，"
-                    f"single 级 {task_tid}_gen_fNNN（不是 _general_）；参考 conventions.md"
+                    f"single 级 {task_tid}_gen_fNNN（不是 _general_）；参考 .repo_template/docs/usage.md"
                 )
             if finding_id.startswith("t000_"):
                 index += 1

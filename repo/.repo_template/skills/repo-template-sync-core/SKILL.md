@@ -96,7 +96,7 @@ agent 不手动用 rsync / jq / sed 重写脚本已覆盖的机械化路径；�
 
 **各资产裁定要点**
 
-- **`AGENTS.md`**：保留消费侧项目一句话介绍（首段/首行）；模板新增的目录权责表行、开发工作流、skill 路由表 → 通常 `merge`。预览写明补哪些表行/段落、不动哪段项目介绍。
+- **`AGENTS.md`**：保留消费侧项目一句话介绍（首段/首行）；模板新增的项目骨架表行、开发原则 → 通常 `merge`。预览写明补哪些表行/段落、不动哪段项目介绍。「本项目使用模板仓 repo_template」声明强制保留：消费侧缺失则补回；`merge` / `keep_consumer` / `user_prompts` 均不得删。既有消费仓迁移动作：指向 `.repo_template/docs/conventions.md` 的句子改为 `.repo_template/docs/usage.md`；已迁到 `usage.md` 的段（skill 调用、工具链写权、命名格式）从消费侧 AGENTS 删除，避免与强制覆盖的 `usage.md` 双源。用法、工具链写权与 skill 调用在 `.repo_template/docs/usage.md`，随模板资产强制覆盖，不在本单元合并。
 - **`.gitignore`**：脚本自动 `merge`（追加模板独有、去重、保留消费独有）；**先套 `user_prompts`**：指令禁止 ignore 某路径 → 模板对应规则不并入、消费侧误有该规则会被脚本删除。agent 核对 plan 中的 added/removed 是否合规。
 - **MCP / settings**：`.mcp.json` 等由脚本按键合并（禁冲密钥）。宿主 settings 片段（`.claude/settings.json` 等）脚本不自动合并 → agent 按键合并，禁冲密钥、token、本机路径。
 

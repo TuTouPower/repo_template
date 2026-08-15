@@ -5,7 +5,7 @@ description: none
 
 # task-run
 
-串行执行固定队列（链式拓扑）。合并时机与分支形态见 `AGENTS.md`「职责分工与合并时机」。
+串行执行固定队列（链式拓扑）。合并时机与分支形态见 `.repo_template/docs/architecture.md`「职责分工」与「合并授权」。
 
 单 task 执行流程见 `task-work`；合并流程见 `task-integrate`。
 

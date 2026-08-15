@@ -5,7 +5,7 @@
 树对树覆盖、skill 整目录覆盖、软链建修、.gitignore / MCP 机械合并、
 sync_state.json 字段级原子更新、差异评估与修改路径清单输出。
 
-非机械化裁定（AGENTS.md / conventions.md 等共享文稿的语义合并）由脚本给出
+非机械化裁定（AGENTS.md 等共享文稿的语义合并）由脚本给出
 分类与差异摘要，agent 审查后通过 `--decision UNIT:DISPOSITION` 决策，apply
 按决策写盘；未提供决策的裁定单元跳过并报告（ask_user 语义）。
 
@@ -953,7 +953,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     apply = sub.add_parser("apply", help="执行对齐写盘")
     apply.add_argument("--decision", action="append", default=[], metavar="UNIT:DISP",
-                       help="裁定单元决策（可重复），如 AGENTS.md:update / conventions.md:keep")
+                       help="裁定单元决策（可重复），如 AGENTS.md:update / AGENTS.md:keep")
     apply.add_argument("--skip-tests", action="store_true", help="跳过 pytest 验证")
     apply.set_defaults(func=cmd_apply)
 

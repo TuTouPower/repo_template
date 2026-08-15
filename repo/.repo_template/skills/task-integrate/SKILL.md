@@ -5,7 +5,7 @@ description: none
 
 # task-integrate
 
-把已完成 task 分支合并进本地主干。本 skill 由 `task-run` 在队列链尾（或单 task 路径）调用，是主仓主干合并的唯一入口。合并时机与分支形态见 `AGENTS.md`「职责分工与合并时机」。
+把已完成 task 分支合并进本地主干。本 skill 由 `task-run` 在队列链尾（或单 task 路径）调用，是主仓主干合并的唯一入口。合并时机与分支形态见 `.repo_template/docs/architecture.md`「职责分工」与「合并授权」。
 
 单 task 与链式聚合是两个独立入口：
 

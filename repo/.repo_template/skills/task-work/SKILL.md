@@ -5,7 +5,7 @@ description: none
 
 # task-work
 
-在给定 worktree 内以 exact identity 执行单个 task，止于一个执行 commit。本 skill 只覆盖 worktree 内实施：主仓 attempt 控制面命令（reserve/terminal/report/cleanup-worktree/integrate）与分支合并由 `task-run` 队列循环承担。状态机、目录权责见 `AGENTS.md`；门禁数字见本 skill。
+在给定 worktree 内以 exact identity 执行单个 task，止于一个执行 commit。本 skill 只覆盖 worktree 内实施：主仓 attempt 控制面命令（reserve/terminal/report/cleanup-worktree/integrate）与分支合并由 `task-run` 队列循环承担。状态机见 `AGENTS.md`；工具链写权见 `.repo_template/docs/usage.md`；门禁数字见本 skill。
 
 ## 执行已获批准
 

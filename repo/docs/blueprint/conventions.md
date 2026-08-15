@@ -1,6 +1,6 @@
 # 约定（项目级）
 
-模板流程的编号与 Markdown 格式见 `.repo_template/docs/conventions.md`。本文只写本项目的语言、框架与 schema 落点例外。
+模板流程的编号与 Markdown 格式见 `.repo_template/docs/usage.md`「命名与格式」。本文只写本项目的语言、框架与 schema 落点例外。
 
 - 语言和框架已有稳定惯例时，在本文件补充项目级例外，不强行覆盖生态要求。
 
