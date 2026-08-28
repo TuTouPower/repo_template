@@ -55,8 +55,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (toolkit / "skills/task-run/SKILL.md").write_text(
         "---\nname: task-run\ndescription: none\ndisable-model-invocation: true\n---\nrun\n"
     )
-    (src / ".github/workflows").mkdir(parents=True)
-    (src / ".github/workflows/repo-template-ci.yml").write_text("name: x\n")
     (src / ".md_kx.toml").write_text("table_mode = \"compact\"\n", encoding="utf-8")
     (src / "AGENTS.md").write_text("SRC AGENTS\n")
     (src / ".gitignore").write_text("node_modules/\n*.log\n")
@@ -478,6 +476,21 @@ def test_install_hooks_force_overwrites(tmp_path, monkeypatch, capsys):
     assert rs.cmd_install_hooks(Namespace(force=True)) == 0
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
         == ".repo_template/hooks"
+
+
+def test_install_hooks_nested_product_uses_toplevel_relative(tmp_path, monkeypatch, capsys):
+    """工厂仓：git 顶层在上、产物在 repo/ 时，hooksPath 须相对顶层。"""
+    factory = tmp_path / "factory"
+    product = factory / "repo"
+    product.mkdir(parents=True)
+    _git(factory, "init", "-b", "main")
+    _ensure_hook(product)
+    monkeypatch.setattr(rs, "CONSUMER", product)
+
+    assert rs.cmd_install_hooks(Namespace()) == 0
+    assert _git(factory, "config", "--get", "core.hooksPath").stdout.strip() \
+        == "repo/.repo_template/hooks"
+    assert "repo/.repo_template/hooks" in capsys.readouterr().out
 
 
 def test_install_hooks_rejects_missing_or_nonexec(tmp_path, monkeypatch, capsys):

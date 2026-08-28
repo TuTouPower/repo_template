@@ -86,6 +86,10 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     check=True 时判断漂移（md_kx --check 对漂移文件 exit 1）不写入。
     md_kx 缺失或非漂移类失败抛 MdFormatError（CLI 语义）。
     """
+    # 黑名单先于缺二进制：拒绝归档路径不依赖本机是否安装 md_kx。
+    for rel in rel_paths:
+        if _is_blacklisted(rel):
+            raise MdFormatError(f"{rel} 在黑名单，拒绝格式化")
     executable = find_md_kx()
     if not executable:
         raise MdFormatError(
@@ -93,8 +97,6 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
         )
     changed: list[str] = []
     for rel in rel_paths:
-        if _is_blacklisted(rel):
-            raise MdFormatError(f"{rel} 在黑名单，拒绝格式化")
         path = REPO_ROOT / rel
         if not path.is_file():
             continue

@@ -44,7 +44,6 @@ PRODUCT_MARKER = ".repo_template/scripts/task.py"
 # 硬同步：整包工具链 + 宿主必须落在仓根的文件。
 HARD_SYNC_DIRS = (".repo_template",)
 HARD_SYNC_FILES = (
-    ".github/workflows/repo-template-ci.yml",
     ".md_kx.toml",
 )
 NOISE_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
@@ -880,18 +879,31 @@ def cmd_prep(args: argparse.Namespace) -> int:
 
 
 def cmd_install_hooks(args: argparse.Namespace) -> int:
-    """幂等设置 core.hooksPath 指向 .repo_template/hooks。
+    """幂等设置 core.hooksPath 指向工具链 hooks。
 
-    git 对相对路径按仓库根解析；hooks 脚本随 HARD_SYNC_DIRS 分发，
-    消费仓复制后只需跑一次本命令。已有其它 hooksPath 时拒绝，须 --force。
+    git 对相对路径按仓库顶层解析。消费仓 hooks 在 `.repo_template/hooks`；
+    工厂仓产物在 `repo/` 下时须写成 `repo/.repo_template/hooks`。已有其它
+    hooksPath 时拒绝，须 --force。
     """
-    hooks_rel = ".repo_template/hooks"
-    hook_script = CONSUMER / hooks_rel / "pre-commit"
+    hooks_dir = CONSUMER / ".repo_template" / "hooks"
+    hook_script = hooks_dir / "pre-commit"
     if not hook_script.is_file():
-        print(f"错误: 缺 hook 脚本 {hooks_rel}/pre-commit", file=sys.stderr)
+        print("错误: 缺 hook 脚本 .repo_template/hooks/pre-commit", file=sys.stderr)
         return 1
     if not os.access(hook_script, os.X_OK):
-        print(f"错误: {hooks_rel}/pre-commit 不可执行", file=sys.stderr)
+        print("错误: .repo_template/hooks/pre-commit 不可执行", file=sys.stderr)
+        return 1
+    toplevel = _git(CONSUMER, "rev-parse", "--show-toplevel").stdout.strip()
+    if not toplevel:
+        print("错误: 无法解析 git 仓库顶层", file=sys.stderr)
+        return 1
+    try:
+        hooks_rel = hooks_dir.resolve().relative_to(Path(toplevel).resolve()).as_posix()
+    except ValueError:
+        print(
+            f"错误: hooks 目录不在仓库顶层内：{hooks_dir} / {toplevel}",
+            file=sys.stderr,
+        )
         return 1
     current = _git(CONSUMER, "config", "--get", "core.hooksPath").stdout.strip()
     if current == hooks_rel:
@@ -967,7 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("link-skills", help="校验并修复 .claude/skills 软链").set_defaults(func=cmd_link_skills)
     hooks = sub.add_parser(
         "install-hooks",
-        help="幂等设置 core.hooksPath 指向 .repo_template/scripts/hooks（已有其它值须 --force）",
+        help="幂等设置 core.hooksPath 指向工具链 hooks（已有其它值须 --force）",
     )
     hooks.add_argument("--force", action="store_true", help="覆盖已有的 core.hooksPath")
     hooks.set_defaults(func=cmd_install_hooks)

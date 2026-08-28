@@ -37,7 +37,8 @@ def _git(repo, *args):
 def _init_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    _git(repo, "init")
+    # 显式 -b main：CI runner 常默认 master，否则后续 checkout main 失败。
+    _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
     (repo / "docs" / "pending" / "todo").mkdir(parents=True)
