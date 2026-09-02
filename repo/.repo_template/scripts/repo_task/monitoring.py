@@ -33,7 +33,23 @@ def _hash_part(digest, label: bytes, value: bytes) -> None:
     digest.update(value)
 
 
-# 被审 diff 指纹排除的任务流程文件：check_review_status / render_review_prompts 共用（单一真相源）。
+# review prompt 渲染输出文件名（按 review_level）：render_review_prompts 的输出 dict key
+# 同源于此（单一真相源）。产物经 --out-dir 落 task 目录后是 untracked 文件，若不入指纹
+# 排除列表会参与重算 → check_review_status 误判 review_scope=stale；本常量防两处漂移。
+REVIEW_PROMPT_OUTPUT_FILES = {
+    "full": ("code_review_prompt.md", "test_review_prompt.md"),
+    "single": ("general_review_prompt.md",),
+}
+# task 目录级 review 流程文件（review 门禁指纹排除全量）：过程文件 + prompt 渲染产物。
+REVIEW_PROCESS_FILES = (
+    "task.md",
+    "review_code.md",
+    "review_test.md",
+    "review_general.md",
+    "handoff.json",
+) + tuple(name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names)
+
+# 仓库级 review 门禁指纹排除（非 task 目录路径）。
 SCOPE_FINGERPRINT_EXCLUDES = (
     ":(exclude)docs/pending", ":(exclude)docs/findings",
     ":(exclude)docs/archive", ":(exclude)docs/tasks_index.json",
@@ -54,13 +70,8 @@ def review_scope_fingerprint(
     """
     root = (repo_root or ctx.REPO_ROOT).resolve()
     excludes = [
-        f":(exclude){rel_task_dir}/task.md",
-        f":(exclude){rel_task_dir}/review_code.md",
-        f":(exclude){rel_task_dir}/review_test.md",
-        f":(exclude){rel_task_dir}/review_general.md",
-        f":(exclude){rel_task_dir}/handoff.json",
-        *SCOPE_FINGERPRINT_EXCLUDES,
-    ]
+        f":(exclude){rel_task_dir}/{name}" for name in REVIEW_PROCESS_FILES
+    ] + list(SCOPE_FINGERPRINT_EXCLUDES)
     try:
         diff = _git_bytes(["diff", "--binary", diff_anchor, "--", ".", *excludes], root=root)
         untracked = _git_bytes(

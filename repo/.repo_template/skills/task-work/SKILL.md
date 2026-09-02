@@ -104,6 +104,7 @@ flowchart TD
 ### Step 6：处置
 
 - 处置表唯一落点：`task.md` → `## Review 处置`。`status` 仅：`已修` / `遗留` / `撤回`。
+- reviewer 结论段「未进表提示」是建议非 finding，不记入处置表、不填 status（约定见 task.md「## Review 处置」）；采纳与否一句话写实施笔记即可，确需后续办理的用 `.repo_template/scripts/pending.py new` 登记转 pending。
 - `status=遗留` 的内容不写 task.md：用 `.repo_template/scripts/pending.py new --slug <主题>` 建条目并填写；`fix_ref` 填该 `pNNN` 或已有 follow-up tid。
 - 运行：
     ```bash

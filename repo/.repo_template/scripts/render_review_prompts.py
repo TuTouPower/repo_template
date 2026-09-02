@@ -25,7 +25,10 @@ from pathlib import Path
 
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter as _parse_front_matter
-from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
+from repo_task.monitoring import (
+    REVIEW_PROMPT_OUTPUT_FILES,
+    review_scope_fingerprint as monitoring_scope_fingerprint,
+)
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TOOLKIT_ROOT.parent
@@ -240,19 +243,21 @@ def render_review_prompts(
     shared = template_paths["share"].read_text(encoding="utf-8")
 
     if level == "single":
+        (general_name,) = REVIEW_PROMPT_OUTPUT_FILES["single"]
         prompts = {
-            "general_review_prompt.md": apply_placeholders(
+            general_name: apply_placeholders(
                 template_paths["general"].read_text(encoding="utf-8") + "\n" + shared,
                 values,
             ),
         }
     else:
+        code_name, test_name = REVIEW_PROMPT_OUTPUT_FILES["full"]
         prompts = {
-            "code_review_prompt.md": apply_placeholders(
+            code_name: apply_placeholders(
                 template_paths["code"].read_text(encoding="utf-8") + "\n" + shared,
                 values,
             ),
-            "test_review_prompt.md": apply_placeholders(
+            test_name: apply_placeholders(
                 template_paths["test"].read_text(encoding="utf-8") + "\n" + shared,
                 values,
             ),

@@ -81,22 +81,27 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 
 命令顺序固定：
 
-1. 首 task 执行 `task.py start {tid}`；后继执行 `task.py start {tid} --base {前一 task 分支}`。
-2. 紧接着执行 `task.py attempt reserve {tid} --executor inline`。reserve 原子返回 identity，inline attempt 直接进入 `running`；当前 attempt 未 terminal 时禁止再次 reserve。
-3. 调用 `task-work` 时 `attempt` 与 `execution_id` 均必填。每个 task 只产生一个执行 commit。
-4. `task-work` 返回后先写 executor 终态：正常返回（包括业务 `blocked`）写 `terminal --status completed`；执行器/环境失败写 `failed`，用户或宿主停止写 `stopped`。再以同一 identity 写 `report --status done|blocked|failed`。
-5. 只有 `terminal completed` 且业务 `report done` 的成员才执行 `cleanup-worktree {tid} --attempt {N} --execution-id {ID}`。中间只 cleanup，**不合并**；分支保留并成为下一个 task 的 `--base`。
-6. 队列全部成员完成后，询问一次是否需要合入；用户同意后调用 `integrate-chain {链尾 tid}`，未同意则不 merge、保留已清理的链分支。它从控制面聚合各成员 exact identity，不接受 `--attempt` / `--execution-id`，主干只进一次链尾 merge commit；命令完成 index 与幂等批量 integrated 后停在 `awaiting_verification`，保留分支和 transaction。
-7. 执行合并后验证。通过后调用同一 `integrate-chain {链尾 tid} --continue`，删除整条链分支并清除 transaction；验证失败则停止，保留可恢复证据，不调用最终 continue。
-8. 当前 task `blocked` → 队列停止，不 cleanup、不自动跳下一个；保留现场等待用户决定。
-9. 「循环」= 本 skill 内串行推进，不是后台常驻。
+01. 首 task 执行 `task.py start {tid}`；后继执行 `task.py start {tid} --base {前一 task 分支}`。
+02. 紧接着执行 `task.py attempt reserve {tid} --executor inline`。reserve 原子返回 identity，inline attempt 直接进入 `running`；当前 attempt 未 terminal 时禁止再次 reserve。
+03. 调用 `task-work` 时 `attempt` 与 `execution_id` 均必填。每个 task 只产生一个执行 commit。
+04. `task-work` 返回后先写 executor 终态：正常返回（包括业务 `blocked`）写 `terminal --status completed`；执行器/环境失败写 `failed`，用户或宿主停止写 `stopped`。再以同一 identity 写 `report --status done|blocked|failed`。
+05. 只有 `terminal completed` 且业务 `report done` 的成员才执行 `cleanup-worktree {tid} --attempt {N} --execution-id {ID}`。中间只 cleanup，**不合并**；分支保留并成为下一个 task 的 `--base`。
+06. 队列全部成员完成后，询问一次是否需要合入；用户同意后调用 `integrate-chain {链尾 tid}`，未同意则不 merge、保留已清理的链分支。它从控制面聚合各成员 exact identity，不接受 `--attempt` / `--execution-id`，主干只进一次链尾 merge commit；命令完成 index 与幂等批量 integrated 后停在 `awaiting_verification`，保留分支和 transaction。
+07. 执行合并后验证。通过后调用同一 `integrate-chain {链尾 tid} --continue`，删除整条链分支并清除 transaction；验证失败则停止，保留可恢复证据，不调用最终 continue。
+08. 当前 task `blocked` → 队列停止，不 cleanup、不自动跳下一个；保留现场等待用户决定。用户加轮放行后按步骤 9 续跑。
+09. blocked 放行（加轮）续跑：一个 identity 只能 terminal + report 一次；report 后该轮即关闭，续跑必须 reserve 新 attempt。故不沿用旧 identity，依次：
+    a. 进入该 task worktree，执行 `task.py resume {tid}`（front matter blocked→active，现场与未提交改动保留）。
+    b. 回主仓执行 `.repo_template/scripts/task.py attempt reserve {tid} --executor inline`，取**新** (attempt, execution_id)。
+    c. 以新 identity 从上次进展对应步骤重入 `task-work` 续跑；正常完成则写 `terminal completed` → `report done`（再次 blocked/failed 则相应写 report 并停下再次呈报，不 cleanup）。
+    d. 仅当 terminal completed 且 report done 时 `cleanup-worktree {tid} --attempt {N} --execution-id {ID}` exact，然后继续队列下一个 tid。
+10. 「循环」= 本 skill 内串行推进，不是后台常驻。
 
 ## 恢复
 
 中断后先用 `task.py ps --all` 与 `task.py ledger tail --tid <tid>` 恢复该 task 的 current exact identity，再按以下优先级判断仓库状态：
 
 1. 当前 identity 为 `running` 且已登记 task worktree：进入该 worktree，用 `.repo_template/scripts/task.py show <tid>` 读 active/blocked 与未提交证据，以原 `attempt` / `execution_id` 回 `task-work` 对应步骤；禁止另行 reserve。
-2. task 分支已有执行 commit 与 `handoff.json`，但 terminal/report/cleanup 未闭环：核对 handoff identity 后，按原 identity 补 `terminal → report → cleanup-worktree`，不创建新 attempt。
+2. task 分支已有执行 commit 与 `handoff.json`，但该轮**尚未 report**（terminal/report/cleanup 未闭环）：核对 handoff identity 后，按原 identity 补 `terminal → report → cleanup-worktree`，不创建新 attempt。已 report 的轮次（如 blocked）不在此列——一个 identity 只能 terminal + report 一次，续跑须 reserve 新 attempt，见「队列循环」步骤 9。
 3. 未合并 task 分支已 `done` 且 exact cleanup 完成：记录其分支为下一个 `--base`，继续队列下一个 backlog。
 4. `.git/repo-task/integrate-chain.json` 存在：读取 `phase`。`prepared` 且有冲突时先解决并 `git add`；`merged` / `indexed` 表示 merge 已发生但收尾未闭环；以上均以原 tail 执行一次 `integrate-chain {链尾 tid} --continue` 恢复到 `awaiting_verification`。`awaiting_verification` 必须先完成合并后验证，验证通过后再执行一次同命令删除分支并清除 transaction。
 5. 主干中尚未进入执行的 backlog task：从队列头执行 `start → reserve inline`。
@@ -112,7 +117,7 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 遇任一即停，不自动跳当前 task 跑下一个：
 
 - `preflight` FAIL 且无法在本 task 内修复。
-- 当前 task `blocked`（呈加轮 / dropped 选项）。
+- 当前 task `blocked`（呈加轮 / dropped 选项；加轮放行的续跑程序见「队列循环」步骤 9）。
 - merge 冲突需用户裁决。
 - 合并后验证失败——停止队列后续全部执行。
 - 需用户提供密钥、环境、产品决策等不可替代输入。

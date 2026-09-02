@@ -38,6 +38,8 @@ note: ""
 
 reviewer 标注为 spec 过时的 finding（实现合理但与 spec 描述不符），处置为改 spec 上下文区，不计 FAIL。
 
+reviewer 结论段「未进表提示」是建议非 finding：不记入本表、不填 status（本表是机器账本，只收 `tNNN_(code|test|gen)_fNNN` finding）。采纳与否留痕可选——需要时一句话写入「实施笔记」；确需后续办理的按顺手发现登记 `docs/pending/todo/`（`.repo_template/scripts/pending.py new`）转 pending。
+
 ### Round 1 场景说明
 
 - **无 finding**：写「Round 1 零 finding，未进处置表。」
