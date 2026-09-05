@@ -44,6 +44,7 @@ disable-model-invocation: true
 |硬同步强制覆盖|`repo_sync.py apply`|硬同步清单树对树（含多余删除）；噪声忽略|
 |skill 整目录覆盖|`repo_sync.py apply`|含 front matter；保护 `sync_state.json`；不做整树 `--delete`|
 |软链建/修|`repo_sync.py apply` / `link-skills`|`.claude/skills/<name>` 与 `.agents/skills/<name>` → `.repo_template/skills/<name>`；同名旧真实目录（旧架构残留）备份后自动转软链；非本机制链接报告不碰|
+|opencode 命令薄层|`repo_sync.py apply` / `link-skills` / `prep`|每个 skill 生成项目级 `.opencode/commands/<name>.md`（调 `skill` 工具执行，`$ARGUMENTS` 透传；opencode 直接读 `.agents/skills`，故 skill 本身不另建软链）；手写命令不覆盖不删，skill 删除后仅清带标记残留|
 |.gitignore / MCP 机械合并|`repo_sync.py apply`|追加去重、按键合并、禁冲密钥；遵从 `user_prompts` 拦截|
 |裁定单元写盘|`repo_sync.py apply --decision U:D`|`update` / `keep`；`merge` 提示后由 agent 手动编辑|
 |state 字段级更新|`apply` / `prompt` 内部|原子写盘，未知键保留（脚本保证纪律）|
