@@ -4,7 +4,8 @@ goal 模式的提示词必须是可机器判定的终态，而不是过程指令
 
 - ``goal``：查看或冻结 ``docs/runtime/goal_queue.json``（已 gitignore，仅主仓）。
   无参且已有快照时只读展示，不改顺序；首次无快照才按 backlog ∪ active 升序冻结。
-  重建须显式 tid 或 ``--reset``；覆盖且与旧队列不一致时须确认（或 ``--yes``）。
+  重建须显式 tid 或 ``--reset``；显式 tid 覆盖且与旧队列不一致时须确认（或 ``--yes``），
+  ``--reset`` 直接覆盖免确认。
 - ``goal-check``：只读判定器。权威 = ledger 投影 + 主干状态 + worktree 登记，
   不看 transcript。输出逐 tid 状态行与一个总结 marker：
 
@@ -192,7 +193,7 @@ def cmd_goal(args) -> None:
     except ctx.TaskDataError as error:
         sys.exit(str(error))
 
-    if existing is not None:
+    if existing is not None and not reset:
         _confirm_overwrite(
             existing["queue"],
             queue,

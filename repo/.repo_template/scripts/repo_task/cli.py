@@ -215,12 +215,12 @@ def main():
     goal.add_argument(
         "--reset",
         action="store_true",
-        help="按 backlog ∪ active 升序重建默认队列并覆盖已有快照",
+        help="按 backlog ∪ active 升序重建默认队列并直接覆盖已有快照（免确认）",
     )
     goal.add_argument(
         "--yes",
         action="store_true",
-        help="覆盖已有快照且顺序不一致时跳过确认",
+        help="显式 tid 覆盖已有快照且顺序不一致时跳过确认（--reset 本身已免确认）",
     )
     goal.set_defaults(func=cmd_goal)
 

@@ -279,10 +279,8 @@ def test_goal_empty_queue_view_keeps_snapshot_reset_clears(git_repo):
     assert "/goal 行不可直接执行" in viewed.stdout
     assert snapshot.is_file()
     assert _snapshot(git_repo) == before
-    refused = _cli(git_repo, "goal", "--reset")
-    assert refused.returncode != 0
-    assert snapshot.is_file()
-    result = _cli(git_repo, "goal", "--reset", "--yes")
+    # --reset 直接覆盖免确认：队列为空时清除快照
+    result = _cli(git_repo, "goal", "--reset")
     assert result.returncode == 0, result.stderr
     assert "队列为空" in result.stdout
     assert not snapshot.exists()
@@ -315,20 +313,21 @@ def test_goal_accidental_no_args_keeps_custom_order(git_repo):
     assert _snapshot(git_repo) == before
 
 
-def test_goal_reset_and_explicit_tids_require_confirm_when_order_differs(git_repo):
+def test_goal_reset_skips_confirm_explicit_tids_require_confirm(git_repo):
     assert _cli(git_repo, "goal", "t002", "t001").returncode == 0
-    before = _snapshot(git_repo)
 
-    refused = _cli(git_repo, "goal", "--reset")
-    assert refused.returncode != 0
-    assert "确认覆盖请加 --yes" in refused.stderr
-    assert "已冻结" in refused.stderr
-    assert _snapshot(git_repo) == before
-
-    reset = _cli(git_repo, "goal", "--reset", "--yes")
+    # --reset 直接覆盖免确认
+    reset = _cli(git_repo, "goal", "--reset")
     assert reset.returncode == 0, reset.stderr
     assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
     assert "队列已重新冻结：t001, t002" in reset.stdout
+
+    # 显式 tid 顺序不一致仍须确认
+    refused = _cli(git_repo, "goal", "t002", "t001")
+    assert refused.returncode != 0
+    assert "确认覆盖请加 --yes" in refused.stderr
+    assert "已冻结" in refused.stderr
+    assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
 
     custom = _cli(git_repo, "goal", "t002", "t001", "--yes")
     assert custom.returncode == 0, custom.stderr
