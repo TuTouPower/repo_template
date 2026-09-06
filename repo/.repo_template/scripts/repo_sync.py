@@ -257,39 +257,68 @@ def _replace_guide_blocks(text: str, current_template: str) -> str:
     current = _guide_blocks_by_heading(current_template)
     if not current:
         return text
-    output: list[str] = []
-    occurrences: dict[str, int] = {}
-    heading = ""
     lines = text.splitlines()
+    output: list[str] = []
     index = 0
     while index < len(lines):
-        line = lines[index]
-        if line.startswith("### "):
-            heading = line[4:].strip()
-        if line.strip() != _GUIDE_OPEN:
-            output.append(line)
+        stripped = lines[index].strip()
+        if not stripped.startswith("### "):
+            output.append(lines[index])
             index += 1
             continue
-        replacement_index = occurrences.get(heading, 0)
+        heading = stripped[4:].strip()
+        end = index + 1
+        while end < len(lines):
+            marker = lines[end].strip()
+            if marker.startswith("### ") or marker.startswith("## "):
+                break
+            end += 1
+        section = lines[index:end]
+        content: list[str] = []
+        cursor = 1
+        old_block_count = 0
+        while cursor < len(section):
+            if section[cursor].strip() != _GUIDE_OPEN:
+                content.append(section[cursor])
+                cursor += 1
+                continue
+            old_block_count += 1
+            cursor += 1
+            while cursor < len(section) and section[cursor].strip() != _GUIDE_CLOSE:
+                cursor += 1
+            if cursor >= len(section):
+                raise SyncError(f"存量 spec 的 {heading!r} 规范块未闭合，拒绝猜测迁移")
+            cursor += 1
         replacements = current.get(heading, [])
-        if replacement_index >= len(replacements):
-            raise SyncError(f"存量 spec 的 {heading!r} 含模板未定义的额外规范块")
-        output.extend(replacements[replacement_index].splitlines())
-        occurrences[heading] = replacement_index + 1
-        index += 1
-        while index < len(lines) and lines[index].strip() != _GUIDE_CLOSE:
-            index += 1
-        if index >= len(lines):
-            raise SyncError("存量 spec 规范块未闭合，拒绝猜测迁移")
-        index += 1
+        if not replacements and old_block_count == 0:
+            output.extend(section)
+            index = end
+            continue
+        while content and not content[0].strip():
+            content.pop(0)
+        while content and not content[-1].strip():
+            content.pop()
+        rendered: list[str] = [section[0], ""]
+        for block_index, block in enumerate(replacements):
+            if block_index:
+                rendered.append("")
+            rendered.extend(block.splitlines())
+        if replacements and content:
+            rendered.append("")
+        rendered.extend(content)
+        rendered.append("")
+        output.extend(rendered)
+        index = end
     return "\n".join(output).rstrip() + "\n"
 
 
 def _implementation_guidance(task_template: str) -> list[str]:
     lines = task_template.splitlines()
-    try:
-        start = lines.index("## 实施笔记") + 1
-    except ValueError:
+    start = next(
+        (index + 1 for index, line in enumerate(lines) if line.strip() == "## 实施笔记"),
+        None,
+    )
+    if start is None:
         return []
     section = []
     for line in lines[start:]:
@@ -316,6 +345,9 @@ def _migrate_task_text(text: str, task_template: str) -> str:
             frontmatter_end = index
             in_frontmatter = False
         elif in_frontmatter:
+            key = line.partition(":")[0].strip()
+            if key == "schedule_status":
+                continue
             has_review = has_review or bool(re.match(r'^review_limit\s*:', line))
             has_verify = has_verify or bool(re.match(r'^verify_limit\s*:', line))
             if re.match(r'^status\s*:\s*["\']?blocked["\']?\s*$', line):
@@ -323,10 +355,10 @@ def _migrate_task_text(text: str, task_template: str) -> str:
         migrated.append(line)
 
     guidance = _implementation_guidance(task_template)
-    try:
-        section_start = migrated.index("## 实施笔记") + 1
-    except ValueError:
-        section_start = None
+    section_start = next(
+        (index + 1 for index, line in enumerate(migrated) if line.strip() == "## 实施笔记"),
+        None,
+    )
     if section_start is not None and guidance:
         section_end = next(
             (i for i in range(section_start, len(migrated)) if migrated[i].startswith("## ")),
@@ -369,28 +401,41 @@ def _registered_task_worktrees() -> list[tuple[Path, str]]:
             root = None
     return rows
 
-def workflow_migration_status(src: Path) -> tuple[list[str], list[tuple[Path, str]]]:
+def workflow_migration_status(
+    src: Path,
+) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
     spec_path = src / ".repo_template/docs/task_template/spec.md"
     task_path = src / ".repo_template/docs/task_template/task.md"
+    worktrees = _registered_task_worktrees()
     if not spec_path.is_file() or not task_path.is_file():
-        return [], _registered_task_worktrees()
+        return [], worktrees, []
     spec_template = spec_path.read_text(encoding="utf-8")
     task_template = task_path.read_text(encoding="utf-8")
     if not _guide_blocks_by_heading(spec_template) or "## 实施笔记" not in task_template:
-        return [], _registered_task_worktrees()
-    candidates = []
+        return [], worktrees, []
+    candidates: list[str] = []
+    errors: list[str] = []
     tasks_dir = CONSUMER / "docs/tasks"
     if tasks_dir.is_dir():
         for task_dir in tasks_dir.glob("t[0-9]*_*"):
             if not task_dir.is_dir():
                 continue
-            spec = task_dir / "spec.md"
-            task = task_dir / "task.md"
-            if spec.is_file() and _replace_guide_blocks(spec.read_text(encoding="utf-8"), spec_template) != spec.read_text(encoding="utf-8"):
-                candidates.append(_rel(spec))
-            if task.is_file() and _migrate_task_text(task.read_text(encoding="utf-8"), task_template) != task.read_text(encoding="utf-8"):
-                candidates.append(_rel(task))
-    return sorted(candidates), _registered_task_worktrees()
+            for filename, transform in (
+                ("spec.md", lambda text: _replace_guide_blocks(text, spec_template)),
+                ("task.md", lambda text: _migrate_task_text(text, task_template)),
+            ):
+                path = task_dir / filename
+                if not path.is_file():
+                    continue
+                before = path.read_text(encoding="utf-8")
+                try:
+                    after = transform(before)
+                except SyncError as error:
+                    errors.append(f"{_rel(path)}: {error}")
+                    continue
+                if after != before:
+                    candidates.append(_rel(path))
+    return sorted(candidates), worktrees, sorted(errors)
 
 
 def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
@@ -408,10 +453,11 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
         raise SyncError(
             "workflow schema 强制更新前必须先完成或 rewind 已登记 task worktree：" + detail
         )
-    reports = []
+    planned: list[tuple[Path, str]] = []
+    errors: list[str] = []
     tasks_dir = CONSUMER / "docs/tasks"
     if not tasks_dir.is_dir():
-        return reports
+        return []
     for task_dir in tasks_dir.glob("t[0-9]*_*"):
         if task_dir.name == "task_template" or not task_dir.is_dir():
             continue
@@ -423,13 +469,21 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
             if not path.is_file():
                 continue
             before = path.read_text(encoding="utf-8")
-            after = transform(before)
-            if after == before:
+            try:
+                after = transform(before)
+            except SyncError as error:
+                errors.append(f"{_rel(path)}: {error}")
                 continue
-            _stage_rollback(path)
-            path.write_text(after, encoding="utf-8")
-            changed.add(path)
-            reports.append(f"{_rel(path)} 已强制迁移到当前 workflow schema")
+            if after != before:
+                planned.append((path, after))
+    if errors:
+        raise SyncError("workflow schema 无法安全迁移：" + "；".join(errors))
+    reports = []
+    for path, after in planned:
+        _stage_rollback(path)
+        path.write_text(after, encoding="utf-8")
+        changed.add(path)
+        reports.append(f"{_rel(path)} 已强制迁移到当前 workflow schema")
     return reports
 
 
@@ -627,8 +681,10 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
         legacy_guard.is_symlink()
         and legacy_guard.resolve(strict=False) == retired_target.resolve(strict=False)
     )
-    if managed_retired_guard:
+    guard_missing = not legacy_guard.exists() and not legacy_guard.is_symlink()
+    if managed_retired_guard or guard_missing:
         _remove_retired_merge_guard_setting(changed, reports)
+    if managed_retired_guard:
         _stage_rollback(legacy_guard)
         legacy_guard.unlink()
         changed.add(legacy_guard)
@@ -1011,14 +1067,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("\n裁定单元:")
     for item in shared_status(src):
         print(f"  {item['cls']:14s} {item['unit']}")
-    migrations, worktrees = workflow_migration_status(src)
+    migrations, worktrees, migration_errors = workflow_migration_status(src)
     print("\nworkflow schema 强制迁移:")
+    if migration_errors:
+        for error in migration_errors:
+            print(f"  BLOCKED: {error}")
     if worktrees:
         print("  BLOCKED: 先完成或 rewind task worktree：" + ", ".join(branch for _, branch in worktrees))
-    elif migrations:
+    if migrations:
         for path in migrations:
             print(f"  migrate {path}")
-    else:
+    if not migration_errors and not worktrees and not migrations:
         print("  无")
     return 0
 
@@ -1089,15 +1148,19 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print(_md_table(["路径", "状态", "说明"], rows))
 
     print("\n### workflow schema 强制迁移")
-    migrations, worktrees = workflow_migration_status(src)
+    migrations, worktrees, migration_errors = workflow_migration_status(src)
+    if migration_errors:
+        print("BLOCKED：以下文档无法自动迁移：")
+        for error in migration_errors:
+            print(f"- {error}")
     if worktrees:
         print("BLOCKED：先完成或 rewind 已登记 task worktree：")
         for root, branch in worktrees:
             print(f"- {branch} @ {root}")
-    elif migrations:
+    if migrations:
         for path in migrations:
             print(f"- {path}")
-    else:
+    if not migration_errors and not worktrees and not migrations:
         print("无")
 
     print("\n### state 推进预期")

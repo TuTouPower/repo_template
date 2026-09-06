@@ -36,7 +36,7 @@ TERMINAL_EVENTS = {"report", "integrated", "attempt_terminal"}
 
 
 def resolve_worktree(project, tid):
-    """Worktree path (absolute) for a tid from the dispatch ledger, or ''.
+    """Worktree path (absolute) for a tid from the attempt ledger, or ''.
 
     A `start` event opens the window; `attempt_reserved` with state=running
     keeps it open; any terminal event (report/integrated/attempt_terminal) closes it,
@@ -59,7 +59,7 @@ def resolve_worktree(project, tid):
                     # ledger 损坏行静默跳过会让该 tid 的 worktree 解析丢失；
                     # 打 WARNING 带行号，与 ledger 的 fail-closed 语义对齐可见性（F35）
                     print(
-                        f"WARNING: 调度账本损坏行已跳过（{ledger} 第 {line_no} 行）",
+                        f"WARNING: attempt 账本损坏行已跳过（{ledger} 第 {line_no} 行）",
                         file=sys.stderr,
                     )
                     continue

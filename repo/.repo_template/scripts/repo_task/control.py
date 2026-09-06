@@ -77,8 +77,20 @@ def cmd_view(args):
         else:
             lines.append("  -")
         lines.extend(["", f"[待运行] backlog {len(backlog_tasks)}"])
+        selected_set = set(selected)
+        ready_conflicts = sorted(
+            {
+                tuple(sorted((tid, peer), key=tid_sort_key))
+                for tid in selected
+                for peer in conflicts[tid] & selected_set
+                if tid != peer
+            },
+            key=lambda pair: (tid_sort_key(pair[0]), tid_sort_key(pair[1])),
+        )
         groups = (
-            ("▸ 下一批可跑", [(tid, tasks[tid]["title"]) for tid in selected]),
+            ("▸ 下一批可跑（冲突项勿并行，分链以 plan 为准）",
+             [(tid, tasks[tid]["title"]) for tid in selected]),
+            ("▸ 可跑但互相冲突", ready_conflicts),
             ("▸ 被依赖阻塞", waiting_deps),
             ("▸ 被冲突阻塞", blocked_conflicts),
         )
@@ -89,6 +101,8 @@ def cmd_view(args):
             for left, right in rows:
                 if heading == "▸ 被依赖阻塞":
                     lines.append(f"    {left} → {right}")
+                elif heading == "▸ 可跑但互相冲突":
+                    lines.append(f"    {left} ↔ {right}  — 不要并行启动")
                 elif heading == "▸ 被冲突阻塞":
                     lines.append(f"    {left} ↔ {right}  — {left}: {tasks[left]['title']}")
                 else:

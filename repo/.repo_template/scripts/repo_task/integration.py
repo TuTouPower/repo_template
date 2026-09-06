@@ -463,6 +463,10 @@ def _chain_locked(func):
 
 
 def _prepare_native_merge(branch: str, message: str) -> None:
+    try:
+        _expected_auto_merge(branch)
+    except ctx.TaskDataError as error:
+        sys.exit(f"merge 尚未开始：{error}")
     result = _git(["merge", "--no-ff", "--no-commit", "-m", message, branch], timeout=120)
     if result.returncode != 0:
         conflicts = _conflicted_paths()
@@ -494,7 +498,13 @@ def _expected_auto_merge(expected_head: str) -> tuple[str, set[str]]:
     fields = result.stdout.split("\0")
     tree = fields[0] if fields else ""
     if result.returncode not in {0, 1} or not re.fullmatch(r"[0-9a-f]{40,64}", tree):
-        raise ctx.TaskDataError("无法重算 Git 自动合并结果，不能校验 staged 内容")
+        detail = result.stderr.strip()
+        if result.returncode == 129 or "unknown option" in detail.lower():
+            raise ctx.TaskDataError("内容门禁需要 Git >= 2.38（merge-tree --write-tree --name-only）")
+        raise ctx.TaskDataError(
+            "无法重算 Git 自动合并结果，不能校验 staged 内容"
+            + (f"：{detail}" if detail else "")
+        )
     try:
         end = fields.index("", 1)
     except ValueError:
@@ -642,24 +652,25 @@ def cmd_integrate(args):
     _prepare_native_merge(branch, f"merge({args.tid}): {branch}")
 
 
-def _collect_chain(tail_tid: str, *, include_merged: bool = False) -> list[tuple[str, str, str]]:
+def _collect_chain(
+    tail_tid: str, *, base_ref: str = "HEAD",
+) -> list[tuple[str, str, str]]:
     tail_branch, tail_sha = _resolve_integrate_branch(tail_tid)
     candidates = []
     for branch in _local_task_branches():
         _, sha = resolve_local_branch(branch)
         if _git(["merge-base", "--is-ancestor", sha, tail_sha]).returncode != 0:
             continue
-        if (
-            not include_merged
-            and not _merge_in_progress()
-            and _git(["merge-base", "--is-ancestor", sha, "HEAD"]).returncode == 0
-        ):
+        # A chain merge covers only commits added relative to its first parent.
+        # Retained branches integrated by an older merge are ancestors of
+        # base_ref and must never be claimed by the current batch.
+        if _git(["merge-base", "--is-ancestor", sha, base_ref]).returncode == 0:
             continue
         match = ctx.TASK_BRANCH_RE.fullmatch(branch)
         if match:
             candidates.append((match.group(1), branch, sha))
     if not any(branch == tail_branch for _, branch, _ in candidates):
-        raise ctx.TaskDataError(f"链尾 {tail_branch!r} 不在可合并 task 分支集合")
+        raise ctx.TaskDataError(f"链尾 {tail_branch!r} 不在本次 merge 覆盖范围")
     for index, left in enumerate(candidates):
         for right in candidates[index + 1:]:
             if not (_is_ancestor(left[2], right[2]) or _is_ancestor(right[2], left[2])):
@@ -678,17 +689,32 @@ def _collect_chain(tail_tid: str, *, include_merged: bool = False) -> list[tuple
     return candidates
 
 
-def _preflight_chain(tail_tid: str, *, allow_integrated: bool = False) -> list[dict]:
-    chain = _collect_chain(tail_tid, include_merged=allow_integrated)
+def _chain_continue_base(tail_tid: str, tail_sha: str) -> str:
+    if _merge_in_progress():
+        if _merge_head() != tail_sha:
+            raise ctx.TaskDataError("MERGE_HEAD 与链尾 tip 不符")
+        return "HEAD"
+    subject = f"merge-chain({tail_tid}):"
+    existing = _find_merge_commit(tail_sha, subject)
+    if existing is None:
+        raise ctx.TaskDataError("当前无对应 pending chain merge 或刚完成的 merge commit")
+    return f"{existing}^1"
+
+
+def _preflight_chain(tail_tid: str, *, continue_merge: bool = False) -> list[dict]:
+    _, tail_sha = _resolve_integrate_branch(tail_tid)
+    base_ref = _chain_continue_base(tail_tid, tail_sha) if continue_merge else "HEAD"
+    chain = _collect_chain(tail_tid, base_ref=base_ref)
     events = ledger_read()
     members = []
     for tid, branch, sha in chain:
         current = current_attempt_record(tid, events)
         if current is None:
             raise ctx.TaskDataError(f"链成员 {tid} 无 current attempt")
+        # Continue may re-enter after ledger write but before branch delete.
         _require_execution_gate(
             tid, current["attempt"], current["execution_id"],
-            allow_integrated=allow_integrated,
+            allow_integrated=continue_merge,
         )
         _verify_exact_handoff(tid, current["attempt"], current["execution_id"])
         registered = _registered_for_branch(branch)
@@ -705,7 +731,7 @@ def _preflight_chain(tail_tid: str, *, allow_integrated: bool = False) -> list[d
 def cmd_integrate_chain(args):
     require_primary_worktree()
     try:
-        members = _preflight_chain(args.tail_tid, allow_integrated=args.continue_merge)
+        members = _preflight_chain(args.tail_tid, continue_merge=args.continue_merge)
     except ctx.TaskDataError as error:
         sys.exit(str(error))
     tail = members[-1]

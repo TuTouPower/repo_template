@@ -38,7 +38,7 @@ start → reserve → task-work → terminal → report → cleanup
 - 与 active task 冲突的 backlog 不作为当前并发链首。
 - 串行执行不受 conflicts 限制。
 
-`task.py view` 展示当前有效状态，`task.py plan` 生成本波建议。状态变化后重新计算，不持久化 `schedule_status`，也不维护冲突反向边。
+`task.py view` 展示当前有效状态，依赖已满足但彼此冲突的 task 会同时列出并明确提示不要并行；`task.py plan` 负责把它们分到不同建议链。状态变化后重新计算，不持久化 `schedule_status`，也不要求声明冲突反向边。
 
 ## Review 与验证
 
@@ -52,7 +52,7 @@ Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope 
 
 ## 合并
 
-merge 必须获得用户明确授权；模板不使用 merge token hook。单 task 和链式合并均先完成 exact gate，然后：
+merge 必须获得用户明确授权；模板不使用 merge token hook。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。单 task 和链式合并均先完成 exact gate，然后：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>

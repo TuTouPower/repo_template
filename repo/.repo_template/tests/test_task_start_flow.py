@@ -560,6 +560,23 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
 
 
 
+def test_prepare_merge_checks_merge_tree_capability_before_git_merge(monkeypatch):
+    calls = []
+
+    def unsupported(_branch):
+        raise ctx.TaskDataError('内容门禁需要 Git >= 2.38')
+
+    def record_git(args, **_kwargs):
+        calls.append(args)
+        raise AssertionError('git merge must not run after capability failure')
+
+    monkeypatch.setattr(integration, '_expected_auto_merge', unsupported)
+    monkeypatch.setattr(integration, '_git', record_git)
+    with pytest.raises(SystemExit, match='merge 尚未开始.*Git >= 2.38'):
+        integration._prepare_native_merge('t001_alpha', 'merge(t001): t001_alpha')
+    assert calls == []
+
+
 def test_integrate_keeps_branch_when_requested(git_repo):
     _start(git_repo, "t001")
     identity, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
@@ -1207,6 +1224,29 @@ def test_edit_updates_dependencies_and_one_sided_conflict_hint(git_repo):
     third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
     assert first["conflicts_with"] == ""
     assert third.get("conflicts_with", "") == ""
+
+
+def test_conflicts_remove_clears_peer_only_declaration(git_repo):
+    declared = _task_cli(git_repo, 'edit', 't003', '--conflicts-with', 't001')
+    assert declared.returncode == 0, declared.stderr
+    removed = _task_cli(git_repo, 'edit', 't001', '--conflicts-remove', 't003')
+    assert removed.returncode == 0, removed.stderr
+    first, _ = parse_front_matter(git_repo / 'docs/tasks/t001_alpha/task.md')
+    third, _ = parse_front_matter(git_repo / 'docs/tasks/t003_gamma/task.md')
+    assert first['conflicts_with'] == ''
+    assert third['conflicts_with'] == ''
+    view = _task_cli(git_repo, 'view')
+    assert 't001 ↔ t003' not in view.stdout
+
+
+def test_view_warns_when_dependency_ready_tasks_conflict(git_repo):
+    result = _task_cli(git_repo, 'edit', 't001', '--conflicts-with', 't003')
+    assert result.returncode == 0, result.stderr
+    view = _task_cli(git_repo, 'view')
+    assert view.returncode == 0, view.stderr
+    assert '下一批可跑（冲突项勿并行，分链以 plan 为准）' in view.stdout
+    assert '可跑但互相冲突' in view.stdout
+    assert 't001 ↔ t003  — 不要并行启动' in view.stdout
 
 
 def test_edit_allows_conflict_hint_to_active_task_without_peer_write(git_repo):

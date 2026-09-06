@@ -7,7 +7,7 @@ from pathlib import Path
 
 import repo_task.context as ctx
 
-from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter
+from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
 from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
@@ -116,6 +116,7 @@ def cmd_edit(args):
         )
 
     changed = []
+    peer_conflict_update = None
     if values["title"] is not None:
         title = values["title"].strip()
         if not title:
@@ -203,9 +204,26 @@ def cmd_edit(args):
             )
             if len(remove_tid) != 1:
                 sys.exit("--conflicts-remove 只接受一个 tid")
-            if remove_tid[0] not in conflicts:
-                sys.exit(f"{args.tid}.conflicts_with 不含 {remove_tid[0]}")
-            conflicts.remove(remove_tid[0])
+            peer_tid = remove_tid[0]
+            _peer_task, peer_path, peer_fm, peer_body = load_task(peer_tid)
+            peer_conflicts = parse_tid_list(
+                peer_fm.get("conflicts_with", ""), field=f"{peer_tid}.conflicts_with"
+            )
+            local_declares = peer_tid in conflicts
+            peer_declares = args.tid in peer_conflicts
+            if not local_declares and not peer_declares:
+                sys.exit(f"{args.tid} 与 {peer_tid} 不存在有效 conflicts_with 关系")
+            if local_declares:
+                conflicts.remove(peer_tid)
+            if peer_declares:
+                if peer_fm["status"] != "backlog" or task_effective_state(peer_tid, peer_fm):
+                    sys.exit(
+                        f"{peer_tid} 仍声明与 {args.tid} 冲突，但其状态不可安全编辑；"
+                        "请先处理该 task 后再移除关系"
+                    )
+                peer_conflicts.remove(args.tid)
+                peer_fm["conflicts_with"] = dump_tid_list(peer_conflicts)
+                peer_conflict_update = (peer_path, peer_fm, peer_body)
         validate_tid_references(
             conflicts,
             field="conflicts_with",
@@ -222,7 +240,10 @@ def cmd_edit(args):
         changed.append(f"conflicts_with={fm['conflicts_with']!r}")
 
 
-    write_front_matter(path, fm, body)
+    if peer_conflict_update is not None:
+        write_front_matter_many([peer_conflict_update, (path, fm, body)])
+    else:
+        write_front_matter(path, fm, body)
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
 

@@ -640,6 +640,28 @@ def test_repair_symlinks_preserves_manual_guard_setting(env):
     assert settings not in changed and guard not in changed
 
 
+def test_repair_symlinks_removes_exact_retired_setting_when_link_is_missing(env):
+    consumer = env['consumer']
+    settings = consumer / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({
+        'hooks': {'PreToolUse': [{
+            'matcher': 'Bash',
+            'hooks': [
+                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
+            ],
+        }]},
+    }))
+    changed: set[Path] = set()
+    rs.repair_symlinks(changed)
+    data = json.loads(settings.read_text())
+    assert data['hooks']['PreToolUse'][0]['hooks'] == [
+        {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
+    ]
+    assert settings in changed
+
+
 def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     consumer = env['consumer']
     settings = consumer / '.claude/settings.json'
@@ -702,6 +724,7 @@ def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
         '旧版规范文字，只写可观察行为和 AC-NNN。',
     )
     old_task = task.replace('status: backlog', 'status: blocked', 1)
+    old_task = old_task.replace('branch: ""\n', 'branch: ""\nschedule_status: scheduled\n', 1)
     old_task = old_task.replace('review_limit: 5\n', '').replace('verify_limit: 5\n', '')
     old_task = old_task.replace(
         '执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。',
@@ -713,6 +736,54 @@ def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
     return old_spec, old_task
 
 
+def test_legacy_full_spec_schema_migrates_as_heading_groups(env):
+    current_spec, _ = _install_current_workflow_templates(env['consumer'])
+    legacy = (Path(__file__).parent / 'fixtures/spec_pre_workflow_simplification.md').read_text()
+    migrated = rs._replace_guide_blocks(legacy, current_spec)
+    current_blocks = rs._guide_blocks_by_heading(current_spec)
+    migrated_blocks = rs._guide_blocks_by_heading(migrated)
+    assert migrated_blocks == current_blocks
+    assert rs._replace_guide_blocks(migrated, current_spec) == migrated
+    assert '已判定不写测试的分支与原因' not in migrated
+    assert 'mock 边界、fixture 来源、断言目标' not in migrated
+
+
+def test_missing_guide_block_is_restored_and_reported(env):
+    consumer = env['consumer']
+    current_spec, current_task = _install_current_workflow_templates(consumer)
+    _install_current_workflow_templates(env['src'])
+    missing = current_spec.replace(
+        rs._guide_blocks_by_heading(current_spec)['验收标准'][0] + '\n\n', '', 1
+    )
+    task_dir = consumer / 'docs/tasks/t001_missing'
+    task_dir.mkdir(parents=True)
+    (task_dir / 'spec.md').write_text(missing)
+    (task_dir / 'task.md').write_text(current_task)
+    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    assert 'docs/tasks/t001_missing/spec.md' in migrations
+    assert worktrees == [] and errors == []
+    rs.force_migrate_workflow_tasks(set())
+    assert (task_dir / 'spec.md').read_text() == current_spec
+
+
+def test_migration_status_reports_malformed_spec_without_raising(env):
+    consumer = env['consumer']
+    current_spec, current_task = _install_current_workflow_templates(consumer)
+    _install_current_workflow_templates(env['src'])
+    malformed = current_spec.replace(rs._GUIDE_CLOSE, '', 1)
+    task_dir = consumer / 'docs/tasks/t001_malformed'
+    task_dir.mkdir(parents=True)
+    (task_dir / 'spec.md').write_text(malformed)
+    (task_dir / 'task.md').write_text(current_task)
+    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    assert migrations == [] and worktrees == []
+    assert len(errors) == 1 and 't001_malformed/spec.md' in errors[0]
+    assert rs.cmd_status(Namespace()) == 0
+    assert rs.cmd_plan(Namespace()) == 0
+    with pytest.raises(rs.SyncError, match='无法安全迁移'):
+        rs.force_migrate_workflow_tasks(set())
+
+
 def test_workflow_migrations_are_idempotent_for_current_schema(env):
     current_spec, current_task = _install_current_workflow_templates(env['consumer'])
     assert rs._replace_guide_blocks(current_spec, current_spec) == current_spec
@@ -722,6 +793,7 @@ def test_workflow_migrations_are_idempotent_for_current_schema(env):
 def test_force_migrate_workflow_updates_old_task_documents(env):
     consumer = env['consumer']
     current_spec, current_task = _install_current_workflow_templates(consumer)
+    _install_current_workflow_templates(env['src'])
     old_spec, old_task = _old_task_documents(current_spec, current_task)
     task_dir = consumer / 'docs/tasks/t001_old'
     task_dir.mkdir(parents=True)
@@ -738,6 +810,7 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
         for block in blocks:
             assert block in migrated_spec
     assert 'status: "active"' in migrated_task
+    assert 'schedule_status' not in migrated_task
     assert 'review_limit: "5"' in migrated_task
     assert 'verify_limit: "5"' in migrated_task
     for line in rs._implementation_guidance(current_task):
@@ -748,8 +821,8 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert rs._replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
     assert rs._migrate_task_text(migrated_task, current_task) == migrated_task
     assert rs.force_migrate_workflow_tasks(set()) == []
-    migrations, worktrees = rs.workflow_migration_status(env['src'])
-    assert migrations == [] and worktrees == []
+    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    assert migrations == [] and worktrees == [] and errors == []
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):

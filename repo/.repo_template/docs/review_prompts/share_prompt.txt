@@ -3,7 +3,7 @@
 本报告必须含一行审查范围指纹，格式精确如下（整行照抄，禁止反引号、加粗或列表前缀等 markdown 修饰）：
 reviewed_scope: {review_scope_fingerprint}
 
-指纹由实施方渲染 prompt 时按 `git diff {diff_anchor}`（排除 task.md / 处置表 / pending / findings 等流程文件）计算。`check_review_status.py` 重算当前指纹比对：
+指纹按相对 `{diff_anchor}` 的完整 worktree 内容变化计算，包含未跟踪交付文件，排除 task.md / 处置表 / pending / findings 等流程文件。实施方派审前须对明确的新交付文件执行 `git add -N`，让它们同时出现在 reviewer 的 `git diff` 中。`check_review_status.py` 重算当前指纹比对：
 
 - 报告缺 `reviewed_scope` 行，或指纹与当前不一致 → 判定「审查后又改动，PASS 失效」，overall=INCOMPLETE，须重审。
 - 多轮追加时，`## Round N` 小节内写**本轮** reviewed_scope 行；脚本取全文最后一条与当前比对。
@@ -26,7 +26,7 @@ reviewed_scope: {review_scope_fingerprint}
 
 ### 不信任 implementer 自述
 
-`task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以 `git -C '{repo_root}' diff {diff_anchor}` 与代码/测试本身为准。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
+`task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以相对 `{diff_anchor}` 的完整交付内容、`git -C '{repo_root}' diff {diff_anchor}`、`git status --short` 与代码/测试本身为准；若状态中仍有 reviewer 看不到的未跟踪交付文件，结论必须为 INCOMPLETE。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
 
 ### AC 复验披露（结论段必写）
 

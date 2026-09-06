@@ -1,5 +1,6 @@
 """Cross-stage workflow contracts, exercised in isolated real Git repositories."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -76,6 +77,19 @@ def test_cleanup_checks_report_not_only_handoff_claim(git_repo, defect):
     assert result.returncode != 0
     assert 'review' in result.stderr.lower()
     assert w.is_dir()
+
+
+def test_task_work_requires_untracked_deliverables_visible_to_review():
+    skill = (
+        Path(__file__).parents[1] / 'skills/task-work/SKILL.md'
+    ).read_text(encoding='utf-8')
+    prompt = (
+        Path(__file__).parents[1] / 'docs/review_prompts/share_prompt.txt'
+    ).read_text(encoding='utf-8')
+    assert 'git ls-files --others --exclude-standard' in skill
+    assert 'git add -N -- <path...>' in skill
+    assert '完整 worktree 内容变化' in prompt
+    assert '未跟踪交付文件' in prompt
 
 
 def test_creation_gate_accepts_classified_blocking_but_start_does_not(git_repo):
@@ -235,6 +249,35 @@ def test_native_chain_merge_commits_once_after_validation(git_repo):
     ]
 
 
+def test_chain_continue_excludes_branch_integrated_by_older_merge(git_repo):
+    first, first_branch, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', first)
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(first)).returncode == 0
+    kept = _task_cli(
+        git_repo, 'integrate', 't001', *_identity_args(first),
+        '--continue', '--keep-branch',
+    )
+    assert kept.returncode == 0, kept.stderr
+    first_merge = [
+        event['merge_sha'] for event in _read_ledger(git_repo)
+        if event['event'] == 'integrated' and event['tid'] == 't001'
+    ][0]
+
+    second, second_branch, _ = _prepare_done(
+        git_repo, 't002', 'beta', base=first_branch,
+    )
+    _cleanup(git_repo, 't002', second)
+    assert _task_cli(git_repo, 'integrate-chain', 't002').returncode == 0
+    finished = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert finished.returncode == 0, finished.stderr
+    events = [event for event in _read_ledger(git_repo) if event['event'] == 'integrated']
+    assert [event['tid'] for event in events] == ['t001', 't002']
+    assert events[0]['merge_sha'] == first_merge
+    assert events[1]['merge_sha'] != first_merge
+    assert _git(git_repo, 'branch', '--list', first_branch).stdout.strip() == first_branch
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+
+
 def test_native_chain_continue_recovers_after_merge_commit_before_ledger(git_repo):
     first, first_branch, _ = _prepare_done(git_repo, 't001', 'alpha')
     _cleanup(git_repo, 't001', first)
@@ -251,6 +294,46 @@ def test_native_chain_continue_recovers_after_merge_commit_before_ledger(git_rep
     assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
     assert _git(git_repo, 'merge-base', '--is-ancestor', second_head, 'main', check=False).returncode == 0
     assert len([e for e in _read_ledger(git_repo) if e['event'] == 'integrated']) == 2
+
+
+def test_chain_continue_finishes_cleanup_after_integrated_ledger(git_repo):
+    first, first_branch, first_head = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', first)
+    second, second_branch, second_head = _prepare_done(
+        git_repo, 't002', 'beta', base=first_branch,
+    )
+    _cleanup(git_repo, 't002', second)
+    assert _task_cli(git_repo, 'integrate-chain', 't002').returncode == 0
+    finished = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert finished.returncode == 0, finished.stderr
+    merge_shas = {
+        event['tid']: event['merge_sha']
+        for event in _read_ledger(git_repo) if event['event'] == 'integrated'
+    }
+    assert merge_shas['t001'] == merge_shas['t002']
+
+    _git(git_repo, 'branch', first_branch, first_head)
+    _git(git_repo, 'branch', second_branch, second_head)
+    recovered = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert recovered.returncode == 0, recovered.stderr
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    assert {
+        event['tid']: event['merge_sha']
+        for event in _read_ledger(git_repo) if event['event'] == 'integrated'
+    } == merge_shas
+
+    _git(git_repo, 'branch', first_branch, first_head)
+    _git(git_repo, 'branch', second_branch, second_head)
+    _git(git_repo, 'branch', '-d', '--', first_branch)
+    recovered_tail = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert recovered_tail.returncode == 0, recovered_tail.stderr
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    assert {
+        event['tid']: event['merge_sha']
+        for event in _read_ledger(git_repo) if event['event'] == 'integrated'
+    } == merge_shas
 
 
 def test_native_merge_conflict_uses_git_state_and_continue(git_repo):

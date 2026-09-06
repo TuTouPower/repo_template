@@ -81,8 +81,8 @@ def write_front_matter(path: Path, fm: dict, body: str) -> None:
 def write_front_matter_many(files: list[tuple[Path, dict, str]]) -> None:
     """批量写 front matter：先全部写 .tmp，再逐个 os.replace（调用方保证 owner 最后）。
 
-    单个 write_front_matter 已原子，但多个文件顺序写中途崩溃仍会单向残留
-    （edit 的 peer 反向边）；两阶段把「部分更新」窗口缩到 replace 循环（RT-008）。
+    单个 write_front_matter 已原子，但多个文件顺序写中途崩溃仍可能只更新一部分；
+    两阶段把 conflict 关系清理等批量写的「部分更新」窗口缩到 replace 循环（RT-008）。
     """
     staged: list[tuple[Path, Path]] = []
     for path, fm, body in files:
