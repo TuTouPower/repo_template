@@ -19,7 +19,6 @@ from repo_task.control import (
     cmd_attempt_reserve,
     cmd_attempt_terminal,
     cmd_effective_status,
-    cmd_ledger_record,
     cmd_ledger_tail,
     cmd_ps,
     cmd_view,
@@ -73,7 +72,6 @@ from repo_task.git_ops import (
 )
 from repo_task.goal import cmd_goal, cmd_goal_check
 from repo_task.integration import (
-    _commit_index,
     _conflicted_paths,
     _merge_in_progress,
     _resolve_integrate_branch,
@@ -108,15 +106,14 @@ from repo_task.ledger import (
 from repo_task.lifecycle import (
     _close_task,
     cmd_add,
-    cmd_block,
     cmd_drop,
     cmd_edit,
     cmd_finish,
     cmd_list,
     cmd_preflight,
     cmd_purge,
-    cmd_resume,
     cmd_rewind,
+    cmd_limits,
     cmd_show,
 )
 from repo_task.monitoring import (

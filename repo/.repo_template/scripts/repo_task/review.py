@@ -20,7 +20,6 @@ FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 FINDING_RE = re.compile(r"^(t[0-9]+)_(?:code|test|gen)_f[0-9]+$")
 STATUSES = ("已修", "遗留", "撤回")
 VALID_REVIEW_LEVELS = {"full", "single"}
-WITHDRAW_THRESHOLD = 0.30
 
 
 class ReviewDataError(ValueError):
@@ -292,11 +291,9 @@ def evaluate_review(task_dir: Path, fm: dict, current_scope: str | None) -> dict
         scope_status = "ok"
     if overall == "PASS" and (missing or scope_status != "ok"):
         overall = "INCOMPLETE"
-    total = sum(stats.values())
     result.update(
         overall=overall, review_scope=scope_status,
         missing_disposition=",".join(missing), round=regression_rounds(*reports),
-        withdraw_rate=stats["撤回"] / total if total else 0.0,
     )
     # Evidence repair does not itself spend a business regression round.
     if overall == "INCOMPLETE":

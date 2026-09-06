@@ -17,7 +17,7 @@
 
 3. 替换本文件与 `AGENTS.md` 首行项目介绍。
 
-4. 保持软链：`CLAUDE.md -> AGENTS.md`；`.claude/skills/*` 与 `.agents/skills/*` 指向 `.repo_template/skills/*`；`.claude/hooks/merge_guard.py` 指向 `.repo_template/hooks/merge_guard.py`。
+4. 保持软链：`CLAUDE.md -> AGENTS.md`；`.claude/skills/*` 与 `.agents/skills/*` 指向 `.repo_template/skills/*`。
 
 5. 按技术栈补充依赖、工具配置和 `.gitignore`。
 

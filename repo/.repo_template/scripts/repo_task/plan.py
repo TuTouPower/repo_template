@@ -82,7 +82,7 @@ def classify_node(tid: str, tasks: dict, schedule: dict) -> str:
     if not task:
         return "backlog"
     status = task["status"]
-    if status in ("active", "blocked"):
+    if status == "active":
         return "active"
     if status in ctx.ARCHIVED_STATUSES:
         return "done" if status == "done" else "dropped"
@@ -106,7 +106,6 @@ def build_board_model(schedule: dict | None = None) -> dict:
             "title": task.get("title") or tid,
             "status": task["status"],
             "category": classify_node(tid, tasks, schedule),
-            "schedule_status": task.get("schedule_status", ""),
             "depends_on": [
                 item.strip()
                 for item in str(task.get("depends_on", "")).split(",")
@@ -178,12 +177,10 @@ def compute_crossings(chains: list[dict], data: dict) -> list[dict]:
 def _build_subgraph(data: dict) -> dict:
     id_set: set[str] = set()
     cat_of: dict[str, str] = {}
-    sched_of: dict[str, str] = {}
     for node in data["nodes"]:
         if is_unfinished(node["category"]):
             id_set.add(node["id"])
             cat_of[node["id"]] = node["category"]
-            sched_of[node["id"]] = node.get("schedule_status") or ""
     ids = sorted(id_set, key=tid_sort_key_or_zero)
 
     upstream: dict[str, list[str]] = {tid: [] for tid in ids}
@@ -213,7 +210,6 @@ def _build_subgraph(data: dict) -> dict:
         "ids": ids,
         "id_set": id_set,
         "cat_of": cat_of,
-        "sched_of": sched_of,
         "upstream": upstream,
         "downstream": downstream,
         "indegree": indegree,
@@ -357,8 +353,6 @@ def compute_batch_plan(data: dict) -> dict:
                     continue
                 if not all(parent in chain_set for parent in sub["upstream"].get(tid, [])):
                     continue
-                if sub["sched_of"].get(tid) != "scheduled":
-                    continue
                 conflicts = sub["conflict_of"].get(tid, [])
                 blocked = False
                 for peer in conflicts:
@@ -427,13 +421,13 @@ def compute_serial_plan(data: dict) -> dict:
     unfinished = [
         node for node in data["nodes"] if is_unfinished(node["category"])
     ]
-    # 可进串行队列：active 或 scheduled backlog 类
+    # 可进串行队列：active 或未完成 backlog 类
     eligible = []
     for node in unfinished:
         cat = node["category"]
         if cat == "active":
             eligible.append(node["id"])
-        elif node.get("schedule_status") == "scheduled":
+        elif cat in {"runnable", "blocked_deps", "blocked_conflict", "backlog"}:
             eligible.append(node["id"])
     eligible_set = set(eligible)
 

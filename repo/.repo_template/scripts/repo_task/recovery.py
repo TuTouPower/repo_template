@@ -34,7 +34,7 @@ def recovery_state(tid: str) -> dict:
 
     if not registered_branch:
         if task["status"] in ctx.ARCHIVED_STATUSES and (not record or record["state"] == "integrated"):
-            return phase("integrated_or_archived", "检查链合并事务；不重复执行")
+            return phase("integrated_or_archived", "检查 Git merge 状态和 integrated 记录；不重复执行")
         if record:
             verdict, detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
             report = record.get("report") or {}
@@ -53,15 +53,13 @@ def recovery_state(tid: str) -> dict:
     fm, _ = parse_front_matter(task_dir / "task.md")
     if fm.get("branch") != branch or fm.get("tid") != tid:
         return state
-    if fm["status"] == "blocked":
-        return phase("blocked", "补齐本轮 terminal/report；用户放行后 resume → reserve 新 identity")
     if fm["status"] == "active":
         if record is None:
             return phase("started_without_attempt", "只 reserve；不重复 start")
         if record["state"] == "running":
             return phase("executing", "以原 identity 继续 task-work")
         if (record.get("report") or {}).get("status") in {"blocked", "failed"}:
-            return phase("retry_ready", "resume 已落盘；reserve 新 identity 后继续，不再 resume")
+            return phase("retry_ready", "task 保持 active；直接 reserve 新 identity 后继续")
         return state
     if fm["status"] != "done" or record is None:
         return state
@@ -77,7 +75,7 @@ def recovery_state(tid: str) -> dict:
             raise ValueError(head.stderr)
         if head.stdout.strip() == fm["diff_anchor"]:
             if record["state"] == "running":
-                return phase("finished_uncommitted", "核验归档 handoff、review 和全部 diff 后回 Step 7c；不 finish、不 reserve")
+                return phase("finished_uncommitted", "核验归档 handoff、review 和全部 diff 后完成“收尾与执行 commit”；不 finish、不 reserve")
             raise ValueError("未提交执行 commit 却已关闭 attempt")
         parent = _git(["rev-parse", "HEAD^1"], root=worktree)
         if parent.returncode != 0 or parent.stdout.strip() != fm["diff_anchor"]:

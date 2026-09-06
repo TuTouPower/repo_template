@@ -498,54 +498,8 @@ def test_rewind_discards_uncommitted_activation_and_removes_empty_branch(git_rep
     assert "main 记录为 backlog" in fm["note"]
 
 
-def test_block_resume_preserves_worktree_notes_and_chain_can_continue(git_repo):
-    _start(git_repo)
-    worktree = _worktree_path(git_repo)
-    task_path = worktree / "docs/tasks/t001_alpha/task.md"
-    fm, body = parse_front_matter(task_path)
-    write_front_matter(task_path, fm, body + "implementation note\n")
-
-    blocked = _task_cli(worktree, "block", "t001", "--reason", "review")
-    resumed = _task_cli(worktree, "resume", "t001")
-
-    assert blocked.returncode == 0, blocked.stderr
-    assert resumed.returncode == 0, resumed.stderr
-    resumed_fm, resumed_body = parse_front_matter(task_path)
-    assert resumed_fm["status"] == "active"
-    assert "implementation note" in resumed_body
-
-    _finish_commit_cleanup(git_repo, "t001", "alpha")
-    _start(git_repo, "t002")
-    assert _worktree_path(git_repo, "t002").is_dir()
 
 
-def test_blocked_task_can_be_dropped_committed_and_cleaned(git_repo):
-    _start(git_repo)
-    identity = _reserve(git_repo, "t001")
-    worktree = _worktree_path(git_repo)
-    blocked = _task_cli(worktree, "block", "t001", "--reason", "infra")
-    dropped = _task_cli(worktree, "drop", "t001", "--reason", "用户移出批次")
-
-    assert blocked.returncode == 0, blocked.stderr
-    assert dropped.returncode == 0, dropped.stderr
-    archived = worktree / "docs/archive/tasks/t001_alpha/task.md"
-    fm, _ = parse_front_matter(archived)
-    assert fm["status"] == "dropped"
-    assert fm["worktree"] == ""
-
-    base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    _write_handoff(
-        worktree, "t001", "alpha", identity, base_sha, status="dropped"
-    )
-    _git(worktree, "add", "-A")
-    _git(worktree, "commit", "-m", "chore(t001): drop task")
-    _terminal(git_repo, "t001", identity)
-    cleaned = _task_cli(
-        git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
-    )
-    assert cleaned.returncode == 0, cleaned.stderr
-    assert not worktree.exists()
-    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
 
 
 def test_start_always_forks_from_current_main_head(git_repo):
@@ -604,69 +558,27 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
 # --------------------------------------------------------------------------
 
 
-def test_integrate_merges_rebuilds_index_and_deletes_branch(git_repo):
-    _start(git_repo, "t001")
-    identity, branch, head = _finish_commit_cleanup(git_repo, "t001", "alpha")
-
-    result = _task_cli(
-        git_repo, "integrate", "t001", *_identity_args(identity)
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", head, "main", check=False
-    ).returncode == 0
-    assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
-    fm, _ = parse_front_matter(git_repo / "docs/archive/tasks/t001_alpha/task.md")
-    assert fm["status"] == "done"
-    assert fm["worktree"] == ""
-    index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
-    assert [row["tid"] for row in index["tasks"]] == ["t001"]
-    subjects = _git(git_repo, "log", "--format=%s", "-2").stdout.split("\n")
-    assert subjects[0] == "chore(task): rebuild task indexes"
-    assert subjects[1].startswith("merge(t001)")
 
 
 def test_integrate_keeps_branch_when_requested(git_repo):
     _start(git_repo, "t001")
     identity, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
 
-    result = _task_cli(
+    rejected = _task_cli(
         git_repo, "integrate", "t001", *_identity_args(identity), "--keep-branch"
     )
-
+    assert rejected.returncode != 0
+    assert "只在 --continue" in rejected.stderr
+    prepared = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+    assert prepared.returncode == 0, prepared.stderr
+    result = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity),
+        "--continue", "--keep-branch",
+    )
     assert result.returncode == 0, result.stderr
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
 
 
-def test_parallel_tasks_integrate_independently_in_completion_order(git_repo):
-    _start(git_repo, "t001")
-    _start(git_repo, "t002")
-    # t002 先完成先合并；t001 后完成，合并时 main 已推进 → 三方 merge
-    second_identity, _, second_head = _finish_commit_cleanup(
-        git_repo, "t002", "beta"
-    )
-    assert _task_cli(
-        git_repo, "integrate", "t002", *_identity_args(second_identity)
-    ).returncode == 0
-
-    first_identity, _, first_head = _finish_commit_cleanup(
-        git_repo, "t001", "alpha"
-    )
-    result = _task_cli(
-        git_repo, "integrate", "t001", *_identity_args(first_identity)
-    )
-
-    assert result.returncode == 0, result.stderr
-    for head in (first_head, second_head):
-        assert _git(
-            git_repo, "merge-base", "--is-ancestor", head, "main", check=False
-        ).returncode == 0
-    for tid, slug in (("t001", "alpha"), ("t002", "beta")):
-        fm, _ = parse_front_matter(
-            git_repo / f"docs/archive/tasks/{tid}_{slug}/task.md"
-        )
-        assert fm["status"] == "done"
 
 
 def test_integrate_rejects_unfinished_task(git_repo):
@@ -807,21 +719,6 @@ def test_integrate_reports_conflict_and_continues_after_resolution(git_repo):
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
 
 
-def test_integrate_is_idempotent_after_merge(git_repo):
-    _start(git_repo, "t001")
-    identity, _, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    first = _task_cli(
-        git_repo, "integrate", "t001", *_identity_args(identity), "--keep-branch"
-    )
-    assert first.returncode == 0, first.stderr
-
-    result = _task_cli(
-        git_repo, "integrate", "t001", *_identity_args(identity)
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "跳过 merge" in result.stdout
-    assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
 
 
 # --------------------------------------------------------------------------
@@ -846,52 +743,6 @@ def test_chain_start_from_previous_completed_branch(git_repo):
     ).returncode == 0
 
 
-def test_chain_integrate_merges_tail_and_deletes_full_chain(git_repo):
-    """三 task 成链，只合链尾，祖先自动跟随，删整条链分支。"""
-    main_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
-    branches = []
-    heads = []
-    previous = None
-    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
-        _start(git_repo, tid, base=previous)
-        _, previous, head = _finish_commit_cleanup(git_repo, tid, slug)
-        branches.append(previous)
-        heads.append(head)
-
-    # 链结构确认：t001 ⊂ t002 ⊂ t003，main 未前进
-    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == main_head
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", branches[0], branches[1], check=False
-    ).returncode == 0
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", branches[1], branches[2], check=False
-    ).returncode == 0
-
-    result = _task_cli(git_repo, "integrate-chain", "t003")
-
-    assert result.returncode == 0, result.stderr
-    # 只合链尾，但三个 head 全部在 main 历史里（祖先跟随）
-    for head in heads:
-        assert _git(
-            git_repo, "merge-base", "--is-ancestor", head, "main", check=False
-        ).returncode == 0
-    # 验证前保留分支与 transaction；显式 continue 表示合并后验证已通过。
-    for branch in branches:
-        assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
-    finalized = _task_cli(git_repo, "integrate-chain", "t003", "--continue")
-    assert finalized.returncode == 0, finalized.stderr
-    for branch in branches:
-        assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
-    # 只进一次 merge commit
-    subjects = _git(git_repo, "log", "--format=%s", "-3").stdout.split("\n")
-    assert subjects[0] == "chore(task): rebuild task indexes"
-    assert subjects[1].startswith("merge-chain(t003)")
-    # 全部 done
-    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
-        fm, _ = parse_front_matter(
-            git_repo / f"docs/archive/tasks/{tid}_{slug}/task.md"
-        )
-        assert fm["status"] == "done"
 
 
 def test_chain_integrate_rejects_mid_chain_undone(git_repo):
@@ -1050,7 +901,7 @@ def test_spike_requires_strict_preflight_before_implementation(git_repo):
     default = _task_cli(worktree, "preflight", "t001")
     assert default.returncode == 0, default.stderr
     assert "WARN" in default.stdout
-    assert "仅可执行 Step 1" in default.stdout
+    assert "只能先完成实验并回填结论" in default.stdout
 
     strict = _task_cli(worktree, "preflight", "t001", "--require-verified")
     assert strict.returncode != 0
@@ -1143,8 +994,8 @@ def test_rewind_backlog_not_covered_by_stale_branch(git_repo):
     result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    # rewind 将 schedule_status 置为 pending_clarification；若被旧分支 active 覆盖则不会出现
-    assert "schedule_status=pending_clarification" in result.stdout
+    assert "[运行中] active 0" in result.stdout
+    assert "t001  alpha" in result.stdout
 
 
 def test_rewind_rejects_foreign_registered_branch(git_repo):
@@ -1322,18 +1173,16 @@ def test_add_initializes_empty_schedule_edges_without_status(git_repo):
     assert "schedule_status" not in fm
 
 
-def test_edit_updates_dependencies_and_symmetric_conflicts(git_repo):
+def test_edit_updates_dependencies_and_one_sided_conflict_hint(git_repo):
     dependency = _task_cli(
         git_repo,
         "edit",
         "t002",
         "--depends-on",
         "t003,t001,t003",
-        "--schedule-status",
-        "scheduled",
     )
     # t002 已依赖 t001/t003，t001↔t002 冲突边会被 L1 冗余门禁拒绝；
-    # 对称边维护用无依赖路径的 t003 验证
+    # 单向 conflict hint 用无依赖路径的 t003 验证
     conflict = _task_cli(
         git_repo,
         "edit",
@@ -1348,25 +1197,24 @@ def test_edit_updates_dependencies_and_symmetric_conflicts(git_repo):
     second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
     third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
     assert second["depends_on"] == "t001,t003"
-    assert second["schedule_status"] == "scheduled"
+    assert "schedule_status" not in second
     assert first["conflicts_with"] == "t003"
-    assert third["conflicts_with"] == "t001"
+    assert third.get("conflicts_with", "") == ""
 
     removed = _task_cli(git_repo, "edit", "t001", "--conflicts-remove", "t003")
     assert removed.returncode == 0, removed.stderr
     first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
     third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
     assert first["conflicts_with"] == ""
-    assert third["conflicts_with"] == ""
+    assert third.get("conflicts_with", "") == ""
 
 
-def test_edit_rejects_conflict_reverse_edge_to_active_task(git_repo):
+def test_edit_allows_conflict_hint_to_active_task_without_peer_write(git_repo):
     _start(git_repo, "t001")
-
     result = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
-
-    assert result.returncode != 0
-    assert "无法维护冲突反向边" in result.stderr
+    assert result.returncode == 0, result.stderr
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/task.md")
+    assert second["conflicts_with"] == "t001"
 
 
 def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
@@ -1394,20 +1242,6 @@ def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
     assert t002_fm["conflicts_with"] == ""
 
 
-def test_rewind_to_backlog_marks_schedule_pending(git_repo):
-    scheduled = _task_cli(
-        git_repo, "edit", "t001", "--schedule-status", "scheduled"
-    )
-    assert scheduled.returncode == 0, scheduled.stderr
-    _git(git_repo, "add", "-A")
-    _git(git_repo, "commit", "-m", "schedule t001")
-    _start(git_repo, "t001")
-
-    _rewind(git_repo, "t001")
-
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/task.md")
-    assert fm["status"] == "backlog"
-    assert fm["schedule_status"] == "pending_clarification"
 
 
 def test_drop_rejects_referenced_task(git_repo):
@@ -1424,9 +1258,8 @@ def test_drop_rejects_referenced_task(git_repo):
 def test_view_dag_conflicts_and_groups(git_repo):
     """view 输出全景：下一批、被依赖阻塞、被冲突阻塞分组展示。"""
     commands = (
-        ("t001", "--schedule-status", "scheduled"),
-        ("t002", "--depends-on", "t001", "--schedule-status", "scheduled"),
-        ("t003", "--conflicts-with", "t002", "--schedule-status", "scheduled"),
+        ("t002", "--depends-on", "t001"),
+        ("t003", "--conflicts-with", "t002"),
     )
     for command in commands:
         result = _task_cli(git_repo, "edit", *command)
@@ -1445,11 +1278,6 @@ def test_view_dag_conflicts_and_groups(git_repo):
 
 def test_view_shows_active_conflict_block(git_repo):
     """active task 占资源阻塞冲突方；done（不论是否合 main）即释放，冲突方解阻塞。"""
-    for tid in ("t001", "t002"):
-        result = _task_cli(
-            git_repo, "edit", tid, "--schedule-status", "scheduled"
-        )
-        assert result.returncode == 0, result.stderr
     conflict = _task_cli(git_repo, "edit", "t001", "--conflicts-with", "t002")
     assert conflict.returncode == 0, conflict.stderr
     _git(git_repo, "add", "-A")
@@ -1473,17 +1301,7 @@ def test_view_shows_active_conflict_block(git_repo):
 
 def test_view_handles_diamond_dependencies(git_repo):
     """菱形依赖：t003 依赖 t001+t002，二者未完成时 t003 进被依赖阻塞组。"""
-    commands = (
-        ("t001", "--schedule-status", "scheduled"),
-        ("t002", "--schedule-status", "scheduled"),
-        (
-            "t003",
-            "--depends-on",
-            "t001,t002",
-            "--schedule-status",
-            "scheduled",
-        ),
-    )
+    commands = (("t003", "--depends-on", "t001,t002"),)
     for command in commands:
         result = _task_cli(git_repo, "edit", *command)
         assert result.returncode == 0, result.stderr
@@ -1505,8 +1323,6 @@ def test_view_reads_done_from_main_archive(git_repo):
         "t002",
         "--depends-on",
         "t001",
-        "--schedule-status",
-        "scheduled",
     )
     assert dependency.returncode == 0, dependency.stderr
     _git(git_repo, "add", "-A")
@@ -1593,82 +1409,35 @@ def test_edit_cycle_resolved_by_dependency_removal(git_repo):
     assert first_fm["depends_on"] == ""
 
 
-def test_view_reports_pending_and_unscheduled(git_repo):
-    """view：scheduled 进下一批，pending_clarification 与未排程各自成组。"""
-    scheduled = _task_cli(
-        git_repo, "edit", "t001", "--schedule-status", "scheduled"
-    )
-    pending = _task_cli(
-        git_repo,
-        "edit",
-        "t002",
-        "--schedule-status",
-        "pending_clarification",
-    )
-    assert scheduled.returncode == 0, scheduled.stderr
-    assert pending.returncode == 0, pending.stderr
-
-    result = _task_cli(git_repo, "view")
-
-    assert result.returncode == 0, result.stderr
-    assert "▸ 下一批可跑" in result.stdout
-    assert "t001" in result.stdout
-    assert "▸ 调度未就绪" in result.stdout
-    assert "t002  schedule_status=pending_clarification" in result.stdout
-    assert "▸ 未排程" in result.stdout
-    assert "t003" in result.stdout
 
 
 def test_view_reads_historical_conflict_as_undirected(git_repo):
     """单向冲突声明（历史脏数据）按无向处理：双方互相阻塞，都进冲突组。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
-    first["schedule_status"] = "scheduled"
     first["conflicts_with"] = "t002"
     write_front_matter(first_path, first, first_body)
 
     second_path = git_repo / "docs/tasks/t002_beta/task.md"
     second, second_body = parse_front_matter(second_path)
-    second["schedule_status"] = "scheduled"
     second["conflicts_with"] = ""
     write_front_matter(second_path, second, second_body)
 
     result = _task_cli(git_repo, "view")
 
     assert result.returncode == 0, result.stderr
-    # 无向冲突：t001 声明 t002，t002 反向继承；序号小者优先可跑，大者被阻塞
+    # 单向声明按无向并发提示读取；无 active 占用时双方都依赖就绪。
     assert "▸ 下一批可跑" in result.stdout
-    assert "t001" in result.stdout
-    assert "▸ 被冲突阻塞" in result.stdout
-    assert "t002 ↔ t001" in result.stdout
+    assert "t001" in result.stdout and "t002" in result.stdout
+    assert "▸ 被冲突阻塞" not in result.stdout
 
 
-def test_view_picks_lower_tid_for_symmetric_backlog_conflict(git_repo):
-    """两个 backlog 互相冲突：序号小者优先可跑，大者被序号小者阻塞。"""
-    for tid in ("t002", "t001"):
-        result = _task_cli(
-            git_repo, "edit", tid, "--schedule-status", "scheduled"
-        )
-        assert result.returncode == 0, result.stderr
-    # t001 序号小，先声明冲突；t001 进 ready，t002 被 t001 阻塞
-    conflict = _task_cli(git_repo, "edit", "t001", "--conflicts-with", "t002")
-    assert conflict.returncode == 0, conflict.stderr
-
-    result = _task_cli(git_repo, "view")
-    assert result.returncode == 0, result.stderr
-    assert "▸ 下一批可跑" in result.stdout
-    assert "t001" in result.stdout
-    assert "t002" not in result.stdout.split("▸ 被冲突阻塞")[0]
-    assert "▸ 被冲突阻塞" in result.stdout
-    assert "t002 ↔ t001" in result.stdout
-    assert "t002 ↔ t001  — t002: beta" in result.stdout
 
 
 def test_view_rejects_dangling_and_dropped_references(git_repo):
     """view 图校验：依赖/冲突引用不存在或 dropped task 均报错。"""
     first_path = git_repo / "docs/tasks/t001_alpha/task.md"
     first, first_body = parse_front_matter(first_path)
-    first["schedule_status"] = "scheduled"
     first["depends_on"] = "t999"
     write_front_matter(first_path, first, first_body)
 
@@ -1725,7 +1494,6 @@ def test_drop_ignores_archived_task_historical_edges(git_repo):
             "diff_anchor": "",
             "depends_on": "t003",
             "conflicts_with": "",
-            "schedule_status": "scheduled",
             "note": "",
         },
         body,
@@ -1772,8 +1540,8 @@ def test_edit_supports_append_remove_and_clear_for_schedule_edges(git_repo):
     third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/task.md")
     assert first["depends_on"] == ""
     assert first["conflicts_with"] == ""
-    assert second["conflicts_with"] == ""
-    assert third["conflicts_with"] == ""
+    assert second.get("conflicts_with", "") == ""
+    assert third.get("conflicts_with", "") == ""
 
 
 def _ledger(repo):

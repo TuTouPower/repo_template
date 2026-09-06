@@ -211,7 +211,7 @@ def unverified_contract_gate(
         if require_verified:
             problems.append(message)
         else:
-            warnings.append(f"{message}；当前仅可执行 Step 1")
+            warnings.append(f"{message}；当前只能先完成实验并回填结论")
 
     return problems, warnings
 
@@ -357,8 +357,7 @@ def validate_task_documents(
             + "、".join(missing_spec_headings)
         )
 
-    # 规范块门禁：模板中带 `<!-- 规范 -->` 标记的就近规范逐字保留，
-    # agent 只能替换块外占位符，不得删除或改写规范块内容。
+    # 规范块属于严格模板契约；repo-template-sync 负责先强制迁移存量 task。
     template_spec_path = ctx.TEMPLATE_DIR / "spec.md"
     if template_spec_path.is_file():
         template_blocks = _extract_guide_blocks(
@@ -366,15 +365,11 @@ def validate_task_documents(
         )
         if template_blocks:
             spec_blocks = set(_extract_guide_blocks(spec_text))
-            missing_blocks = [b for b in template_blocks if b not in spec_blocks]
+            missing_blocks = [item for item in template_blocks if item not in spec_blocks]
             if missing_blocks:
                 problems.append(
-                    f"spec.md 缺或被改 {len(missing_blocks)} 个规范块"
-                    "（`<!-- 规范 -->` 标记内的内容不得删除或改写，"
-                    "只能替换块外占位符；改模板须同步修改本校验）：\n  - "
-                    + "\n  - ".join(
-                        block.replace("\n", " ")[:100] for block in missing_blocks
-                    )
+                    f"spec.md 缺或被改 {len(missing_blocks)} 个当前规范块；"
+                    "先运行 repo-template-sync 强制迁移，规范块不得手改"
                 )
 
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
@@ -410,12 +405,13 @@ def validate_task_documents(
             + "、".join(missing_task_headings)
         )
 
+
     visible_task_lines = {line.strip() for line in _visible_markdown_lines(task_body)}
     missing_guidance = [
         line for line in ctx.IMPLEMENTATION_NOTE_GUIDANCE if line not in visible_task_lines
     ]
     if missing_guidance:
-        problems.append("task.md 实施笔记缺模板固定说明")
+        problems.append("task.md 实施笔记缺当前模板固定说明；先运行 repo-template-sync 强制迁移")
 
     notes = _extract_markdown_section(task_body, 2, "实施笔记")
     if notes is not None:

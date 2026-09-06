@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_review_status.py - 读 review 报告与处置表，输出 verdict、回归轮次与撤回率（Step 6 处置用）。
+"""check_review_status.py - 读 review 报告与处置表，输出 verdict、证据完整性与回归轮次（review 处置用）。
 
 用法：
   python3 .repo_template/scripts/check_review_status.py --task-dir docs/tasks/t001_foo
@@ -20,8 +20,6 @@
   max_verify_round=N      # 来自 task.md verify_limit
   next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_disposition
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
-  withdraw_rate=0.NN
-  prompt_hint=...       # 撤回率超阈值时的下一轮 prompt 附加要求
 """
 
 import argparse
@@ -34,7 +32,7 @@ from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fi
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 from repo_task.review import (
     ReviewDataError, read, visible_markdown_lines, extract_verdicts, parse_front_matter, regression_rounds, extract_h2_lines, table_cells, is_separator_row, disposition_stats, disposed_findings, reported_findings, reviewed_scope, reviewed_scope_hint,
-    VALID_REVIEW_LEVELS, WITHDRAW_THRESHOLD, evaluate_review, review_limits,
+    VALID_REVIEW_LEVELS, evaluate_review, review_limits,
 )
 
 def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
@@ -96,23 +94,15 @@ def main():
             raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
         limits = review_limits(fm)
         if args.max_review_round is not None and args.max_review_round > limits["review_limit"]:
-            raise ReviewDataError("先经 task.py resume --review-limit 持久化用户批准的上限")
+            raise ReviewDataError("先经 task.py limits --review 持久化用户批准的上限")
         result = evaluate_review(task_dir, fm, current_scope_fingerprint(task_dir, fm.get("diff_anchor", "")))
     except (ReviewDataError, TaskDataError, OSError) as e:
         p.error(str(e))
     for key, value in result.items():
-        if key == "withdraw_rate":
-            continue
         if value != "":
             print(f"{key}={value}")
     print(f"max_review_round={args.max_review_round or limits['review_limit']}")
     print(f"max_verify_round={limits['verify_limit']}")
-    rate = result["withdraw_rate"]
-    print(f"withdraw_rate={rate:.2f}")
-    if rate > WITHDRAW_THRESHOLD:
-        print("prompt_hint=撤回率超阈值；下一轮 review prompt 须附上轮被撤回的 finding_id 与撤回理由，要求 reviewer 先复核判定边界再出新 finding")
-    else:
-        print("prompt_hint=")
 
 
 if __name__ == "__main__":

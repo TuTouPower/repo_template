@@ -414,11 +414,11 @@ def compute_ps_rows(
 ) -> list[dict]:
     records = project_attempts(events)
     ledger_tids = {record["tid"] for record in records.values()}
-    # 合并 effective 中 active/blocked 的 tid：frontmatter 被手工改状态但未走
+    # 合并 effective 中 active 的 tid：frontmatter 被手工改状态但未走
     # reserve 的脏状态也要可见，避免状态不一致被掩盖（无 reserve 标注）。
     active_tids = {
         tid for tid, task in effective.items()
-        if task.get("status") in ("active", "blocked")
+        if task.get("status") == "active"
     }
     rows = []
     for tid in sorted(ledger_tids | active_tids, key=_ledger_tid_sort_key):
@@ -434,7 +434,7 @@ def compute_ps_rows(
             "note": "",
         }
         if record is None:
-            # frontmatter active/blocked 但无 attempt：脏状态，标注无 reserve。
+            # frontmatter active 但无 attempt：脏状态，标注无 reserve。
             base["state"] = f"{effective_status}(无 reserve)"
             rows.append(base)
             continue

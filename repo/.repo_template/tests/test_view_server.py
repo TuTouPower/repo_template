@@ -115,34 +115,6 @@ def test_resolve_task_doc_rejects_path_traversal(repo_layout):
         view_server._resolve_task_doc(tasks, "t001", "spec")
 
 
-def test_build_model_shape(monkeypatch):
-    schedule = {
-        "tasks": {
-            "t001": {"tid": "t001", "title": "任务一", "status": "active", "depends_on": "", "conflicts_with": ""},
-            "t002": {"tid": "t002", "title": "任务二", "status": "backlog", "depends_on": "t001", "conflicts_with": "t003", "schedule_status": "scheduled"},
-            "t003": {"tid": "t003", "title": "任务三", "status": "backlog", "depends_on": "", "conflicts_with": "t002"},
-            "t004": {"tid": "t004", "title": "任务四", "status": "done", "depends_on": "", "conflicts_with": ""},
-        },
-        "selected": ["t002"],
-        "waiting_deps": [],
-        "blocked_conflicts": [],
-        "active_list": ["t001"],
-        "main_done_set": {"t004"},
-        "dropped_set": set(),
-    }
-    monkeypatch.setattr(view_server, "compute_schedule", lambda: schedule)
-    model = view_server._build_model()
-    assert model["project"] == ctx.REPO_ROOT.name
-    assert model["summary"]["active"] == 1
-    assert model["summary"]["runnable"] == 1
-    assert model["summary"]["done"] == 1
-    assert len(model["edges"]) == 2  # 1 dep + 1 conflict
-    by_id = {n["id"]: n for n in model["nodes"]}
-    assert by_id["t002"]["category"] == "runnable"
-    assert by_id["t002"]["depends_on"] == ["t001"]
-    # 前端建链需要 schedule_status 区分未排程/待澄清 backlog
-    assert by_id["t002"]["schedule_status"] == "scheduled"
-    assert by_id["t003"]["schedule_status"] == ""
 
 
 def test_is_wsl_detects_env(monkeypatch):
@@ -258,3 +230,23 @@ def test_serve_rejects_non_loopback_without_allow(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
     with pytest.raises(SystemExit, match="拒绝绑定非 loopback"):
         view_server.serve(host="0.0.0.0", port=8766)
+
+
+def test_build_model_has_no_schedule_status(monkeypatch):
+    schedule = {
+        'tasks': {
+            't001': {'tid': 't001', 'title': 'one', 'status': 'backlog', 'depends_on': '', 'conflicts_with': 't002'},
+            't002': {'tid': 't002', 'title': 'two', 'status': 'backlog', 'depends_on': '', 'conflicts_with': ''},
+        },
+        'selected': ['t001', 't002'],
+        'waiting_deps': [], 'blocked_conflicts': [],
+        'conflicts': {'t001': {'t002'}, 't002': {'t001'}},
+        'main_done_set': set(), 'effective_done_set': set(), 'unmerged_done': [],
+        'dropped_set': set(), 'active_list': [], 'active_set': set(),
+        'backlog_tasks': {}, 'ready': ['t001', 't002'],
+    }
+    monkeypatch.setattr(view_server, 'compute_schedule', lambda: schedule)
+    model = view_server._build_model()
+    assert {node['id'] for node in model['nodes']} == {'t001', 't002'}
+    assert all('schedule_status' not in node for node in model['nodes'])
+    assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]

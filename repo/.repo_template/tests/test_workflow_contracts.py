@@ -5,7 +5,7 @@ import pytest
 
 from test_dispatch_integration import (
     git_repo, _git, _task_cli, _prepare_done, _cleanup, _worktree,
-    _reserve, _identity_args, _handoff,
+    _reserve, _identity_args, _handoff, _read_ledger,
 )
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.monitoring import review_scope_fingerprint
@@ -93,30 +93,15 @@ def test_creation_gate_accepts_classified_blocking_but_start_does_not(git_repo):
     assert not _worktree(git_repo, 't001').exists()
 
 
-def test_creation_gate_still_rejects_bare_unknown(git_repo):
-    path = git_repo / 'docs/tasks/t001_alpha/spec.md'
-    path.write_text(path.read_text().replace('外部行为：已核实', '外部行为：UNVERIFIED，未知'))
-    result = _task_cli(git_repo, 'preflight', 't001', '--creation')
+
+def test_runtime_rejects_retired_blocked_status_instead_of_compatibility_fallback(git_repo):
+    path = git_repo / 'docs/tasks/t001_alpha/task.md'
+    fm, body = parse_front_matter(path)
+    fm['status'] = 'blocked'
+    write_front_matter(path, fm, body)
+    result = _task_cli(git_repo, 'list')
     assert result.returncode != 0
-    assert '裸 UNVERIFIED' in result.stdout
-
-
-def test_resume_persists_only_explicitly_increased_budget(git_repo):
-    assert _task_cli(git_repo, 'start', 't001').returncode == 0
-    w = _worktree(git_repo, 't001')
-    assert _task_cli(w, 'block', 't001', '--reason', 'review').returncode == 0
-    result = _task_cli(w, 'resume', 't001', '--review-limit', '8', '--reason', '用户批准追加三轮')
-    assert result.returncode == 0, result.stderr
-    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/task.md')
-    assert fm['review_limit'] == '8'
-    assert fm['verify_limit'] == '5'
-    assert '用户批准追加三轮' in fm['note']
-    assert _task_cli(w, 'block', 't001', '--reason', 'review').returncode == 0
-    before = (w / 'docs/tasks/t001_alpha/task.md').read_bytes()
-    for args in (('--review-limit', '5', '--reason', 'decrease'), ('--review-limit', '9')):
-        result = _task_cli(w, 'resume', 't001', *args)
-        assert result.returncode != 0
-        assert (w / 'docs/tasks/t001_alpha/task.md').read_bytes() == before
+    assert "status 非法（'blocked'）" in result.stderr
 
 
 def _recovery(repo):
@@ -162,40 +147,248 @@ def test_recovery_closes_same_identity_without_reexecution(git_repo):
     assert state['execution_id'] == identity['execution_id']
 
 
-def test_recovery_rejects_wrong_identity_in_finished_worktree(git_repo):
-    assert _task_cli(git_repo, 'start', 't001').returncode == 0
-    identity = _reserve(git_repo, 't001')
-    w = _worktree(git_repo, 't001')
-    base = _git(w, 'rev-parse', 'HEAD').stdout.strip()
-    assert _task_cli(w, 'finish', 't001').returncode == 0
-    handoff = _handoff('t001', 't001_alpha', identity, base)
-    handoff['execution_id'] = 'wrong-execution'
-    (w / 'docs/archive/tasks/t001_alpha/handoff.json').write_text(json.dumps(handoff))
-    assert _recovery(git_repo)['phase'] == 'needs_attention'
-
-
-def test_retry_recovery_retains_budget_between_resume_and_reserve(git_repo):
-    assert _task_cli(git_repo, 'start', 't001').returncode == 0
-    old = _reserve(git_repo, 't001')
-    w = _worktree(git_repo, 't001')
-    assert _task_cli(w, 'block', 't001', '--reason', 'review').returncode == 0
-    for command, status in (('terminal', 'stopped'), ('report', 'blocked')):
-        result = _task_cli(git_repo, 'attempt', command, 't001', *_identity_args(old), '--status', status)
-        assert result.returncode == 0, result.stderr
-    assert _recovery(git_repo)['phase'] == 'blocked'
-    result = _task_cli(w, 'resume', 't001', '--review-limit', '8', '--reason', '用户加轮')
-    assert result.returncode == 0, result.stderr
-    assert _recovery(git_repo)['phase'] == 'retry_ready'
-    new = _reserve(git_repo, 't001')
-    assert new['attempt'] == old['attempt'] + 1
-    assert _recovery(git_repo)['phase'] == 'executing'
-    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/task.md')
-    assert fm['review_limit'] == '8'
-
-
 def test_creation_cannot_be_used_for_active_or_strict_readiness(git_repo):
     result = _task_cli(git_repo, 'preflight', 't001', '--creation', '--require-verified')
     assert result.returncode != 0
     assert _task_cli(git_repo, 'start', 't001').returncode == 0
     result = _task_cli(_worktree(git_repo, 't001'), 'preflight', 't001', '--creation')
     assert result.returncode != 0
+
+
+def test_limits_increase_both_budgets_without_state_transition(git_repo):
+    assert _task_cli(git_repo, 'start', 't001').returncode == 0
+    w = _worktree(git_repo, 't001')
+    result = _task_cli(w, 'limits', 't001', '--review', '8', '--verify', '7', '--reason', '用户批准')
+    assert result.returncode == 0, result.stderr
+    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/task.md')
+    assert fm['status'] == 'active'
+    assert fm['review_limit'] == '8' and fm['verify_limit'] == '7'
+    before = (w / 'docs/tasks/t001_alpha/task.md').read_bytes()
+    result = _task_cli(w, 'limits', 't001', '--review', '8', '--reason', '不能不增')
+    assert result.returncode != 0
+    assert (w / 'docs/tasks/t001_alpha/task.md').read_bytes() == before
+
+
+def test_blocked_attempt_keeps_task_active_and_new_attempt_resumes(git_repo):
+    assert _task_cli(git_repo, 'start', 't001').returncode == 0
+    first = _reserve(git_repo, 't001')
+    for command, status in (('terminal', 'stopped'), ('report', 'blocked')):
+        result = _task_cli(git_repo, 'attempt', command, 't001', *_identity_args(first), '--status', status)
+        assert result.returncode == 0, result.stderr
+    w = _worktree(git_repo, 't001')
+    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/task.md')
+    assert fm['status'] == 'active'
+    assert _recovery(git_repo)['phase'] == 'retry_ready'
+    second = _reserve(git_repo, 't001')
+    assert second['attempt'] == first['attempt'] + 1
+
+
+def test_native_single_merge_validates_before_commit(git_repo):
+    identity, branch, branch_head = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', identity)
+    started = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity))
+    assert started.returncode == 0, started.stderr
+    assert '尚未 commit' in started.stdout
+    assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+    assert _git(git_repo, 'merge-base', '--is-ancestor', branch_head, 'main', check=False).returncode != 0
+    finished = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
+    assert finished.returncode == 0, finished.stderr
+    assert _git(git_repo, 'merge-base', '--is-ancestor', branch_head, 'main', check=False).returncode == 0
+    assert not _git(git_repo, 'branch', '--list', branch).stdout.strip()
+    integrated = [e for e in _read_ledger(git_repo) if e['event'] == 'integrated']
+    assert len(integrated) == 1
+
+
+def test_native_merge_can_abort_without_main_commit(git_repo):
+    identity, branch, branch_head = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', identity)
+    before = _git(git_repo, 'rev-parse', 'HEAD').stdout.strip()
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
+    assert _git(git_repo, 'merge', '--abort').returncode == 0
+    assert _git(git_repo, 'rev-parse', 'HEAD').stdout.strip() == before
+    assert _git(git_repo, 'branch', '--list', branch).stdout.strip()
+    assert not [e for e in _read_ledger(git_repo) if e['event'] == 'integrated']
+
+
+def test_native_chain_merge_commits_once_after_validation(git_repo):
+    first, first_branch, first_head = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', first)
+    second, second_branch, second_head = _prepare_done(git_repo, 't002', 'beta', base=first_branch)
+    _cleanup(git_repo, 't002', second)
+    before = int(_git(git_repo, 'rev-list', '--merges', '--count', 'HEAD').stdout)
+    prepared = _task_cli(git_repo, 'integrate-chain', 't002')
+    assert prepared.returncode == 0, prepared.stderr
+    assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+    assert int(_git(git_repo, 'rev-list', '--merges', '--count', 'HEAD').stdout) == before
+    assert not [e for e in _read_ledger(git_repo) if e['event'] == 'integrated']
+    finished = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert finished.returncode == 0, finished.stderr
+    assert int(_git(git_repo, 'rev-list', '--merges', '--count', 'HEAD').stdout) == before + 1
+    for head in (first_head, second_head):
+        assert _git(git_repo, 'merge-base', '--is-ancestor', head, 'main', check=False).returncode == 0
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    events = [e for e in _read_ledger(git_repo) if e['event'] == 'integrated']
+    assert [(e['tid'], e['attempt'], e['execution_id']) for e in events] == [
+        ('t001', first['attempt'], first['execution_id']),
+        ('t002', second['attempt'], second['execution_id']),
+    ]
+
+
+def test_native_chain_continue_recovers_after_merge_commit_before_ledger(git_repo):
+    first, first_branch, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', first)
+    second, second_branch, second_head = _prepare_done(git_repo, 't002', 'beta', base=first_branch)
+    _cleanup(git_repo, 't002', second)
+    assert _task_cli(git_repo, 'integrate-chain', 't002').returncode == 0
+    # Simulate process loss after Git commit but before integrated events/branch cleanup.
+    committed = _git(git_repo, 'commit', '--no-edit')
+    assert committed.returncode == 0, committed.stderr
+    assert not [e for e in _read_ledger(git_repo) if e['event'] == 'integrated']
+    recovered = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert recovered.returncode == 0, recovered.stderr
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    assert _git(git_repo, 'merge-base', '--is-ancestor', second_head, 'main', check=False).returncode == 0
+    assert len([e for e in _read_ledger(git_repo) if e['event'] == 'integrated']) == 2
+
+
+def test_native_merge_conflict_uses_git_state_and_continue(git_repo):
+    shared = git_repo / 'shared.txt'
+    shared.write_text('base\n')
+    _git(git_repo, 'add', 'shared.txt')
+    _git(git_repo, 'commit', '-m', 'add shared')
+
+    def mutate(worktree):
+        (worktree / 'shared.txt').write_text('from task\n')
+
+    identity, branch, branch_head = _prepare_done(git_repo, 't001', 'alpha', mutate=mutate)
+    _cleanup(git_repo, 't001', identity)
+    shared.write_text('from main\n')
+    _git(git_repo, 'add', 'shared.txt')
+    _git(git_repo, 'commit', '-m', 'main edit')
+
+    conflict = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity))
+    assert conflict.returncode != 0
+    assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+    assert _git(git_repo, 'diff', '--name-only', '--diff-filter=U').stdout.strip() == 'shared.txt'
+    shared.write_text('resolved\n')
+    _git(git_repo, 'add', 'shared.txt')
+    finished = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
+    assert finished.returncode == 0, finished.stderr
+    assert _git(git_repo, 'merge-base', '--is-ancestor', branch_head, 'main', check=False).returncode == 0
+    assert not _git(git_repo, 'branch', '--list', branch).stdout.strip()
+
+
+def test_creation_gate_rejects_bare_unverified(git_repo):
+    path = git_repo / 'docs/tasks/t001_alpha/spec.md'
+    path.write_text(path.read_text().replace('外部行为：已核实', '外部行为：UNVERIFIED，待分类'))
+    result = _task_cli(git_repo, 'preflight', 't001', '--creation')
+    assert result.returncode != 0
+    assert '裸 UNVERIFIED' in result.stdout
+
+
+def test_recovery_rejects_wrong_handoff_identity(git_repo):
+    assert _task_cli(git_repo, 'start', 't001').returncode == 0
+    identity = _reserve(git_repo, 't001')
+    worktree = _worktree(git_repo, 't001')
+    base = _git(worktree, 'rev-parse', 'HEAD').stdout.strip()
+    assert _task_cli(worktree, 'finish', 't001').returncode == 0
+    handoff = _handoff('t001', 't001_alpha', identity, base)
+    handoff['execution_id'] = 'wrong-execution-id'
+    (worktree / 'docs/archive/tasks/t001_alpha/handoff.json').write_text(json.dumps(handoff))
+    state = _recovery(git_repo)
+    assert state['phase'] == 'needs_attention'
+    assert 'identity' in state['action']
+
+
+@pytest.mark.parametrize('option,field', [('--review', 'review_limit'), ('--verify', 'verify_limit')])
+def test_limits_can_increase_one_budget(git_repo, option, field):
+    assert _task_cli(git_repo, 'start', 't001').returncode == 0
+    worktree = _worktree(git_repo, 't001')
+    result = _task_cli(worktree, 'limits', 't001', option, '9', '--reason', '用户批准单项追加')
+    assert result.returncode == 0, result.stderr
+    fm, _ = parse_front_matter(worktree / 'docs/tasks/t001_alpha/task.md')
+    assert fm[field] == '9'
+    other = 'verify_limit' if field == 'review_limit' else 'review_limit'
+    assert fm[other] == '5'
+
+
+def test_merge_continue_rejects_unrelated_staged_path(git_repo):
+    identity, _, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', identity)
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
+    (git_repo / 'unrelated.txt').write_text('not part of task\n')
+    _git(git_repo, 'add', 'unrelated.txt')
+    result = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
+    assert result.returncode != 0
+    assert '无关路径' in result.stderr and 'unrelated.txt' in result.stderr
+    assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+
+
+def test_native_merge_commit_contains_derived_indexes(git_repo):
+    identity, _, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', identity)
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue').returncode == 0
+    names = _git(git_repo, 'show', '--format=', '--name-only', 'HEAD').stdout.splitlines()
+    assert 'docs/tasks_index.json' in names
+    assert 'docs/archive/tasks_index.json' in names
+
+
+def test_two_independent_tasks_integrate_in_completion_order(git_repo):
+    first, first_branch, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', first)
+    second, second_branch, _ = _prepare_done(git_repo, 't002', 'beta')
+    _cleanup(git_repo, 't002', second)
+    for tid, identity in (('t002', second), ('t001', first)):
+        assert _task_cli(git_repo, 'integrate', tid, *_identity_args(identity)).returncode == 0
+        assert _task_cli(git_repo, 'integrate', tid, *_identity_args(identity), '--continue').returncode == 0
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    assert [e['tid'] for e in _read_ledger(git_repo) if e['event'] == 'integrated'] == ['t002', 't001']
+
+
+def test_integrate_is_idempotent_after_branch_cleanup(git_repo):
+    identity, _, _ = _prepare_done(git_repo, 't001', 'alpha')
+    _cleanup(git_repo, 't001', identity)
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
+    assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue').returncode == 0
+    repeated = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
+    assert repeated.returncode == 0, repeated.stderr
+    assert '幂等' in repeated.stdout
+    assert len([e for e in _read_ledger(git_repo) if e['event'] == 'integrated']) == 1
+
+
+def test_native_chain_conflict_resolves_then_continues(git_repo):
+    shared = git_repo / 'shared.txt'
+    shared.write_text('base\n')
+    _git(git_repo, 'add', 'shared.txt')
+    _git(git_repo, 'commit', '-m', 'add shared')
+
+    first, first_branch, _ = _prepare_done(
+        git_repo, 't001', 'alpha',
+        mutate=lambda worktree: (worktree / 'shared.txt').write_text('from chain\n'),
+    )
+    _cleanup(git_repo, 't001', first)
+    second, second_branch, second_head = _prepare_done(
+        git_repo, 't002', 'beta', base=first_branch,
+    )
+    _cleanup(git_repo, 't002', second)
+
+    shared.write_text('from main\n')
+    _git(git_repo, 'add', 'shared.txt')
+    _git(git_repo, 'commit', '-m', 'main edit')
+
+    conflict = _task_cli(git_repo, 'integrate-chain', 't002')
+    assert conflict.returncode != 0
+    assert 'shared.txt' in conflict.stderr
+    assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+    shared.write_text('resolved chain merge\n')
+    _git(git_repo, 'add', 'shared.txt')
+    finished = _task_cli(git_repo, 'integrate-chain', 't002', '--continue')
+    assert finished.returncode == 0, finished.stderr
+    assert _git(git_repo, 'merge-base', '--is-ancestor', second_head, 'main', check=False).returncode == 0
+    assert not _git(git_repo, 'branch', '--list', first_branch).stdout.strip()
+    assert not _git(git_repo, 'branch', '--list', second_branch).stdout.strip()
+    assert len([e for e in _read_ledger(git_repo) if e['event'] == 'integrated']) == 2

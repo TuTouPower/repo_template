@@ -31,6 +31,7 @@ def task_schedule_references(target_tid: str, tasks: list[dict] | None = None) -
                 references.append(f"{task['tid']}.{field}")
     return references
 
+
 def _task_record(fm: dict, *, directory: str, source: str, archived: bool) -> dict:
     tid = fm.get("tid", "")
     if not ctx.TID_RE.match(tid):
@@ -280,12 +281,12 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
             raise ctx.TaskDataError(f"未合并 task 分支 {branch!r} 缺自身 task {owner_tid}")
         branch_task = task
         main_task = effective.get(owner_tid)
-        # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active/blocked 不覆盖。
+        # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active 不覆盖。
         # worktree 从 start 到 finish 一直存在，无登记 worktree 的 active 分支只来自 rewind。
         if (
             main_task is not None
             and main_task["status"] == "backlog"
-            and branch_task["status"] in ("active", "blocked")
+            and branch_task["status"] == "active"
         ):
             continue
         effective[owner_tid] = branch_task
@@ -310,7 +311,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
                 "tid": owner_tid,
                 "slug": "",
                 "title": "(worktree task.md 损坏)",
-                "status": "blocked",
+                "status": "active",
                 "note": f"登记 worktree {path} 的 task.md 无法解析",
             }
             sources[owner_tid] = ("worktree", str(path))
@@ -320,7 +321,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
                 "tid": owner_tid,
                 "slug": "",
                 "title": "(worktree 缺自身 task)",
-                "status": "blocked",
+                "status": "active",
                 "note": f"登记 worktree {path} 缺自身 task {owner_tid}",
             }
             sources[owner_tid] = ("worktree", str(path))

@@ -225,15 +225,3 @@ def test_list_rebuild_writes_index(fake_repo, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert ctx.ACTIVE_PATH.exists()
     assert "index rebuilt" in out
-
-
-def test_task_worktree_state_updates_do_not_rebuild_index(fake_repo, monkeypatch):
-    import argparse
-
-    _make_task(ctx.TASKS_DIR, "t001", "alpha", "active")
-    monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
-    lifecycle.cmd_block(argparse.Namespace(tid="t001", reason="review"))
-
-    assert not ctx.ACTIVE_PATH.exists()
-    fm, _ = parse_front_matter(ctx.TASKS_DIR / "t001_alpha/task.md")
-    assert fm["status"] == "blocked"

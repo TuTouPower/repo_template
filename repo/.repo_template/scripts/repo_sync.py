@@ -21,13 +21,13 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 .repo_template/scripts/repo_sync.py link-skills
   python3 .repo_template/scripts/repo_sync.py install-hooks [--force]
 
-本脚本只处理模板工具链与模板侧资产，不碰业务代码与项目状态。禁止自动
-commit——写盘与 state 更新完成后由 agent 走审批门禁。
+本脚本处理模板工具链与模板侧资产，并在 apply 时强制迁移 active/backlog task 的 workflow schema；不碰业务代码。禁止自动 commit——写盘与 state 更新完成后由 agent 走审批门禁。
 """
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -216,6 +216,208 @@ def assert_not_self(src: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Workflow schema migration (forced on apply)
+# ---------------------------------------------------------------------------
+
+_GUIDE_OPEN = "<!-- 规范（门禁必留，不得删除） -->"
+_GUIDE_CLOSE = "<!-- /规范 -->"
+_OLD_NOTE_PREFIXES = (
+    "执行期边做边写：",
+    "创建期不预测实施步骤——",
+    "执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。",
+    "创建期不预测实施步骤。只记有追溯价值的内容；无事项时写“无”。",
+)
+
+
+def _guide_blocks_by_heading(text: str) -> dict[str, list[str]]:
+    heading = ""
+    blocks: dict[str, list[str]] = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("### "):
+            heading = line[4:].strip()
+        if line.strip() == _GUIDE_OPEN:
+            block = [line]
+            index += 1
+            while index < len(lines):
+                block.append(lines[index])
+                if lines[index].strip() == _GUIDE_CLOSE:
+                    break
+                index += 1
+            if not block or block[-1].strip() != _GUIDE_CLOSE:
+                raise SyncError("当前 spec 模板规范块未闭合")
+            blocks.setdefault(heading, []).append("\n".join(block))
+        index += 1
+    return blocks
+
+
+def _replace_guide_blocks(text: str, current_template: str) -> str:
+    current = _guide_blocks_by_heading(current_template)
+    if not current:
+        return text
+    stripped: list[str] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() == _GUIDE_OPEN:
+            index += 1
+            while index < len(lines) and lines[index].strip() != _GUIDE_CLOSE:
+                index += 1
+            if index >= len(lines):
+                raise SyncError("存量 spec 规范块未闭合，拒绝猜测迁移")
+            index += 1
+            continue
+        stripped.append(lines[index])
+        index += 1
+    output: list[str] = []
+    for line in stripped:
+        output.append(line)
+        if line.startswith("### "):
+            heading = line[4:].strip()
+            for block in current.get(heading, []):
+                output.extend(["", block, ""])
+    # Collapse migration-created runs only; md formatter handles final style.
+    return "\n".join(output).rstrip() + "\n"
+
+
+def _implementation_guidance(task_template: str) -> list[str]:
+    lines = task_template.splitlines()
+    try:
+        start = lines.index("## 实施笔记") + 1
+    except ValueError:
+        return []
+    section = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        if line.strip() and line.strip() != "无":
+            section.append(line.strip())
+        if len(section) == 2:
+            break
+    return section
+
+
+def _migrate_task_text(text: str, task_template: str) -> str:
+    lines = text.splitlines()
+    migrated = []
+    has_review = False
+    has_verify = False
+    in_frontmatter = False
+    frontmatter_end = 0
+    for index, line in enumerate(lines):
+        if index == 0 and line.strip() == "---":
+            in_frontmatter = True
+        elif in_frontmatter and line.strip() == "---":
+            frontmatter_end = index
+            in_frontmatter = False
+        elif in_frontmatter:
+            has_review = has_review or bool(re.match(r'^review_limit\s*:', line))
+            has_verify = has_verify or bool(re.match(r'^verify_limit\s*:', line))
+            if re.match(r'^status\s*:\s*["\']?blocked["\']?\s*$', line):
+                line = 'status: "active"'
+        if any(line.strip().startswith(prefix) for prefix in _OLD_NOTE_PREFIXES):
+            continue
+        migrated.append(line)
+    insert_at = next((i + 1 for i, line in enumerate(migrated) if line.startswith("## 实施笔记")), None)
+    guidance = _implementation_guidance(task_template)
+    if insert_at is not None and guidance:
+        migrated[insert_at:insert_at] = ["", *guidance, ""]
+    if frontmatter_end and (not has_review or not has_verify):
+        # Recompute the closing marker position after guidance-only edits (front matter is before it).
+        close = next(i for i in range(1, len(migrated)) if migrated[i].strip() == "---")
+        fields = []
+        if not has_review:
+            fields.append('review_limit: "5"')
+        if not has_verify:
+            fields.append('verify_limit: "5"')
+        migrated[close:close] = fields
+    return "\n".join(migrated).rstrip() + "\n"
+
+
+def _registered_task_worktrees() -> list[tuple[Path, str]]:
+    result = _git(CONSUMER, "worktree", "list", "--porcelain")
+    if result.returncode != 0:
+        return []
+    rows: list[tuple[Path, str]] = []
+    root: Path | None = None
+    for raw in result.stdout.splitlines() + [""]:
+        if raw.startswith("worktree "):
+            root = Path(raw.removeprefix("worktree ")).resolve()
+        elif raw.startswith("branch refs/heads/") and root is not None:
+            branch = raw.removeprefix("branch refs/heads/")
+            if root != CONSUMER.resolve() and re.match(r"^t[0-9]+_", branch):
+                rows.append((root, branch))
+        elif not raw:
+            root = None
+    return rows
+
+def workflow_migration_status(src: Path) -> tuple[list[str], list[tuple[Path, str]]]:
+    spec_path = src / ".repo_template/docs/task_template/spec.md"
+    task_path = src / ".repo_template/docs/task_template/task.md"
+    if not spec_path.is_file() or not task_path.is_file():
+        return [], _registered_task_worktrees()
+    spec_template = spec_path.read_text(encoding="utf-8")
+    task_template = task_path.read_text(encoding="utf-8")
+    if not _guide_blocks_by_heading(spec_template) or "## 实施笔记" not in task_template:
+        return [], _registered_task_worktrees()
+    candidates = []
+    tasks_dir = CONSUMER / "docs/tasks"
+    if tasks_dir.is_dir():
+        for task_dir in tasks_dir.glob("t[0-9]*_*"):
+            if not task_dir.is_dir():
+                continue
+            spec = task_dir / "spec.md"
+            task = task_dir / "task.md"
+            if spec.is_file() and _replace_guide_blocks(spec.read_text(encoding="utf-8"), spec_template) != spec.read_text(encoding="utf-8"):
+                candidates.append(_rel(spec))
+            if task.is_file() and _migrate_task_text(task.read_text(encoding="utf-8"), task_template) != task.read_text(encoding="utf-8"):
+                candidates.append(_rel(task))
+    return sorted(candidates), _registered_task_worktrees()
+
+
+def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
+    spec_template_path = CONSUMER / ".repo_template/docs/task_template/spec.md"
+    task_template_path = CONSUMER / ".repo_template/docs/task_template/task.md"
+    if not spec_template_path.is_file() or not task_template_path.is_file():
+        return []
+    spec_template = spec_template_path.read_text(encoding="utf-8")
+    task_template = task_template_path.read_text(encoding="utf-8")
+    if not _guide_blocks_by_heading(spec_template) or "## 实施笔记" not in task_template:
+        return []
+    registered = _registered_task_worktrees()
+    if registered:
+        detail = ", ".join(f"{branch}@{root}" for root, branch in registered)
+        raise SyncError(
+            "workflow schema 强制更新前必须先完成或 rewind 已登记 task worktree：" + detail
+        )
+    reports = []
+    tasks_dir = CONSUMER / "docs/tasks"
+    if not tasks_dir.is_dir():
+        return reports
+    for task_dir in tasks_dir.glob("t[0-9]*_*"):
+        if task_dir.name == "task_template" or not task_dir.is_dir():
+            continue
+        for filename, transform in (
+            ("spec.md", lambda text: _replace_guide_blocks(text, spec_template)),
+            ("task.md", lambda text: _migrate_task_text(text, task_template)),
+        ):
+            path = task_dir / filename
+            if not path.is_file():
+                continue
+            before = path.read_text(encoding="utf-8")
+            after = transform(before)
+            if after == before:
+                continue
+            _stage_rollback(path)
+            path.write_text(after, encoding="utf-8")
+            changed.add(path)
+            reports.append(f"{_rel(path)} 已强制迁移到当前 workflow schema")
+    return reports
+
+
+# ---------------------------------------------------------------------------
 # 硬同步（树对树 / 单文件）
 # ---------------------------------------------------------------------------
 
@@ -327,6 +529,61 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
     changed.add(link)
 
 
+def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) -> None:
+    settings = CONSUMER / ".claude/settings.json"
+    if not settings.is_file():
+        return
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+        raise SyncError(
+            f"{_rel(settings)} 无法解析，不能安全移除已退役 merge guard PreToolUse（{error}）"
+        ) from error
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    groups = hooks.get("PreToolUse")
+    if not isinstance(groups, list):
+        return
+    changed_settings = False
+    kept_groups = []
+    for group in groups:
+        if not isinstance(group, dict):
+            kept_groups.append(group)
+            continue
+        entries = group.get("hooks")
+        if not isinstance(entries, list):
+            kept_groups.append(group)
+            continue
+        kept_entries = [
+            entry for entry in entries
+            if not (
+                isinstance(entry, dict)
+                and "merge_guard.py" in str(entry.get("command", ""))
+            )
+        ]
+        if len(kept_entries) != len(entries):
+            changed_settings = True
+        if kept_entries:
+            updated = dict(group)
+            updated["hooks"] = kept_entries
+            kept_groups.append(updated)
+    if not changed_settings:
+        return
+    _stage_rollback(settings)
+    if kept_groups:
+        hooks["PreToolUse"] = kept_groups
+    else:
+        hooks.pop("PreToolUse", None)
+    if not hooks:
+        data.pop("hooks", None)
+    temporary = settings.with_name(settings.name + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(settings)
+    changed.add(settings)
+    reports.append(f"{_rel(settings)} 已移除退役 merge guard PreToolUse")
+
+
 def repair_symlinks(changed: set[Path]) -> list[str]:
     """建/修宿主软链，指向 .repo_template/。非本机制链接报告不碰。"""
     reports: list[str] = []
@@ -345,13 +602,13 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
                 expected, changed, reports,
             )
-    hook_src = CONSUMER / ".repo_template/hooks/merge_guard.py"
-    if hook_src.is_file():
-        _ensure_symlink(
-            CONSUMER / ".claude/hooks/merge_guard.py",
-            os.path.join("..", "..", ".repo_template", "hooks", "merge_guard.py"),
-            hook_src.resolve(), changed, reports,
-        )
+    _remove_retired_merge_guard_setting(changed, reports)
+    legacy_guard = CONSUMER / ".claude/hooks/merge_guard.py"
+    if legacy_guard.is_symlink() and "merge_guard.py" in os.readlink(legacy_guard):
+        _stage_rollback(legacy_guard)
+        legacy_guard.unlink()
+        changed.add(legacy_guard)
+        reports.append(f"{_rel(legacy_guard)} 已退役并移除")
     return reports
 
 
@@ -730,6 +987,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("\n裁定单元:")
     for item in shared_status(src):
         print(f"  {item['cls']:14s} {item['unit']}")
+    migrations, worktrees = workflow_migration_status(src)
+    print("\nworkflow schema 强制迁移:")
+    if worktrees:
+        print("  BLOCKED: 先完成或 rewind task worktree：" + ", ".join(branch for _, branch in worktrees))
+    elif migrations:
+        for path in migrations:
+            print(f"  migrate {path}")
+    else:
+        print("  无")
     return 0
 
 
@@ -798,6 +1064,18 @@ def cmd_plan(args: argparse.Namespace) -> int:
         rows.append([f".claude/skills/{item['name']}", item["state"], mark])
     print(_md_table(["路径", "状态", "说明"], rows))
 
+    print("\n### workflow schema 强制迁移")
+    migrations, worktrees = workflow_migration_status(src)
+    if worktrees:
+        print("BLOCKED：先完成或 rewind 已登记 task worktree：")
+        for root, branch in worktrees:
+            print(f"- {branch} @ {root}")
+    elif migrations:
+        for path in migrations:
+            print(f"- {path}")
+    else:
+        print("无")
+
     print("\n### state 推进预期")
     if dirty:
         print(f"SRC dirty，apply 可写盘但**不**推进 last_synced_commit")
@@ -819,6 +1097,8 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
     for rel in HARD_SYNC_FILES:
         sync_file(src / rel, CONSUMER / rel, changed)
 
+    for report in force_migrate_workflow_tasks(changed):
+        print(f"提示: {report}")
     reports = repair_symlinks(changed)
     for r in reports:
         print(f"提示: {r}")
@@ -852,7 +1132,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     try:
         _apply_sync_write(src, decisions, changed, blocked)
-    except OSError as error:
+    except (OSError, SyncError) as error:
         _rollback_changes()
         raise SyncError(f"apply 中途失败，已回滚已覆盖文件（{error}）") from error
 

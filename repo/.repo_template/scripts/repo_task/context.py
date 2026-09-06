@@ -18,16 +18,13 @@ TEMPLATE_DIR = TOOLKIT_ROOT / "docs" / "task_template"
 RUNTIME_DIR = REPO_ROOT / "docs" / "runtime"
 LEDGER_PATH = RUNTIME_DIR / "dispatch_ledger.jsonl"
 
-VALID_STATUSES = ("backlog", "active", "blocked", "done", "dropped")
+VALID_STATUSES = ("backlog", "active", "done", "dropped")
 ARCHIVED_STATUSES = ("done", "dropped")
-SCHEDULE_STATUSES = ("scheduled", "pending_clarification")
 # 仅活跃目录内可 rewind 的状态及其顺序（防 forward）
-STATUS_ORDER = ("backlog", "active", "blocked")
-DEFAULT_REWIND = {"active": "backlog", "blocked": "active"}  # 撤一步映射
-BLOCK_REASONS = ("blackbox", "review", "infra")
+STATUS_ORDER = ("backlog", "active")
+DEFAULT_REWIND = {"active": "backlog"}  # 撤一步映射
 REVIEW_LEVELS = ("full", "single")
 DEFAULT_REVIEW_LEVEL = "full"
-LEDGER_RECORDABLE_EVENTS = ("note",)
 LEDGER_REPORT_STATUSES = ("done", "blocked", "failed")
 LEDGER_TERMINAL_STATUSES = ("completed", "failed", "stopped")
 LEDGER_FAIL_CLASSES = ("infra", "task", "contract")
@@ -71,15 +68,15 @@ TASK_REQUIRED_HEADINGS = (
     (2, "收尾报告"),
 )
 IMPLEMENTATION_NOTE_GUIDANCE = (
-    "执行期边做边写：实际步骤、踩坑、中途决策、偏离 spec、关键验证、blocked 原因与用户放行的新轮次上限。",
-    "创建期不预测实施步骤——那时尚未读代码，预测必然失准。只记有追溯价值的内容，不写命令流水账。无事项时写：无",
+    "执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。",
+    "创建期不预测实施步骤。只记有追溯价值的内容；无事项时写“无”。",
 )
 TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
     "tid", "slug", "title", "status", "branch", "worktree",
     "review_level", "review_limit", "verify_limit", "diff_anchor", "depends_on", "conflicts_with",
-    "schedule_status", "note",
+    "note",
 )
 
 

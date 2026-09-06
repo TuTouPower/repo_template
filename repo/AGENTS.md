@@ -15,7 +15,7 @@
 |`docs/archive/pending/pNNN_{slug}.md`|已闭环待办|仅由`.repo_template/scripts/pending.py archive` 迁入；只准新增|
 |`docs/blueprint/`|当前长期真相：架构、领域、约定、决策、测试|finalization 时更新；写代码或文档前读`conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions.md`，`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 在 `testing.md`。`architecture.md` / `domain.md` 是模板仓占位符，**消费项目复制后自行填充**；未填充前不视为权威，agent 读到占位符不据此推断|
 |`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/`|
-|`docs/spikes/{sid}_{slug}/`|当前 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`（Step 1 spike 项）；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/`|
+|`docs/spikes/{sid}_{slug}/`|当前 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`“实施”中的未知契约处理；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/`|
 |`docs/guides/`|给人看的使用指南|给人读，不写 agent 行为规则|
 |`docs/archive/`|完结或终止的历史|镜像原路径；内部文件只准新增|
 |`schemas/`|跨服务接口契约|改契约走 task 流程|
@@ -31,8 +31,8 @@
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确要求修改，且当前任务不在获准写入的 skill 流程中时，禁止修改未被 gitignore 的代码文件。
 - task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → 主干。进行中 task 的状态在其合并前不进主干；`list/show/preflight --ref` 用于只读分支快照，不能据主干旧 backlog 重复 start 或维护。
-- task 执行期一个实现 commit；创建期、状态维护、index 维护与 merge commit 分开。每个 commit 必须独立可验证，有工程意义。
+- task 执行期一个实现 commit；创建期和状态维护 commit 分开；派生 index 在集成时进入同一个 merge commit。每个 commit 必须独立可验证，有工程意义。
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - 使用 `.repo_template` 提供的工具链、skills、hooks、模板文件时发现缺陷，不静默处理、不自行绕过或修改，报告用户决定。
-- task 状态：`backlog` / `active` / `blocked` / `done` / `dropped`。
+- task 状态：`backlog` / `active` / `done` / `dropped`。
 - 开发工作流的设计见 `.repo_template/docs/architecture.md`，使用见 `.repo_template/docs/usage.md`。

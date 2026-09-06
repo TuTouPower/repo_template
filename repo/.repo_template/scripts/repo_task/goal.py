@@ -39,7 +39,7 @@ GOAL_LINE_TEMPLATE = (
     '/goal 按 task-run skill 链式串行执行冻结队列 [{queue}]'
     "（快照 docs/runtime/goal_queue.json，禁止变更队列成员）。"
     "队列执行授权已给出：禁止逐 task 征求确认、禁止进入 plan mode；"
-    "停止条件仅限 task-run skill「停止条件」列举项，task blocked 属合法停止，"
+    "停止条件仅限 task-run skill「停止条件」列举项，attempt report=blocked 属合法停止，"
     "按 skill 汇报后停。整链完成后按 skill 询问一次合并授权。"
     "终态判定：在主仓根目录运行 python3 .repo_template/scripts/task.py goal-check——"
     "输出 GOAL_QUEUE_COMPLETE 或 GOAL_QUEUE_STOPPED 即本 goal 结束；"
@@ -64,10 +64,6 @@ def _compute_queue(args) -> list[str]:
             status = task["status"]
             if status in ctx.ARCHIVED_STATUSES:
                 raise ctx.TaskDataError(f"{tid} 已归档（{status}）；done/dropped 永不入队")
-            if status == "blocked":
-                raise ctx.TaskDataError(
-                    f"{tid} 处于 blocked；先由用户决策（resume/drop）再生成 goal 队列"
-                )
             queue.append(tid)
         return queue
     queue = [

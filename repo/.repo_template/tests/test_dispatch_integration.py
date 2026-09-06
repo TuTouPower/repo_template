@@ -384,27 +384,6 @@ def test_start_appends_ledger_event(git_repo):
     assert "ts" in start
 
 
-def test_integrate_appends_integrated_with_merge_sha(git_repo):
-    identity, branch, branch_head = _prepare_done(git_repo, "t001", "alpha")
-    _cleanup(git_repo, "t001", identity)
-
-    result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
-
-    assert result.returncode == 0, result.stderr
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", branch_head, "main", check=False
-    ).returncode == 0
-    assert _git(git_repo, "branch", "--list", branch).stdout.strip() == ""
-    integrated = [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
-    assert len(integrated) == 1
-    event = integrated[0]
-    assert event["tid"] == "t001"
-    assert event["attempt"] == identity["attempt"]
-    assert event["execution_id"] == identity["execution_id"]
-    assert _git(git_repo, "rev-parse", f"{event['merge_sha']}^2", check=False).returncode == 0
-    assert _git(
-        git_repo, "merge-base", "--is-ancestor", event["merge_sha"], "main", check=False
-    ).returncode == 0
 
 
 def test_integrate_skip_merge_also_appends_integrated(git_repo):
@@ -428,6 +407,10 @@ def test_integrate_skip_merge_also_appends_integrated(git_repo):
     assert integrated[0]["merge_sha"] == preintegrate_head
     assert integrated[0]["attempt"] == identity["attempt"]
     assert integrated[0]["execution_id"] == identity["execution_id"]
+    # Recovery also persists derived indexes; merge_sha remains the actual merge commit.
+    assert (git_repo / "docs/tasks_index.json").is_file()
+    assert (git_repo / "docs/archive/tasks_index.json").is_file()
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() != preintegrate_head
 
 
 def test_integrate_skip_merge_rejects_foreign_head(git_repo):
@@ -440,7 +423,7 @@ def test_integrate_skip_merge_rejects_foreign_head(git_repo):
     result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
 
     assert result.returncode != 0
-    assert "找不到对应 merge(t001)" in result.stderr
+    assert "找不到对应的 merge(t001):" in result.stderr
     assert not [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
 
 
@@ -565,7 +548,12 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
     assert not worktree.exists()
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch
 
-    integrated = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+    prepared = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+    assert prepared.returncode == 0, prepared.stderr
+    assert not [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
+    integrated = _task_cli(
+        git_repo, "integrate", "t001", *_identity_args(identity), "--continue"
+    )
     assert integrated.returncode == 0, integrated.stderr
     records = [event for event in _read_ledger(git_repo) if event["event"] == "integrated"]
     assert records[-1]["attempt"] == identity["attempt"]
@@ -583,78 +571,8 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
 # --------------------------------------------------------------------------
 
 
-def test_integrate_chain_aggregate_gate_then_one_merge_and_exact_events(git_repo):
-    first, first_branch, first_head = _prepare_done(git_repo, "t001", "alpha")
-    _cleanup(git_repo, "t001", first)
-    second, second_branch, second_head = _prepare_done(
-        git_repo, "t002", "beta", base=first_branch
-    )
-    _cleanup(git_repo, "t002", second)
-
-    before_merges = int(_git(git_repo, "rev-list", "--merges", "--count", "HEAD").stdout)
-    result = _task_cli(git_repo, "integrate-chain", "t002")
-    assert result.returncode == 0, result.stderr
-    after_merges = int(_git(git_repo, "rev-list", "--merges", "--count", "HEAD").stdout)
-    assert after_merges - before_merges == 1
-    for head in (first_head, second_head):
-        assert _git(git_repo, "merge-base", "--is-ancestor", head, "main", check=False).returncode == 0
-    git_dir = Path(_git(git_repo, "rev-parse", "--absolute-git-dir").stdout.strip())
-    transaction = git_dir / "repo-task" / "integrate-chain.json"
-    payload = json.loads(transaction.read_text(encoding="utf-8"))
-    assert payload["phase"] == "awaiting_verification"
-    assert payload["merge_sha"]
-    assert _git(git_repo, "branch", "--list", first_branch).stdout.strip() == first_branch
-    assert _git(git_repo, "branch", "--list", second_branch).stdout.strip() == second_branch
-    events = [item for item in _read_ledger(git_repo) if item["event"] == "integrated"]
-    assert [(item["tid"], item["attempt"], item["execution_id"]) for item in events] == [
-        ("t001", first["attempt"], first["execution_id"]),
-        ("t002", second["attempt"], second["execution_id"]),
-    ]
-
-    finalized = _task_cli(git_repo, "integrate-chain", "t002", "--continue")
-    assert finalized.returncode == 0, finalized.stderr
-    assert not transaction.exists()
-    assert _git(git_repo, "branch", "--list", first_branch).stdout.strip() == ""
-    assert _git(git_repo, "branch", "--list", second_branch).stdout.strip() == ""
 
 
-def test_integrate_chain_recovers_post_merge_finalize_without_duplicate_events(git_repo):
-    first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
-    _cleanup(git_repo, "t001", first)
-    second, second_branch, _ = _prepare_done(
-        git_repo, "t002", "beta", base=first_branch
-    )
-    _cleanup(git_repo, "t002", second)
-    started = _task_cli(git_repo, "integrate-chain", "t002")
-    assert started.returncode == 0, started.stderr
-
-    git_dir = Path(_git(git_repo, "rev-parse", "--absolute-git-dir").stdout.strip())
-    transaction = git_dir / "repo-task" / "integrate-chain.json"
-    payload = json.loads(transaction.read_text(encoding="utf-8"))
-    assert payload["phase"] == "awaiting_verification"
-    original_events = [
-        item for item in _read_ledger(git_repo) if item["event"] == "integrated"
-    ]
-    payload["phase"] = "merged"
-    payload["index_sha"] = None
-    transaction.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-
-    recovered = _task_cli(git_repo, "integrate-chain", "t002", "--continue")
-    assert recovered.returncode == 0, recovered.stderr
-    recovered_payload = json.loads(transaction.read_text(encoding="utf-8"))
-    assert recovered_payload["phase"] == "awaiting_verification"
-    recovered_events = [
-        item for item in _read_ledger(git_repo) if item["event"] == "integrated"
-    ]
-    assert recovered_events == original_events
-    assert _git(git_repo, "branch", "--list", first_branch).stdout.strip() == first_branch
-    assert _git(git_repo, "branch", "--list", second_branch).stdout.strip() == second_branch
-
-    finalized = _task_cli(git_repo, "integrate-chain", "t002", "--continue")
-    assert finalized.returncode == 0, finalized.stderr
-    assert not transaction.exists()
 
 
 def test_integrate_chain_preflight_failure_has_zero_merge_and_zero_integrated(git_repo):
@@ -677,46 +595,6 @@ def test_integrate_chain_preflight_failure_has_zero_merge_and_zero_integrated(gi
     assert second["execution_id"] != "wrong"
 
 
-def test_integrate_chain_conflict_continue_uses_exact_transaction(git_repo):
-    shared = git_repo / "shared.txt"
-    shared.write_text("base\n", encoding="utf-8")
-    _git(git_repo, "add", "shared.txt")
-    _git(git_repo, "commit", "-m", "add shared")
-
-    def task_edit(worktree):
-        (worktree / "shared.txt").write_text("from task\n", encoding="utf-8")
-
-    identity, _, _ = _prepare_done(
-        git_repo, "t001", "alpha", mutate=task_edit
-    )
-    _cleanup(git_repo, "t001", identity)
-    shared.write_text("from main\n", encoding="utf-8")
-    _git(git_repo, "add", "shared.txt")
-    _git(git_repo, "commit", "-m", "edit shared on main")
-
-    conflict = _task_cli(git_repo, "integrate-chain", "t001")
-    assert conflict.returncode != 0
-    assert "冲突" in conflict.stderr
-    git_dir = Path(_git(git_repo, "rev-parse", "--absolute-git-dir").stdout.strip())
-    transaction = git_dir / "repo-task" / "integrate-chain.json"
-    assert transaction.is_file()
-
-    foreign = _task_cli(git_repo, "integrate-chain", "t002", "--continue")
-    assert foreign.returncode != 0
-    assert "tail_tid" in foreign.stderr
-
-    shared.write_text("resolved\n", encoding="utf-8")
-    _git(git_repo, "add", "shared.txt")
-    resumed = _task_cli(git_repo, "integrate-chain", "t001", "--continue")
-    assert resumed.returncode == 0, resumed.stderr
-    payload = json.loads(transaction.read_text(encoding="utf-8"))
-    assert payload["phase"] == "awaiting_verification"
-    assert payload["merge_sha"]
-    assert shared.read_text(encoding="utf-8") == "resolved\n"
-
-    finalized = _task_cli(git_repo, "integrate-chain", "t001", "--continue")
-    assert finalized.returncode == 0, finalized.stderr
-    assert not transaction.exists()
 
 
 def test_legacy_cli_paths_fail_explicitly(git_repo):
@@ -777,13 +655,6 @@ def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
     assert after != before
 
 
-def test_require_index_commit_rejects_foreign_commit(git_repo):
-    """RT-005：紧邻 merge 的 commit 若非工具链 index commit，恢复必须拒绝认领。"""
-    from repo_task import integration
-
-    _git(git_repo, "commit", "--allow-empty", "-m", "chore: not index commit")
-    with pytest.raises(ctx.TaskDataError, match="非工具链 index 维护 commit"):
-        integration._require_index_commit("HEAD")
 
 
 def test_cmd_integrate_uses_chain_lock(git_repo):

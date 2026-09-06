@@ -47,7 +47,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (toolkit / "docs/spike_report_template.md").write_text("# report\n")
     (toolkit / "docs/architecture.md").write_text("# arch\n")
     (toolkit / "hooks").mkdir(parents=True)
-    (toolkit / "hooks/merge_guard.py").write_text("print('guard')\n")
     hook = toolkit / "hooks/pre-commit"
     hook.write_text("#!/bin/sh\nexit 0\n")
     hook.chmod(0o755)
@@ -392,7 +391,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     # 硬同步
     assert (consumer / ".repo_template/scripts/task.py").exists()
     assert (consumer / ".repo_template/docs/spike_report_template.md").read_text() == "# report\n"
-    assert (consumer / ".claude/hooks/merge_guard.py").is_symlink()
+    assert not (consumer / ".claude/hooks/merge_guard.py").exists()
     assert (consumer / ".repo_template/skills/task-run/SKILL.md").read_text().startswith("---")
     assert (consumer / ".claude/skills/task-run").is_symlink()
     assert (consumer / ".agents/skills/task-run").is_symlink()
@@ -591,3 +590,158 @@ def test_skill_overwrite_rollback_restores_old_file(env):
     assert (dst_skill / "SKILL.md").read_text(encoding="utf-8") == "OLD CONTENT\n"
     rs._ROLLBACK.clear()
     rs._cleanup_rollback()
+
+
+def test_repair_symlinks_removes_retired_managed_merge_guard(env):
+    consumer = env['consumer']
+    guard = consumer / '.claude/hooks/merge_guard.py'
+    guard.parent.mkdir(parents=True)
+    guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
+    changed: set[Path] = set()
+    reports = rs.repair_symlinks(changed)
+    assert not guard.exists() and not guard.is_symlink()
+    assert guard in changed
+    assert any('已退役并移除' in line for line in reports)
+
+
+def test_repair_symlinks_preserves_manual_merge_guard_file(env):
+    consumer = env['consumer']
+    guard = consumer / '.claude/hooks/merge_guard.py'
+    guard.parent.mkdir(parents=True)
+    guard.write_text('manual\n')
+    changed: set[Path] = set()
+    rs.repair_symlinks(changed)
+    assert guard.read_text() == 'manual\n'
+    assert guard not in changed
+
+
+def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
+    consumer = env['consumer']
+    settings = consumer / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({
+        'hooks': {
+            'PreToolUse': [{
+                'matcher': 'Bash',
+                'hooks': [
+                    {'type': 'command', 'command': 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'},
+                    {'type': 'command', 'command': 'echo keep'},
+                ],
+            }],
+            'PostToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'echo post'}]}],
+        },
+    }))
+    guard = consumer / '.claude/hooks/merge_guard.py'
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
+    changed: set[Path] = set()
+    rs.repair_symlinks(changed)
+    data = json.loads(settings.read_text())
+    assert data['hooks']['PreToolUse'][0]['hooks'] == [{'type': 'command', 'command': 'echo keep'}]
+    assert 'PostToolUse' in data['hooks']
+    assert not guard.is_symlink()
+    assert settings in changed and guard in changed
+
+
+def test_repair_symlinks_refuses_malformed_settings_before_unlink(env):
+    consumer = env['consumer']
+    settings = consumer / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{bad')
+    guard = consumer / '.claude/hooks/merge_guard.py'
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
+    with pytest.raises(rs.SyncError, match='不能安全移除'):
+        rs.repair_symlinks(set())
+    assert guard.is_symlink()
+
+
+def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
+    source = SCRIPTS_DIR.parent / 'docs/task_template'
+    target = consumer / '.repo_template/docs/task_template'
+    target.mkdir(parents=True, exist_ok=True)
+    spec = (source / 'spec.md').read_text()
+    task = (source / 'task.md').read_text()
+    (target / 'spec.md').write_text(spec)
+    (target / 'task.md').write_text(task)
+    return spec, task
+
+
+def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
+    old_spec = spec.replace(
+        '只写可观察、可独立验证的行为；每条使用稳定且不复用的 `AC-NNN`。需真实部署或人工环境验证时在编号前加 `[deploy]`。技术选型不作为行为 AC。',
+        '旧版规范文字，只写可观察行为和 AC-NNN。',
+    )
+    old_task = task.replace('status: backlog', 'status: blocked', 1)
+    old_task = old_task.replace('review_limit: 5\n', '').replace('verify_limit: 5\n', '')
+    old_task = old_task.replace(
+        '执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。',
+        '执行期边做边写：旧版固定说明。',
+    ).replace(
+        '创建期不预测实施步骤。只记有追溯价值的内容；无事项时写“无”。',
+        '创建期不预测实施步骤——旧版固定说明。',
+    )
+    return old_spec, old_task
+
+
+def test_force_migrate_workflow_updates_old_task_documents(env):
+    consumer = env['consumer']
+    current_spec, current_task = _install_current_workflow_templates(consumer)
+    old_spec, old_task = _old_task_documents(current_spec, current_task)
+    task_dir = consumer / 'docs/tasks/t001_old'
+    task_dir.mkdir(parents=True)
+    (task_dir / 'spec.md').write_text(old_spec)
+    (task_dir / 'task.md').write_text(old_task)
+
+    changed: set[Path] = set()
+    reports = rs.force_migrate_workflow_tasks(changed)
+
+    migrated_spec = (task_dir / 'spec.md').read_text()
+    migrated_task = (task_dir / 'task.md').read_text()
+    assert '旧版规范文字' not in migrated_spec
+    for blocks in rs._guide_blocks_by_heading(current_spec).values():
+        for block in blocks:
+            assert block in migrated_spec
+    assert 'status: "active"' in migrated_task
+    assert 'review_limit: "5"' in migrated_task
+    assert 'verify_limit: "5"' in migrated_task
+    for line in rs._implementation_guidance(current_task):
+        assert line in migrated_task
+    assert '旧版固定说明' not in migrated_task
+    assert task_dir / 'spec.md' in changed and task_dir / 'task.md' in changed
+    assert len(reports) == 2
+
+
+def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
+    _, current_task = _install_current_workflow_templates(env['consumer'])
+    old_task = current_task.replace('review_limit: 5\n', '').replace('verify_limit: 5\n', '')
+    old_task = old_task.replace(
+        '无\n\n## Review 处置',
+        'status: blocked\nreview_limit: 正文不是字段\nverify_limit: 正文不是字段\n\n## Review 处置',
+    )
+    migrated = rs._migrate_task_text(old_task, current_task)
+    assert 'status: blocked' in migrated
+    assert 'review_limit: 正文不是字段' in migrated
+    assert 'verify_limit: 正文不是字段' in migrated
+    frontmatter = migrated.split('---', 2)[1]
+    assert 'review_limit: "5"' in frontmatter
+    assert 'verify_limit: "5"' in frontmatter
+
+
+def test_force_migrate_workflow_rejects_registered_task_worktree(env):
+    consumer = env['consumer']
+    current_spec, current_task = _install_current_workflow_templates(consumer)
+    task_dir = consumer / 'docs/tasks/t001_old'
+    task_dir.mkdir(parents=True)
+    (task_dir / 'spec.md').write_text(current_spec)
+    (task_dir / 'task.md').write_text(current_task)
+    _git(consumer, 'init', '-b', 'main')
+    _git(consumer, 'config', 'user.email', 'test@example.com')
+    _git(consumer, 'config', 'user.name', 'test')
+    _git(consumer, 'add', '-A')
+    _git(consumer, 'commit', '-m', 'init')
+    worktree = consumer.parent / 'consumer_t001'
+    _git(consumer, 'worktree', 'add', '-b', 't001_old', str(worktree))
+
+    with pytest.raises(rs.SyncError, match='必须先完成或 rewind'):
+        rs.force_migrate_workflow_tasks(set())
