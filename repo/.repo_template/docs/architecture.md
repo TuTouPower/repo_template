@@ -19,6 +19,8 @@ task 工具链的执行拓扑、attempt 生命周期与合并授权。项目自�
                └── 会话 B：t002       ──► 链尾 merge
 ```
 
+依赖就绪分两层：有效状态须为 done，且实际选定 base 必须包含每个依赖的实现 SHA。显式 --base 与自动选择的 base 一视同仁；依赖已通过链合入且分支被删除时，从主干归档 handoff 的创建提交恢复实现 SHA，不靠 merge subject。缺少可验证 provenance 时拒绝 start，不把空证据当已继承。
+
 ## 本波执行计划（`task.py plan`）
 
 写图（`task-schedule` → `depends_on` / `conflicts_with`）与推链分离。`plan` 只读、不落盘，算法权威在 `repo_task.plan.compute_batch_plan`；CLI 与 `view --serve` 看板共用。

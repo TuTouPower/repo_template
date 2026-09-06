@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import tempfile
 from pathlib import Path
 
 import repo_task.context as ctx
@@ -58,41 +59,96 @@ SCOPE_FINGERPRINT_EXCLUDES = (
 )
 
 
-def review_scope_fingerprint(
-    diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None
-) -> str:
-    """被审 diff 指纹：`git diff {diff_anchor}` 排除 task 流程文件后的内容摘要。
+def _review_logical_path(path: str, task_name: str) -> str | None:
+    # finish moves the current task, not its reviewed meaning. Canonicalize both
+    # locations before applying the archive exclusion; keep its spec/attachments.
+    for prefix in (f"docs/tasks/{task_name}/", f"docs/archive/tasks/{task_name}/"):
+        if path.startswith(prefix):
+            suffix = path[len(prefix):]
+            return None if suffix in REVIEW_PROCESS_FILES else f"docs/tasks/{task_name}/{suffix}"
+    excluded = [item.removeprefix(":(exclude)") for item in SCOPE_FINGERPRINT_EXCLUDES]
+    if any(path == item or path.startswith(item + "/") for item in excluded):
+        return None
+    return path
 
-    未跟踪文件（未 `git add -N` 的新源码）对 `git diff <anchor>` 不可见，会静默绕过
-    review 门禁；把 `git ls-files --others` 内容一并纳入哈希，与 repository_fingerprint
-    口径一致（RT-002）。git 失败返回 ""。check_review_status / render_review_prompts
-    共用本实现，防口径漂移。
+
+def _review_tree(root: Path, ref: str, task_name: str) -> dict[str, tuple[str, str]]:
+    data = _required_git_bytes(["ls-tree", "-r", "-z", ref], root)
+    tree = {}
+    for entry in data.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, _, oid = metadata.decode("ascii").split()
+        path = _review_logical_path(os.fsdecode(raw_path), task_name)
+        if path is not None:
+            if path in tree:
+                raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
+            tree[path] = (mode, oid)
+    return tree
+
+
+def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
+    data = _required_git_bytes(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root)
+    algorithm = _required_git_bytes(["rev-parse", "--show-object-format"], root).decode().strip()
+    tree = {}
+    for raw in set(data.split(b"\0")) - {b""}:
+        physical = os.fsdecode(raw)
+        path = _review_logical_path(physical, task_name)
+        if path is None:
+            continue
+        source = root / physical
+        try:
+            mode = source.lstat().st_mode
+        except FileNotFoundError:
+            continue  # tracked deletion
+        if path in tree:
+            raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
+        if stat.S_ISLNK(mode):
+            content, git_mode = os.fsencode(os.readlink(source)), "120000"
+        elif stat.S_ISREG(mode):
+            content = source.read_bytes()
+            git_mode = "100755" if mode & 0o111 else "100644"
+        elif stat.S_ISDIR(mode):
+            # Gitlinks are opaque dependencies. Bind their checked-out commit.
+            git_mode = "160000"
+            oid = _required_git_bytes(["rev-parse", "HEAD"], source).decode().strip()
+            tree[path] = (git_mode, oid)
+            continue
+        else:
+            raise ctx.TaskDataError(f"review scope 不支持文件类型：{physical}")
+        blob = f"blob {len(content)}\0".encode() + content
+        tree[path] = (git_mode, hashlib.new(algorithm, blob).hexdigest())
+    return tree
+
+
+def review_scope_fingerprint(
+    diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None,
+    ref: str | None = None,
+) -> str:
+    """Hash the delivered content delta, independent of staging/commit/archive.
+
+    ref=None reads the complete worktree (including untracked outputs); ref reads
+    only immutable committed blobs. A deleted file, mode or symlink change is part
+    of the scope. Process files are excluded, never the current task's spec.
+    Old diff-serialization fingerprints deliberately require a fresh review.
     """
     root = (repo_root or ctx.REPO_ROOT).resolve()
-    excludes = [
-        f":(exclude){rel_task_dir}/{name}" for name in REVIEW_PROCESS_FILES
-    ] + list(SCOPE_FINGERPRINT_EXCLUDES)
+    task_name = Path(rel_task_dir).name
     try:
-        diff = _git_bytes(["diff", "--binary", diff_anchor, "--", ".", *excludes], root=root)
-        untracked = _git_bytes(
-            ["ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
-            root=root,
-        )
-    except (ctx.TaskDataError, OSError):
-        return ""
-    if diff.returncode != 0 or untracked.returncode != 0:
-        return ""
-    digest = hashlib.sha1()
-    digest.update(diff.stdout)
-    for raw in untracked.stdout.split(b"\0"):
-        if not raw:
-            continue
-        digest.update(b"U" + raw)
-        try:
-            digest.update((root / os.fsdecode(raw)).read_bytes())
-        except OSError:
-            pass
-    return digest.hexdigest()[:16]
+        before = _review_tree(root, diff_anchor, task_name)
+        after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
+        digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
+        for path in sorted(before.keys() | after.keys()):
+            if before.get(path) == after.get(path):
+                continue
+            _hash_part(digest, b"path", os.fsencode(path))
+            for label, tree in ((b"before", before), (b"after", after)):
+                value = " ".join(tree[path]).encode() if path in tree else b"deleted"
+                _hash_part(digest, label, value)
+        return digest.hexdigest()[:16]
+    except (ctx.TaskDataError, OSError, ValueError):
+        return ""  # fail closed; an unreadable output is never silently omitted
 
 
 def _required_git_bytes(args: list[str], root: Path) -> bytes:
@@ -319,6 +375,30 @@ def verify_integrate_ready(
             f"{diff_anchor!r} 与 branch tip first parent {first_parent!r} 不一致；"
             "一个 task 必须恰有一个执行 commit"
         )
+    if status == "done":
+        from .review import ReviewDataError, evaluate_review
+        scope = review_scope_fingerprint(first_parent, task["dir"], ref=tip_result.stdout.strip())
+        try:
+            with tempfile.TemporaryDirectory(prefix="repo-task-review-") as tmp:
+                target = Path(tmp)
+                for name in ("task.md", "review_code.md", "review_test.md", "review_general.md"):
+                    try:
+                        text = git_text_at_ref(branch, f"{task['dir']}/{name}")
+                    except ctx.TaskDataError:
+                        if name == "task.md":
+                            raise
+                        continue
+                    (target / name).write_text(text, encoding="utf-8")
+                result = evaluate_review(target, fm, scope or None)
+            if result["overall"] != "PASS":
+                return "contract", (
+                    f"review gate：overall={result['overall']} "
+                    f"review_scope={result['review_scope']} "
+                    f"missing_disposition={result['missing_disposition']}；"
+                    "最终提交须有同内容的 PASS 证据"
+                )
+        except (ctx.TaskDataError, ReviewDataError, OSError) as error:
+            return "contract", f"review gate：{error}"
     detail = "分支 tip terminal + exact handoff + diff_anchor/first-parent provenance"
     if not has_unmerged_commits(branch):
         detail += "（已合入）"

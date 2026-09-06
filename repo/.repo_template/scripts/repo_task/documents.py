@@ -187,6 +187,7 @@ def unverified_contract_gate(
     spec_text: str,
     *,
     require_verified: bool = False,
+    creation: bool = False,
 ) -> tuple[list[str], list[str]]:
     """返回未知契约的 (阻塞项, 警告项)。"""
     contracts = parse_unverified_contracts(spec_text)
@@ -198,7 +199,7 @@ def unverified_contract_gate(
             "须明确改为 UNVERIFIED-BLOCKING 或 UNVERIFIED-SPIKE"
         )
     if contracts["blocking"]:
-        problems.append(
+        (warnings if creation and not require_verified else problems).append(
             f"未知契约清单有 {len(contracts['blocking'])} 项 UNVERIFIED-BLOCKING；"
             "须由用户或外部环境核实并改写结论"
         )
@@ -344,6 +345,7 @@ def validate_task_documents(
     *,
     require_verified: bool = False,
     allow_template_placeholders: bool = False,
+    creation: bool = False,
 ) -> tuple[list[str], list[str]]:
     """校验 task 创建骨架与未知契约门禁，返回 (阻塞项, 警告项)。"""
     problems, warnings = [], []
@@ -437,6 +439,7 @@ def validate_task_documents(
     contract_problems, contract_warnings = unverified_contract_gate(
         spec_text,
         require_verified=require_verified,
+        creation=creation,
     )
     problems.extend(contract_problems)
     warnings.extend(contract_warnings)

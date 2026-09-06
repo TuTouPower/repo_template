@@ -59,6 +59,22 @@
 |`task-work`|在 task worktree 实施并写 `handoff.json`（由 `task-run` 调用）|
 |`task-integrate`|单 task 或链式合并回主干（由 `task-run` 调用）|
 
+### 跨 skill 调用契约
+
+|调用|输入与授权|输出与恢复|写域 / 提交责任|
+|---|---|---|---|
+|task-create → preflight --creation|已批准创建的 backlog；可含已分类阻塞事项|结构/AC/占位符错误 FAIL；BLOCKING 为 WARN，仍禁止 start|task 目录 + 派生 index；用户同意后创建 commit|
+|task-run → task-work|tid、原 exact identity、登记 worktree、持久 review_limit/verify_limit；仅执行授权|执行 commit 或明确 blocked/infra；中断先 recovery 读阶段|当前 worktree；一个执行 commit，不写主仓 attempt|
+|task-work → task-bug analysis-only|现象与父 task 写域，不传递立项/提交授权|pNNN 或分析阻断，禁止进入第 7–9 步|.scratch 与本次 pending；提交归父 task|
+|task-work → review checker|实际 task_dir（finish 后为 archive）与最新报告|PASS / FAIL / INCOMPLETE，按 next_action 处理，exit 0 不等于 PASS|只读；checker 不修改报告或提高预算|
+|task-run → task-integrate|逐成员 exact cleanup；整链完成后用户另行批准合并|awaiting_verification → 验证 → finalize；失败保留事务|仅主仓；merge/index 与执行 commit 分开|
+
+`task.py recovery {tid}` 只读输出 phase、原 identity、worktree/task_dir 和下一步；不会自动 reserve、commit 或清理。`review_limit` / `verify_limit` 在 task front matter 持久保存，旧 task 默认 5；只有用户批准后由 `resume --review-limit/--verify-limit ... --reason ...` 增加，新 attempt 不清零历史轮次。
+
+创建有效性用 `preflight {tid} --creation`；执行就绪仍用 `preflight {tid} --allow-backlog`，执行期严格验证用 `--require-verified`。前者不能替代后两者。
+
+review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交或 finish 的目录迁移改变。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；handoff 的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅；如已提交或 cleanup，保留分支/证据并请用户决定恢复方式，不擅自 amend 或绕过门禁。
+
 ## workflow 示例
 
 `/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。

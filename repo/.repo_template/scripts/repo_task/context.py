@@ -78,7 +78,7 @@ TZ_CN = timezone(timedelta(hours=8))
 
 FRONT_MATTER_KEYS = (
     "tid", "slug", "title", "status", "branch", "worktree",
-    "review_level", "diff_anchor", "depends_on", "conflicts_with",
+    "review_level", "review_limit", "verify_limit", "diff_anchor", "depends_on", "conflicts_with",
     "schedule_status", "note",
 )
 

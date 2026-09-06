@@ -8,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
+
+from review_support import ensure_review_evidence
 
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -120,6 +123,7 @@ def _prepare_done(repo, tid, slug):
     branch = f"{tid}_{slug}"
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     archive = worktree / "docs" / "archive" / "tasks" / branch
+    ensure_review_evidence(worktree, archive, base_sha)
     payload = {
         "tid": tid,
         "attempt": identity["attempt"],

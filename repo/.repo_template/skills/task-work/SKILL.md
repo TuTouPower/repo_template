@@ -23,7 +23,7 @@ description: none
 
 ## 单 task 流程
 
-门禁默认：`max_verify_round = 5`（黑盒）；`max_review_round = 5`（审阅）。`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 见 `docs/blueprint/testing.md`。
+门禁上限从 task front matter 读取：`verify_limit`（黑盒）、`review_limit`（审阅），旧 task 缺字段时均为 5。黑盒累计轮次及证据记在实施笔记；审阅轮次由报告计算。新 attempt 不重置历史或上限，只有用户批准后经 `task.py resume --review-limit/--verify-limit ... --reason ...` 才能增加。`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 见 `docs/blueprint/testing.md`。
 
 ```mermaid
 flowchart TD
@@ -33,7 +33,7 @@ flowchart TD
     S4 --> B1{"黑盒通过?"}
     B1 -->|否且未满轮| S3
     B1 -->|否且满轮| BLK["blocked"]
-    B1 -->|是| S5["5 审阅"]
+    B1 -->|是| DOCS["4b 收尾产物"] --> S5["5 审阅"]
     S5 --> D{"6 overall?"}
     D -->|PASS| S7["7 收尾+执行 commit"]
     D -->|FAIL 未满轮| W["写处置表"]
@@ -55,7 +55,9 @@ flowchart TD
 |黑盒过、无审阅|Step 5|
 |有 FAIL、未满轮|Step 6 处置后按表回流|
 |`blocked`|停止，呈 blocked 选项|
-|`done` / `dropped`|不改动，交出 branch 与 HEAD；task-run 仍以 exact handoff/attempt gate 判断|
+|`done`，恢复分类为 `finished_uncommitted`|使用归档 task 目录和原 identity；核对 HEAD 仍等于 diff_anchor、handoff identity 与全部待提交内容，通过最终 review 检查后回 Step 7c，不再 finish/reserve|
+|`done`，已有执行 commit|不改动；交出 branch 与 HEAD，由 task-run 补缺失的 terminal/report/cleanup|
+|`dropped`|不继续实施，报告 task-run 按终止决策处理|
 
 ### Step 1：开干与前置
 
@@ -87,6 +89,21 @@ flowchart TD
 
 进入最后一轮（已用轮次 = `max_verify_round - 1`）仍未过时，回 Step 3 前先在实施笔记写「聚焦修复计划」：失败项、根因假设、最小修复动作；范围仅限失败项，禁止顺手改动。把盲目重试升级为带假设的最后一击。
 
+### Step 4b：收尾产物（最终审阅前）
+
+以下产物和格式化必须先完成，再进入 Step 5。以后重审也先核对它们与实现一致；登记操作按已有 pNNN/dNNN 查重，不重复创建。
+
+- 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`。
+- 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
+- 写全 `task.md` 收尾报告；收尾报告不设遗留节，遗留在 `docs/pending/todo/`。
+- pending 闭环：`.repo_template/scripts/pending.py archive <pNNN...> --fix-ref {tid} --write`。
+- 顺手发现登记（必做）：实施/测试/黑盒中观察到、但不属本 task 范围且未修的疑似存量问题，不得只写 `task.md` 笔记——`task.md` 随 task 归档后这些发现无人跟踪。逐条盘点处置：已复现确认的 bug 调用 `task-bug` 的 `analysis-only` 模式（仅第 1–6 步，根因 + 补测分析 + 登记）；疑点或技术债用 `pending.py new` 登记。已随本 task 修复或确认不成立的不登记。
+- 测试假绿专项（必做）：测试过程中发现疑似假绿（断言过弱、mock 掉被测逻辑、只测假路径、缺集成层导致测试通过但逻辑有误）的存量测试，同样必须登记——能定位根因的走 `task-bug analysis-only` 补测分析，暂不能定位的用 `pending.py new` 登记并注明疑似假绿。不得在收尾报告里一笔带过。
+- 核对所有 `status=遗留` 行的 `fix_ref` 已指向 `pNNN` 或 follow-up tid。
+- 用 `.repo_template/scripts/findings.py new` 抽取可跨 task 复用的已验证事实。
+
+先执行 Step 7 的清洁度检查，并用 `md_format.py` 格式化本 task Markdown 产物；所有需提交的非过程改动均进入本轮 review。`analysis-only` 不立项、不审批、不 commit，登记文件归本 task 的唯一执行 commit。
+
 ### Step 5：审阅
 
 - 用 `git ls-files --others --exclude-standard` 列出本 task 新文件，剔除无关/临时/`.scratch/` 后，对明确路径执行 `git add -N -- <path...>`，让 untracked 产出进入 `git diff {diff_anchor}`；无新文件则跳过。不得用无路径 `git add -N`。
@@ -109,11 +126,16 @@ flowchart TD
 - 运行：
     ```bash
     python3 .repo_template/scripts/check_review_status.py \
-      --task-dir docs/tasks/{tid}_{slug} \
-      --max-review-round <N>
+      --task-dir docs/tasks/{tid}_{slug}
     ```
 - `prompt_hint` 非空 → 下一轮派发附上轮撤回 finding_id 与理由。
 - reviewer 标注 spec 过时：改 spec 上下文区，不计 FAIL，不因此回 Step 3。
+- checker 正常返回码只表示成功取数，必须读 `overall`，不能把 exit 0 当 PASS。
+- `overall=INCOMPLETE` 按 `next_action` 补齐证据，不直接 finish/block review：
+    - `collect_reports`：补派缺失报告的 reviewer，其他报告保留。
+    - `complete_disposition`：补缺失处置及遗留引用，再跑 checker。
+    - `rerender_review`：`review_scope=missing/format_error` 由原 reviewer 补正确格式/证据，不由实施者代填指纹；`stale` 表示内容变化，重渲染并审当前内容，改过代码/测试先回 Step 3→4。
+    - 补格式/收集报告不消耗业务回归轮次，不覆盖历史或同轮复核翻 PASS；真实修复重审仍按原轮次规则。针对同一缺证原因修复后仍无法取得完整证据，视为评审基础设施阻断，`block --reason infra` 并交 task-run 写本轮终态，不无界重派。
 - `overall=PASS` → Step 7。
 - `FAIL` 且 `round < max`：填处置表；改代码/测试则 Step 3→4→5→6，只改必要文档也须回 Step 5 完整重审。进入最后一轮（`round = max - 1`）的处置前，除处置表外须先在实施笔记写「聚焦修复计划」：失败 finding、根因假设、最小修复动作；范围仅限失败项。
 - `FAIL` 且 `round ≥ max`：处置表填完 → `block --reason review`，停止。
@@ -133,18 +155,11 @@ grep -cE 'print\(|pprint\(' .scratch/added_lines.txt || true   # debug 输出残
 grep -cE '\b(TODO|FIXME|XXX)\b' .scratch/added_lines.txt || true # 会话 TODO 残留
 ```
 
-`grep -c` 零匹配时 exit 1，属预期绿态，须带 `|| true`；判据只看计数数字，不看退出码。非零计数 = 收尾前必须修掉的残留。spec 声明 `Cleanliness override:` 的项报告计数但不判失败（override 须写明放行理由与具体项，保持窄口径）。该检查专门防「未提交的 debug 残留」——只看 `..HEAD` 的 diff 对它不可见。
+`grep -c` 零匹配时 exit 1，属预期绿态，须带 `|| true`；判据只看计数数字，不看退出码。非零计数 = 收尾前必须修掉的残留；若本次检查后需修改代码/测试，回 Step 3→4→4b→5，若只改交付文档则回 Step 4b→5，不能继续沿用旧 PASS。spec 声明 `Cleanliness override:` 的项报告计数但不判失败（override 须写明放行理由与具体项，保持窄口径）。该检查专门防「未提交的 debug 残留」——只看 `..HEAD` 的 diff 对它不可见。
 
 **7a 收尾文档**：
 
-- 更新 `docs/specs/<slug>.md` 与 `docs/specs_index.md`。
-- 更新受影响的 `docs/blueprint/`、`docs/guides/`、`README.md`、`AGENTS.md`、API 文档等。
-- 写全 `task.md` 收尾报告；收尾报告不设遗留节，遗留在 `docs/pending/todo/`。
-- pending 闭环：`.repo_template/scripts/pending.py archive <pNNN...> --fix-ref {tid} --write`。
-- 顺手发现登记（必做）：实施/测试/黑盒中观察到、但不属本 task 范围且未修的疑似存量问题，不得只写 `task.md` 笔记——`task.md` 随 task 归档后这些发现无人跟踪。逐条盘点处置：已复现确认的 bug 链式走 `task-bug`（根因 + 补测 + 登记）；疑点或技术债用 `pending.py new` 登记。已随本 task 修复或确认不成立的不登记。
-- 测试假绿专项（必做）：测试过程中发现疑似假绿（断言过弱、mock 掉被测逻辑、只测假路径、缺集成层导致测试通过但逻辑有误）的存量测试，同样必须登记——能定位根因的走 `task-bug` 补测分析，暂不能定位的用 `pending.py new` 登记并注明疑似假绿。不得在收尾报告里一笔带过。
-- 核对所有 `status=遗留` 行的 `fix_ref` 已指向 `pNNN` 或 follow-up tid。
-- 用 `.repo_template/scripts/findings.py new` 抽取可跨 task 复用的已验证事实。
+- 仅补齐过程性 `task.md` 收尾报告、Review 处置引用与 handoff 元数据；交付文档已在 Step 4b 完成，不在 PASS 后继续改产物。
 - 在执行 commit 前读取当前完整 `HEAD`，确认它仍等于 task front matter 的 `diff_anchor`，并记为 `base_sha`；该值就是稍后 branch tip 执行 commit 的 first parent。若两者不等，说明已产生额外 commit，停止而不是写一个“当前 HEAD”掩盖一 task 一 commit 违约。
 - 写交接单 `docs/tasks/{tid}_{slug}/handoff.json`（机器可读契约，随执行 commit 入库）：
     ```json
@@ -180,10 +195,11 @@ grep -cE '\b(TODO|FIXME|XXX)\b' .scratch/added_lines.txt || true # 会话 TODO �
 
 **7c 执行 commit**：
 
-- 把本 task 执行期全部改动（含 7a 文档、7b 归档移动）一次性 commit；subject 含 `{tid}`。
+- 用已归档路径重跑 `check_review_status.py --task-dir docs/archive/tasks/{tid}_{slug}`，`overall=PASS` 后才能提交；归档前后同内容指纹不变。若此时为 INCOMPLETE，不提交、不伪造 PASS，保留现场报告 task-run；需要改产物时由用户裁决恢复方案。
+- 把本 task 执行期全部改动（含 4b 交付文档、7a 元数据、7b 归档移动）一次性 commit；subject 含 `{tid}`。
 - 一 task 一执行 commit，不提交派生 index。
 - commit 后确认 worktree clean，当前 branch tip 就是该执行 commit，且 `git rev-parse HEAD^` 精确等于 handoff 的完整 `base_sha`。
-- 再核对 branch tip 中已归档 task 的 `handoff.json`：`tid` / `attempt` / `execution_id` / `status` / `branch` 与输入和 refs 一致，三项结果为非空字符串，`ac_evidence` 精确覆盖 spec 验收标准 AC，两项条目为字符串数组。
+- exact cleanup/integrate 会从 branch tip 读取真实 review 报告并核对内容指纹；handoff 的 `review` 文本不能替代证据。再核对 branch tip 中已归档 task 的 `handoff.json`：`tid` / `attempt` / `execution_id` / `status` / `branch` 与输入和 refs 一致，三项结果为非空字符串，`ac_evidence` 精确覆盖 spec 验收标准 AC，两项条目为字符串数组。
 - blocked 未放行前不 finish、不 commit 终态。
 
 ## 停止条件

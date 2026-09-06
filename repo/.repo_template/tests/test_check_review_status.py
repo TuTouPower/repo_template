@@ -500,3 +500,39 @@ def test_main_scope_reports_format_error(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "overall=INCOMPLETE" in out
     assert "review_scope=format_error" in out
+
+
+def test_checker_reads_persisted_budget_and_refuses_implicit_raise(tmp_path, monkeypatch, capsys):
+    task_dir = _scope_task_dir(tmp_path, monkeypatch, f'reviewed_scope: {SCOPE}\n')
+    path = task_dir / 'task.md'
+    path.write_text(path.read_text().replace('review_level: single', 'review_level: single\nreview_limit: 8\nverify_limit: 7'))
+    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: SCOPE)
+    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir)])
+    crs.main()
+    out = capsys.readouterr().out
+    assert 'max_review_round=8' in out
+    assert 'max_verify_round=7' in out
+    assert 'next_action=finalize' in out
+    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir), '--max-review-round', '9'])
+    with pytest.raises(SystemExit) as exc:
+        crs.main()
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize('defect,action', [
+    ('missing_report', 'collect_reports'), ('stale', 'rerender_review'),
+    ('missing_disposition', 'complete_disposition'),
+])
+def test_incomplete_has_explicit_recovery_action(tmp_path, monkeypatch, capsys, defect, action):
+    task_dir = _scope_task_dir(tmp_path, monkeypatch, f'reviewed_scope: {SCOPE}\n')
+    report = task_dir / 'review_general.md'
+    if defect == 'missing_report':
+        report.unlink()
+    elif defect == 'missing_disposition':
+        report.write_text(report.read_text() + '\n|t001_gen_f001|important|bug|\n')
+    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: '0' * 16 if defect == 'stale' else SCOPE)
+    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir)])
+    crs.main()
+    out = capsys.readouterr().out
+    assert 'overall=INCOMPLETE' in out
+    assert f'next_action={action}' in out

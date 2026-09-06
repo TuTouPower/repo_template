@@ -49,7 +49,7 @@ goal 模式同时只服务一个队列；已冻结快照不得被无参 `task.py
 |状态词 `backlog` 和/或 `active`|只跑这些状态的全部，tid 升序|
 |写了 `blocked`|`blocked` 不入队。先呈 blocked 选项请用户决策；用户当次明确继续后，再跑其余可跑 tid|
 
-`done` / `dropped` 永不重新入队。CLI 一次只能带一个 `--status`，默认队列由两次 list 合并去重。开始修改状态前固定 tid 与顺序。
+`done` / `dropped` 不作为新执行成员入队；已冻结队列中的 done 中间态须按「恢复」补交付，不能直接跳过。CLI 一次只能带一个 `--status`，默认队列由两次 list 合并去重。开始修改状态前固定 tid 与顺序。
 
 依赖被前置 task 满足的 backlog 可入队，只要前置排在其前。队列内有 `conflicts_with` 边不影响串行执行——链式拓扑本就不并发。
 
@@ -81,7 +81,7 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 
 命令顺序固定：
 
-01. 首 task 执行 `task.py start {tid}`；后继执行 `task.py start {tid} --base {前一 task 分支}`。
+01. 新启动的首 task 执行 `task.py start {tid}`；后继执行 `task.py start {tid} --base {前一 task 分支}`。已 active 或中断恢复的成员先走「恢复」，不重复 start。
 02. 紧接着执行 `task.py attempt reserve {tid} --executor inline`。reserve 原子返回 identity，inline attempt 直接进入 `running`；当前 attempt 未 terminal 时禁止再次 reserve。
 03. 调用 `task-work` 时 `attempt` 与 `execution_id` 均必填。每个 task 只产生一个执行 commit。
 04. `task-work` 返回后先写 executor 终态：正常返回（包括业务 `blocked`）写 `terminal --status completed`；执行器/环境失败写 `failed`，用户或宿主停止写 `stopped`。再以同一 identity 写 `report --status done|blocked|failed`。
@@ -90,7 +90,7 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 07. 执行合并后验证。通过后调用同一 `integrate-chain {链尾 tid} --continue`，删除整条链分支并清除 transaction；验证失败则停止，保留可恢复证据，不调用最终 continue。
 08. 当前 task `blocked` → 队列停止，不 cleanup、不自动跳下一个；保留现场等待用户决定。用户加轮放行后按步骤 9 续跑。
 09. blocked 放行（加轮）续跑：一个 identity 只能 terminal + report 一次；report 后该轮即关闭，续跑必须 reserve 新 attempt。故不沿用旧 identity，依次：
-    a. 进入该 task worktree，执行 `task.py resume {tid}`（front matter blocked→active，现场与未提交改动保留）。
+    a. 进入该 task worktree；用户批准加轮时执行 `task.py resume {tid} --review-limit {新绝对上限} --reason "{用户授权说明}"`，黑盒对应 `--verify-limit`（可同时传）。只增不减、不清历史；基础设施修复且无需增加预算时才用无参数 `resume`。上限和授权写入 front matter/note，恢复时以此为准。
     b. 回主仓执行 `.repo_template/scripts/task.py attempt reserve {tid} --executor inline`，取**新** (attempt, execution_id)。
     c. 以新 identity 从上次进展对应步骤重入 `task-work` 续跑；正常完成则写 `terminal completed` → `report done`（再次 blocked/failed 则相应写 report 并停下再次呈报，不 cleanup）。
     d. 仅当 terminal completed 且 report done 时 `cleanup-worktree {tid} --attempt {N} --execution-id {ID}` exact，然后继续队列下一个 tid。
@@ -98,15 +98,25 @@ integrate-chain t003 → aggregate gate → 一次 merge 链尾 → 重建 index
 
 ## 恢复
 
-中断后先用 `task.py ps --all` 与 `task.py ledger tail --tid <tid>` 恢复该 task 的 current exact identity，再按以下优先级判断仓库状态：
+中断后先在主仓运行 `task.py recovery {tid}`（只读 JSON），再用 `task.py ps --all` 与 `task.py ledger tail --tid {tid}` 核对原 exact identity。恢复分类只是下一步线索，不代替提交、review、cleanup 的门禁。
 
-1. 当前 identity 为 `running` 且已登记 task worktree：进入该 worktree，用 `.repo_template/scripts/task.py show <tid>` 读 active/blocked 与未提交证据，以原 `attempt` / `execution_id` 回 `task-work` 对应步骤；禁止另行 reserve。
-2. task 分支已有执行 commit 与 `handoff.json`，但该轮**尚未 report**（terminal/report/cleanup 未闭环）：核对 handoff identity 后，按原 identity 补 `terminal → report → cleanup-worktree`，不创建新 attempt。已 report 的轮次（如 blocked）不在此列——一个 identity 只能 terminal + report 一次，续跑须 reserve 新 attempt，见「队列循环」步骤 9。
-3. 未合并 task 分支已 `done` 且 exact cleanup 完成：记录其分支为下一个 `--base`，继续队列下一个 backlog。
-4. `.git/repo-task/integrate-chain.json` 存在：读取 `phase`。`prepared` 且有冲突时先解决并 `git add`；`merged` / `indexed` 表示 merge 已发生但收尾未闭环；以上均以原 tail 执行一次 `integrate-chain {链尾 tid} --continue` 恢复到 `awaiting_verification`。`awaiting_verification` 必须先完成合并后验证，验证通过后再执行一次同命令删除分支并清除 transaction。
-5. 主干中尚未进入执行的 backlog task：从队列头执行 `start → reserve inline`。
+若存在 `.git/repo-task/integrate-chain.json`，优先处理原事务：`prepared` 有冲突时先裁决并暂存；`merged/indexed` 以原 tail `--continue` 恢复到 `awaiting_verification`；该阶段必须先完成合并后验证，通过后才最终 continue。
 
-已合并的 task 在主干中即 `done`，不重复执行。current attempt 未 terminal 时绝不 reserve 新 attempt。
+|phase|唯一下一步|
+|---|---|
+|`pending`|按原固定队列 start → reserve|
+|`started_without_attempt`|已有 worktree，只 reserve，不再 start|
+|`executing`|原 identity 回 task-work 对应步骤，禁止新 reserve|
+|`finished_uncommitted`|进输出的归档 task_dir；确认 HEAD=diff_anchor、handoff identity/所有权/待提交内容，重验最终 review 后回 task-work Step 7c。不得再次 finish，不把基线 HEAD 当执行 commit|
+|`committed_unreported`|检查最终提交与 handoff/review；按原 identity 仅补缺失的 terminal/report，已有事件不重写|
+|`reported_uncleaned`|仅以原 identity exact cleanup，失败保留现场|
+|`closed`|记录分支为下一 --base，继续原队列；不重跑该 task|
+|`blocked`|补齐本轮 terminal/report 后报告用户；放行后按步骤 9 resume → reserve|
+|`retry_ready`|resume 已落盘但新 reserve 尚未发生；保留持久预算，只 reserve 新 identity|
+|`integrated_or_archived`|不重复执行；检查并完成仍保留的链事务|
+|`needs_attention`|状态、所有权或 handoff 异常，保留现场并报告，不猜 identity、不自动提交|
+
+原队列的 done task 只有执行 commit、terminal/report 与 exact cleanup 均闭环才跳过；current attempt 未 terminal 时绝不 reserve 新 attempt。
 
 **view 的主干视角限制**：`task.py view` 的 `done_set` 用 `main_done_set`（已合入主干才算 done）。链上已完成但未合 main 的前置在 view 中显示为「依赖阻塞」，对链式恢复无意义——链式恢复时按**分支 tip 与 exact attempt 闭环**判依赖（前置分支 done 且已 cleanup 才可作 `--base`），不依赖 view 的解锁判断。
 

@@ -16,6 +16,7 @@ from .control import (
     cmd_view,
 )
 from .goal import cmd_goal, cmd_goal_check
+from .recovery import cmd_recovery
 from .plan import cmd_plan
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
@@ -43,6 +44,9 @@ def main():
         description="task 状态入口（状态权威 = task.md；执行权威 = exact attempt identity）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
+    recovery = sub.add_parser("recovery", help="只读判定 start/finish/commit/attempt 中断阶段（JSON）")
+    recovery.add_argument("tid")
+    recovery.set_defaults(func=cmd_recovery)
 
     add = sub.add_parser("add", help="新增 backlog task")
     add.add_argument("--title", required=True)
@@ -74,6 +78,7 @@ def main():
     preflight = sub.add_parser("preflight", help="开干前门禁")
     preflight.add_argument("tid")
     preflight.add_argument("--allow-backlog", action="store_true")
+    preflight.add_argument("--creation", action="store_true", help="只验 backlog 创建有效性；已分类 BLOCKING 不阻断创建")
     preflight.add_argument("--ref")
     preflight.add_argument("--require-verified", action="store_true")
     preflight.set_defaults(func=cmd_preflight)
@@ -85,6 +90,9 @@ def main():
 
     resume = sub.add_parser("resume", help="blocked -> active")
     resume.add_argument("tid")
+    resume.add_argument("--review-limit", type=int, help="用户批准的新绝对审阅上限（只增不减）")
+    resume.add_argument("--verify-limit", type=int, help="用户批准的新绝对黑盒上限（只增不减）")
+    resume.add_argument("--reason", help="加轮的用户授权说明（调整上限时必填）")
     resume.set_defaults(func=cmd_resume)
 
     finish = sub.add_parser("finish", help="active -> done")

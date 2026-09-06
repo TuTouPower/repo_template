@@ -349,7 +349,10 @@ def cmd_preflight(args):
     problems, warnings = [], []
 
     # 1. 状态
-    allow_backlog = args.allow_backlog
+    creation = getattr(args, "creation", False)
+    if creation and (fm["status"] != "backlog" or args.require_verified):
+        sys.exit("--creation 仅用于 backlog，且不能与 --require-verified 同用")
+    allow_backlog = args.allow_backlog or creation
     if fm["status"] in ctx.ARCHIVED_STATUSES:
         problems.append(f"status={fm['status']}，已归档不可执行")
     elif fm["status"] == "blocked":
@@ -379,6 +382,7 @@ def cmd_preflight(args):
             text,
             task_body,
             require_verified=args.require_verified,
+            creation=creation,
         )
         problems.extend(document_problems)
         warnings.extend(document_warnings)
@@ -455,6 +459,22 @@ def cmd_resume(args):
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "blocked")
     require_own_task_worktree(fm)
+    from .review import review_limits
+    limits = review_limits(fm)
+    changes = []
+    for name in ("review_limit", "verify_limit"):
+        value = getattr(args, name, None)
+        if value is not None:
+            if value <= limits[name]:
+                sys.exit(f"{name} 必须大于当前上限 {limits[name]}；不重置历史轮次")
+            changes.append(f"{name}: {limits[name]}->{value}")
+            limits[name] = value
+    reason = (getattr(args, "reason", None) or "").strip()
+    if changes and not reason:
+        sys.exit("调整轮次上限必须 --reason 记录用户授权")
+    fm.update({key: str(value) for key, value in limits.items()})
+    if changes:
+        append_note(fm, f"budget: {', '.join(changes)}; {reason}")
     fm["status"] = "active"
     write_front_matter(path, fm, body)
     print(f"{args.tid} status=active (resumed)")

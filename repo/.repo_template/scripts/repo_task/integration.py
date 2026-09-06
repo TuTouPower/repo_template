@@ -84,28 +84,40 @@ def _is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
 
 
 def _dependency_implementations(dep: str) -> list[str]:
-    """依赖的可校验实现 ref：分支 tips；分支已删（已合入 main）时退 main 上该 dep 的 merge commit。
+    """Resolve implementation commits even after chain branches have been deleted.
 
-    链式合入（merge-chain）无独立 `merge({dep}):` commit，返回空——无法精确判断，
-    调用方对这类依赖放宽（链内依赖通常已含于 base）。
+    The archived handoff is durable provenance. Locate its creation commit on main,
+    not a merge subject (chain merges intentionally have no per-task subject).
+    Unknown provenance is a hard failure, never an empty, permissive dependency.
     """
-    refs = []
-    for branch in _task_branch_names(dep):
-        try:
-            _, sha = resolve_local_branch(branch)
-        except ctx.TaskDataError:
-            continue
-        refs.append(sha)
+    refs = [resolve_local_branch(branch)[1] for branch in _task_branch_names(dep)]
     if refs:
         return refs
-    base = default_branch()
-    r = _git([
-        "rev-list", "--merges", "--max-count=1", "--grep",
-        f"merge({dep}):", f"refs/heads/{base}",
-    ])
-    if r.returncode == 0 and r.stdout.strip():
-        return [r.stdout.strip().splitlines()[0]]
-    return []
+    main = default_branch()
+    try:
+        task, fm, _ = load_task_at_ref(dep, main)
+        path = f"{task['dir']}/handoff.json"
+        handoff = json.loads(git_text_at_ref(main, path))
+        if fm.get("status") != "done" or handoff.get("tid") != dep:
+            raise ValueError("dependency is not done")
+        base_sha = handoff["base_sha"]
+        history = _git([
+            "log", "--format=%H", "--no-merges", "--diff-filter=A",
+            f"refs/heads/{main}", "--", path,
+        ])
+        if history.returncode != 0:
+            raise ValueError(history.stderr.strip())
+        for sha in history.stdout.splitlines():
+            parent = _git(["rev-parse", f"{sha}^1"])
+            if parent.returncode == 0 and parent.stdout.strip() == base_sha:
+                if json.loads(git_text_at_ref(sha, path)) == handoff:
+                    return [sha]
+    except (ctx.TaskDataError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    raise ctx.TaskDataError(
+        f"start=FAIL：{dep} 缺依赖实现的可验证 SHA；"
+        "须恢复已归档 handoff/实现提交证据，不能仅凭 done 放行"
+    )
 
 
 def cmd_start(args):
@@ -140,22 +152,6 @@ def cmd_start(args):
             unmet.append(f"{dep}({dep_status or '缺失'})")
     if unmet:
         sys.exit(f"start=FAIL：{args.tid} 依赖未满足：{', '.join(unmet)}")
-
-    # 显式 --base 时同样须继承前置实现：base 分支须包含每个依赖的实现 ref。
-    # 用「实现是否 base 祖先」而非「是否已合入当前 main」推导——已合入 main 的
-    # 依赖若合入于 base 分支 fork 之后，base 仍缺其代码（t023 合 main、t025 分支
-    # fork 于旧 main 时，start t028 --base t025 会缺 t023）。
-    if base_arg is not None and depends_on:
-        missing_in_base = []
-        for dep in depends_on:
-            for ref in _dependency_implementations(dep):
-                if _git(["merge-base", "--is-ancestor", ref, base_sha]).returncode != 0:
-                    missing_in_base.append(f"{dep}（实现 {ref[:12]} 不在 base {base_branch!r}）")
-        if missing_in_base:
-            sys.exit(
-                f"start=FAIL：{args.tid} 显式 --base {base_branch!r} 缺依赖实现："
-                f"{', '.join(missing_in_base)}；请以依赖分支为 --base 或先 integrate 前置"
-            )
 
     # 冲突只警告：「正在运行」= 登记 worktree 存在 且 status=active。
     running_conflicts = []
@@ -201,6 +197,22 @@ def cmd_start(args):
             problems, _ = validate_task_documents(spec_text, ref_task_body)
             if problems:
                 sys.exit("start=FAIL：" + "；".join(problems))
+
+    # 实际起点（显式或自动选出的 base）须包含每个依赖的实现 SHA。
+    # 用「实现是否 base 祖先」而非「是否已合入当前 main」推导——已合入 main 的
+    # 依赖若合入于 base 分支 fork 之后，base 仍缺其代码（t023 合 main、t025 分支
+    # fork 于旧 main 时，start t028 --base t025 会缺 t023）。
+    if depends_on:
+        missing_in_base = []
+        for dep in depends_on:
+            for ref in _dependency_implementations(dep):
+                if _git(["merge-base", "--is-ancestor", ref, base_sha]).returncode != 0:
+                    missing_in_base.append(f"{dep}（实现 {ref[:12]} 不在 base {base_branch!r}）")
+        if missing_in_base:
+            sys.exit(
+                f"start=FAIL：{args.tid} base {base_branch!r} 缺依赖实现："
+                f"{', '.join(missing_in_base)}；请以依赖分支为 --base 或先 integrate 前置"
+            )
 
     branch = f"{ref_fm['tid']}_{ref_fm['slug']}"
     worktree_rel = ctx.worktree_rel_path(ref_fm["tid"])

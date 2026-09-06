@@ -83,3 +83,59 @@ def test_prompt_output_filenames_covered_by_review_process_files():
     """渲染产物输出名全部在指纹排除清单内（防排除列表漏新增产物）。"""
     covered = {name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names}
     assert covered <= set(REVIEW_PROCESS_FILES)
+
+
+def test_scope_is_stable_across_staging_archive_and_commit(git_repo):
+    """The same delivered bytes have one scope, independent of Git lifecycle phase."""
+    import shutil
+    repo, anchor = git_repo
+    (repo / 'new.py').write_text('result = 1\n')
+    (repo / TASK_REL / 'spec.md').write_text('## 契约区\nverified AC1\n')
+    reviewed = _fingerprint(repo, anchor)
+    _git(repo, 'add', '-N', 'new.py')
+    assert _fingerprint(repo, anchor) == reviewed
+    _git(repo, 'add', '-A')
+    assert _fingerprint(repo, anchor) == reviewed
+    archive = 'docs/archive/tasks/t001_foo'
+    (repo / archive).parent.mkdir(parents=True)
+    shutil.move(str(repo / TASK_REL), str(repo / archive))
+    assert review_scope_fingerprint(anchor, archive, repo_root=repo) == reviewed
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-m', 'complete task')
+    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') == reviewed
+
+
+def test_committed_scope_tracks_archived_spec_and_not_primary_dirt(git_repo):
+    import shutil
+    repo, anchor = git_repo
+    archive = 'docs/archive/tasks/t001_foo'
+    (repo / archive).parent.mkdir(parents=True)
+    shutil.move(str(repo / TASK_REL), str(repo / archive))
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-m', 'archive')
+    before = review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD')
+    (repo / 'README.md').write_text('unrelated primary worktree dirt\n')
+    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') == before
+    (repo / archive / 'spec.md').write_text('changed AC\n')
+    _git(repo, 'add', archive)
+    _git(repo, 'commit', '-m', 'change archived spec')
+    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') != before
+
+
+def test_scope_tracks_mode_and_symlink_target(git_repo):
+    repo, anchor = git_repo
+    before = _fingerprint(repo, anchor)
+    (repo / 'README.md').chmod(0o755)
+    mode_scope = _fingerprint(repo, anchor)
+    assert mode_scope != before
+    link = repo / 'link'
+    link.symlink_to('README.md')
+    link_scope = _fingerprint(repo, anchor)
+    assert link_scope != mode_scope
+    link.unlink()
+    link.symlink_to('missing-target')
+    assert _fingerprint(repo, anchor) != link_scope
+    _git(repo, 'add', '-A')
+    reviewed = _fingerprint(repo, anchor)
+    _git(repo, 'commit', '-m', 'mode and link')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == reviewed

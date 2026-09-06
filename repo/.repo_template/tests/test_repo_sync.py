@@ -396,7 +396,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     assert (consumer / ".repo_template/skills/task-run/SKILL.md").read_text().startswith("---")
     assert (consumer / ".claude/skills/task-run").is_symlink()
     assert (consumer / ".agents/skills/task-run").is_symlink()
-    assert (consumer / ".opencode/commands/task-run").is_file()
+    assert (consumer / ".opencode/commands/task-run.md").is_file()
     # 裁定单元 update
     assert (consumer / "AGENTS.md").read_text() == "SRC AGENTS\n"
     # state 推进

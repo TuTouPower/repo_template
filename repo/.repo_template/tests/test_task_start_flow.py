@@ -8,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
+
+from review_support import ensure_review_evidence
 
 from repo_task import context as ctx
 from repo_task import integration, lifecycle, store
@@ -177,6 +180,7 @@ def _terminal(repo, tid, identity, status="completed"):
 def _write_handoff(worktree, tid, slug, identity, base_sha, *, status="done"):
     branch = f"{tid}_{slug}"
     archive = worktree / "docs" / "archive" / "tasks" / branch
+    ensure_review_evidence(worktree, archive, base_sha)
     (archive / "handoff.json").write_text(
         json.dumps(
             _handoff(tid, branch, identity, base_sha, status=status),

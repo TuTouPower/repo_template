@@ -45,7 +45,7 @@ description: none
 }
 ```
 
-`tests`、`blackbox`、`review` 都是非空字符串；`ac_evidence` 是 JSON 对象，键必须精确等于 spec 验收标准节的全部 `AC-NNN` 编号（缺或多都会导致 integrate 门禁失败），值为非空字符串数组，每项是一条证据引用；`pending`、`findings` 都是字符串数组，可为空数组；全部字段必填。`attempt` 必须是非 bool 的正整数。`base_sha` 是执行 commit 前的 HEAD，必须同时等于 task front matter 的 `diff_anchor` 与 branch tip 的 first parent 完整 SHA；该机械等式保证一个 task 恰有一个执行 commit。链上后继成员的 `base_sha` 还必须等于紧邻前一成员 branch tip。
+`tests`、`blackbox`、`review` 都是非空字符串；`ac_evidence` 是 JSON 对象，键必须精确等于 spec 验收标准节的全部 `AC-NNN` 编号（缺或多都会导致 integrate 门禁失败），值为非空字符串数组，每项是一条证据引用；`pending`、`findings` 都是字符串数组，可为空数组；全部字段必填。handoff 的 `review` 是摘要，不代替门禁：done 分支 tip 还必须有对应 review_level 的实际 PASS 报告、完整处置，以及与最终提交内容一致的 reviewed_scope；缺证或过期拒绝 cleanup/integrate。`attempt` 必须是非 bool 的正整数。`base_sha` 是执行 commit 前的 HEAD，必须同时等于 task front matter 的 `diff_anchor` 与 branch tip 的 first parent 完整 SHA；该机械等式保证一个 task 恰有一个执行 commit。链上后继成员的 `base_sha` 还必须等于紧邻前一成员 branch tip。
 
 ## 单 task：cleanup + integrate
 
