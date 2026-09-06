@@ -58,7 +58,7 @@ merge 必须获得用户明确授权；模板不使用 merge token hook。单 ta
 git merge --no-ff --no-commit <branch-or-tail>
 → 重建并暂存派生 index
 → 运行合并后验证
-→ 通过：--continue 创建 merge commit、写 integrated、删除分支
+→ 通过：--continue 重算自动合并 tree；仅原始冲突路径可含人工解决内容，随后创建 merge commit、写 integrated、删除分支
 → 失败：git merge --abort
 ```
 

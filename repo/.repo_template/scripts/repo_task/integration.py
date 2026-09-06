@@ -3,6 +3,7 @@
 import functools
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -480,6 +481,27 @@ def _prepare_native_merge(branch: str, message: str) -> None:
     print("合并结果已准备但尚未 commit。请运行合并后验证：通过后重跑 --continue；失败则 git merge --abort。")
 
 
+def _expected_auto_merge(expected_head: str) -> tuple[str, set[str]]:
+    """Recompute Git's merge result without touching the current index.
+
+    merge-tree returns the synthetic tree first.  With --name-only -z, paths
+    between that tree id and the first empty field are the original conflicts.
+    """
+    result = _git([
+        "merge-tree", "--write-tree", "--name-only", "-z",
+        "HEAD", expected_head,
+    ], timeout=120)
+    fields = result.stdout.split("\0")
+    tree = fields[0] if fields else ""
+    if result.returncode not in {0, 1} or not re.fullmatch(r"[0-9a-f]{40,64}", tree):
+        raise ctx.TaskDataError("无法重算 Git 自动合并结果，不能校验 staged 内容")
+    try:
+        end = fields.index("", 1)
+    except ValueError:
+        end = len(fields)
+    return tree, {path for path in fields[1:end] if path}
+
+
 def _validate_merge_staged_scope(expected_head: str) -> None:
     merge_base = _git(["merge-base", "HEAD", expected_head])
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
@@ -492,14 +514,33 @@ def _validate_merge_staged_scope(expected_head: str) -> None:
     staged_result = _git(["diff", "--cached", "--name-only", "-z"])
     if expected_result.returncode != 0 or staged_result.returncode != 0:
         raise ctx.TaskDataError("无法校验 merge staged 范围")
+    index_paths = {ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)}
     expected = {path for path in expected_result.stdout.split("\0") if path}
-    expected.update({ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)})
+    expected.update(index_paths)
     staged = {path for path in staged_result.stdout.split("\0") if path}
     unexpected = sorted(staged - expected)
     if unexpected:
         raise ctx.TaskDataError(
             "merge staged 范围含无关路径：" + ", ".join(unexpected[:10])
             + "；移出暂存区后再继续"
+        )
+
+    auto_tree, conflict_paths = _expected_auto_merge(expected_head)
+    current_tree = _git(["write-tree"])
+    if current_tree.returncode != 0 or not current_tree.stdout.strip():
+        raise ctx.TaskDataError("无法读取当前 staged tree，不能校验 merge 内容")
+    changed_result = _git([
+        "diff", "--name-only", "-z", auto_tree, current_tree.stdout.strip(),
+    ])
+    if changed_result.returncode != 0:
+        raise ctx.TaskDataError("无法比较 staged tree 与 Git 自动合并结果")
+    changed = {path for path in changed_result.stdout.split("\0") if path}
+    altered_clean_paths = sorted(changed - conflict_paths - index_paths)
+    if altered_clean_paths:
+        raise ctx.TaskDataError(
+            "非冲突文件偏离 Git 自动合并结果："
+            + ", ".join(altered_clean_paths[:10])
+            + "；这些内容未被 task handoff/review 覆盖，请恢复后再继续"
         )
 
 

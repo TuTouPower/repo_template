@@ -28,9 +28,9 @@ git merge --no-ff --no-commit <branch-or-tail>
 
 此时运行 `docs/blueprint/testing.md` 声明的合并后验证：
 
-- 通过：以同一命令加 `--continue` 创建 merge commit、写 integrated 事件并删除已完全合入的分支；
+- 通过：以同一命令加 `--continue`；脚本重算 Git 自动合并 tree，拒绝非冲突文件在 merge 期间发生的额外内容变化，然后创建 merge commit、写 integrated 事件并删除已完全合入的分支；
 - 失败：`git merge --abort`，保留 task 分支继续修复；
-- 冲突：按双方语义解决并 `git add`，无法判断时停止请用户裁决；解决后先验证，再 `--continue`。
+- 冲突：只在 Git 原始冲突路径中按双方语义解决并 `git add`，无法判断时停止请用户裁决；不要在主仓顺手修改非冲突文件。解决后先验证，再 `--continue`。
 
 中断后用 `git status` 判断 pending merge；不再维护模板自研 transaction phase 或 transaction JSON。
 

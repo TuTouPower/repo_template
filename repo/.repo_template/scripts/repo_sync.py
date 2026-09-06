@@ -257,28 +257,31 @@ def _replace_guide_blocks(text: str, current_template: str) -> str:
     current = _guide_blocks_by_heading(current_template)
     if not current:
         return text
-    stripped: list[str] = []
+    output: list[str] = []
+    occurrences: dict[str, int] = {}
+    heading = ""
     lines = text.splitlines()
     index = 0
     while index < len(lines):
-        if lines[index].strip() == _GUIDE_OPEN:
-            index += 1
-            while index < len(lines) and lines[index].strip() != _GUIDE_CLOSE:
-                index += 1
-            if index >= len(lines):
-                raise SyncError("存量 spec 规范块未闭合，拒绝猜测迁移")
-            index += 1
-            continue
-        stripped.append(lines[index])
-        index += 1
-    output: list[str] = []
-    for line in stripped:
-        output.append(line)
+        line = lines[index]
         if line.startswith("### "):
             heading = line[4:].strip()
-            for block in current.get(heading, []):
-                output.extend(["", block, ""])
-    # Collapse migration-created runs only; md formatter handles final style.
+        if line.strip() != _GUIDE_OPEN:
+            output.append(line)
+            index += 1
+            continue
+        replacement_index = occurrences.get(heading, 0)
+        replacements = current.get(heading, [])
+        if replacement_index >= len(replacements):
+            raise SyncError(f"存量 spec 的 {heading!r} 含模板未定义的额外规范块")
+        output.extend(replacements[replacement_index].splitlines())
+        occurrences[heading] = replacement_index + 1
+        index += 1
+        while index < len(lines) and lines[index].strip() != _GUIDE_CLOSE:
+            index += 1
+        if index >= len(lines):
+            raise SyncError("存量 spec 规范块未闭合，拒绝猜测迁移")
+        index += 1
     return "\n".join(output).rstrip() + "\n"
 
 
@@ -317,15 +320,28 @@ def _migrate_task_text(text: str, task_template: str) -> str:
             has_verify = has_verify or bool(re.match(r'^verify_limit\s*:', line))
             if re.match(r'^status\s*:\s*["\']?blocked["\']?\s*$', line):
                 line = 'status: "active"'
-        if any(line.strip().startswith(prefix) for prefix in _OLD_NOTE_PREFIXES):
-            continue
         migrated.append(line)
-    insert_at = next((i + 1 for i, line in enumerate(migrated) if line.startswith("## 实施笔记")), None)
+
     guidance = _implementation_guidance(task_template)
-    if insert_at is not None and guidance:
-        migrated[insert_at:insert_at] = ["", *guidance, ""]
+    try:
+        section_start = migrated.index("## 实施笔记") + 1
+    except ValueError:
+        section_start = None
+    if section_start is not None and guidance:
+        section_end = next(
+            (i for i in range(section_start, len(migrated)) if migrated[i].startswith("## ")),
+            len(migrated),
+        )
+        content = [
+            line for line in migrated[section_start:section_end]
+            if not any(line.strip().startswith(prefix) for prefix in _OLD_NOTE_PREFIXES)
+        ]
+        while content and not content[0].strip():
+            content.pop(0)
+        migrated[section_start:section_end] = [
+            "", guidance[0], "", *guidance[1:], "", *content,
+        ]
     if frontmatter_end and (not has_review or not has_verify):
-        # Recompute the closing marker position after guidance-only edits (front matter is before it).
         close = next(i for i in range(1, len(migrated)) if migrated[i].strip() == "---")
         fields = []
         if not has_review:
@@ -529,6 +545,9 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
     changed.add(link)
 
 
+_RETIRED_MERGE_GUARD_COMMAND = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'
+
+
 def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) -> None:
     settings = CONSUMER / ".claude/settings.json"
     if not settings.is_file():
@@ -559,7 +578,7 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) 
             entry for entry in entries
             if not (
                 isinstance(entry, dict)
-                and "merge_guard.py" in str(entry.get("command", ""))
+                and str(entry.get("command", "")).strip() == _RETIRED_MERGE_GUARD_COMMAND
             )
         ]
         if len(kept_entries) != len(entries):
@@ -602,9 +621,14 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
                 expected, changed, reports,
             )
-    _remove_retired_merge_guard_setting(changed, reports)
     legacy_guard = CONSUMER / ".claude/hooks/merge_guard.py"
-    if legacy_guard.is_symlink() and "merge_guard.py" in os.readlink(legacy_guard):
+    retired_target = CONSUMER / ".repo_template/hooks/merge_guard.py"
+    managed_retired_guard = (
+        legacy_guard.is_symlink()
+        and legacy_guard.resolve(strict=False) == retired_target.resolve(strict=False)
+    )
+    if managed_retired_guard:
+        _remove_retired_merge_guard_setting(changed, reports)
         _stage_rollback(legacy_guard)
         legacy_guard.unlink()
         changed.add(legacy_guard)

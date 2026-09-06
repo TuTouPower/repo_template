@@ -615,6 +615,31 @@ def test_repair_symlinks_preserves_manual_merge_guard_file(env):
     assert guard not in changed
 
 
+def test_repair_symlinks_preserves_manual_guard_setting(env):
+    consumer = env['consumer']
+    settings = consumer / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({
+        'hooks': {'PreToolUse': [{
+            'matcher': 'Bash',
+            'hooks': [
+                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
+            ],
+        }]},
+    }))
+    guard = consumer / '.claude/hooks/merge_guard.py'
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    guard.write_text('manual\n')
+    changed: set[Path] = set()
+    rs.repair_symlinks(changed)
+    data = json.loads(settings.read_text())
+    commands = [entry['command'] for entry in data['hooks']['PreToolUse'][0]['hooks']]
+    assert commands == [rs._RETIRED_MERGE_GUARD_COMMAND, 'python3 scripts/custom_merge_guard.py']
+    assert guard.read_text() == 'manual\n'
+    assert settings not in changed and guard not in changed
+
+
 def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     consumer = env['consumer']
     settings = consumer / '.claude/settings.json'
@@ -625,6 +650,7 @@ def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
                 'matcher': 'Bash',
                 'hooks': [
                     {'type': 'command', 'command': 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'},
+                    {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
                     {'type': 'command', 'command': 'echo keep'},
                 ],
             }],
@@ -637,7 +663,10 @@ def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     changed: set[Path] = set()
     rs.repair_symlinks(changed)
     data = json.loads(settings.read_text())
-    assert data['hooks']['PreToolUse'][0]['hooks'] == [{'type': 'command', 'command': 'echo keep'}]
+    assert data['hooks']['PreToolUse'][0]['hooks'] == [
+        {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
+        {'type': 'command', 'command': 'echo keep'},
+    ]
     assert 'PostToolUse' in data['hooks']
     assert not guard.is_symlink()
     assert settings in changed and guard in changed
@@ -684,6 +713,12 @@ def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
     return old_spec, old_task
 
 
+def test_workflow_migrations_are_idempotent_for_current_schema(env):
+    current_spec, current_task = _install_current_workflow_templates(env['consumer'])
+    assert rs._replace_guide_blocks(current_spec, current_spec) == current_spec
+    assert rs._migrate_task_text(current_task, current_task) == current_task
+
+
 def test_force_migrate_workflow_updates_old_task_documents(env):
     consumer = env['consumer']
     current_spec, current_task = _install_current_workflow_templates(consumer)
@@ -710,6 +745,11 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert '旧版固定说明' not in migrated_task
     assert task_dir / 'spec.md' in changed and task_dir / 'task.md' in changed
     assert len(reports) == 2
+    assert rs._replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
+    assert rs._migrate_task_text(migrated_task, current_task) == migrated_task
+    assert rs.force_migrate_workflow_tasks(set()) == []
+    migrations, worktrees = rs.workflow_migration_status(env['src'])
+    assert migrations == [] and worktrees == []
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
