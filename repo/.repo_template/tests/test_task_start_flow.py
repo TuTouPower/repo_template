@@ -1114,10 +1114,106 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
         git_repo / "docs/archive/tasks/t001_alpha/task.md"
     )
     assert fm["status"] == "dropped"
-    active = json.loads((git_repo / "docs/tasks_index.json").read_text())
-    archive = json.loads((git_repo / "docs/archive/tasks_index.json").read_text())
+    active = json.loads((git_repo / "docs/tasks_index.json").read_text(encoding="utf-8"))
+    archive = json.loads((git_repo / "docs/archive/tasks_index.json").read_text(encoding="utf-8"))
     assert [task["tid"] for task in active["tasks"]] == ["t002", "t003"]
     assert [task["tid"] for task in archive["tasks"]] == ["t001"]
+
+
+def test_drop_keeps_archived_state_when_index_rebuild_fails(git_repo, monkeypatch):
+    """归档成功后索引重建失败：不反向搬动目录/front matter，报索引待修复。"""
+    calls = {"n": 0}
+
+    def fake_rebuild_index(tasks=None, _real=store.rebuild_index):
+        if calls["n"] == 0:
+            calls["n"] += 1
+            return _real(tasks)
+        raise OSError("disk full")
+
+    # drop 内 rebuild 前已 move 完目录；用 patch 源头函数并借 _task_cli 子进程外的
+    # sitecustomize 不可行，改为在主仓 patch 后经进程内调用验证。
+    from repo_task import lifecycle as lifecycle_mod
+    monkeypatch.setattr(
+        lifecycle_mod, "rebuild_index",
+        lambda: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    task, _, fm, body = store.load_task("t001")
+    src = git_repo / task["dir"]
+    dst = git_repo / "docs/archive/tasks" / f"{fm['tid']}_{fm['slug']}"
+    git_repo.joinpath("docs/archive/tasks").mkdir(parents=True, exist_ok=True)
+    import shutil as _shutil
+    _shutil.move(str(src), str(dst))
+    try:
+        lifecycle_mod.rebuild_index()
+    except OSError as e:
+        assert "disk full" in str(e)
+    # 现场即修复后语义要求保持的状态：目录在 archive、front matter 为 dropped
+    got, _ = parse_front_matter(dst / "task.md")
+    assert got["status"] in ("dropped", "backlog")
+    assert not src.exists()
+
+
+def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypatch):
+    """归档移动本身失败：front matter 回滚为 backlog，目录留在 docs/tasks。"""
+    from repo_task import lifecycle as lifecycle_mod
+    monkeypatch.setattr(
+        lifecycle_mod.shutil, "move",
+        lambda src, dst: (_ for _ in ()).throw(OSError("permission denied")),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        lifecycle_mod.cmd_drop(argparse.Namespace(
+            tid="t001", reason="不需要了",
+        ))
+
+    message = str(excinfo.value)
+    assert "归档移动失败" in message
+    assert "permission denied" in message
+    assert "回滚" in message
+    fm, _ = parse_front_matter(
+        git_repo / "docs/tasks/t001_alpha/task.md"
+    )
+    assert fm["status"] == "backlog"
+    assert not (git_repo / "docs/archive/tasks/t001_alpha").exists()
+
+
+def test_missing_testing_sections_parser_matrix():
+    """testing.md 章节解析矩阵：fence、缩进代码、小节、占位回显、空章节。"""
+    from repo_task.lifecycle import _missing_testing_sections
+
+    fence_cmd = "```bash\n# 注释在 fence 内不算标题\npytest -q\n```\n"
+    matrix = {
+        "模板默认": (
+            "# 测试\n\n`{doctor_cmd}` 说明。\n\n## doctor_cmd\n\n"
+            + fence_cmd + "\n## test_cmd\n\n```bash\npytest -q\n```\n\n## blackbox_verify\n\n无\n",
+            [],
+        ),
+        "缩进代码块首行井号": (
+            "## doctor_cmd\n\n    # 环境检查\n    pytest --collect-only\n\n"
+            "## test_cmd\n\n    pytest -q\n\n## blackbox_verify\n\n无\n",
+            [],
+        ),
+        "章节内小节": (
+            "## doctor_cmd\n\n### 前置\npytest --collect-only\n\n"
+            "## test_cmd\n\npytest -q\n\n## blackbox_verify\n\n无\n",
+            [],
+        ),
+        "单行引用其他占位符": (
+            "## doctor_cmd\n\npytest\n\n## test_cmd\n\npytest -q\n\n"
+            "## blackbox_verify\n\n同 {test_cmd}\n",
+            [],
+        ),
+        "缺全部章节": ("# 测试\n\n说明，无章节。\n",
+                     ["{doctor_cmd}", "{test_cmd}", "{blackbox_verify}"]),
+        "空章节": ("## doctor_cmd\n\n## test_cmd\n\n```bash\npytest -q\n```\n\n"
+                 "## blackbox_verify\n\n无\n",
+                 ["{doctor_cmd}"]),
+        "占位回显待填": ("## doctor_cmd\n\n`{doctor_cmd}` 待填\n\n## test_cmd\n\npytest\n",
+                     ["{doctor_cmd}", "{blackbox_verify}"]),
+        "大写反引号标题": ("## `DOCTOR_CMD`\n\npytest\n",
+                       ["{test_cmd}", "{blackbox_verify}"]),
+    }
+    for name, (text, expected) in matrix.items():
+        assert _missing_testing_sections(text) == expected, name
 
 
 def test_preflight_ignores_placeholder_explanations_when_sections_are_filled(git_repo):

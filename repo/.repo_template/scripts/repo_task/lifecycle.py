@@ -1,6 +1,7 @@
 """Canonical lifecycle implementation for the task toolchain."""
 
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -247,24 +248,65 @@ def cmd_edit(args):
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
 
+_TESTING_PENDING_RE = re.compile(
+    r"^[\s`*_/、。:：-]*(待填|待补|未填|占位|todo|tbd)[\s`*_/、。:：-]*$", re.IGNORECASE
+)
+
+
+def _testing_line_has_content(line: str, placeholders: tuple[str, ...]) -> bool:
+    """正文行剥去门禁占位符字面后是否仍承载内容。
+
+    覆盖章节体内占位符回显（`{doctor_cmd}` 待填）不算已配置；对其他占位符的
+    有效引用（如「同 {test_cmd}」）算已配置。
+    """
+    body = re.sub(r"\{(" + "|".join(placeholders) + r")\}", "", line).strip()
+    if not body:
+        return False
+    return not _TESTING_PENDING_RE.fullmatch(body)
+
+
 def _missing_testing_sections(text: str) -> list[str]:
-    """只检查各门禁章节，不把文首的占位符说明误判为未配置。"""
-    headings = {
-        "{doctor_cmd}": "doctor_cmd",
-        "{test_cmd}": "test_cmd",
-        "{blackbox_verify}": "blackbox_verify",
-    }
-    found = {name: False for name in headings.values()}
+    """检查三个门禁章节是否已配置（章节体存在非占位内容）。
+
+    章节名是 preflight 与 skill 的机械锚点。用 HEADING_RE 识别标题行（同级及
+    更高层标题结束当前章节，章节内 ### 小节仍属章节），用 FENCE_RE/
+    FENCE_CLOSE_RE 跳过 fenced code——fence 内的 `#` 注释行不是标题，fence
+    本身计作已配置。正文行剥去占位符字面后无剩余内容（或仅为待填标记）的
+    章节视为未配置；正文写「无」按 task-preflight / task-work skill 的门禁
+    语义裁定，此处视为已配置。
+    """
+    sections = ("doctor_cmd", "test_cmd", "blackbox_verify")
+    found = {name: False for name in sections}
     current = None
+    current_level = 0
+    fence_marker = None
     for line in text.splitlines():
-        heading = line.strip().lower()
-        if heading.startswith("#"):
-            title = heading.lstrip("#").strip().strip("`")
-            current = title if title in found else None
+        if fence_marker is not None:
+            fence = ctx.FENCE_CLOSE_RE.match(line)
+            if fence and fence.group(1)[0] == fence_marker:
+                fence_marker = None
+                if current:
+                    found[current] = True
             continue
-        if current and line.strip() and not any(marker in line for marker in headings):
+        fence = ctx.FENCE_RE.match(line)
+        if fence:
+            if current:
+                found[current] = True
+            fence_marker = fence.group(1)[0]
+            continue
+        heading = ctx.HEADING_RE.fullmatch(line)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip().strip("`").lower()
+            if current and level > current_level:
+                found[current] = True
+                continue
+            current = title if title in found else None
+            current_level = level if current else 0
+            continue
+        if current and line.strip() and _testing_line_has_content(line, sections):
             found[current] = True
-    return [marker for marker, section in headings.items() if not found[section]]
+    return [f"{{{name}}}" for name in sections if not found[name]]
 
 
 def cmd_preflight(args):
@@ -439,7 +481,8 @@ def _close_task(args, status: str, note: str | None) -> None:
             ctx.effective_worktree(fm), expected_branch=fm.get("branch")
         )
 
-    orig_fm = dict(fm)
+    fm = dict(fm)
+    orig_status = fm["status"]
     fm["status"] = status
     if note:
         append_note(fm, note)
@@ -452,23 +495,39 @@ def _close_task(args, status: str, note: str | None) -> None:
     ctx.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         shutil.move(str(src), str(dst))
-        # main 上直接 drop 会改变 task 的目录归属；同步两个派生索引。
-        # active worktree 中的 finish/drop 由后续 task commit/integrate 收尾索引，
-        # 此处不能提前把索引写进执行分支，否则会制造 merge 冲突。
-        if status == "dropped" and not in_own_worktree:
-            rebuild_index()
-    except (OSError, shutil.Error, ctx.TaskDataError) as e:
-        if dst.exists() and not src.exists():
-            try:
-                shutil.move(str(dst), str(src))
-            except (OSError, shutil.Error):
-                pass
+    except (OSError, shutil.Error) as e:
+        # 移动失败：front matter 已写成目标状态但目录仍在原处。回滚 front matter
+        # 避免「状态已迁 + 目录未归档」的中间态；回滚本身失败则如实报告现场。
+        rollback_note = ""
         if src.exists():
-            write_front_matter(path, orig_fm, body)
+            try:
+                fm["status"] = orig_status
+                write_front_matter(path, fm, body)
+                rollback_note = "；front matter 已回滚"
+            except (OSError, ctx.TaskDataError) as rb:
+                rollback_note = f"；front matter 回滚失败（{rb}），仍是 status={status}"
+        else:
+            rollback_note = "；源目录不存在，无法回滚 front matter"
         sys.exit(
-            f"归档移动失败（{e}）；front matter 已回滚为 status={orig_fm['status']}，"
-            f"目录应保留在 {ctx._rel(src)}。排除原因后重试"
+            f"归档移动失败（{e}）{rollback_note}；"
+            f"目录在 {ctx._rel(src) if src.exists() else ctx._rel(dst)}。排除原因后重试"
         )
+    # 归档已成功；此后只派生索引重建，失败不反向搬动状态权威（目录/front matter
+    # 保持归档终态），只提示索引待重建。
+    # 条件等价于 not in_own_worktree：done 分支前置校验无条件要求自身 worktree，
+    # done 恒 in_own_worktree=True。写 dropped 是为保持该不变量显式可见。
+    # main 上直接 drop 会改变 task 的目录归属；同步两个派生索引。
+    # active worktree 中的 finish/drop 由后续 task commit/integrate 收尾索引，
+    # 此处不能提前把索引写进执行分支，否则会制造 merge 冲突。
+    if status == "dropped" and not in_own_worktree:
+        try:
+            rebuild_index()
+        except (OSError, ctx.TaskDataError) as e:
+            sys.exit(
+                f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}\n"
+                f"派生索引重建失败（{e}）；归档状态已生效，"
+                "运行 `task.py list --rebuild` 修复索引后随维护 commit 入库"
+            )
     print(f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)

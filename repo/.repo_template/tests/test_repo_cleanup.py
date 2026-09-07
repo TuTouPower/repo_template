@@ -117,6 +117,23 @@ def test_keep_protects_scratch_reference(tree):
     assert (tree / ".scratch/exp").is_dir()
 
 
+def test_keep_protects_file_level_hit_outside_bulk(tree):
+    """普通 os.walk 分支的文件级命中（logs 类）也须被 --keep 排除。"""
+    for keep in ("scripts/debug.log", "*.log", "scripts"):
+        hits, skipped = _collect(tree, ["logs"], keeps=[keep])
+        assert "scripts/debug.log" not in {h["path"] for h in hits}, keep
+        assert "scripts/debug.log" in skipped, keep
+
+
+def test_apply_delete_rechecks_keep_as_second_line_of_defense(tree):
+    """apply 独立重查 keep：调用方传入未经 collect 过滤的 hits 也不误删。"""
+    hits, _ = _collect(tree, ["logs"])
+    assert "scripts/debug.log" in {h["path"] for h in hits}
+    deleted = rc.apply_delete(tree, hits, ["scripts/debug.log"])
+    assert "scripts/debug.log" not in deleted
+    assert (tree / "scripts/debug.log").is_file()
+
+
 def test_apply_unlinks_symlink_dir(tree):
     link = tree / "src" / "__pycache__"
     link.symlink_to(tree / "src" / "app" / "__pycache__")

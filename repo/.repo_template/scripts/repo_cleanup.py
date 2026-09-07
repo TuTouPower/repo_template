@@ -155,6 +155,9 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
                 continue
             if rel.startswith("docs/") and cat not in DOCS_ONLY_CATEGORIES:
                 continue
+            if _kept(rel, keeps):
+                skipped.append(rel)
+                continue
             hits.append({"path": rel, "category": cat, "kind": "dir" if is_dir else "file"})
 
     # glob keep 不会在 _kept 里挡住祖先目录；按已跳过路径再滤一遍，避免 rmtree 父目录。
@@ -189,6 +192,10 @@ def apply_delete(repo: Path, hits: list[dict], keeps: list[str] | None = None) -
         if not target.exists() and not target.is_symlink():
             continue
         if h["path"] in HARD_PROTECTED:
+            continue
+        # 二次防线：apply 独立重查 keep（文件级与目录级），防止调用方
+        # 传入未经 collect 过滤的 hits（或 scan/apply 之间 keep 变化）。
+        if _kept(h["path"], keeps):
             continue
         if h["kind"] == "dir":
             if _dir_holds_keep(h["path"], keeps):

@@ -6,14 +6,23 @@
 
 ## 初始化
 
-1. 从模板工厂复制产物（不要用 `cp -r`，会展开软链）：
+以下命令为 POSIX shell（Linux/macOS/WSL/Git Bash）。目标目录应为**不存在或空目录**，已有项目禁止直接覆盖。
+
+1. 安装 `rsync` 后从模板工厂复制产物。`--ignore-existing` 保证已有文件不被覆盖；统一用 `rsync -a` 保留软链，不用 `cp -r` 代替。复制前先确认目标为空：
 
     ```bash
-    rsync -a --exclude .git/ --exclude .scratch/ --exclude .pytest_cache/ --exclude __pycache__/ \
-      /path/to/repo_template/repo/ /path/to/new_project/
+    target=/path/to/new_project
+    [ -e "$target" ] && [ -n "$(ls -A "$target")" ] && echo "目标非空，停止" && exit 1
+    rsync -a --ignore-existing \
+      --exclude .git/ --exclude .scratch/ --exclude .pytest_cache/ --exclude __pycache__/ \
+      /path/to/repo_template/repo/ "$target/"
     ```
 
-2. 初始化版本控制。
+    任何步骤非零退出即停止，不重试覆盖。Windows PowerShell 无本步骤的直接等价物，用 WSL/Git Bash 执行；NTFS 上软链复制需开发者模式或管理员权限。
+
+    成功后在新项目目录执行 `test -L CLAUDE.md && test "$(readlink CLAUDE.md)" = AGENTS.md`，并核对第 4 步的 skill 软链；验证失败先修复复制结果。
+
+2. 在新项目目录初始化版本控制；后续命令均在该目录执行。
 
 3. 替换本文件与 `AGENTS.md` 首行项目介绍。
 
@@ -25,7 +34,7 @@
 
 7. 启用 commit 前格式化 hook：`python3 .repo_template/scripts/repo_sync.py install-hooks`（`core.hooksPath` 指向 `.repo_template/hooks`；已有其它 hooksPath 须 `--force`）。
 
-8. 填写 `docs/blueprint/architecture.md`、`domain.md`、`conventions.md`、`testing.md`；`decisions.md` 初始可空。
+8. 填写 `docs/blueprint/architecture.md`、`domain.md`（占位，未填前不视为权威）。`conventions.md` / `testing.md` 是模板默认，按技术栈改命令与例外；`decisions.md` 初始可空。
 
 9. 确认 `docs/tasks/` 无遗留 task 目录、`docs/specs_index.md` 无伪 active 数据。task 模板在 `.repo_template/docs/task_template/`。
 
