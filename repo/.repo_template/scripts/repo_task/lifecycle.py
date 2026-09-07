@@ -247,6 +247,26 @@ def cmd_edit(args):
     rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
 
+def _missing_testing_sections(text: str) -> list[str]:
+    """只检查各门禁章节，不把文首的占位符说明误判为未配置。"""
+    headings = {
+        "{doctor_cmd}": "doctor_cmd",
+        "{test_cmd}": "test_cmd",
+        "{blackbox_verify}": "blackbox_verify",
+    }
+    found = {name: False for name in headings.values()}
+    current = None
+    for line in text.splitlines():
+        heading = line.strip().lower()
+        if heading.startswith("#"):
+            title = heading.lstrip("#").strip().strip("`")
+            current = title if title in found else None
+            continue
+        if current and line.strip() and not any(marker in line for marker in headings):
+            found[current] = True
+    return [marker for marker, section in headings.items() if not found[section]]
+
+
 def cmd_preflight(args):
     ref_arg = args.ref
     source_ref = ""
@@ -332,10 +352,7 @@ def cmd_preflight(args):
     testing_md = ctx.REPO_ROOT / "docs" / "blueprint" / "testing.md"
     if testing_md.is_file():
         testing_text = testing_md.read_text(encoding="utf-8")
-        missing = [
-            ph for ph in ("{doctor_cmd}", "{test_cmd}", "{blackbox_verify}")
-            if ph in testing_text
-        ]
+        missing = _missing_testing_sections(testing_text)
         if missing:
             warnings.append(
                 f"testing.md 仍有未填占位符 {' / '.join(missing)}；"
@@ -435,11 +452,22 @@ def _close_task(args, status: str, note: str | None) -> None:
     ctx.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         shutil.move(str(src), str(dst))
-    except (OSError, shutil.Error) as e:
-        write_front_matter(path, orig_fm, body)
+        # main 上直接 drop 会改变 task 的目录归属；同步两个派生索引。
+        # active worktree 中的 finish/drop 由后续 task commit/integrate 收尾索引，
+        # 此处不能提前把索引写进执行分支，否则会制造 merge 冲突。
+        if status == "dropped" and not in_own_worktree:
+            rebuild_index()
+    except (OSError, shutil.Error, ctx.TaskDataError) as e:
+        if dst.exists() and not src.exists():
+            try:
+                shutil.move(str(dst), str(src))
+            except (OSError, shutil.Error):
+                pass
+        if src.exists():
+            write_front_matter(path, orig_fm, body)
         sys.exit(
             f"归档移动失败（{e}）；front matter 已回滚为 status={orig_fm['status']}，"
-            f"目录仍在 {ctx._rel(src)}。排除原因后重试"
+            f"目录应保留在 {ctx._rel(src)}。排除原因后重试"
         )
     print(f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:

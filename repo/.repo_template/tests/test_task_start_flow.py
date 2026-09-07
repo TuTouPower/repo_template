@@ -1106,7 +1106,7 @@ def test_drop_from_main_rejects_stale_backlog_with_unmerged_done_branch(git_repo
 
 
 def test_drop_allows_genuine_fresh_backlog(git_repo):
-    """未 start 的真 backlog 仍可正常 drop。"""
+    """未 start 的真 backlog 仍可正常 drop，并同步两个派生索引。"""
     result = _task_cli(git_repo, "drop", "t001", "--reason", "不需要了")
 
     assert result.returncode == 0, result.stderr
@@ -1114,6 +1114,41 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
         git_repo / "docs/archive/tasks/t001_alpha/task.md"
     )
     assert fm["status"] == "dropped"
+    active = json.loads((git_repo / "docs/tasks_index.json").read_text())
+    archive = json.loads((git_repo / "docs/archive/tasks_index.json").read_text())
+    assert [task["tid"] for task in active["tasks"]] == ["t002", "t003"]
+    assert [task["tid"] for task in archive["tasks"]] == ["t001"]
+
+
+def test_preflight_ignores_placeholder_explanations_when_sections_are_filled(git_repo):
+    testing = git_repo / "docs/blueprint/testing.md"
+    testing.parent.mkdir(parents=True)
+    testing.write_text(
+        """# 测试
+
+`{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 的说明。
+
+## doctor_cmd
+
+```bash
+python3 --version
+```
+
+## test_cmd
+
+```bash
+pytest -q
+```
+
+## blackbox_verify
+
+运行 CLI 并检查 stdout。
+""",
+        encoding="utf-8",
+    )
+    result = _task_cli(git_repo, "preflight", "t001", "--allow-backlog")
+    assert result.returncode == 0, result.stderr
+    assert "testing.md 仍有未填占位符" not in result.stdout
 
 
 def test_edit_rejects_stale_backlog_with_active_worktree(git_repo):
@@ -1263,9 +1298,6 @@ def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
     _start(git_repo, "t001")
     _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
     _git(git_repo, "merge", "--no-ff", branch, "-m", "merge t001")
-    _task_cli(git_repo, "list", "--rebuild")
-    _git(git_repo, "add", "docs/tasks_index.json", "docs/archive/tasks_index.json")
-    _git(git_repo, "commit", "-m", "chore: rebuild index")
     # t001 已归档 done；t002 单边声明冲突应成功（不写 t001 反向边）
     declared = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
     assert declared.returncode == 0, declared.stderr
