@@ -2,7 +2,9 @@
 
 来源：用户要求模板仓与消费仓非归档 Markdown 统一用 md_kx 格式化。md_kx 三种表风格（`compact` = `|a|b|`、`spaced` = `| a | b |`、`pad` = 按列对齐）由 md_kx 仓交付，本仓只消费。
 
-> **状态（2026-08-13）**：未落地。本文是方案推导，尚未立项、未改生产树。**执行本计划（立项或改生产树）之前，必须先过「前置门禁」。门禁不过，停。**
+> **已落地（2026-09-07 核对）**：`.md_kx.toml` 已进 `HARD_SYNC_FILES`；仓库入口为 `.repo_template/scripts/md_format.py`；pre-commit hook 与 `usage.md`「命名与格式」已约束 compact 表。本文保留方案推导，不是现行操作手册。现行命令以 `python3 .repo_template/scripts/md_format.py --help` 为准。
+
+当前入口：[使用说明](../../repo/.repo_template/docs/usage.md)、[执行架构](../../repo/.repo_template/docs/architecture.md)、[裁决总账](../decision_log.md)。正文旧目录和命令属于原方案快照，不直接复制执行。
 
 ## 前置门禁：md_kx 必须先交付
 
@@ -12,11 +14,11 @@
 
 对同一张输入表（单元格有效文本 `a`、`b`），`table_mode` / `--table-mode` 只能是下面三种，默认 `spaced`，`none` 非法：
 
-|风格|单元格空白|分隔行|示例|
-|---|---|---|---|
-|`compact`|有效文本与两侧 `\|` 之间零空格|两侧也零空格|`\|a\|b\|` / `\|---\|---\|`|
-|`spaced`|两侧各恰好一个空格，不按列对齐|`\| --- \|`|`\| a \| b \|`|
-|`pad`|两侧至少一空格，再按列补齐，外层 `\|` 对齐|分隔段随列宽|`\|    a   \| b \|`|
+| 风格 | 单元格空白 | 分隔行 | 示例 |
+| --- | --- | --- | --- |
+| `compact` | 有效文本与两侧 `\|` 之间零空格 | 两侧也零空格 | `\|a\|b\|` / `\|---\|---\|` |
+| `spaced` | 两侧各恰好一个空格，不按列对齐 | `\| --- \|` | `\| a \| b \|` |
+| `pad` | 两侧至少一空格，再按列补齐，外层 `\|` 对齐 | 分隔段随列宽 | `\|    a   \| b \|` |
 
 还须同时成立：
 
@@ -35,7 +37,7 @@
 在**本机将要用来跑模板仓的那个 `md_kx`** 上测（`which md_kx` / `md_kx --version` 先记下来）。不要用未重装的旧 `uv tool`。
 
 1. `md_kx --help` 的 `--table-mode` 只列 `compact` / `spaced` / `pad`，没有 `none`。
-2. 对夹具表分别指定三风格，输出符合上表。至少用这一份输入：
+1. 对夹具表分别指定三风格，输出符合上表。至少用这一份输入：
 
 ```markdown
 |路径|用途|
@@ -51,8 +53,8 @@
 - 再跑同一风格一次，文件无 diff
 
 3. `--table-mode none` 非 0 退出，文件未改。
-4. 无 CLI、无 toml 时，默认是 spaced。
-5. 模板将采用的配置（`.md_kx.toml` 里 `table_mode = "compact"`）对上面那张表必须得到 `|路径|用途|`，不能是 `| 路径 | 用途 |`。
+1. 无 CLI、无 toml 时，默认是 spaced。
+1. 模板将采用的配置（`.md_kx.toml` 里 `table_mode = "compact"`）对上面那张表必须得到 `|路径|用途|`，不能是 `| 路径 | 用途 |`。
 
 任一条失败 = md_kx 没搞完。本计划的 task 1/2/3 都不开。包装脚本、挂钩、存量 format 全部停。
 
@@ -65,21 +67,21 @@ A–E、建议切分都默认门禁已过。文中「新 compact」= 本节的 `
 模板仓已有 `.md_kx.toml`（`compact` / 4 空格 / `number`），但：
 
 1. 配置不在 `HARD_SYNC_FILES`，消费仓同步不到。
-2. 没有仓库内入口。`md_kx .` 递归扫全部 `*.md`，不读 gitignore，会进 `node_modules/`；`exclude` 只在 Python 3.13+ 有效，模板 CI 是 3.12。
-3. `repo-template-sync` 写着「合并共享文稿禁止任何 Markdown 格式化」，是防 prettier 把表 pad 成宽列。md_kx compact 不是那种，但这条禁令不改，agent 不敢跑。
-4. agent 写 md 的路径（task-work 收尾、pending/findings/spikes `new`、task-create 落盘）没有强制 format，风格会漂。
+1. 没有仓库内入口。`md_kx .` 递归扫全部 `*.md`，不读 gitignore，会进 `node_modules/`；`exclude` 只在 Python 3.13+ 有效，模板 CI 是 3.12。
+1. `repo-template-sync` 写着「合并共享文稿禁止任何 Markdown 格式化」，是防 prettier 把表 pad 成宽列。md_kx compact 不是那种，但这条禁令不改，agent 不敢跑。
+1. agent 写 md 的路径（task-work 收尾、pending/findings/spikes `new`、task-create 落盘）没有强制 format，风格会漂。
 
 归档「内部文件只准新增」。用户已拍板：**跳过 `docs/archive/`**。这轮只改模板仓，消费仓靠之后 sync。
 
 ## 设计总览
 
-|#|机制|落点|为什么这样|
-|---|---|---|---|
-|A|`.md_kx.toml` 硬同步|`HARD_SYNC_FILES`|风格是模板约定，不是消费侧定制。不进 `SHARED_FILES`，避免每轮裁定|
-|B|包装脚本当唯一入口|`scripts/repo_template/md_format.py`|随 `HARD_SYNC_DIRS` 自动进消费仓；选文件、黑名单、缺二进制在仓库内解决，不依赖 md_kx 的 3.13 exclude|
-|C|写 md 的出口挂钩|pending / findings / spikes `new`；task-work Step 7a；task-create 落盘自检|机械化写入由脚本收；agent 写的正文由 skill 在 commit / 落盘前收|
-|D|约定与禁令改写|`conventions.md`、repo-template-sync skill、`testing.md` doctor、`README.md`|禁止 prettier/pad 保留；语义合并结束后允许包装脚本|
-|E|本仓一次性 format|非归档已跟踪 md，单独 chore|存量对齐。必须等本机 md_kx 已是新 compact，否则表会变成 spaced|
+| # | 机制 | 落点 | 为什么这样 |
+| --- | --- | --- | --- |
+| A | `.md_kx.toml` 硬同步 | `HARD_SYNC_FILES` | 风格是模板约定，不是消费侧定制。不进 `SHARED_FILES`，避免每轮裁定 |
+| B | 包装脚本当唯一入口 | `scripts/repo_template/md_format.py` | 随 `HARD_SYNC_DIRS` 自动进消费仓；选文件、黑名单、缺二进制在仓库内解决，不依赖 md_kx 的 3.13 exclude |
+| C | 写 md 的出口挂钩 | pending / findings / spikes `new`；task-work Step 7a；task-create 落盘自检 | 机械化写入由脚本收；agent 写的正文由 skill 在 commit / 落盘前收 |
+| D | 约定与禁令改写 | `conventions.md`、repo-template-sync skill、`testing.md` doctor、`README.md` | 禁止 prettier/pad 保留；语义合并结束后允许包装脚本 |
+| E | 本仓一次性 format | 非归档已跟踪 md，单独 chore | 存量对齐。必须等本机 md_kx 已是新 compact，否则表会变成 spaced |
 
 ## 不做什么
 
@@ -122,12 +124,12 @@ python3 scripts/repo_template/md_format.py --check
 
 ## C. 挂钩
 
-|落点|行为|
-|---|---|
-|pending / findings / spikes `new`|刚写的文件走库函数|
-|task-work Step 7a|执行 commit 前 `--changed`；失败不得 commit|
-|task-create 落盘自检|本批新建 spec/task 跑包装脚本后再 preflight|
-|`task.py add`|只复制模板，不 format；填完正文由 create / work 收|
+| 落点 | 行为 |
+| --- | --- |
+| pending / findings / spikes `new` | 刚写的文件走库函数 |
+| task-work Step 7a | 执行 commit 前 `--changed`；失败不得 commit |
+| task-create 落盘自检 | 本批新建 spec/task 跑包装脚本后再 preflight |
+| `task.py add` | 只复制模板，不 format；填完正文由 create / work 收 |
 
 ## D. 约定改写
 
@@ -149,11 +151,11 @@ python3 scripts/repo_template/md_format.py --check
 
 实施时走标准 task 流程。`review_level=single`。现有主仓脏改动不混入，只在 task worktree 做。**立项前先过前置门禁**；门禁不过不 `task.py add`。
 
-|顺序|slug|交付|依赖|
-|---|---|---|---|
-|1|`md_format_wrapper`|脚本 + toml 硬同步 + 测试（含 `test_repo_sync` fixture 补 `.md_kx.toml`）|前置门禁|
-|2|`md_format_hooks`|C + D|1|
-|3|`md_format_existing`|E|1 + 门禁第 5 条复测|
+| 顺序 | slug | 交付 | 依赖 |
+| --- | --- | --- | --- |
+| 1 | `md_format_wrapper` | 脚本 + toml 硬同步 + 测试（含 `test_repo_sync` fixture 补 `.md_kx.toml`） | 前置门禁 |
+| 2 | `md_format_hooks` | C + D | 1 |
+| 3 | `md_format_existing` | E | 1 + 门禁第 5 条复测 |
 
 ## 验证
 

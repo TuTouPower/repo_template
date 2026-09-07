@@ -1,8 +1,8 @@
 # 调度控制面：统一 attempt + 水位触发 reconcile
 
-> **过时（2026-08-12 标注）**：本文描述的 coordinator / reconcile / 扇出 dispatch / 5 分钟 cron 机制已于 [`decision_log.md`](../decision_log.md) L35 退役。并发只保留用户手动多会话 `task-run`。当前执行架构权威见 `../../docs/blueprint/architecture_repo_template.md`；`task.py view --serve` 是现行只读看板入口。
+> **过时（2026-08-12 标注；2026-09-07 迁 archive）**：本文描述的 coordinator / reconcile / 扇出 dispatch / 5 分钟 cron 机制已于 [`decision_log.md`](../decision_log.md) L35 退役。并发只保留用户手动多会话 `task-run`。现行执行架构见 [`../../repo/.repo_template/docs/architecture.md`](../../repo/.repo_template/docs/architecture.md)；`task.py view --serve` 是现行只读看板入口。正文是当时设计，不是现行操作手册。
 
-全部执行拓扑共用统一 attempt 控制面。`task-run` 使用链式 branch topology 与 inline executor；`task-dispatch` 使用扇出 branch topology 与 agent executor。本文重点描述 coordinator 在扇出调度中的 reconcile 行为；attempt 生命周期权威定义见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)，静默算法见 [`plan_worker_silence_monitoring.md`](plan_worker_silence_monitoring.md)。
+当时全部执行拓扑共用统一 attempt 控制面。`task-run` 使用链式 branch topology 与 inline executor；`task-dispatch` 使用扇出 branch topology 与 agent executor。本文重点描述 coordinator 在扇出调度中的 reconcile 行为；当时 attempt 生命周期定义见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)，静默算法见 [`plan_worker_silence_monitoring.md`](plan_worker_silence_monitoring.md)。
 
 ## Reconcile 是并行动作来源
 
@@ -28,16 +28,16 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 
 ## 扇出调度动作
 
-|action|coordinator 动作|
-|---|---|
-|`dispatch`|`task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。失败重试也走本动作，带 \`mode=resume|
-|`observe`|对宿主仍 running 的 current identity 执行 `observe TID --attempt N --execution-id ID`。|
-|`terminal`|宿主进入 \`completed|
-|`report`|terminal 后，根据 handoff 与宿主结果执行 \`attempt report --status done|
-|`await-report`|`terminal failed/stopped` 且尚无 report 时输出：先写 report 再进入 dispatch/escalate，禁止 report 落账前自动重派（否则新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失）。|
-|`integrate`|terminal completed 且 refs/handoff ready 后，exact cleanup，再 exact 单 task integrate；正常调度仍先按同一 identity 写 report；完成后同回合再次 reconcile。|
-|`escalate`|对已 terminal identity 执行 `attempt escalate` 并请求用户裁决。reconcile 输出 escalate 即释放该 tid 并发槽（等待用户期间不阻塞其他 task）；`reserved` 悬挂超过 silent 阈值同样输出 escalate。|
-|`alert-silent`|对 current running identity 的 fingerprint 执行 `attempt silent-alert`，报告用户并停止自动调度；不取消、不重派。|
+| action | coordinator 动作 |
+| --- | --- |
+| `dispatch` | `task.py start TID` → `attempt reserve TID --executor agent [--model M]` → Agent prompt 携带 reserve 返回的 attempt/execution_id → Agent 启动取得宿主句柄后 `attempt bind`。失败重试也走本动作，带 \`mode=resume |
+| `observe` | 对宿主仍 running 的 current identity 执行 `observe TID --attempt N --execution-id ID`。 |
+| `terminal` | 宿主进入 \`completed |
+| `report` | terminal 后，根据 handoff 与宿主结果执行 \`attempt report --status done |
+| `await-report` | `terminal failed/stopped` 且尚无 report 时输出：先写 report 再进入 dispatch/escalate，禁止 report 落账前自动重派（否则新 attempt 成为 current 后旧 identity 的 class/reason 永久丢失）。 |
+| `integrate` | terminal completed 且 refs/handoff ready 后，exact cleanup，再 exact 单 task integrate；正常调度仍先按同一 identity 写 report；完成后同回合再次 reconcile。 |
+| `escalate` | 对已 terminal identity 执行 `attempt escalate` 并请求用户裁决。reconcile 输出 escalate 即释放该 tid 并发槽（等待用户期间不阻塞其他 task）；`reserved` 悬挂超过 silent 阈值同样输出 escalate。 |
+| `alert-silent` | 对 current running identity 的 fingerprint 执行 `attempt silent-alert`，报告用户并停止自动调度；不取消、不重派。 |
 
 ## 持久控制面
 
@@ -45,17 +45,17 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 
 控制面记录以下事实：
 
-|类别|关键字段|写入入口|
-|---|---|---|
-|reserve|tid, attempt, execution_id, executor, model?, state|`attempt reserve`|
-|bind|exact identity, host_worker_id?, state=running|`attempt bind`|
-|terminal|exact identity, status=\`completed|failed|
-|report|exact identity, status=\`done|blocked|
-|observation|exact identity, fingerprint, head, worktree, dirty|`observe`|
-|silent alert|exact identity, fingerprint|`attempt silent-alert`|
-|escalated|exact identity, reason|`attempt escalate`|
-|integrated|exact identity, merge_sha|`integrate` / `integrate-chain`|
-|note|tid/reason|`ledger record`|
+| 类别 | 关键字段 | 写入入口 |
+| --- | --- | --- |
+| reserve | tid, attempt, execution_id, executor, model?, state | `attempt reserve` |
+| bind | exact identity, host_worker_id?, state=running | `attempt bind` |
+| terminal | exact identity, status=\`completed | failed |
+| report | exact identity, status=\`done | blocked |
+| observation | exact identity, fingerprint, head, worktree, dirty | `observe` |
+| silent alert | exact identity, fingerprint | `attempt silent-alert` |
+| escalated | exact identity, reason | `attempt escalate` |
+| integrated | exact identity, merge_sha | `integrate` / `integrate-chain` |
+| note | tid/reason | `ledger record` |
 
 `ledger record` 只允许 `note`，不能写生命周期事件；`ledger tail` 只读。账本追加使用文件锁，损坏行警告后跳过，不让单条截断写破坏整个控制面。
 
@@ -64,10 +64,10 @@ reconcile 只读并输出行动计划；副作用由 `start`、`attempt`、`obse
 worker 完成后在 task 分支 tip 提供终态 front matter 与完整 `handoff.json`。reconcile 对 current identity 验证：
 
 1. task 分支存在且包含恰好一个未合入主干的执行 commit；
-2. tip task 状态与 handoff status 一致；
-3. handoff 的 tid/attempt/execution_id/branch 精确匹配控制面与 refs，attempt 为非 bool 正整数；
-4. tests/blackbox/review 是非空字符串，pending/findings 是字符串数组；
-5. handoff `base_sha` 同时等于 task `diff_anchor` 与 branch tip first parent 完整 SHA；链成员后继还等于紧邻 predecessor tip。
+1. tip task 状态与 handoff status 一致；
+1. handoff 的 tid/attempt/execution_id/branch 精确匹配控制面与 refs，attempt 为非 bool 正整数；
+1. tests/blackbox/review 是非空字符串，pending/findings 是字符串数组；
+1. handoff `base_sha` 同时等于 task `diff_anchor` 与 branch tip first parent 完整 SHA；链成员后继还等于紧邻 predecessor tip。
 
 refs/handoff ready 不能替代 executor terminal。terminal completed + handoff/refs ready 才输出 cleanup/integrate。正常 coordinator 流程仍在 terminal 后先写 report；report 保存业务结果，但不替代 cleanup/integrate 的 exact terminal 与 handoff 门禁。running identity 即使分支已出现终态文件也继续占槽，不 cleanup、不 integrate、不 reserve 新 attempt。
 
@@ -94,11 +94,11 @@ python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 
 ## 失败与重试
 
-|类别|来源|自动策略|升级条件|
-|---|---|---|---|
-|infra|provider/API/宿主错误的 terminal/report failed|同模型重试一次（按现场 resume/restart）；不降档|额度用尽|
-|contract|failed/stopped identity 的 refs/handoff/identity 验证失败|同模型 resume 补契约|completed identity、重犯或无安全现场|
-|task|黑盒/review 等显式失败或 blocked|按既有额度处理|blocked 总是升级|
+| 类别 | 来源 | 自动策略 | 升级条件 |
+| --- | --- | --- | --- |
+| infra | provider/API/宿主错误的 terminal/report failed | 同模型重试一次（按现场 resume/restart）；不降档 | 额度用尽 |
+| contract | failed/stopped identity 的 refs/handoff/identity 验证失败 | 同模型 resume 补契约 | completed identity、重犯或无安全现场 |
+| task | 黑盒/review 等显式失败或 blocked | 按既有额度处理 | blocked 总是升级 |
 
 重试前旧 identity 必须 terminal，且 terminal 为 `failed/stopped` 或 exact report 明确为 `failed`。completed identity 必须先 integrate 或显式 escalate，不能被新 reserve 顶掉；已 integrated identity 不可重跑。`attempt reserve` 在锁内机械执行这些规则。迟到旧 identity 的通知只能补其原记录，不影响 current attempt。
 
@@ -118,10 +118,10 @@ python3 scripts/repo_template/task.py integrate-chain TAIL_TID [--continue]
 cron 每 5 分钟唤醒 coordinator：
 
 1. 从 current agent attempt 读取 `host_worker_id` 并查询宿主状态；
-2. running identity 执行 exact observe；
-3. terminal 宿主先执行 exact terminal，再执行 exact report；
-4. 运行 reconcile 并执行计划；
-5. 遇 silent alert 时记录 exact fingerprint，注销 cron并等待用户，不自动取消或重派。
+1. running identity 执行 exact observe；
+1. terminal 宿主先执行 exact terminal，再执行 exact report；
+1. 运行 reconcile 并执行计划；
+1. 遇 silent alert 时记录 exact fingerprint，注销 cron并等待用户，不自动取消或重派。
 
 通知丢失可以由 refs/handoff 补充业务证据，但不能绕过宿主 terminal 与 exact identity 门禁。
 

@@ -38,7 +38,7 @@ start → reserve → task-work → terminal → report → cleanup
 - 与 active task 冲突的 backlog 不作为当前并发链首。
 - 串行执行不受 conflicts 限制。
 
-`task.py view` 展示当前有效状态，依赖已满足但彼此冲突的 task 会同时列出并明确提示不要并行；`task.py plan` 负责把它们分到不同建议链。状态变化后重新计算，不持久化 `schedule_status`，也不要求声明冲突反向边。
+`task.py view` 展示当前有效状态，依赖已满足但彼此冲突的 task 会同时列出并明确提示不要并行；`task.py plan` 负责把它们分到不同建议链。状态变化后按当前 front matter 重新计算；调度字段只有 `depends_on` 与 `conflicts_with`，不要求声明冲突反向边。
 
 ## Review 与验证
 
@@ -48,11 +48,11 @@ start → reserve → task-work → terminal → report → cleanup
 2. 项目定义的黑盒验证，未定义时明确记录；
 3. 按 `review_level` 执行的独立 review。
 
-Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。`withdraw_rate` 和自动 prompt hint 不属于门禁，不再维护。
+Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。门禁不含 `withdraw_rate` 与自动 prompt hint。
 
 ## 合并
 
-merge 必须获得用户明确授权；模板不使用 merge token hook。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。单 task 和链式合并均先完成 exact gate，然后：
+merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。单 task 和链式合并均先完成 exact gate，然后：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
@@ -62,7 +62,7 @@ git merge --no-ff --no-commit <branch-or-tail>
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相，不再维护 `integrate-chain.json` 或自定义 phase。链式只 merge 链尾；Git ancestry 自然包含全部前置执行 commit。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置执行 commit。
 
 ## Goal
 

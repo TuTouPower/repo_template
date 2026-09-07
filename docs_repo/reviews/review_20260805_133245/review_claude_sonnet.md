@@ -1,5 +1,7 @@
 # 本路模型标识
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文是 2026-08-05 评审及其采纳记录；原采纳/不采纳结论保留，不据当前代码重新裁决。dispatch 自动调度和旧合并事务此后已演进，见 [裁决总账](../../decision_log.md) L35/L36。正文中的 HEAD、路径、行号和修复建议均属于当时范围，不用于指挥当前执行。
+
 Claude Sonnet
 
 # 审阅范围
@@ -20,13 +22,13 @@ Claude Sonnet
 
 - **位置**：`scripts/repo_template/repo_task/monitoring.py:569-572`
 - **现象**：
-    ```python
-    if (
-        report and report.get("status") == "blocked"
-        or effective_tasks.get(tid, {}).get("status") == "blocked"
-    ):
-    ```
-    Python 中 `and` 优先于 `or`，实际等价于 `(report and report.get("status") == "blocked") or (effective_tasks.get(...))`。当前恰好符合意图，但缺括号，后续维护改 `==` 链或加第三项即出错。
+  ```python
+  if (
+      report and report.get("status") == "blocked"
+      or effective_tasks.get(tid, {}).get("status") == "blocked"
+  ):
+  ```
+  Python 中 `and` 优先于 `or`，实际等价于 `(report and report.get("status") == "blocked") or (effective_tasks.get(...))`。当前恰好符合意图，但缺括号，后续维护改 `==` 链或加第三项即出错。
 - **影响**：低（当前行为正确），但属易触雷的代码气味。
 - **建议**：补括号：`if (report and report.get("status") == "blocked") or (effective_tasks.get(tid, {}).get("status") == "blocked"):`。
 - **置信度**：高
@@ -156,23 +158,23 @@ Claude Sonnet
 ## 全局
 
 1. **`repo_task/` 模块化设计扎实**：13 个文件职责清晰，attempts.py（domain）+ ledger.py（storage）+ monitoring.py（observation）分层得当，test 用依赖注入（observer/verifier/mode_probe 默认参数）做替换，是良好实践。
-2. **exact identity `(tid, attempt, execution_id)` 的引入解决了原 attempt 复用混乱**，`_require_exact_current` 在每个 mutation 前做 identity 校验，配合 ledger 锁，正确性高。
-3. **3fdd454 的 9 项修复质量高**，特别是 escalated 死闩与 `append_integrated` 死代码——后者若保留会导致 silent corruption。
-4. **建议补充**：
-    - 增加 `attempt doctor` 子命令，自动检测并报告：a) overlapping_attempts 中的 tid；b) 残留 worktree 但无 active task 的情况；c) ledger 行解析失败的行号。当前这些只能靠 ps/reconcile 间接观察。
-    - SKILL.md 中补一张「attempt state 机状态转移图」（reserved→running→terminal→integrated/escalated；reserved→running→terminal→escalated→integrated 这种 H2 关注的边），让 reviewer/agent 一致理解。
-    - `repo_task/__init__.py` 当前只导出 5 个名字（test 验证），考虑显式 `__all__` 防止意外 re-export。
+1. **exact identity `(tid, attempt, execution_id)` 的引入解决了原 attempt 复用混乱**，`_require_exact_current` 在每个 mutation 前做 identity 校验，配合 ledger 锁，正确性高。
+1. **3fdd454 的 9 项修复质量高**，特别是 escalated 死闩与 `append_integrated` 死代码——后者若保留会导致 silent corruption。
+1. **建议补充**：
+   - 增加 `attempt doctor` 子命令，自动检测并报告：a) overlapping_attempts 中的 tid；b) 残留 worktree 但无 active task 的情况；c) ledger 行解析失败的行号。当前这些只能靠 ps/reconcile 间接观察。
+   - SKILL.md 中补一张「attempt state 机状态转移图」（reserved→running→terminal→integrated/escalated；reserved→running→terminal→escalated→integrated 这种 H2 关注的边），让 reviewer/agent 一致理解。
+   - `repo_task/__init__.py` 当前只导出 5 个名字（test 验证），考虑显式 `__all__` 防止意外 re-export。
 
 ## 测试
 
 1. `test_dispatch_control.py`（1478 行）+ `test_dispatch_integration.py`（750 行）覆盖了 attempt 全生命周期、链式/扇出拓扑、并发 reserve/binding、escalated 路径、silent_alert、batch integrated 等关键路径，质量高。
-2. 建议补：a) `compute_reconcile_plan` 在运算符优先级边界（H1）的回归用例；b) `append_integrated_batch` 中混合 escalated+completed 成员的用例（H2）；c) `discover_effective_tasks` 在 worktree task.md 损坏时的行为（M6）。
+1. 建议补：a) `compute_reconcile_plan` 在运算符优先级边界（H1）的回归用例；b) `append_integrated_batch` 中混合 escalated+completed 成员的用例（H2）；c) `discover_effective_tasks` 在 worktree task.md 损坏时的行为（M6）。
 
 # 不确定项
 
 1. **H2/H3 escalate→integrate 是否为合法路径**：commit message 模糊，需项目维护者澄清 escalate 是终态还是中间态。当前代码允许，但语义上 escalate 的「需用户裁决」与 integrate 的「已并入主干」存在张力。
-2. **`monitoring.py:dispatch_mode` 的 `restart` vs `resume` 决策**：当前靠 worktree 是否存在 + 是否有未合并 commit 判断；若用户手动 `git worktree remove` 后又想 resume，会被判 restart，丢失 resume 上下文。是否设计如此？
-3. **`integration.py:_collect_chain` 的线性 ancestry 验证**：用两两 `merge-base --is-ancestor` 配对检查 + first-parent 连续性，但要求 chain 中所有 task 分支 tip 都互为祖先关系——若两条独立 task 分支同时未合并但都属于 chain 候选（通过 `--is-ancestor sha tail_sha` 都为真），会因无祖先关系 raise。这种「Y 型」未合并分支组合在实际并行 task 中常见，是否应更友好地降级为只取链尾单独 integrate？
-4. **`ledger.py` 行级解析失败仅 warning 跳过**：`_read_unlocked` 第 53-58 行对解析失败的行只 stderr 警告并跳过，不抛错。这会让 project_attempts 静默丢失事件，可能在 `require_exact_terminal` 中产生错误「未 reserve」结论。是否应在 strict 模式（如 reconcile）下 fail-fast？
+1. **`monitoring.py:dispatch_mode` 的 `restart` vs `resume` 决策**：当前靠 worktree 是否存在 + 是否有未合并 commit 判断；若用户手动 `git worktree remove` 后又想 resume，会被判 restart，丢失 resume 上下文。是否设计如此？
+1. **`integration.py:_collect_chain` 的线性 ancestry 验证**：用两两 `merge-base --is-ancestor` 配对检查 + first-parent 连续性，但要求 chain 中所有 task 分支 tip 都互为祖先关系——若两条独立 task 分支同时未合并但都属于 chain 候选（通过 `--is-ancestor sha tail_sha` 都为真），会因无祖先关系 raise。这种「Y 型」未合并分支组合在实际并行 task 中常见，是否应更友好地降级为只取链尾单独 integrate？
+1. **`ledger.py` 行级解析失败仅 warning 跳过**：`_read_unlocked` 第 53-58 行对解析失败的行只 stderr 警告并跳过，不抛错。这会让 project_attempts 静默丢失事件，可能在 `require_exact_terminal` 中产生错误「未 reserve」结论。是否应在 strict 模式（如 reconcile）下 fail-fast？
 
 —— 审阅完成。5 个 commit 的核心风险集中在 escalate 与 integrate 的状态机边界（H2/H3），其余多为代码气味与故障恢复路径的鲁棒性。

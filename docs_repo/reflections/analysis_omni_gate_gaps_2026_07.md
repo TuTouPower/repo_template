@@ -1,5 +1,7 @@
 # 门禁缺口分析：typecheck:test / build / lint 未全覆盖（2026-07）
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文的现状、测试结果与建议属于正文所列项目和历史时段，不代表当前工厂仓或外部项目状态。后续模板裁决见 [裁决总账](../decision_log.md)，当前工具链见 [使用说明](../../repo/.repo_template/docs/usage.md)。原始日志、外部环境和模型容量未在本次复验；引用这些结论作新决策前须在目标环境重新取证。
+
 ## 背景
 
 审计 omni_media 项目 150 个归档 task 的 `task.md` 后发现：`npm run typecheck:test`（测试代码类型检查）当前失败，涉及十几个测试文件、数十处类型错误，且长期未被发现。根因是红/绿门禁未覆盖测试代码类型检查。
@@ -8,13 +10,13 @@
 
 实证数据（2026-07-29 于 omni_media 主仓 main 分支实跑）：
 
-|命令|当前状态|是否在红/绿门禁|
-|---|---|---|
-|`npm test`（vitest）|通过|是|
-|`npm run typecheck`（生产代码 tsc）|通过|是|
-|`npm run typecheck:test`（测试代码 tsc）|**失败**（十几个文件数十处错误）|**否**|
-|`npm run lint`（eslint 全仓）|**15857 problems**（1225 errors / 14632 warnings）|**否**|
-|`npm run build`（next build + prisma generate）|通过|**否**（task 自觉跑，非门禁）|
+| 命令 | 当前状态 | 是否在红/绿门禁 |
+| --- | --- | --- |
+| `npm test`（vitest） | 通过 | 是 |
+| `npm run typecheck`（生产代码 tsc） | 通过 | 是 |
+| `npm run typecheck:test`（测试代码 tsc） | **失败**（十几个文件数十处错误） | **否** |
+| `npm run lint`（eslint 全仓） | **15857 problems**（1225 errors / 14632 warnings） | **否** |
+| `npm run build`（next build + prisma generate） | 通过 | **否**（task 自觉跑，非门禁） |
 
 ## 缺口 1：测试代码不类型检查（typecheck:test）
 
@@ -34,16 +36,16 @@ npm run smoke:*       # 按需
 
 `npm run typecheck:test` 当前失败，错误集中在：
 
-|文件|错误数|主要类别|
-|---|---|---|
-|`tests/unit/xhs/tikhub_client.test.ts`|17|`FetchLike` mock 缺 `ok/statusText/body` 字段|
-|`tests/unit/t071_rate_limit_hardening.test.ts`|12|速率限制 mock 类型不匹配|
-|`tests/unit/xhs/parse_note.test.ts`|9|mock 类型|
-|`tests/unit/xhs/blogger_fetch.test.ts`|9|mock 类型|
-|`tests/unit/t031_logger.test.ts`|9|logger mock 类型|
-|`tests/unit/api/admin_billing.test.ts`|9|mock 类型|
-|`tests/e2e/t130_anonymous_parse.e2e.ts`|7|e2e 类型|
-|其余十几个文件|各 2-5|`NODE_ENV` 只读赋值、BigInt 等|
+| 文件 | 错误数 | 主要类别 |
+| --- | --- | --- |
+| `tests/unit/xhs/tikhub_client.test.ts` | 17 | `FetchLike` mock 缺 `ok/statusText/body` 字段 |
+| `tests/unit/t071_rate_limit_hardening.test.ts` | 12 | 速率限制 mock 类型不匹配 |
+| `tests/unit/xhs/parse_note.test.ts` | 9 | mock 类型 |
+| `tests/unit/xhs/blogger_fetch.test.ts` | 9 | mock 类型 |
+| `tests/unit/t031_logger.test.ts` | 9 | logger mock 类型 |
+| `tests/unit/api/admin_billing.test.ts` | 9 | mock 类型 |
+| `tests/e2e/t130_anonymous_parse.e2e.ts` | 7 | e2e 类型 |
+| 其余十几个文件 | 各 2-5 | `NODE_ENV` 只读赋值、BigInt 等 |
 
 ### 后果
 
@@ -148,19 +150,19 @@ build 作为门禁，但需先解决 worktree 下 build 环境问题：
 
 ## 与现有裁决的关系
 
-|裁决|关系|
-|---|---|
-|L11（TDD 顺序违规）|互补。L11 管「改测试适配实现」的方向；本议题管「测试代码本身类型正确」|
-|L2（finding 锚 AC）|互补。typecheck:test 失败是可观测行为缺陷，reviewer 应出 finding，但门禁缺位致 reviewer 也看不到|
-|L14（一 task 一 commit）|相关。build/lint 缺门禁时，task 收尾质量靠 agent 自觉，与 L14「commit 须可独立验证」矛盾|
+| 裁决 | 关系 |
+| --- | --- |
+| L11（TDD 顺序违规） | 互补。L11 管「改测试适配实现」的方向；本议题管「测试代码本身类型正确」 |
+| L2（finding 锚 AC） | 互补。typecheck:test 失败是可观测行为缺陷，reviewer 应出 finding，但门禁缺位致 reviewer 也看不到 |
+| L14（一 task 一 commit） | 相关。build/lint 缺门禁时，task 收尾质量靠 agent 自觉，与 L14「commit 须可独立验证」矛盾 |
 
 ## 落地建议
 
 1. **立即**：`test_cmd` 加 `typecheck:test`（方案 A，已实施于 omni_media）
-2. **立即**：`test_cmd` 加 `build` + `lint`（方案 A，已实施于 omni_media）
-3. **建 task**：修 typecheck:test 存量错误（omni_media 已登记 f043，important）
-4. **评估**：lint 存量是否走基线快照（方案 B）还是一次性清理（t084 先例：曾清 4828 个，但回潮）
-5. **评估**：worktree build 环境修复（方案 C）是否进模板
+1. **立即**：`test_cmd` 加 `build` + `lint`（方案 A，已实施于 omni_media）
+1. **建 task**：修 typecheck:test 存量错误（omni_media 已登记 f043，important）
+1. **评估**：lint 存量是否走基线快照（方案 B）还是一次性清理（t084 先例：曾清 4828 个，但回潮）
+1. **评估**：worktree build 环境修复（方案 C）是否进模板
 
 ## 开放问题
 

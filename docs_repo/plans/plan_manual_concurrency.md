@@ -4,7 +4,9 @@
 
 本文是 L35 的实施设计。实施时按仓库标准 task 流程拆分执行。
 
-> **已落地（2026-08-12 核对）**：手动并发已实施——`task.py plan`（本波并发链）、`task.py view --serve`（只读看板）、AGENTS「多会话并发」、`architecture_repo_template.md`「手动并发」节。本文为实施设计，正文保留。
+> **已落地（2026-08-12 核对；2026-09-07 勘误）**：手动并发已实施——`task.py plan`（本波并发链）、`task.py view --serve`（只读看板）、`usage.md`「skill 调用」多会话并发、`.repo_template/docs/architecture.md`「执行拓扑」。本文为当时实施设计，不是现行操作手册。L36 已删除 merge token hook；dispatch 专属 plan 已迁 `docs_repo/archive/`。
+
+当前入口：[使用说明](../../repo/.repo_template/docs/usage.md)、[执行架构](../../repo/.repo_template/docs/architecture.md)、[裁决总账](../decision_log.md)。正文旧目录和命令属于原方案快照，不直接复制执行。
 
 ## 目标形态
 
@@ -25,10 +27,10 @@ task-create → task-schedule（依赖/冲突落盘）
 
 `start` 目前只校验 spec/task 文档与分支/worktree 占用，不看 `depends_on` / `conflicts_with`。新增：
 
-|检查|不满足时|口径|
-|---|---|---|
-|`depends_on` 全部前置|**硬拒**，列出未满足 tid|**完成口径**：前置 `done`（有执行 commit + `handoff.json`），**不要求已合并主干**。判据 = 未合并 task 分支 ref 上的 front matter `status=done`（状态读取优先级：登记 worktree → 未合并分支 ref → 主干）|
-|`conflicts_with` 对方正在运行|**警告后放行**，列出冲突 tid|「正在运行」= 登记 worktree 存在 且 task front matter `status=active`（`git worktree list` + task.md，不查 ledger）|
+| 检查 | 不满足时 | 口径 |
+| --- | --- | --- |
+| `depends_on` 全部前置 | **硬拒**，列出未满足 tid | **完成口径**：前置 `done`（有执行 commit + `handoff.json`），**不要求已合并主干**。判据 = 未合并 task 分支 ref 上的 front matter `status=done`（状态读取优先级：登记 worktree → 未合并分支 ref → 主干） |
+| `conflicts_with` 对方正在运行 | **警告后放行**，列出冲突 tid | 「正在运行」= 登记 worktree 存在 且 task front matter `status=active`（`git worktree list` + task.md，不查 ledger） |
 
 依赖硬拒通过时，若前置未合并，`start` 的 base 自动解析到**最新完成的前置分支 tip**（复用现有 `resolve_start_base` / `--base` 机制），git 历史自然串起；用户显式传 `--base` 时以用户为准。前置已合并主干则 base 落主干 HEAD，行为不变。
 
@@ -43,22 +45,22 @@ task-create → task-schedule（依赖/冲突落盘）
 
 ### 3. 退役拆除
 
-|对象|处置|
-|---|---|
-|`.agents/skills/task-dispatch/`|删除目录及 `.claude/skills/` 对应软链|
-|dispatch cron 节拍（`task-dispatch` 内 cron 兜底）|随 skill 删除一并拆除|
-|`docs_repo/plan_worker_silence_monitoring.md` 等 dispatch 专属 plan|不动（docs_repo 是历史证据，只准新增；在 L35 行已标明被替代）|
-|`docs/runtime/dispatch_ledger.jsonl` + attempt 生命周期|**保留**——`task-run` inline attempt 在用；路径名维持兼容名|
-|`merge_guard.py` hook|**保留**——防脚本外手 merge，与自动并发无关|
-|`task-work` / `task-integrate`|**保留**——task-run 内联路径在用；dispatch 专属命令（`attempt bind/escalate/silent-alert`、`observe`、`reconcile`）与对应函数已删，attempt 状态机精简为 `running→terminal→integrated` 三态，executor 收为仅 `inline`|
+| 对象 | 处置 |
+| --- | --- |
+| `.agents/skills/task-dispatch/` | 删除目录及 `.claude/skills/` 对应软链 |
+| dispatch cron 节拍（`task-dispatch` 内 cron 兜底） | 随 skill 删除一并拆除 |
+| `docs_repo/plan_worker_silence_monitoring.md` 等 dispatch 专属 plan | 不动（docs_repo 是历史证据，只准新增；在 L35 行已标明被替代） |
+| `docs/runtime/dispatch_ledger.jsonl` + attempt 生命周期 | **保留**——`task-run` inline attempt 在用；路径名维持兼容名 |
+| `merge_guard.py` hook | **保留**——防脚本外手 merge，与自动并发无关 |
+| `task-work` / `task-integrate` | **保留**——task-run 内联路径在用；dispatch 专属命令（`attempt bind/escalate/silent-alert`、`observe`、`reconcile`）与对应函数已删，attempt 状态机精简为 `running→terminal→integrated` 三态，executor 收为仅 `inline` |
 
 ### 4. 文档同步
 
-|文件|改动|
-|---|---|
-|`CLAUDE.md` 工作流表|删 `task-dispatch` 行；`task-run` 职责改为「链式串行；多会话手动并发时各跑用户指定段」；典型路径改为 `task-create → task-schedule → task.py view --serve → 一个或多个会话 task-run`|
-|`docs/blueprint/architecture_repo_template.md`|「执行拓扑」删扇出段落，补手动并发模型：每会话一条链、coordinator 唯一写者假设解除、撞车靠 git；「执行角色」保留 worker/coordinator 但注明并发发生在用户维度|
-|`docs_repo/decision_log.md` L35|实施完成后状态改「已落地」|
+| 文件 | 改动 |
+| --- | --- |
+| `CLAUDE.md` 工作流表 | 删 `task-dispatch` 行；`task-run` 职责改为「链式串行；多会话手动并发时各跑用户指定段」；典型路径改为 `task-create → task-schedule → task.py view --serve → 一个或多个会话 task-run` |
+| `docs/blueprint/architecture_repo_template.md` | 「执行拓扑」删扇出段落，补手动并发模型：每会话一条链、coordinator 唯一写者假设解除、撞车靠 git；「执行角色」保留 worker/coordinator 但注明并发发生在用户维度 |
+| `docs_repo/decision_log.md` L35 | 实施完成后状态改「已落地」 |
 
 ## 不做的事
 
@@ -71,7 +73,7 @@ task-create → task-schedule（依赖/冲突落盘）
 ## 验收
 
 1. 两个会话各 `task-run` 不同 task 段，互不干扰；同一 task 被第二会话 `start` 时报「分支/worktree 已存在」（现有行为）。
-2. `start` 一个 `depends_on` 未完成的 task → 拒绝并列出未满足项；前置 `done` 未合并时再 `start` → 通过，分支基于前置分支 tip。
-3. `start` 与运行中 task 冲突的 task → 警告后成功。
-4. `task.py view --serve` 起服务、浏览器打开、页面显示项目名与着色调度图；某会话推进 task 后点刷新，图状态更新。
-5. `task-dispatch` skill 与 cron 不复存在；`task-run` 全链回归通过（单会话串行行为不变）。
+1. `start` 一个 `depends_on` 未完成的 task → 拒绝并列出未满足项；前置 `done` 未合并时再 `start` → 通过，分支基于前置分支 tip。
+1. `start` 与运行中 task 冲突的 task → 警告后成功。
+1. `task.py view --serve` 起服务、浏览器打开、页面显示项目名与着色调度图；某会话推进 task 后点刷新，图状态更新。
+1. `task-dispatch` skill 与 cron 不复存在；`task-run` 全链回归通过（单会话串行行为不变）。

@@ -2,28 +2,30 @@
 
 来源：参考项目 supergoal（github.com/robzilla1738/supergoal，本地 ~/github_repo/supergoal）的机制分析。本仓已有 script 控制面（ledger / exact identity / worktree 拓扑），不引入 supergoal 的 prompt-as-program 骨架，只移植其防自欺机制，并解决 goal 模式「提示词非强约束、频繁中断等输入」的实测痛点。
 
-> **已落地（2026-08-12 核对）**：goal 模式已实现为 `task.py goal` / `goal-check`（见 AGENTS「skill 调用」goal 模式、`task-run`「goal 模式」节）。本文为方案推导，正文保留。
+> **已落地（2026-08-12 核对；2026-09-07 勘误）**：goal 模式已实现为 `task.py goal` / `goal-check`（见 `usage.md`「skill 调用」、`architecture.md`「Goal」）。本文为方案推导，不是现行操作手册。
+
+当前入口：[使用说明](../../repo/.repo_template/docs/usage.md)、[执行架构](../../repo/.repo_template/docs/architecture.md)、[裁决总账](../decision_log.md)。正文旧目录和命令属于原方案快照，不直接复制执行。
 
 ## 问题
 
 用户以 `/goal 请你按照 task run 工作流执行所有 task` 驱动队列，三个结构性弱点：
 
 1. 终态不可判定：「按工作流执行所有 task」是过程指令，goal evaluator 无客观依据反驳中途停止。
-2. 「所有 task」未冻结：跑到一半 backlog 变化，指代不明。
-3. 提示词不携带授权语义与停止边界，模型自我怀疑时倾向停下问。
+1. 「所有 task」未冻结：跑到一半 backlog 变化，指代不明。
+1. 提示词不携带授权语义与停止边界，模型自我怀疑时倾向停下问。
 
 ## 设计总览
 
-|#|机制|落点|来源|
-|---|---|---|---|
-|A1|`task.py goal`：冻结队列快照 + 打印 ready-to-paste `/goal` 行（含机器终态判定）|`repo_task/goal.py`|supergoal Stage 7|
-|A2|`task.py goal-check`：只读判定器，ledger + worktree 登记为权威，输出 marker|`repo_task/goal.py`|supergoal transcript marker 的机器化替代|
-|A3|task-run skill「goal 模式」节|`.agents/skills/task-run/SKILL.md`|—|
-|B|baseline 健康预检：跑 `{doctor_cmd}`，红则标阻塞|task-preflight skill|supergoal Stage 6.5|
-|C|`repo_state.py`：baseline→完整工作树取数（added-lines / deliverable / changed-files）；task-work Step 7 清洁度 grep|`scripts/repo_template/repo_state.py`|supergoal repo-state.sh|
-|D|聚焦修复轮：verify/review 达 max-1 轮时先写聚焦修复计划再执行最后一轮|task-work skill|supergoal fix-spec|
-|E|task-create 落盘自检三问：AC 可证伪 / task 原子性 / 最弱依赖|task-create skill|supergoal Stage 6a|
-|F|review 报告 AC 复验披露：`re_verified` / `trust_prior` 分类 + 覆盖率行 + >30% 人工抽查提示|`docs/reviews/prompts/share_prompt.txt`|supergoal audit coverage|
+| # | 机制 | 落点 | 来源 |
+| --- | --- | --- | --- |
+| A1 | `task.py goal`：冻结队列快照 + 打印 ready-to-paste `/goal` 行（含机器终态判定） | `repo_task/goal.py` | supergoal Stage 7 |
+| A2 | `task.py goal-check`：只读判定器，ledger + worktree 登记为权威，输出 marker | `repo_task/goal.py` | supergoal transcript marker 的机器化替代 |
+| A3 | task-run skill「goal 模式」节 | `.agents/skills/task-run/SKILL.md` | — |
+| B | baseline 健康预检：跑 `{doctor_cmd}`，红则标阻塞 | task-preflight skill | supergoal Stage 6.5 |
+| C | `repo_state.py`：baseline→完整工作树取数（added-lines / deliverable / changed-files）；task-work Step 7 清洁度 grep | `scripts/repo_template/repo_state.py` | supergoal repo-state.sh |
+| D | 聚焦修复轮：verify/review 达 max-1 轮时先写聚焦修复计划再执行最后一轮 | task-work skill | supergoal fix-spec |
+| E | task-create 落盘自检三问：AC 可证伪 / task 原子性 / 最弱依赖 | task-create skill | supergoal Stage 6a |
+| F | review 报告 AC 复验披露：`re_verified` / `trust_prior` 分类 + 覆盖率行 + >30% 人工抽查提示 | `docs/reviews/prompts/share_prompt.txt` | supergoal audit coverage |
 
 ## A. goal 模式控制面
 
@@ -41,16 +43,16 @@
 
 只读、幂等。逐 tid 判定（权威 = ledger 投影 + worktree 登记，不看 transcript）：
 
-|状态|判据|
-|---|---|
-|`integrated`|主干已 done 或 attempt state=integrated|
-|`closed`|terminal completed + report done + `verify_integrate_ready` ready + worktree 未登记（exact cleanup 完成）|
-|`cleanup_pending`|业务闭环但 worktree 仍登记|
-|`running`|current attempt state=running|
-|`pending`|ledger 无记录|
-|`blocked`|report status=blocked|
-|`failed`|terminal failed/stopped 或 report failed|
-|`dropped`|主干已 dropped（快照过期，需重新 `task.py goal`）|
+| 状态 | 判据 |
+| --- | --- |
+| `integrated` | 主干已 done 或 attempt state=integrated |
+| `closed` | terminal completed + report done + `verify_integrate_ready` ready + worktree 未登记（exact cleanup 完成） |
+| `cleanup_pending` | 业务闭环但 worktree 仍登记 |
+| `running` | current attempt state=running |
+| `pending` | ledger 无记录 |
+| `blocked` | report status=blocked |
+| `failed` | terminal failed/stopped 或 report failed |
+| `dropped` | 主干已 dropped（快照过期，需重新 `task.py goal`） |
 
 总结 marker 与退出码：
 
@@ -88,8 +90,8 @@ Step 4 / Step 6 达到 `max-1` 轮仍未过时，最后一轮前必须先在 `ta
 第 5 步自检扩充为三问，结论随统一提交询问列出：
 
 1. **AC 可证伪**：每条 AC 是 yes/no 可判；出现「可用/合理/正常/完好」类不可测词 → 就地改写。
-2. **task 原子性**：标题含「和/与/并」或一个 task 两个独立验收面 → 拆。
-3. **最弱依赖**：哪个 task 失败级联最多下游 → 评估是否降扇出或重排。
+1. **task 原子性**：标题含「和/与/并」或一个 task 两个独立验收面 → 拆。
+1. **最弱依赖**：哪个 task 失败级联最多下游 → 评估是否降扇出或重排。
 
 ## F. review AC 复验披露（share_prompt.txt）
 
@@ -98,10 +100,10 @@ Step 4 / Step 6 达到 `max-1` 轮仍未过时，最后一轮前必须先在 `ta
 ## 实施顺序与验证
 
 1. `repo_state.py` + `tests/repo_template/test_repo_state.py`（临时 git 仓验证三种子命令与降级路径）。
-2. `repo_task/goal.py` + cli.py 接线 + task.py façade 导出 + `tests/repo_template/test_goal.py`（快照写入、队列计算、三种 marker 与退出码、错误路径）。
-3. skill 文档四件（task-run / task-preflight / task-work / task-create）+ share_prompt.txt。
-4. AGENTS.md（`docs/runtime/` 写权行补 goal_queue.json、使用示例补 goal 命令）+ `docs/blueprint/architecture_repo_template.md`（职责分工资节补 goal 模式段落）。
-5. `python3 -m pytest tests -q` 全绿；`task.py goal --help` / `goal-check --help` 冒烟。
+1. `repo_task/goal.py` + cli.py 接线 + task.py façade 导出 + `tests/repo_template/test_goal.py`（快照写入、队列计算、三种 marker 与退出码、错误路径）。
+1. skill 文档四件（task-run / task-preflight / task-work / task-create）+ share_prompt.txt。
+1. AGENTS.md（`docs/runtime/` 写权行补 goal_queue.json、使用示例补 goal 命令）+ `docs/blueprint/architecture_repo_template.md`（职责分工资节补 goal 模式段落）。
+1. `python3 -m pytest tests -q` 全绿；`task.py goal --help` / `goal-check --help` 冒烟。
 
 ## 明确不做
 

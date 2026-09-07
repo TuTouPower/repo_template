@@ -1,5 +1,7 @@
 # Claude Code 会话实证分析与工作流改进建议（omni_usage, 2026-07）
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留所述项目与 task 区间的历史实证及原建议；正文中的“当前”、门禁轮次、命令和建议不构成现行规则。采纳状态统一见 [裁决总账](../decision_log.md)，现行执行入口见 [使用说明](../../repo/.repo_template/docs/usage.md)。
+
 > 落地状态见 `decision_log.md`。§1/§3/§4/§5 的 P0 建议已实施；§2 的 `/goal` hook 与 §8 Electron ABI 属宿主与项目特有，不进通用模板（L28）。文中 PASS 率与遗留数来自单一项目样本，按「方向正确、数值待复测」对待。
 
 ## 元信息
@@ -13,19 +15,19 @@
 ## TL;DR（按严重度）
 
 1. **审阅 finding 信噪比灾难**：首轮 PASS 率仅 29-30%；单 task 累计处置最多 1454 条，撤回+遗留远超已修。根因不是 reviewer 太严（同模型无能力差），是 finding 定义无界 + 上下文不对称 → P0
-2. **`/goal` hook 串行多 task 致单会话 context 溢出**：两个 19MB 会话、`Request too large` 中断、`2377` 次 error → P0
-3. **TDD 顺序违规 + 测试断言错误行为**：改测试适配实现、auth 改坏后仍过测 → P0
-4. **subagent 失控 + 503 无工作流出口**：13→8→2 agent 数量失守；11+ 次 503 后自定"容错上限"停手，不走 blocked → P1
-5. **spec 阶段对外部契约脑补**：CPA"官方接口/SK 前缀"全为假设，17 次"不是"纠错 → P1
+1. **`/goal` hook 串行多 task 致单会话 context 溢出**：两个 19MB 会话、`Request too large` 中断、`2377` 次 error → P0
+1. **TDD 顺序违规 + 测试断言错误行为**：改测试适配实现、auth 改坏后仍过测 → P0
+1. **subagent 失控 + 503 无工作流出口**：13→8→2 agent 数量失守；11+ 次 503 后自定"容错上限"停手，不走 blocked → P1
+1. **spec 阶段对外部契约脑补**：CPA"官方接口/SK 前缀"全为假设，17 次"不是"纠错 → P1
 
 ## 实证数据概览
 
-|会话|大小|task 跨度|审阅轮次分布|首轮 PASS|compact|
-|---|---|---|---|---|---|
-|`6cc03e0d` (7-21~24)|19MB|t041-t097 ~30 task|R1:103 / R2:76 / R3:6|19/66 = 29%|0（手动 `/clear` 接力）|
-|`af3dbbf3` (7-24~25)|19MB|t099-t105 7 task|R1:37 / R2:44 / R3-R5:16|16/54 = 30%|1|
-|`87f4adb0` (7-26)|7.2MB|t111-t118 8 task|处置 490 已修 / 203 撤回 / 761 遗留|—|多次，结尾 `Request too large`|
-|`587f2c52` (7-26)|2.6MB|t121|单 task 326 条处置（144 / 54 / 128）|—|—|
+| 会话 | 大小 | task 跨度 | 审阅轮次分布 | 首轮 PASS | compact |
+| --- | --- | --- | --- | --- | --- |
+| `6cc03e0d` (7-21~24) | 19MB | t041-t097 ~30 task | R1:103 / R2:76 / R3:6 | 19/66 = 29% | 0（手动 `/clear` 接力） |
+| `af3dbbf3` (7-24~25) | 19MB | t099-t105 7 task | R1:37 / R2:44 / R3-R5:16 | 16/54 = 30% | 1 |
+| `87f4adb0` (7-26) | 7.2MB | t111-t118 8 task | 处置 490 已修 / 203 撤回 / 761 遗留 | — | 多次，结尾 `Request too large` |
+| `587f2c52` (7-26) | 2.6MB | t121 | 单 task 326 条处置（144 / 54 / 128） | — | — |
 
 ______________________________________________________________________
 
@@ -201,15 +203,15 @@ ______________________________________________________________________
 
 ## 本轮新发现 vs 已知问题
 
-|问题|现有报告覆盖？|
-|---|---|
-|审阅信噪比 / 首轮 PASS 29%|否（新）|
-|`/goal` hook context 溢出|否（新，omni_media 未用 `/goal`）|
-|subagent 失控 + 503 无出口|否（新）|
-|TDD 顺序违规|否（新）|
-|原生模块 ABI 脚本|否（新，Electron 特有）|
-|spec/plan 模板字段重叠|是 → `workflow_reflection_1.md` §1|
-|`tasks_index.json` 多分支 merge 冲突|是 → `workflow_reflection_4.md` §1|
+| 问题 | 现有报告覆盖？ |
+| --- | --- |
+| 审阅信噪比 / 首轮 PASS 29% | 否（新） |
+| `/goal` hook context 溢出 | 否（新，omni_media 未用 `/goal`） |
+| subagent 失控 + 503 无出口 | 否（新） |
+| TDD 顺序违规 | 否（新） |
+| 原生模块 ABI 脚本 | 否（新，Electron 特有） |
+| spec/plan 模板字段重叠 | 是 → `workflow_reflection_1.md` §1 |
+| `tasks_index.json` 多分支 merge 冲突 | 是 → `workflow_reflection_4.md` §1 |
 
 ## 亮点（值得保留的做法）
 
@@ -221,18 +223,18 @@ ______________________________________________________________________
 
 ## 优先级汇总
 
-|P|问题|关键动作|
-|---|---|---|
-|P0|审阅信噪比|reviewer 加 AC 硬阈值 + review prompt 注入决策上下文 + Step 2 AC 断言清单（均不依赖换模型）|
-|P0|`/goal` context 溢出|每 task 切会话 + 单会话 `≤ 2` task + 强制 `/compact`|
-|P0|TDD 顺序违规|旧绿测只删不改 + reviewer 复核改测试|
-|P1|subagent 失控 + 503|审阅 `agent = 2` + infra blocked + 派发用文件路径|
-|P1|spec 脑补契约|未知契约清单必填 + 假设审计|
-|P1|bug → task 接口|只读调研后必须追加 `bugs.md`|
-|P1|任务建完又删|`add` 后确认才进 Step 1|
-|P1|ABI 脚本|自检产物 ABI + 移除 `poststart` 反切|
-|P2|工具误用|`known_pitfalls.md`|
-|P2|打包验证|纳入 `{blackbox_cmd}`|
-|P2|分支卫生|Step 1 强制 `git status` 校验|
-|P2|索引同步|`task.py finish` 引用校验|
-|P2|review 落地|`/multi-model-review` 强制建 task|
+| P | 问题 | 关键动作 |
+| --- | --- | --- |
+| P0 | 审阅信噪比 | reviewer 加 AC 硬阈值 + review prompt 注入决策上下文 + Step 2 AC 断言清单（均不依赖换模型） |
+| P0 | `/goal` context 溢出 | 每 task 切会话 + 单会话 `≤ 2` task + 强制 `/compact` |
+| P0 | TDD 顺序违规 | 旧绿测只删不改 + reviewer 复核改测试 |
+| P1 | subagent 失控 + 503 | 审阅 `agent = 2` + infra blocked + 派发用文件路径 |
+| P1 | spec 脑补契约 | 未知契约清单必填 + 假设审计 |
+| P1 | bug → task 接口 | 只读调研后必须追加 `bugs.md` |
+| P1 | 任务建完又删 | `add` 后确认才进 Step 1 |
+| P1 | ABI 脚本 | 自检产物 ABI + 移除 `poststart` 反切 |
+| P2 | 工具误用 | `known_pitfalls.md` |
+| P2 | 打包验证 | 纳入 `{blackbox_cmd}` |
+| P2 | 分支卫生 | Step 1 强制 `git status` 校验 |
+| P2 | 索引同步 | `task.py finish` 引用校验 |
+| P2 | review 落地 | `/multi-model-review` 强制建 task |

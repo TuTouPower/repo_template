@@ -1,5 +1,7 @@
 # Opus 审阅：docs_repo 全部复盘笔记
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留 2026-07 评审时的发现、建议和状态表，不是当前模板的缺陷清单或操作授权。后续裁决与实施状态见 [裁决总账](../../decision_log.md)，现行规则由 [工厂文档入口](../../README.md) 导航。正文旧路径及模型标识按原始记录保留。
+
 审阅范围：`workflow_feedback.md`（omni_media 理论）、`workflow_retrospective.md`（omni_media 实战 21 task）、`workflow_retrospective_0.md`（omni_media t001-t007）、`workflow_session_analysis_2026-07.md`（omni_usage 会话实证 80MB 日志）、`workflow_record.md`（worktree 事故）、`11111.md`（遗留备忘）、`archive/workflow_skill_split_proposal.md`（skill 拆分方案）。
 
 > **文件名勘误（2026-08-12 标注）**：本审阅正文保留审阅时点文件名，此后已改名：`11111.md` → 已删除，内容并入 `decision_log.md`；`workflow_feedback.md` → `workflow_reflection_1.md`；`workflow_record.md` → `workflow_reflection_2.md`；`workflow_retrospective_0.md` → `workflow_reflection_3.md`；`workflow_retrospective.md` → `workflow_reflection_4.md`；`workflow_session_analysis_2026-07.md` → `workflow_reflection_5.md`。`archive/workflow_skill_split_proposal.md` 未改名。
@@ -56,10 +58,10 @@ workflow_feedback §「spec/plan 边界的再评估」给出的解法「按读�
 具体建议（按笔记因果链）：
 
 1. **spec 模板分契约区 / 上下文区**。契约区=范围/非范围/AC（含可测试性声明）；上下文区=决策依据/测试策略/未知契约清单。reviewer prompt 明确「判 AC 只看契约区；判测试覆盖核对上下文区」。
-2. **render_review_prompts.py 注入决策上下文**。新增占位符 `{plan_context}`（或直接把 plan.md 的「已判定不测分支」「测试策略」段落抽进 prompt），消除信息差。
-3. **reviewer 硬阈值**：prompt 加「只报 AC 阻塞 / 行为级缺陷；建议加强测试降级为 non-blocking 备注」。当前 prompt 有「为凑数制造 finding」禁止项，但无积极阈值——负向约束不够，需正向锚定。
-4. **AC 断言清单前置**：Step 2 红阶段产出「AC→断言映射表」，reviewer 只核对清单覆盖，不自由发挥「还可以测什么」。
-5. **撤回率 > 30% 强制 reviewer 复盘 prompt**：check_review_status.py 检测 `已修/(已修+撤回+遗留)` 比例，超阈值则下一轮 review prompt 注入「上轮撤回原因」。
+1. **render_review_prompts.py 注入决策上下文**。新增占位符 `{plan_context}`（或直接把 plan.md 的「已判定不测分支」「测试策略」段落抽进 prompt），消除信息差。
+1. **reviewer 硬阈值**：prompt 加「只报 AC 阻塞 / 行为级缺陷；建议加强测试降级为 non-blocking 备注」。当前 prompt 有「为凑数制造 finding」禁止项，但无积极阈值——负向约束不够，需正向锚定。
+1. **AC 断言清单前置**：Step 2 红阶段产出「AC→断言映射表」，reviewer 只核对清单覆盖，不自由发挥「还可以测什么」。
+1. **撤回率 > 30% 强制 reviewer 复盘 prompt**：check_review_status.py 检测 `已修/(已修+撤回+遗留)` 比例，超阈值则下一轮 review prompt 注入「上轮撤回原因」。
 
 ______________________________________________________________________
 
@@ -76,8 +78,8 @@ ______________________________________________________________________
 我的判断：**笔记对，现状错**。理由：
 
 1. 「一个 commit」的初衷是可追溯 + 易回滚，但 21 task 实证显示它要么被违反（多修复点打包）、要么被架空（多 task 合一 commit），规则名存实亡。
-2. 「一主题 N commit」不损失可追溯——commit subject 含 tid，task.md 收尾引用全部 commit hash；反而比「强行一个巨型 commit」更易 review（每个 commit 原子）。
-3. 与审阅分级联动：commit 级 review（每原子 commit 独立）或 task 级总 review（最后一次），可由 risk_level 决定。
+1. 「一主题 N commit」不损失可追溯——commit subject 含 tid，task.md 收尾引用全部 commit hash；反而比「强行一个巨型 commit」更易 review（每个 commit 原子）。
+1. 与审阅分级联动：commit 级 review（每原子 commit 独立）或 task 级总 review（最后一次），可由 risk_level 决定。
 
 建议改 commit 策略：
 
@@ -178,19 +180,19 @@ ______________________________________________________________________
 
 ## 10. 改进优先级（综合四份笔记 + 当前现状）
 
-|优先级|项|来源|当前状态|动作|
-|---|---|---|---|---|
-|P0|reviewer 注入决策上下文 + AC 硬阈值|session_analysis P0 / feedback 再评估|未做（render 无 plan 注入，prompt 无阈值）|改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区|
-|P0|审阅按 risk_level 分级|三份笔记一致|未做（仅统一抬 max 到 4）|spec front matter 加 review_level + complexity；task.py 按级提示|
-|P0|tasks_index merge 冲突|retrospective §1 / 11111|未做（仍分支+JSON 单点写）|状态写 task.md front matter，JSON 改 derived data|
-|P1|commit 策略改「一主题 N commit」|feedback B / retrospective §7|未做（仍一 task 一 commit）|改 AGENTS.md commit 策略；task.md 收尾列 commit hash|
-|P1|blocked 加 infra 触发|session_analysis §4|未做（blocked 表只两行）|AGENTS.md blocked 表加第三行|
-|P1|worktree 隔离硬校验|workflow_record|未做|tasks-run Step 1 加 git worktree 校验|
-|P1|TDD 旧绿测只删不改|session_analysis §3|未做|AGENTS.md 开发原则 + test prompt 复核项|
-|P2|subagent prompt 文件路径化|session_analysis §2|部分（render 写 .scratch，需确认不内联正文）|审 tasks-run Step 5 派发方式|
-|P2|横向缺口 reviewer 建议开 task|retrospective_0 根因|半落实（prompt 有 follow-up 字段）|prompt 强化「引用已有 tid，不重复 finding」|
-|P2|AC 唯一源 spec.md|retrospective_0 痛点 7|未做（task.md 模板仍复制 AC）|改 task_template/task.md 收尾引用不复制|
-|P3|环境前置 doctor + 已知陷阱文档|retrospective_0 痛点 6 / session §9|未做|建 env_doctor task + known_pitfalls.md|
-|P3|/goal 切会话 + 单会话 ≤2 task|session_analysis §2|本仓未引入 /goal，预防性|引入 /goal 时同步加约束|
+| 优先级 | 项 | 来源 | 当前状态 | 动作 |
+| --- | --- | --- | --- | --- |
+| P0 | reviewer 注入决策上下文 + AC 硬阈值 | session_analysis P0 / feedback 再评估 | 未做（render 无 plan 注入，prompt 无阈值） | 改 render_review_prompts.py + code/test prompt + spec 模板分契约/上下文区 |
+| P0 | 审阅按 risk_level 分级 | 三份笔记一致 | 未做（仅统一抬 max 到 4） | spec front matter 加 review_level + complexity；task.py 按级提示 |
+| P0 | tasks_index merge 冲突 | retrospective §1 / 11111 | 未做（仍分支+JSON 单点写） | 状态写 task.md front matter，JSON 改 derived data |
+| P1 | commit 策略改「一主题 N commit」 | feedback B / retrospective §7 | 未做（仍一 task 一 commit） | 改 AGENTS.md commit 策略；task.md 收尾列 commit hash |
+| P1 | blocked 加 infra 触发 | session_analysis §4 | 未做（blocked 表只两行） | AGENTS.md blocked 表加第三行 |
+| P1 | worktree 隔离硬校验 | workflow_record | 未做 | tasks-run Step 1 加 git worktree 校验 |
+| P1 | TDD 旧绿测只删不改 | session_analysis §3 | 未做 | AGENTS.md 开发原则 + test prompt 复核项 |
+| P2 | subagent prompt 文件路径化 | session_analysis §2 | 部分（render 写 .scratch，需确认不内联正文） | 审 tasks-run Step 5 派发方式 |
+| P2 | 横向缺口 reviewer 建议开 task | retrospective_0 根因 | 半落实（prompt 有 follow-up 字段） | prompt 强化「引用已有 tid，不重复 finding」 |
+| P2 | AC 唯一源 spec.md | retrospective_0 痛点 7 | 未做（task.md 模板仍复制 AC） | 改 task_template/task.md 收尾引用不复制 |
+| P3 | 环境前置 doctor + 已知陷阱文档 | retrospective_0 痛点 6 / session §9 | 未做 | 建 env_doctor task + known_pitfalls.md |
+| P3 | /goal 切会话 + 单会话 ≤2 task | session_analysis §2 | 本仓未引入 /goal，预防性 | 引入 /goal 时同步加约束 |
 
 **一句话**：四份笔记诊断高度一致且相互印证，方向（分级/按读者切/derived data/横向开 task）都对；当前模板仓吸收了约三成（skill 拆分、max 抬 4、task-debt/bug 路由），剩下七成（reviewer 上下文、审阅分级、JSON 冲突、commit 粒度、blocked infra、worktree 校验、TDD 硬约束）是最该先做的。建议按 P0 三项先试点，不要全量推。

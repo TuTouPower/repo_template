@@ -2,7 +2,11 @@
 
 > **状态：已实施。** 裁决与实施日期：2026-09-06。
 >
-> 用户已逐项裁决并完成实施；当前行为真相落在 `repo/AGENTS.md`、`.repo_template/docs/usage.md`、skills、scripts 和测试。本文保留设计取舍与实施范围。
+> 用户已逐项裁决并完成实施；当前行为真相落在 `repo/AGENTS.md`、`.repo_template/docs/usage.md`、skills、scripts 和测试。本文保留设计取舍与实施范围，不是现行操作手册。
+>
+> **最终保留**：严格模板、ID 锁、四态、worktree、attempt/ledger/recovery、goal、review 三态与 scope、review/verify limit、一 task 一执行 commit、depends/conflicts + view/plan、sync 全能力、pending 子代理、worktree 状态栏 hook、md_kx pre-commit。
+>
+> **最终删除**：merge token hook、正式 blocked 与 `block`/`resume`、`schedule_status` 与复杂 tie-break、skill 内重复剧本。状态栏 hook 与格式化 hook **保留**（对应节标题「拒绝」= 当时否决删除）。
 
 ## 背景
 
@@ -18,7 +22,7 @@
 
 这与 `decision_log.md` L35 的方向存在张力：编程 Agent 能力会持续提高，工作流应保持薄而通用，不应不断用 hook、skill 和控制面替代 Agent 自身能力。
 
-2026-09-06 的 commit `f87e81b` 修复了现有复杂工作流中的依赖继承、review 最终内容绑定和中断恢复问题。该 commit 是对当前架构的正确性修补，不代表应永久保留全部架构。如果本文获批，后续可主动删除其中不再需要的 recovery、review scope 和 retry budget 等机制。
+2026-09-06 的 commit `f87e81b` 修复了现有复杂工作流中的依赖继承、review 最终内容绑定和中断恢复问题。该 commit 是对当时架构的正确性修补。L36 已按本文取舍实施；recovery、review scope 和 retry budget 保留。
 
 ## 目标原则
 
@@ -1367,9 +1371,11 @@ task-create
 | 十二：同步简化 | 拒绝行为变更；能力和流程全部保留，只精简 SKILL.md 重复文字 |
 | 十三：逐 skill 精简 | 同意，按可靠性门禁优先原则执行 |
 
-## 尚未阻塞实施的小参数
+## 实施期命名备选（历史快照）
 
-没有需要再次做产品方向裁决的事项。以下属于实施期可由 Agent按现有语义选择并通过测试确定的命名细节：
+下列是当时留给实施期的备选，不再是当前开放项。现有 CLI 使用 `limits` 和 `integrate` / `integrate-chain --continue`；恢复与验收以 [使用说明](../../repo/.repo_template/docs/usage.md) 为准。
+
+原备选：
 
 - 新的上限调整命令最终叫 `limits`、`extend-limits` 或其它清晰名称；
 - Git 原生 integrate 是否用 `--finish/--abort` 包装，或直接提示原生 Git 命令；

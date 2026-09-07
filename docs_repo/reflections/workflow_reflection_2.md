@@ -1,3 +1,7 @@
+# t071 共享工作区未提交改动丢失事故
+
+> **阅读说明（2026-09-08T01:42:21+08:00）**：以下保留事故时的会话记录、reflog 和恢复建议；“当前”指事故现场，不是现在的仓库状态。事故精确时间与最终恢复结果未在本文件留证，不补造。后续隔离规则见 [裁决总账](../decision_log.md) L4 和 [执行架构](../../repo/.repo_template/docs/architecture.md)。
+
 > 落地状态见 `decision_log.md`。本文教训已固化为默认 worktree 隔离与 `task.py preflight` 工作区门禁（L4）。
 
 责任在我。问题分三层：
@@ -34,18 +38,18 @@ worktree 隔离保护。这里没有做。
 已确认事实：
 
 1. t071 分支创建成功，task.py start t071 把 t071 标为 active。
-2. 在共享目录写入过 t071 内容：
-    \- tests/unit/t071_rate_limit_hardening.test.ts
-    \- src/lib/rate_limit/config.ts
-    \- src/lib/rate_limit/fixed_window.ts
-    \- src/instrumentation.ts
-    \- src/instrumentation.node.ts
-    \- scripts/smoke_rate_limit_startup.ts
-    \- package.json
-    \- t071 task.md 的 diff_anchor
-3. 这些改动没有提交。
-4. 随后同一个仓库根目录被切回 main，当前 main 存在 t102 合并冲突。
-5. reflog 记录了这次共享工作区状态切换：
+1. 在共享目录写入过 t071 内容：
+   \- tests/unit/t071_rate_limit_hardening.test.ts
+   \- src/lib/rate_limit/config.ts
+   \- src/lib/rate_limit/fixed_window.ts
+   \- src/instrumentation.ts
+   \- src/instrumentation.node.ts
+   \- scripts/smoke_rate_limit_startup.ts
+   \- package.json
+   \- t071 task.md 的 diff_anchor
+1. 这些改动没有提交。
+1. 随后同一个仓库根目录被切回 main，当前 main 存在 t102 合并冲突。
+1. reflog 记录了这次共享工作区状态切换：
 
 checkout: moving from t071_rate_limit_trusted_proxies to main
 reset: moving to HEAD
@@ -93,7 +97,7 @@ worktree，再开始测试和代码修改。
 
 - t071 分支：仍存在，但没有 t071 提交，指向创建时基础提交 faa1ecf。
 - t071 状态：启动时已写为 active；当前 docs/tasks_index.json 存在
-    t102 冲突，不能安全确认或改写。
+  t102 冲突，不能安全确认或改写。
 - t071 未提交实现：已丢失，需在隔离 worktree 中重建。
 - t102 冲突：未修改。
 - main / t110 / t102 文件：不应触碰。
@@ -103,8 +107,8 @@ worktree，再开始测试和代码修改。
 恢复时应按以下顺序：
 
 1. 不处理、不覆盖当前 main 的 t102 冲突。
-2. 基于既有 t071_rate_limit_trusted_proxies 分支创建独立 worktree。
-3. 只在该 worktree 内恢复 t071 测试和实现。
-4. t071 完成验证、review、归档后，按项目规则形成唯一 task commit。
-5. 主 worktree 与 t071 worktree 分开运行；不在主目录执行 t071 的 git
-    switch、reset、build 产物清理或任务状态操作。
+1. 基于既有 t071_rate_limit_trusted_proxies 分支创建独立 worktree。
+1. 只在该 worktree 内恢复 t071 测试和实现。
+1. t071 完成验证、review、归档后，按项目规则形成唯一 task commit。
+1. 主 worktree 与 t071 worktree 分开运行；不在主目录执行 t071 的 git
+   switch、reset、build 产物清理或任务状态操作。

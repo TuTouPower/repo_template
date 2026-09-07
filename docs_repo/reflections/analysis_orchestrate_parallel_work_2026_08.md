@@ -1,5 +1,7 @@
 # orchestrateParallelWork-skill 借鉴分析
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文的现状、测试结果与建议属于正文所列项目和历史时段，不代表当前工厂仓或外部项目状态。后续模板裁决见 [裁决总账](../decision_log.md)，当前工具链见 [使用说明](../../repo/.repo_template/docs/usage.md)。原始日志、外部环境和模型容量未在本次复验；引用这些结论作新决策前须在目标环境重新取证。
+
 日期：2026-08-07（同日按双份外部评审修正）
 对象仓库：https://github.com/wyizhou/orchestrateParallelWork-skill （本地副本 `~/github_repo/orchestrateParallelWork-skill`）
 目的：评估该 skill 的机制，筛出可借鉴到本模板 task 工作流的部分。
@@ -14,11 +16,11 @@
 
 对方机制分三层，强度递减。本文第一版曾统一写成「运行时硬门禁」，高估了其自动化与防绕过程度：
 
-|层|内容|强度|
-|---|---|---|
-|A. 编译期硬校验|`compileBundle` 系列：批准 hash、parallel_conflict、validator 白名单、覆盖闭合、档位约束|端到端强制，计划不过编译即拒绝|
-|B. 状态机库函数|`activateNode` / `assertNodeSubmission` / `assertNodeTransition` / `staleDescendants` / `invalidateArtifactDescendants` / `markReadyNodes` / `approvalMatches` 等|有完整测试，但**无生产调用方、未接入 CLI**；全仓唯一生产导入者 graphctl.mjs 只用 `compileBundle` / `loadBundle` / `validateRuntimeRegistries`|
-|C. 规程约定|Node test/lint 提交门、实际调度与状态迁移、stale 传播执行、重试不覆盖历史、能力探测与串行降级|SKILL.md / references/\*.md 要求 Agent 自觉遵守，代码无强制点|
+| 层 | 内容 | 强度 |
+| --- | --- | --- |
+| A. 编译期硬校验 | `compileBundle` 系列：批准 hash、parallel_conflict、validator 白名单、覆盖闭合、档位约束 | 端到端强制，计划不过编译即拒绝 |
+| B. 状态机库函数 | `activateNode` / `assertNodeSubmission` / `assertNodeTransition` / `staleDescendants` / `invalidateArtifactDescendants` / `markReadyNodes` / `approvalMatches` 等 | 有完整测试，但**无生产调用方、未接入 CLI**；全仓唯一生产导入者 graphctl.mjs 只用 `compileBundle` / `loadBundle` / `validateRuntimeRegistries` |
+| C. 规程约定 | Node test/lint 提交门、实际调度与状态迁移、stale 传播执行、重试不覆盖历史、能力探测与串行降级 | SKILL.md / references/\*.md 要求 Agent 自觉遵守，代码无强制点 |
 
 CLI 唯一入口 `graphctl.mjs:12-18` 明文声明只读（"The tool is read-only. It never starts workers or changes plan state"），仅暴露 `validate` / `summary` / `hash` / `check-state` 四个子命令。
 
@@ -57,7 +59,9 @@ CLI 唯一入口 `graphctl.mjs:12-18` 明文声明只读（"The tool is read-onl
 - 失效传播：`staleDescendants`（:647-659）将已接受输入变化的下游传递闭包全部置 stale，`invalidateArtifactDescendants`（:661-665）经 producer node 包装。函数有测试但未接入口，实际传播靠 Coordinator 调用。
 - 平台适配：能力探测 + 安全降级（无委派/隔离能力时降级串行）。仅存在于规程文档（references/runtime-generic.md:5-9,45、runtime-claude-code.md、runtime-codex.md、SKILL.md:109），代码无强制点。与 A 层硬校验并列展示时须标注强度差异。
 
-## 本模板现状对照
+## 本模板现状对照（2026-08-07 快照）
+
+> **后续落点**：当前 spec 已有 `AC-NNN`，handoff 的 `ac_evidence` 精确覆盖由门禁校验；L36 已移除 `schedule_status` 和旧 `awaiting_verification` 事务。下列缺口分析保留原样，不能将“无 AC ID”或“先 merge commit 后验证”继续当作现状。现行定义见 [使用说明](../../repo/.repo_template/docs/usage.md) 与 [执行架构](../../repo/.repo_template/docs/architecture.md)。
 
 - 依赖/冲突：`depends_on` / `conflicts_with` 由 task-schedule 的 Agent 人工分析落盘。脚本机械校验（`repo_task/scheduling.py`）当前覆盖：自引用拒绝、引用不存在 task、引用 dropped task、depends_on 环检测、schedule_status 合法性、dep-ready 冲突阻塞规则、next-batch 互斥择优、stalled 停滞哨兵；另有 `cmd_edit` 侧依赖×冲突冗余门禁（lifecycle.py:267-321）。**调度死锁环校验曾在 7df2c3d 加入、546a59d 已移除**（dep-ready 收紧后等待环可证恒空，死代码删除），本文第一版「脚本校验…调度死锁环」表述已过时。冲突判定本身无机械化辅助。
 - 验证链：task-work Step 2-4 红→绿→黑盒由实施 agent 自己执行；结果以自述字符串写入 `handoff.json`（`tests` / `blackbox` / `review` 仅要求非空字符串，`"tests": "随便写的"` 一样通过，monitoring.py:132-144,196）；`verify_integrate_ready`（monitoring.py:153-237）校验格式、attempt/execution_id identity、分支终态与执行 commit provenance，不校验结果真实性。
@@ -90,7 +94,7 @@ CLI 唯一入口 `graphctl.mjs:12-18` 明文声明只读（"The tool is read-onl
 二选一：
 
 1. 新增 `owned_scopes` 结构化字段（改数据模型），脚本做前缀重叠判定。须处理：task 创建时未读代码导致路径声明不准、glob 与目录前缀语义、测试/schema/配置/文档间接冲突、多 task 共改派生索引但非业务冲突的例外。
-2. 不加字段，由 Agent 从 spec 推断路径、输出候选冲突对供裁剪——此时属 Agent 辅助而非脚本机械判定，强度降一档，不能声称「机械兜底」。
+1. 不加字段，由 Agent 从 spec 推断路径、输出候选冲突对供裁剪——此时属 Agent 辅助而非脚本机械判定，强度降一档，不能声称「机械兜底」。
 
 ### 借鉴 4. handoff 证据结构化（原 a，定位降级为审计增强）
 

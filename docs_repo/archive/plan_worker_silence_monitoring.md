@@ -1,8 +1,8 @@
 # Worker 静默监控权威设计
 
-> **过时（2026-08-12 标注）**：本文描述的 agent executor 静默监控 / coordinator / `host_worker_id` 查询机制已于 [`decision_log.md`](../decision_log.md) L35 随 dispatch 退役。executor 仅 `inline`，无 agent 宿主静默监控。当前执行架构权威见 `../../docs/blueprint/architecture_repo_template.md`。
+> **过时（2026-08-12 标注；2026-09-07 迁 archive）**：本文描述的 agent executor 静默监控 / coordinator / `host_worker_id` 查询机制已于 [`decision_log.md`](../decision_log.md) L35 随 dispatch 退役。executor 仅 `inline`，无 agent 宿主静默监控。现行执行架构见 [`../../repo/.repo_template/docs/architecture.md`](../../repo/.repo_template/docs/architecture.md)。正文是当时设计，不是现行操作手册。
 
-本文是 agent executor 静默监控的当前权威设计。调度控制面的总体 reconcile 架构见 [`plan_dispatch_control_plane.md`](plan_dispatch_control_plane.md)；attempt identity 与生命周期见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)。
+本文当时是 agent executor 静默监控的设计。当时调度控制面见 [`plan_dispatch_control_plane.md`](plan_dispatch_control_plane.md)；attempt identity 见 [`plan_attempt_lifecycle_closure.md`](plan_attempt_lifecycle_closure.md)。
 
 ## 目标与边界
 
@@ -26,9 +26,9 @@
 `repository_fingerprint(worktree)` 计算稳定 SHA-256，输入依次为：
 
 1. `HEAD` commit；
-2. `git diff --binary --cached --no-ext-diff --full-index` 的原始 bytes；
-3. `git diff --binary --no-ext-diff --full-index` 的原始 bytes；
-4. `git ls-files --others --exclude-standard -z` 给出的非 ignored untracked 条目，按原始路径 bytes 排序后逐项加入路径、类型、mode 与内容。
+1. `git diff --binary --cached --no-ext-diff --full-index` 的原始 bytes；
+1. `git diff --binary --no-ext-diff --full-index` 的原始 bytes；
+1. `git ls-files --others --exclude-standard -z` 给出的非 ignored untracked 条目，按原始路径 bytes 排序后逐项加入路径、类型、mode 与内容。
 
 规则：
 
@@ -53,10 +53,10 @@ python3 scripts/repo_template/task.py observe TID \
 执行前校验：
 
 1. 命令运行于主仓主干；
-2. exact identity 是该 tid 的 current running attempt；
-3. executor=agent 且已 bind；
-4. 对应 worktree 存在并已登记；
-5. 登记分支、worktree 当前分支与 tid ownership 一致。
+1. exact identity 是该 tid 的 current running attempt；
+1. executor=agent 且已 bind；
+1. 对应 worktree 存在并已登记；
+1. 登记分支、worktree 当前分支与 tid ownership 一致。
 
 成功输出 fingerprint、是否变化、最后变化时间、静默分钟数、`host_worker_id`、HEAD、worktree 和 dirty 摘要。首次观察或 fingerprint 变化时追加精确绑定 identity 的 `observation`；未变化时只输出，不追加。
 
@@ -88,11 +88,11 @@ reserved、terminal、reported、待 cleanup/integrate 等生命周期状态由 
 `task.py reconcile --silent-minutes N` 默认 `N=30`。对每个 current identity 按以下边界处理：
 
 1. `reserved`：等待 bind，继续占槽；不 observe。
-2. agent 宿主仍 running：执行 exact observe；超过阈值时输出 `alert-silent`，否则继续占槽。
-3. 宿主进入 `completed|failed|stopped`：coordinator 先执行 exact terminal，再根据 handoff/宿主结果执行 exact report。
-4. terminal completed + refs/handoff ready：输出 exact cleanup/integrate；正常流程已在前一步写入 report done。
-5. report blocked：输出 exact escalate，不派替代 worker。
-6. report failed：按失败分类决定新 reserve 或 escalate；新 attempt 只能在旧 attempt terminal 后创建。
+1. agent 宿主仍 running：执行 exact observe；超过阈值时输出 `alert-silent`，否则继续占槽。
+1. 宿主进入 `completed|failed|stopped`：coordinator 先执行 exact terminal，再根据 handoff/宿主结果执行 exact report。
+1. terminal completed + refs/handoff ready：输出 exact cleanup/integrate；正常流程已在前一步写入 report done。
+1. report blocked：输出 exact escalate，不派替代 worker。
+1. report failed：按失败分类决定新 reserve 或 escalate；新 attempt 只能在旧 attempt terminal 后创建。
 
 `alert-silent` 示例：
 
@@ -113,11 +113,11 @@ ALERT-SILENT t272 attempt=1 execution_id=0123456789abcdef0123456789abcdef host_w
 每次 Agent 通知、cron 到点、integrate 完成或用户消息唤醒时：
 
 1. 从 current agent identity 读取 `host_worker_id`，查询宿主后台任务状态；
-2. 对宿主仍 running 的 identity 执行 `task.py observe TID --attempt N --execution-id ID --json`；
-3. 对宿主 terminal 的 identity 依次执行 exact `attempt terminal`、`attempt report`；
-4. 执行 `task.py reconcile ... --silent-minutes 30`；
-5. 执行普通 dispatch/redispatch/integrate/escalate 计划；
-6. 遇 `alert-silent` 时执行 exact `attempt silent-alert`，向用户报告并注销 cron，停止自动调度。
+1. 对宿主仍 running 的 identity 执行 `task.py observe TID --attempt N --execution-id ID --json`；
+1. 对宿主 terminal 的 identity 依次执行 exact `attempt terminal`、`attempt report`；
+1. 执行 `task.py reconcile ... --silent-minutes 30`；
+1. 执行普通 dispatch/redispatch/integrate/escalate 计划；
+1. 遇 `alert-silent` 时执行 exact `attempt silent-alert`，向用户报告并注销 cron，停止自动调度。
 
 告警报告至少包含 tid、attempt、execution_id、静默时长、`host_worker_id` 与宿主状态、最后变化时间、HEAD、worktree 和 dirty 摘要。报告后保留 Agent、worktree、分支和 attempt 原状，等待用户决定；不得取消、重派、写失败或 reserve 同 tid 新 attempt。
 

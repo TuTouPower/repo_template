@@ -1,73 +1,43 @@
-# React + TypeScript + Vite
+# Task 看板 Demo
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+用于演示任务 DAG、链式规划与批次交互的前端应用，仅供模板工厂开发参考，不随 `repo/` 复制到消费项目。
 
-Currently, two official plugins are available:
+## 数据与边界
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+页面从 `src/lib/mockData.ts` 读取内置模拟数据；不是消费仓 `task.py view --serve` 的实时看板。界面上的规划和完成操作用于演示，不据此判定真实 task 状态或派发 agent。设计背景见 [执行计划](../plan.md)，现行工具链入口见 [消费仓用法](../../../repo/.repo_template/docs/usage.md)。
 
-## React Compiler
+## 本地运行
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+前置条件：Node.js 与 npm。当前 `package-lock.json` 中 Vite 和 React 插件的 Node.js 要求为 `^20.19.0 || >=22.12.0`；安装前检查 `node --version`。依赖精确版本以 lockfile 为准，而非初始化记录 `info.md`。
 
-## Expanding the ESLint configuration
+从工厂仓根进入 Demo 后执行：
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd docs_repo/demos/app
+npm ci
+npm run dev -- --host 127.0.0.1
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+`npm ci` 会按 lockfile 重建本目录的 `node_modules/`，需要依赖下载源可达。安装或启动失败时停止，按报错检查 Node.js 版本、网络和依赖，不删除 lockfile 绕过问题；修复后重跑失败步骤。开发端口配置为 3000，实际地址以终端输出为准；用 Ctrl+C 停止服务。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 检查与构建
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+在本目录执行：
+
+```bash
+npm run lint
+npm run build
+npm run preview -- --host 127.0.0.1
 ```
+
+各步骤分别检查退出码，失败时停止后续步骤。`build` 先运行 TypeScript 构建检查，再由 Vite 输出到已忽略的 `dist/`；只在构建成功后启动预览。预览服务用 Ctrl+C 停止，生成文件不手工维护，修复源码后重新构建。
+
+浏览器验证：页面可加载；切换数据集后 DAG 与链列表更新；选择任务可查看详情。构建通过不等于这些交互已验证，也不代表与真实 task 工具链完成集成。
+
+## 实现入口
+
+- `src/pages/Home.tsx`：页面状态、数据集切换与交互编排。
+- `src/lib/mockData.ts`：模拟数据与异步取数。
+- `src/lib/chainPlan.ts`、`src/lib/batchPlan.ts`：链操作与批次规划。
+- `src/components/board/`：DAG、链列表与任务详情组件。
+- `src/main.tsx`、`vite.config.ts`：HashRouter 与相对资源路径配置。

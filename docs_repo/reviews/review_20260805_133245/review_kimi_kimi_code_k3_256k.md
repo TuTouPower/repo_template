@@ -1,5 +1,7 @@
 # 代码审阅报告
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文是 2026-08-05 评审及其采纳记录；原采纳/不采纳结论保留，不据当前代码重新裁决。dispatch 自动调度和旧合并事务此后已演进，见 [裁决总账](../../decision_log.md) L35/L36。正文中的 HEAD、路径、行号和修复建议均属于当时范围，不用于指挥当前执行。
+
 ## 本路模型标识
 
 Kimi (kimi-code/k3-256k)
@@ -143,10 +145,10 @@ Kimi (kimi-code/k3-256k)
 ## 改进建议
 
 1. 优先修 H1（integrate-chain 恢复路径校验墙），这是 transaction 机制核心价值的缺口。
-2. 统一向后兼容策略：M2/M3 一批破坏性变更（账本 execution_id、handoff.json 依赖、CLI 改名、identity 强制）建议集中写一份迁移说明，能加 alias/迁移脚本的加上。
-3. 补两类测试：contract+resume 自动重试路径（M9）、escalate action 的 identity 断言（M10）——前者丢的是整段可达逻辑，后者守的是本次重构的核心不变量。
-4. 统一 reconcile action 术语：实现已用 `dispatch+mode`，把文档的 `redispatch` 改掉（M8）。
-5. 清一批搬运残留：未使用 import、`control.py` 死分支、`compute_ps_rows` 死参数（L2/L3），让「未使用 import」类检查在包内重新有效。
+1. 统一向后兼容策略：M2/M3 一批破坏性变更（账本 execution_id、handoff.json 依赖、CLI 改名、identity 强制）建议集中写一份迁移说明，能加 alias/迁移脚本的加上。
+1. 补两类测试：contract+resume 自动重试路径（M9）、escalate action 的 identity 断言（M10）——前者丢的是整段可达逻辑，后者守的是本次重构的核心不变量。
+1. 统一 reconcile action 术语：实现已用 `dispatch+mode`，把文档的 `redispatch` 改掉（M8）。
+1. 清一批搬运残留：未使用 import、`control.py` 死分支、`compute_ps_rows` 死参数（L2/L3），让「未使用 import」类检查在包内重新有效。
 
 ## 不确定项
 

@@ -15,7 +15,7 @@ disable-model-invocation: true
 3. 分类为 `bug` 或 `需求`。
 4. 在 `.scratch/repo_template_issues/` 写本地完整版，使用既定报告模板。
 5. 生成 `.issue.md` 脱敏版：去除用户名、绝对路径、仓库名、业务细节、内部 URL/IP 和所有 secret；模板相对路径可保留。
-6. `gh` 可用且已登录时向模板仓创建一条 issue；不可用则报告两份本地文件供人工交接。
+6. 从已确认的模板源确定 GitHub `<owner>/<repo>`，不要默认用消费仓 origin。核对 `gh` 可用且已登录、目标仓库与脱敏正文，查重后用 `gh issue create --repo <owner>/<repo> --title <问题摘要> --body-file <脱敏版路径>` 发布。目标无法确认或 GitHub 不可用则停止发布，报告两份本地文件供人工交接。成功须取得 issue 编号或地址；超时先查询是否已创建，避免重复发布。
 
 ## 报告结构
 

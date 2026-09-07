@@ -1,19 +1,21 @@
 # 工作流实战复盘
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留所述项目与 task 区间的历史实证及原建议；正文中的“当前”、门禁轮次、命令和建议不构成现行规则。采纳状态统一见 [裁决总账](../decision_log.md)，现行执行入口见 [使用说明](../../repo/.repo_template/docs/usage.md)。
+
 > 落地状态见 `decision_log.md`。§1 方案 C（不切分支、全在 main 上做）未被采纳为全局教条——它与 `workflow_reflection_2.md`（原 `incident_t071_worktree_loss.md`）回答的不是同一问题，当前规则是默认 worktree 隔离（L4/L30）。
 
 基于 omni_media 项目执行 21 个 task（t041-t061）的完整记录复盘。与 `workflow_reflection_1.md`（原 `workflow_feedback.md`，理论分析）互补，本文聚焦**实战中暴露的、之前未预测到的问题**。
 
 ## 执行概况
 
-|指标|数据|
-|---|---|
-|task 总数|21（20 done + 1 dropped 后拆为 6 个子 task 全 done）|
-|审阅 task|10 个走了完整审阅（t041-t046）；其余 11 个直接收尾|
-|审阅轮次|t041: 3 轮, t042: 4 轮, t043: 4 轮, t044: 5 轮, t045: 4 轮, t046: 3 轮|
-|总 commit|31|
-|测试基线→最终|343 → 370 passed（+27 用例）|
-|分支数|11 个独立分支 + 4 个在 main 上直接做|
+| 指标 | 数据 |
+| --- | --- |
+| task 总数 | 21（20 done + 1 dropped 后拆为 6 个子 task 全 done） |
+| 审阅 task | 10 个走了完整审阅（t041-t046）；其余 11 个直接收尾 |
+| 审阅轮次 | t041: 3 轮, t042: 4 轮, t043: 4 轮, t044: 5 轮, t045: 4 轮, t046: 3 轮 |
+| 总 commit | 31 |
+| 测试基线→最终 | 343 → 370 passed（+27 用例） |
+| 分支数 | 11 个独立分支 + 4 个在 main 上直接做 |
 
 ## 实战暴露的结构性问题
 
@@ -111,11 +113,11 @@
 ## 做得好的设计（保留）
 
 1. **specs driven 防漂移**：spec 在前确实让"做什么"先于"怎么做"清晰
-2. **max_review_round 上限**：防止无限循环（即使 5 轮也是有限的）
-3. **blocked 机制**：t050 dropped → 拆分为 t056-t061 是正确的终止决策
-4. **task.py 自动化**：降低状态管理心智负担（虽然有 merge 冲突问题）
-5. **adoption_decision.md**：16 份 review 报告 → 63 采纳项 → 15 个 task 的完整追溯链非常有效
-6. **审阅对关键 task 的价值**：t041/t044/t045 的 reviewer 发现了真实 critical bug（new Function RCE、余额泄漏、幂等缺口）
+1. **max_review_round 上限**：防止无限循环（即使 5 轮也是有限的）
+1. **blocked 机制**：t050 dropped → 拆分为 t056-t061 是正确的终止决策
+1. **task.py 自动化**：降低状态管理心智负担（虽然有 merge 冲突问题）
+1. **adoption_decision.md**：16 份 review 报告 → 63 采纳项 → 15 个 task 的完整追溯链非常有效
+1. **审阅对关键 task 的价值**：t041/t044/t045 的 reviewer 发现了真实 critical bug（new Function RCE、余额泄漏、幂等缺口）
 
 ## 改进建议（按优先级）
 

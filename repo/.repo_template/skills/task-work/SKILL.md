@@ -21,7 +21,7 @@ description: none
 
 ### 黑盒验证
 
-有 `{blackbox_verify}` 时必须执行并触达用户或调用方可观察行为。失败后修复并重验；达到 `verify_limit` 停止并报告。项目未定义黑盒命令时明确记录“未定义”，不能伪写通过。
+`docs/blueprint/testing.md` 的 `blackbox_verify` 章节正文不是「无」时必须执行，并触达用户或调用方可观察行为。失败后修复并重验；达到 `verify_limit` 停止并报告。项目未定义黑盒命令时明确记录“未定义”，不能伪写通过。
 
 ### 独立 review
 
@@ -41,4 +41,4 @@ description: none
 
 ## 完成
 
-交给 task-run：`{tid} attempt={N} execution_id={ID}: {branch} @ {sha}`，并附测试、黑盒、review、pending/finding 和 worktree 摘要。停止时改为报告门禁、所需输入和恢复入口。
+交给 task-run：tid、正整数 attempt、非空 execution_id、分支与执行 commit SHA，并附测试、黑盒、review、pending/finding 和 worktree 摘要。停止时改为报告门禁、所需输入和恢复入口。

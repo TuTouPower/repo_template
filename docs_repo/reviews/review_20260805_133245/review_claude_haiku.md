@@ -1,5 +1,7 @@
 # 审阅报告 — Claude Haiku
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文是 2026-08-05 评审及其采纳记录；原采纳/不采纳结论保留，不据当前代码重新裁决。dispatch 自动调度和旧合并事务此后已演进，见 [裁决总账](../../decision_log.md) L35/L36。正文中的 HEAD、路径、行号和修复建议均属于当时范围，不用于指挥当前执行。
+
 ## 本路模型标识
 
 Claude Haiku（`default_haiku[1m]`）
@@ -77,14 +79,14 @@ Claude Haiku（`default_haiku[1m]`）
 ## 改进建议
 
 1. `overlapping_attempts`（H1）与 `reserved` 超时（H2）建议补测试：分别覆盖"重叠全 terminal 后 invalid 应清除或给出恢复指引""reserved 悬挂超时自动回收"。
-2. `cmd_integrate` 的 `record` 在 merge 前捕获，`append_integrated` 依赖 `record["state"] != "integrated"`；若 `_commit_index()` 成功而 `append_integrated` 失败，二次 integrate（不带 --continue）走 is-ancestor 分支自愈，已确认幂等，可保留但建议加注释。
-3. skill 文档（task-dispatch/task-run）建议与 H2/H3 的恢复语义同步，避免协调器在文档未覆盖的悬挂态下机械等待。
-4. `attempts.py:29` project 中 `"reserved": event` 直接引用原事件对象，跨事件复用时可读性尚可；如后续有事件字段扩展，注意 `model` 可空字段的兼容。
+1. `cmd_integrate` 的 `record` 在 merge 前捕获，`append_integrated` 依赖 `record["state"] != "integrated"`；若 `_commit_index()` 成功而 `append_integrated` 失败，二次 integrate（不带 --continue）走 is-ancestor 分支自愈，已确认幂等，可保留但建议加注释。
+1. skill 文档（task-dispatch/task-run）建议与 H2/H3 的恢复语义同步，避免协调器在文档未覆盖的悬挂态下机械等待。
+1. `attempts.py:29` project 中 `"reserved": event` 直接引用原事件对象，跨事件复用时可读性尚可；如后续有事件字段扩展，注意 `model` 可空字段的兼容。
 
 ## 不确定项
 
 1. `documents.py`（348 行）与 `store.py` 的 `discover_effective_tasks` / `rebuild_index` 仅 diff 抽查，未逐行核验 front matter 校验与索引重建的原子性。
-2. 未运行任何测试（审阅要求不跑）；`tests/repo_template/test_dispatch_integration.py`（+750 行）与 `test_task_modularization.py` 未逐条核对断言与 H1/H2 疑点是否已有覆盖。
-3. `integration.py:368-371` `_collect_chain` 按"被其他成员祖先数"排序：当链成员含分支点（非纯线性）或存在同 tid 多分支残留时行为未验证，实际依赖 `_resolve_integrate_branch` 前置拒绝多分支。
-4. 并发 start 撞车场景下 `rollback_start` 的"未登记分支但 worktree 存在"分支路径（worktrees.py:141）依赖 `worktree prune` 的时序，未实测。
-5. ledger 手工损坏（JSON 断行）时 `_read_unlocked` 跳过并告警，但 `ledger_next_attempt` 基于存活事件计算，损坏行可能导致 attempt 号回退重用，未确认是否有意容错。
+1. 未运行任何测试（审阅要求不跑）；`tests/repo_template/test_dispatch_integration.py`（+750 行）与 `test_task_modularization.py` 未逐条核对断言与 H1/H2 疑点是否已有覆盖。
+1. `integration.py:368-371` `_collect_chain` 按"被其他成员祖先数"排序：当链成员含分支点（非纯线性）或存在同 tid 多分支残留时行为未验证，实际依赖 `_resolve_integrate_branch` 前置拒绝多分支。
+1. 并发 start 撞车场景下 `rollback_start` 的"未登记分支但 worktree 存在"分支路径（worktrees.py:141）依赖 `worktree prune` 的时序，未实测。
+1. ledger 手工损坏（JSON 断行）时 `_read_unlocked` 跳过并告警，但 `ledger_next_attempt` 基于存活事件计算，损坏行可能导致 attempt 号回退重用，未确认是否有意容错。

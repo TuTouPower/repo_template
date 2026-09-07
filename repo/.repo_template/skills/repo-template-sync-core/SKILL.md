@@ -11,7 +11,7 @@ disable-model-invocation: true
 ## 硬边界
 
 - 仅用户显式请求时运行；禁止在模板仓本体把自己同步给自己。
-- apply 前只读；共享资产有歧义时必须先由用户裁定。
+- 共享资产裁定前不改这些资产；启动器 `init`/`prep` 已可能写入 state、脚本与入口，URL 源的 status/plan 也会更新 `.scratch/` 源缓存。这些写入属于同步准备的副作用。共享资产有歧义时必须先由用户裁定。
 - 不覆盖 secret、本机路径或消费项目业务内容。
 - apply 后测试通过且用户批准才 commit；不 push。
 
@@ -19,15 +19,15 @@ disable-model-invocation: true
 
 1. **确认源**：读取 `sync_state.json` 和模板源状态；源缺失、同一性冲突或 dirty 影响版本判断时停止说明。
 2. **status**：运行 `repo_sync.py status`，报告模板版本、消费状态和漂移。
-3. **plan**：运行 `repo_sync.py plan`，取得硬同步、共享文件、技能入口和删除候选；本步零写盘。
+3. **plan**：运行 `repo_sync.py plan`，取得硬同步、共享文件、技能入口和删除候选；本步不修改待同步资产；URL 源解析会 clone/pull 本地缓存。
 4. **裁定**：
     - `.repo_template/`、模板配置和生成入口按脚本硬同步；
     - `.gitignore` / MCP 只做安全的键或规则合并；
-    - `AGENTS.md` 按语义合并，保留消费项目骨架和业务约定；
+    - `AGENTS.md` 按语义合并，保留消费项目骨架和业务约定；批准后由 Agent 编辑，`--decision AGENTS.md:merge` 只记录处理方式，不替 Agent 合并正文；
     - 宿主 settings 不自动覆盖，只合并明确需要且不含 secret/本机路径的片段；
     - 手写文件和用户 prompt 保护项保持不动，冲突交用户决定。
-5. **apply**：把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、共享文件写入、workflow schema 强制更新和 state 字段级更新。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
-6. **验证**：运行同步后的 `.repo_template/tests` 和脚本报告的结构检查。失败不推进 state、不 commit，并报告回滚或残留现场。
+5. **apply**：先保存本次会覆盖文件的未提交内容和当前 state，作为失败恢复基线；用户已有改动无法隔离时停止。把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、共享文件写入、workflow schema 强制更新和 state 字段级更新。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
+6. **验证**：运行同步后的 `.repo_template/tests` 和脚本报告的结构检查。写盘异常触发脚本回滚；内置测试返回失败则不推进 state，但保留已写入文件，不能声称已自动回滚。停止且不 commit，核对 diff 与预先保存的基线后修复重验；不要用 `--skip-tests` 绕过。若 apply 已成功推进 state 后的额外检查失败，报告实际 state，不伪称未推进。
 7. **审批**：列出实际改动、测试、模板源版本和仍待决定项，询问是否 commit；批准后只提交本轮同步内容。
 
 ## 保留的完整语义

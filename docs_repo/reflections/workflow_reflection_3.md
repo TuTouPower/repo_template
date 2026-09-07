@@ -1,5 +1,7 @@
 # 开发工作流反思(t001-t007 实跑复盘)
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留所述项目与 task 区间的历史实证及原建议；正文中的“当前”、门禁轮次、命令和建议不构成现行规则。采纳状态统一见 [裁决总账](../decision_log.md)，现行执行入口见 [使用说明](../../repo/.repo_template/docs/usage.md)。
+
 > 落地状态见 `decision_log.md`。痛点 1/7 与横向缺口根因已吸收；痛点 5「round N 新 finding 不该强制 N+1」已通过 round 语义改为回归轮次实现（L8）。文中「审阅对简单 task 过重」已由 `review_level` 分级解决（L5）。
 
 > 基于 omni_media 项目 t001-t007(7 个 task,Next.js 全栈 MVP)走完整标准工作流的真实记录。本文档记录实际碰到的痛点、具体例子、代价,以及改进建议。目的:让后续项目调流程,减少摩擦。
@@ -8,13 +10,13 @@
 
 7 个 task 产生 **39 条 review finding**,分类:
 
-|类|条数|占比|实际价值|
-|---|---|---|---|
-|真 bug / 安全问题|~11|28%|高(改了防真实故障)|
-|spec 过时(实现对的,spec 没同步)|4|10%|零(处置=改 spec,代码不动)|
-|重复模式(同问题每 task 重提)|4|10%|零(每次标遗留)|
-|nitpick(改不改两可)|6|15%|低(防御/品味)|
-|测试覆盖缺口(smoke 写太薄)|~14|36%|中(补测有价值,根因是缺单测层)|
+| 类 | 条数 | 占比 | 实际价值 |
+| --- | --- | --- | --- |
+| 真 bug / 安全问题 | ~11 | 28% | 高(改了防真实故障) |
+| spec 过时(实现对的,spec 没同步) | 4 | 10% | 零(处置=改 spec,代码不动) |
+| 重复模式(同问题每 task 重提) | 4 | 10% | 零(每次标遗留) |
+| nitpick(改不改两可) | 6 | 15% | 低(防御/品味) |
+| 测试覆盖缺口(smoke 写太薄) | ~14 | 36% | 中(补测有价值,根因是缺单测层) |
 
 **真 bug 只占 28%,但噪音 finding(A+B+C=14 条,36%)每条都要读 + 写处置表 + 改/标遗留 + 重跑 + 可能触发 round 2。** 噪音消耗的 turn 反而比真 bug 多(真 bug 改起来快且明确)。
 
@@ -26,12 +28,12 @@ ______________________________________________________________________
 
 **具体例子(t001,一轮审阅触发 4 条 + 整轮 round 2)**:
 
-|finding|spec 写的|实际实现|处置|
-|---|---|---|---|
-|t001_code_f001|"Next.js 15 + Tailwind 3.4"|`create-next-app@latest` 装 Next 16 + Tailwind v4|改 spec|
-|t001_code_f002|"`web/` 目录"|项目根(用户中途改"一统全栈"架构)|改 spec|
-|t001_code_f003|"shadcn/ui(Radix 组件)"|shadcn 新版底层换 `@base-ui/react`|改 spec|
-|t001_code_f004|"`tailwind.config.ts`"|v4 用 `globals.css @theme`(无 config 文件)|改 spec|
+| finding | spec 写的 | 实际实现 | 处置 |
+| --- | --- | --- | --- |
+| t001_code_f001 | "Next.js 15 + Tailwind 3.4" | `create-next-app@latest` 装 Next 16 + Tailwind v4 | 改 spec |
+| t001_code_f002 | "`web/` 目录" | 项目根(用户中途改"一统全栈"架构) | 改 spec |
+| t001_code_f003 | "shadcn/ui(Radix 组件)" | shadcn 新版底层换 `@base-ui/react` | 改 spec |
+| t001_code_f004 | "`tailwind.config.ts`" | v4 用 `globals.css @theme`(无 config 文件) | 改 spec |
 
 **代价**:4 条 important FAIL → 写处置表 → 改 spec.md → 重跑 → round 2 审阅复核。**整个 round 2(2 个 sub agent)只为确认"spec 改对了"。** 代码零改动。
 
@@ -71,11 +73,11 @@ ______________________________________________________________________
 
 **具体例子(t002,3 条全 minor,0 真 bug)**:
 
-|finding|内容|价值|
-|---|---|---|
-|t002_code_f001|`.env.example` 含 t003/t005 的 SUPABASE/S3 占位(超 t002 scope)|项目级 env 模板含全部占位是惯例,非偏航|
-|t002_code_f002|smoke 用 `new PrismaClient` 而非 `src/lib/db` 单例|smoke 是一次性脚本,HMR 单例对它无意义|
-|t002_test_f001|同 code_f002|同上|
+| finding | 内容 | 价值 |
+| --- | --- | --- |
+| t002_code_f001 | `.env.example` 含 t003/t005 的 SUPABASE/S3 占位(超 t002 scope) | 项目级 env 模板含全部占位是惯例,非偏航 |
+| t002_code_f002 | smoke 用 `new PrismaClient` 而非 `src/lib/db` 单例 | smoke 是一次性脚本,HMR 单例对它无意义 |
+| t002_test_f001 | 同 code_f002 | 同上 |
 
 3 条 minor,处置代价:写处置表 + 改 smoke import 单例 + 精简 .env.example + 重跑 smoke + round 2 审阅。**round 2 两个 sub agent 复核两条 minor 改动。**
 
@@ -133,13 +135,13 @@ ______________________________________________________________________
 
 **具体例子(每个都耗 5-15 turn 诊断)**:
 
-|问题|task|现象|诊断过程|
-|---|---|---|---|
-|WSL Turbopack dev HMR ws 失败|t001|受控组件 onChange 不触发|手动 Playwright 才发现是 dev 模式 hydrate 问题,production 正常|
-|Prisma 7 配置大改|t002|`url` 移出 schema,driver-adapter 强制|查错误 + 降级 Prisma 6|
-|MinIO 下载受阻|t005|proxy 7890 对 dl.min.io SSL 握手 eof|试 curl/wget/直连都失败,改用 Supabase Storage|
-|@aws-sdk endpoint path 剥离|t005|forcePathStyle 剥 `/storage/v1`,请求落 Kong 根 404|抓 raw response 才发现 path 丢了|
-|Supabase Storage S3 protocol 不兼容|t005|XML parse error(响应非 S3 XML)|看 $response 才发现是 404 route not found|
+| 问题 | task | 现象 | 诊断过程 |
+| --- | --- | --- | --- |
+| WSL Turbopack dev HMR ws 失败 | t001 | 受控组件 onChange 不触发 | 手动 Playwright 才发现是 dev 模式 hydrate 问题,production 正常 |
+| Prisma 7 配置大改 | t002 | `url` 移出 schema,driver-adapter 强制 | 查错误 + 降级 Prisma 6 |
+| MinIO 下载受阻 | t005 | proxy 7890 对 dl.min.io SSL 握手 eof | 试 curl/wget/直连都失败,改用 Supabase Storage |
+| @aws-sdk endpoint path 剥离 | t005 | forcePathStyle 剥 `/storage/v1`,请求落 Kong 根 404 | 抓 raw response 才发现 path 丢了 |
+| Supabase Storage S3 protocol 不兼容 | t005 | XML parse error(响应非 S3 XML) | 看 $response 才发现是 404 route not found |
 
 **代价**:每个问题 5-15 turn 诊断 + 方案调整。t005 一个 task 耗在环境兼容上的 turn 比写代码还多。
 
@@ -156,8 +158,8 @@ ______________________________________________________________________
 **现象**:验收标准(AC)在三个地方维护,信息重复:
 
 1. `spec.md` 的"验收标准"(权威源)
-2. `task.md` 的"收尾报告 → 验收标准勾选"(复制 spec AC + 勾选)
-3. 处置表/review 间接引用 AC
+1. `task.md` 的"收尾报告 → 验收标准勾选"(复制 spec AC + 勾选)
+1. 处置表/review 间接引用 AC
 
 spec AC 变(如 t001 改技术栈),task.md 的勾选版本要同步改,否则不一致。
 
@@ -174,17 +176,17 @@ ______________________________________________________________________
 
 **痛点 2/4/6 的共同根因**。复盘发现,三次遇到跨 task 的系统性缺口,三次都选择在业务 task 内打补丁 + 标遗留,而不是开独立基础设施 task 根治:
 
-|横向缺口|实际行为(打补丁)|正确做法(独立 task)|
-|---|---|---|
-|无单测框架(痛点 4)|纯函数塞进 smoke + reviewer 反复挑"测试面偏离"|第一次发现就开 `test_framework` task 引入 vitest|
-|getUserId/notFound 重复(痛点 2)|t004/t006 各标一次遗留|t004 发现就开 `auth_helper_refactor` task|
-|环境陷阱(痛点 6)|每个 task 重新诊断(WSL HMR/Prisma7/MinIO/...)|开 `env_doctor` task,建前置检查脚本 + 已知陷阱文档|
+| 横向缺口 | 实际行为(打补丁) | 正确做法(独立 task) |
+| --- | --- | --- |
+| 无单测框架(痛点 4) | 纯函数塞进 smoke + reviewer 反复挑"测试面偏离" | 第一次发现就开 `test_framework` task 引入 vitest |
+| getUserId/notFound 重复(痛点 2) | t004/t006 各标一次遗留 | t004 发现就开 `auth_helper_refactor` task |
+| 环境陷阱(痛点 6) | 每个 task 重新诊断(WSL HMR/Prisma7/MinIO/...) | 开 `env_doctor` task,建前置检查脚本 + 已知陷阱文档 |
 
 **为什么没开(执行失误的根因)**:
 
 1. **scope 守过头**:"一个 task 一个 scope"理解太死板,把横向基础设施(单测框架/auth helper)误判为"超当前 task scope"。实际上它们是独立需求,该独立 task。
-2. **goal 推进压力**:goal hook 催做完既定 task(t002-t007),开新 task = 更多工作,本能回避。
-3. **没第一时间识别系统性**:第一次遇到(如 t003 映射单测)绕过,第二次(t005)才意识到系统性,但已 mid-task,没停下来开。
+1. **goal 推进压力**:goal hook 催做完既定 task(t002-t007),开新 task = 更多工作,本能回避。
+1. **没第一时间识别系统性**:第一次遇到(如 t003 映射单测)绕过,第二次(t005)才意识到系统性,但已 mid-task,没停下来开。
 
 **AGENTS.md 已明确**:"一个需求拆成 N 个 task,过大则继续拆"。单测框架/auth helper refactor/环境 doctor 都是独立需求,符合"拆 task"条件,但执行时没拆。
 
@@ -210,16 +212,16 @@ ______________________________________________________________________
 
 ## 改进建议汇总(可执行)
 
-|#|建议|消除的痛点|代价|
-|---|---|---|---|
-|**0**|**发现横向系统性缺口(测试/公共代码/环境/工具链)立即开 backlog task 根治,不在业务 task 打补丁**|**2/4/6 共因(根因)**|低(流程规则)|
-|1|spec 只写行为 AC,技术选型落 ADR|#1 spec 过时|低(改 spec 模板说明)|
-|2|reviewer 发现横向缺口时建议开新 task,而非标遗留|#2 重复模式|低(改 reviewer prompt)|
-|3|审阅分级:复杂逻辑审阅,基础设施单审/self-review|#3 过重|中(改 review 编排)|
-|4|minor-only FAIL 不强制 round 2|#3 过重|低(改门禁规则)|
-|5|引入 vitest,纯函数单测脱离 smoke(由 #0 的 test_framework task 落地)|#4 无单测|中(test_framework task)|
-|6|round N 新 finding 允许 round N 内处置收尾,不强制 N+1|#5 blocked 陷阱|低(改流程描述)|
-|7|task Step 1 加环境前置 doctor + 维护已知陷阱文档(由 #0 的 env_doctor task 落地)|#6 环境诊断|中(env_doctor task)|
-|8|AC 唯一源 spec.md,task.md 引用不复制|#7 文档重复|低(改模板)|
+| # | 建议 | 消除的痛点 | 代价 |
+| --- | --- | --- | --- |
+| **0** | **发现横向系统性缺口(测试/公共代码/环境/工具链)立即开 backlog task 根治,不在业务 task 打补丁** | **2/4/6 共因(根因)** | 低(流程规则) |
+| 1 | spec 只写行为 AC,技术选型落 ADR | #1 spec 过时 | 低(改 spec 模板说明) |
+| 2 | reviewer 发现横向缺口时建议开新 task,而非标遗留 | #2 重复模式 | 低(改 reviewer prompt) |
+| 3 | 审阅分级:复杂逻辑审阅,基础设施单审/self-review | #3 过重 | 中(改 review 编排) |
+| 4 | minor-only FAIL 不强制 round 2 | #3 过重 | 低(改门禁规则) |
+| 5 | 引入 vitest,纯函数单测脱离 smoke(由 #0 的 test_framework task 落地) | #4 无单测 | 中(test_framework task) |
+| 6 | round N 新 finding 允许 round N 内处置收尾,不强制 N+1 | #5 blocked 陷阱 | 低(改流程描述) |
+| 7 | task Step 1 加环境前置 doctor + 维护已知陷阱文档(由 #0 的 env_doctor task 落地) | #6 环境诊断 | 中(env_doctor task) |
+| 8 | AC 唯一源 spec.md,task.md 引用不复制 | #7 文档重复 | 低(改模板) |
 
 **最高 ROI:#0(横向缺口开 task,根因)+ #1(spec 不写死技术)+ #5(vitest)+ #7(环境 doctor)**。#0 是元改进(它本身会催生 #5/#7 的 task),消掉 ~60% 噪音 turn。

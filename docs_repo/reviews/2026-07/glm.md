@@ -1,5 +1,7 @@
 # docs_repo 全量审阅意见（GLM）
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留 2026-07 评审时的发现、建议和状态表，不是当前模板的缺陷清单或操作授权。后续裁决与实施状态见 [裁决总账](../../decision_log.md)，现行规则由 [工厂文档入口](../../README.md) 导航。正文旧路径及模型标识按原始记录保留。
+
 - **范围**：`docs_repo/` 下全部文件（含 `archive/` 与 `review/`）
 - **已读对照**：`review/gemini.md`、`review/grok.md`、`review/k3.md`——本文不重复三者已建立的共识，仅在其基础上补充分歧、被忽略的盲点，以及更具体的落地形态。
 - **日期**：2026-07-27（UTC+8）
@@ -11,11 +13,11 @@ ______________________________________________________________________
 
 ## 0. 与已有三份审阅的关系
 
-|已有审阅|做对了什么|我补充什么|
-|---|---|---|
-|gemini|概括了证据强度与主结论，结构清晰|末尾的"落地到 AGENTS"建议过简，未指出落地时的操作冲突；对 `11111.md` 与 `workflow_record.md` 的改造停留在"归档/整理"层，不够|
-|grok|"证据强于方案、方案强于落地跟踪"的核心判断准确；§3.3 的冲突裁决到位|§6 的 P0/P1 行动项与 CLAUDE.md 现行字段未做逐条映射，可执行性仍偏弱；"裁决 §3.3"未给出裁决格式|
-|k3|跨文档总账意识最强；"缺的是总账而非复盘"这一元判断最锋利|提出了 `decision_log.md` 但没定义它；"建议落地率存疑"是断言但未做盘点|
+| 已有审阅 | 做对了什么 | 我补充什么 |
+| --- | --- | --- |
+| gemini | 概括了证据强度与主结论，结构清晰 | 末尾的"落地到 AGENTS"建议过简，未指出落地时的操作冲突；对 `11111.md` 与 `workflow_record.md` 的改造停留在"归档/整理"层，不够 |
+| grok | "证据强于方案、方案强于落地跟踪"的核心判断准确；§3.3 的冲突裁决到位 | §6 的 P0/P1 行动项与 CLAUDE.md 现行字段未做逐条映射，可执行性仍偏弱；"裁决 §3.3"未给出裁决格式 |
+| k3 | 跨文档总账意识最强；"缺的是总账而非复盘"这一元判断最锋利 | 提出了 `decision_log.md` 但没定义它；"建议落地率存疑"是断言但未做盘点 |
 
 本文做三件事：(1) 一张落地状态总账，终结"已改/仍缺/已否决"三态不明；(2) 一组裁决表，收敛 grok §3.3 的四个冲突；(3) 一组被三份审阅漏掉但应该单独提出的文档级与流程级问题。
 
@@ -25,24 +27,24 @@ ______________________________________________________________________
 
 > 表格只列**被两份以上复盘诊断过**的议题。单文档独有意见不进总账，避免再增噪。
 
-|#|议题|出处（≥2 份）|当前模板状态|建议裁决|
-|---|---|---|---|---|
-|L1|`tasks_index.json` 多分支 merge 冲突|feedback §4/E、retrospective §1、11111#3、session §12|JSON 仍是唯一权威；task.py 仍是唯一写者|**P0**：状态写 per-task front matter，index 改 derived；见 §3.1|
-|L2|审阅 finding 无界 / 信噪比低|session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3|share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控|**P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2|
-|L3|reviewer 缺决策上下文 → 撤回率堆积|session §1b、feedback 再评估节|render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt|**P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无"|
-|L4|branch ≠ worktree，未提交丢失|record、retrospective §1、session §11|tasks-run 未强制 worktree；tasks-parallel 仅提示|**P0**：tasks-run Step 1 加工作区门禁；见 §3.3|
-|L5|审阅对所有 task 无差别（文档/格式也审阅）|feedback §3/C、retrospective §2、retrospective_0 痛点 3|仍固定审阅|**P1**：`review_level: full\|single\|none` 进 spec front matter|
-|L6|plan.md 实际弃用 / 退化为 spec 副本|feedback §1+A、retrospective §4、session §1b|模板仍是「步骤+风险+blueprint」，未按读者切|**P1**：按读者重划——spec 吸收契约区+上下文区；plan 降为可选实施笔记；见 §3.4|
-|L7|spec 写死技术选型 → 过时 → FAIL 循环|retrospective_0 痛点 1、feedback §1|spec 模板已约束"不写版本号/库/目录"；code_prompt 技术约束不判 blocking|**已吸收**；补一条：发现 spec 技术字段漂移时改 spec 不计 FAIL|
-|L8|max_review_round 不够 / 语义模糊|retrospective §3、retrospective_0 痛点 5、session §1|默认已抬到 4；round 语义仍混（出场次数 vs 闭环次数）|**P1**：round 定义为"同一批 finding 的回归轮次"；新 finding 不强制 N+1|
-|L9|横向缺口只标遗留、不开 task|retrospective_0 根因节、feedback、session §13、11111#1|review 输出"系统性 follow-up"；task-debt skill 已有|**已吸收**；强化：遗留 finding 必须映射到 tid，禁止悬空|
-|L10|AC 三处维护（spec / task.md 勾选 / 处置表）|retrospective_0 痛点 7|task_template 已约束"引用不复制"|**已吸收**|
-|L11|TDD 顺序违规（改测试适配实现）|session §3|test_prompt 有红灯归因，**无"旧绿测只删不改预期"硬句**|**P1**：加硬句；见 §3.5|
-|L12|blocked 原因表只覆盖 blackbox/review|session §4|blocked 表无 infra 路径|**P1**：加 `--reason infra`|
-|L13|spec 脑补外部契约|session §5|spec 模板无「未知契约清单」|**P1**：spec 增必填项；见 §3.4|
-|L14|commit 粒度"一 task 一 commit"与实战脱节|feedback B、retrospective §7|仍写"执行期一个 task 一个 commit"|**待裁决**；见 §3.6|
-|L15|bug 调研后不开 task、只口头|session §6|无硬约束|**P2**：CLAUDE.md 加"只读调研完必须追加 bugs.md + 提议 task"|
-|L16|任务建完又删|session §7|无 add 后确认门|**P2**：`task.py add` 后列影响文件，等确认才进 Step 1|
+| # | 议题 | 出处（≥2 份） | 当前模板状态 | 建议裁决 |
+| --- | --- | --- | --- | --- |
+| L1 | `tasks_index.json` 多分支 merge 冲突 | feedback §4/E、retrospective §1、11111#3、session §12 | JSON 仍是唯一权威；task.py 仍是唯一写者 | **P0**：状态写 per-task front matter，index 改 derived；见 §3.1 |
+| L2 | 审阅 finding 无界 / 信噪比低 | session §1、feedback §3/C、retrospective §2、retrospective_0 痛点 3 | share_prompt 有 Pre-Report Gate 雏形，无 AC 硬阈值；撤回率无监控 | **P0**：reviewer finding 必须锚 AC 或行为级缺陷，"建议加测"降 non-blocking；见 §3.2 |
+| L3 | reviewer 缺决策上下文 → 撤回率堆积 | session §1b、feedback 再评估节 | render_review_prompts 以 spec 为中心；plan 的"有意不测"未强制进 reviewer prompt | **P0**：review prompt 注入「有意不测清单」与「未知契约清单」；无则显式写"无" |
+| L4 | branch ≠ worktree，未提交丢失 | record、retrospective §1、session §11 | tasks-run 未强制 worktree；tasks-parallel 仅提示 | **P0**：tasks-run Step 1 加工作区门禁；见 §3.3 |
+| L5 | 审阅对所有 task 无差别（文档/格式也审阅） | feedback §3/C、retrospective §2、retrospective_0 痛点 3 | 仍固定审阅 | **P1**：`review_level: full\|single\|none` 进 spec front matter |
+| L6 | plan.md 实际弃用 / 退化为 spec 副本 | feedback §1+A、retrospective §4、session §1b | 模板仍是「步骤+风险+blueprint」，未按读者切 | **P1**：按读者重划——spec 吸收契约区+上下文区；plan 降为可选实施笔记；见 §3.4 |
+| L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retrospective_0 痛点 1、feedback §1 | spec 模板已约束"不写版本号/库/目录"；code_prompt 技术约束不判 blocking | **已吸收**；补一条：发现 spec 技术字段漂移时改 spec 不计 FAIL |
+| L8 | max_review_round 不够 / 语义模糊 | retrospective §3、retrospective_0 痛点 5、session §1 | 默认已抬到 4；round 语义仍混（出场次数 vs 闭环次数） | **P1**：round 定义为"同一批 finding 的回归轮次"；新 finding 不强制 N+1 |
+| L9 | 横向缺口只标遗留、不开 task | retrospective_0 根因节、feedback、session §13、11111#1 | review 输出"系统性 follow-up"；task-debt skill 已有 | **已吸收**；强化：遗留 finding 必须映射到 tid，禁止悬空 |
+| L10 | AC 三处维护（spec / task.md 勾选 / 处置表） | retrospective_0 痛点 7 | task_template 已约束"引用不复制" | **已吸收** |
+| L11 | TDD 顺序违规（改测试适配实现） | session §3 | test_prompt 有红灯归因，**无"旧绿测只删不改预期"硬句** | **P1**：加硬句；见 §3.5 |
+| L12 | blocked 原因表只覆盖 blackbox/review | session §4 | blocked 表无 infra 路径 | **P1**：加 `--reason infra` |
+| L13 | spec 脑补外部契约 | session §5 | spec 模板无「未知契约清单」 | **P1**：spec 增必填项；见 §3.4 |
+| L14 | commit 粒度"一 task 一 commit"与实战脱节 | feedback B、retrospective §7 | 仍写"执行期一个 task 一个 commit" | **待裁决**；见 §3.6 |
+| L15 | bug 调研后不开 task、只口头 | session §6 | 无硬约束 | **P2**：CLAUDE.md 加"只读调研完必须追加 bugs.md + 提议 task" |
+| L16 | 任务建完又删 | session §7 | 无 add 后确认门 | **P2**：`task.py add` 后列影响文件，等确认才进 Step 1 |
 
 共 16 条。**已吸收 3 条**（L7/L9/L10），**P0 共 4 条**（L1-L4），**P1 共 7 条**，**P2 共 2 条**，**待裁决 1 条**。这就是四份复盘 1200+ 行换来的全部共识，可以收敛。
 
@@ -96,7 +98,7 @@ ______________________________________________________________________
 三份审阅一致认可方向，但没给迁移路径。分两步：
 
 1. **写权下沉**：task.py `add`/`start`/`finish`/`drop` 时，在对应 `docs/tasks/{tid}_{slug}/task.md` 的 front matter 写入 `status`、`active_at`、`done_at`、`depends_on`、`review_level`、`risk`。每分支只改自己的 task.md，零冲突。
-2. **index 派生**：`tasks_index.json` 改为 `task.py list --rebuild` 扫描所有 task.md 生成；main 上 merge 后跑一次 rebuild。分支不写 JSON。
+1. **index 派生**：`tasks_index.json` 改为 `task.py list --rebuild` 扫描所有 task.md 生成；main 上 merge 后跑一次 rebuild。分支不写 JSON。
 
 迁移风险：现有 task.md 的 front matter 可能不规范。先跑一次 `task.py doctor --migrate-frontmatter` 把历史 task 状态补齐，再切换读写路径。
 
@@ -113,9 +115,9 @@ ______________________________________________________________________
 record 事故的根因是"branch ≠ worktree"。门禁写成可执行检查：
 
 1. `git status --porcelain` 输出为空，或所有改动属于本 task 目录
-2. `git branch --show-current` 与 `{tid}` 匹配（若用分支模式）
-3. 若 `git status` 含未提交改动且不属于本 task → **拒绝开干，报告后等用户处置**
-4. 若仓库被多会话共享（`tasks-parallel` 模式）→ 强制 `git worktree add` 到独立目录后再改代码
+1. `git branch --show-current` 与 `{tid}` 匹配（若用分支模式）
+1. 若 `git status` 含未提交改动且不属于本 task → **拒绝开干，报告后等用户处置**
+1. 若仓库被多会话共享（`tasks-parallel` 模式）→ 强制 `git worktree add` 到独立目录后再改代码
 
 第 4 条是 record 事故的直接防御。第 3 条是 session §11 的建议。前两条是基础卫生。
 

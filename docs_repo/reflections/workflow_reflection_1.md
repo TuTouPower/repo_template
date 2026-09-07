@@ -9,10 +9,10 @@
 CLAUDE.md 定义的开发工作流基于五条核心假设：
 
 1. **task 是独立可验证的最小单元**（"一个需求拆成 N 个 task，每个结果独立可验证，一个 task 一个 commit"）
-2. **spec/plan 分离让"想清楚"和"做"分离**
-3. **门禁（黑盒 5 轮 / 审阅 5 轮）保证质量**
-4. **索引（tasks_index.json / specs_index.md）保证可追溯**
-5. **追加式记录（handoff.md / bugs.md）保留历史**
+1. **spec/plan 分离让"想清楚"和"做"分离**
+1. **门禁（黑盒 5 轮 / 审阅 5 轮）保证质量**
+1. **索引（tasks_index.json / specs_index.md）保证可追溯**
+1. **追加式记录（handoff.md / bugs.md）保留历史**
 
 实际操作中，1、3、5 大体成立；2、4 暴露了结构性问题。
 
@@ -100,12 +100,12 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 工作流不是全错，以下设计应保留：
 
 1. **specs driven 防止实施时范围漂移**：spec 在前确实让"做什么"先于"怎么做"清晰
-2. **门禁上限防止无限循环**：5 轮黑盒 / 2 轮审阅是合理的硬上限
-3. **blocked 机制明确"何时问用户"**：避免 agent 卡死或自作主张推进
-4. **spike / task 二分**：技术选型（spike）和需求实现（task）解耦，干净
-5. **AGENTS.md 文档规范**（禁止元引用 / 单一权威定义 / 禁止元 ticket 编号嵌入正文）：文档质量确实更高
-6. **追加式 handoff**：保留时间线，新 agent 能续接，历史决策可追溯
-7. **task.py 自动化**：降低状态管理心智负担（虽然有 bug 但方向对）
+1. **门禁上限防止无限循环**：5 轮黑盒 / 2 轮审阅是合理的硬上限
+1. **blocked 机制明确"何时问用户"**：避免 agent 卡死或自作主张推进
+1. **spike / task 二分**：技术选型（spike）和需求实现（task）解耦，干净
+1. **AGENTS.md 文档规范**（禁止元引用 / 单一权威定义 / 禁止元 ticket 编号嵌入正文）：文档质量确实更高
+1. **追加式 handoff**：保留时间线，新 agent 能续接，历史决策可追溯
+1. **task.py 自动化**：降低状态管理心智负担（虽然有 bug 但方向对）
 
 ## 改进建议（按收益排序）
 
@@ -149,11 +149,11 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 
 #### C. 审阅按 task 风险等级
 
-|Task 类型|流程|
-|---|---|
-|CRITICAL / HIGH 资金 / 安全 / 并发|审阅 + e2e|
-|MEDIUM 代码|单审（code 或 test 二选一）+ 单测|
-|LOW / 文档 / 风格 / 配置|lint 通过 + 自验收（无 reviewer）|
+| Task 类型 | 流程 |
+| --- | --- |
+| CRITICAL / HIGH 资金 / 安全 / 并发 | 审阅 + e2e |
+| MEDIUM 代码 | 单审（code 或 test 二选一）+ 单测 |
+| LOW / 文档 / 风格 / 配置 | lint 通过 + 自验收（无 reviewer） |
 
 减少无效成本，把审阅精力集中在风险高的地方。task spec 加 `risk_level` 字段，task.py 根据 risk_level 提示对应流程。
 
@@ -213,20 +213,20 @@ CLAUDE.md 自承"后置 task 的 spec/plan 随前置完成修订"——这承认
 ### 两个正交维度
 
 1. **读者**：spec 给 reviewer / 后置 task / finalization（他人）；plan 给 agent 自己
-2. **稳定性**：spec 是契约（AC 定了不该动）；plan 是工作笔记（随实现调整）
+1. **稳定性**：spec 是契约（AC 定了不该动）；plan 是工作笔记（随实现调整）
 
 ### 按读者重新归位
 
-|信息|读者|稳定性|归属|
-|---|---|---|---|
-|范围 / AC|reviewer|契约|spec|
-|可测试性声明|reviewer|契约|spec（新增）|
-|决策上下文（有意不测的分支）|reviewer|契约|spec（从 plan 收编）|
-|未知契约清单|reviewer / 用户|契约|spec（新增）|
-|测试策略|reviewer|半稳定|spec（从 plan 收编）|
-|风险与回退|agent / 处置|易变|plan（简单 task 可省）|
-|文件级实现步骤|agent|易变|plan（可省，agent 现场定）|
-|技术决策细节|agent|易变|plan（改进建议 A 的核心）|
+| 信息 | 读者 | 稳定性 | 归属 |
+| --- | --- | --- | --- |
+| 范围 / AC | reviewer | 契约 | spec |
+| 可测试性声明 | reviewer | 契约 | spec（新增） |
+| 决策上下文（有意不测的分支） | reviewer | 契约 | spec（从 plan 收编） |
+| 未知契约清单 | reviewer / 用户 | 契约 | spec（新增） |
+| 测试策略 | reviewer | 半稳定 | spec（从 plan 收编） |
+| 风险与回退 | agent / 处置 | 易变 | plan（简单 task 可省） |
+| 文件级实现步骤 | agent | 易变 | plan（可省，agent 现场定） |
+| 技术决策细节 | agent | 易变 | plan（改进建议 A 的核心） |
 
 净效果：**spec 吸收所有"对他人稳定可见"的信息，plan 退化为"给 agent 自己的易变笔记"**。简单 task 可不要 plan，agent 拿强 spec 现场定 HOW——对应会话分析中"agent 执行时自行决定"的方向。
 
@@ -259,15 +259,17 @@ reviewer 提示词明确"判 AC 时只看契约区；判测试覆盖时核对上
 - t041 / t043 / t044 / t045 / t046 / t047 真正需要审阅 + e2e（安全 / 资金 / 关键前端 / e2e 基础设施）
 - t048-t055 走简化流程（lint + spot check）就够
 
-## 待决策项
+## 原始待决策项（历史快照）
 
-实施上述改进前需明确：
+下列问题保留当时提案上下文，不是当前待办队列；后续裁决见 [裁决总账](../decision_log.md) L1、L5、L6、L14、L21、L26、L27。
+
+当时实施上述改进前需明确：
 
 1. **plan 模板分级**：是否接受三套模板？还是保留单模板但重写字段定义？
-2. **task 粒度**：从"一个 task 一个 commit"改为"一个 task 一个主题，N 个 commit"，是否接受？
-3. **审阅分级**：是否接受按 risk_level 分级？risk_level 由谁定（agent 推断 / 用户指定）？
-4. **索引简化**：tasks_index.json 是保留 task.py 唯一权威，还是改为 archive-only？
-5. **依赖图**：是否引入 depends_on 字段？
-6. **spec/plan 边界**：接受"按读者重划"——spec 收编决策上下文 + 测试策略 + 未知契约清单，plan 只留 agent 私有实施细节（plan_code 收窄）？还是保持改进建议 A（plan 承载测试策略）？
+1. **task 粒度**：从"一个 task 一个 commit"改为"一个 task 一个主题，N 个 commit"，是否接受？
+1. **审阅分级**：是否接受按 risk_level 分级？risk_level 由谁定（agent 推断 / 用户指定）？
+1. **索引简化**：tasks_index.json 是保留 task.py 唯一权威，还是改为 archive-only？
+1. **依赖图**：是否引入 depends_on 字段？
+1. **spec/plan 边界**：接受"按读者重划"——spec 收编决策上下文 + 测试策略 + 未知契约清单，plan 只留 agent 私有实施细节（plan_code 收窄）？还是保持改进建议 A（plan 承载测试策略）？
 
 建议先在一两个新 task 上试点 A/B/C 三项（plan 分级 / task 粒度 / 审阅分级），观察效果再决定是否全量推行。

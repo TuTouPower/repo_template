@@ -1,5 +1,7 @@
 # docs_repo 综合审阅报告与评估意见
 
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文保留 2026-07 评审时的发现、建议和状态表，不是当前模板的缺陷清单或操作授权。后续裁决与实施状态见 [裁决总账](../../decision_log.md)，现行规则由 [工厂文档入口](../../README.md) 导航。正文旧路径及模型标识按原始记录保留。
+
 **审阅日期**：2026-07-27（UTC+8）\
 **审阅范围**：\[docs_repo/\](file:///home/karon/karson_ubuntu/repo_template/docs_repo) 下所有文件（包含 6 份主文档与 `archive/` 历史文档）\
 **审阅者**：Antigravity AI (Gemini 3.6 Flash)
@@ -13,12 +15,12 @@ ______________________________________________________________________
 `docs_repo/` 记录了项目模板及其工作流在实战（如 `omni_media`、`omni_usage` 项目）中的多维演进、复盘与反思。主要文件结构如下：
 
 1. **\[docs_repo/11111.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/11111.md)**：包含遗留记录与 bugs.md 结合点、禁止进入 plan mode 的指令、以及关于并发 task 在 `tasks_index.json` 冲突的简短随笔。
-2. **\[docs_repo/workflow_feedback.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_feedback.md)**：基于 `omni_media`（t041-t055）实战的理论层面反思，指出 spec/plan 字段重叠、审阅形式主义、索引同步高开销、依靠 git 分支导致的隔离缺失等结构性缺陷。
-3. **\[docs_repo/workflow_record.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_record.md)**：对 t071 事故的专门分析，揭示了“创建 Git 分支 ≠ Git worktree 隔离”的问题，导致未提交代码在共享工作区中因 `git switch/reset` 被抹除。
-4. **\[docs_repo/workflow_retrospective.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_retrospective.md)**：基于 `omni_media` 21 个 task 的实战总结，聚焦多分支 merge 冲突（`tasks_index.json` 灾难）、审阅无差别浪费、plan.md 实际弃用、手写脚本破坏缩进等现实痛点。
-5. **\[docs_repo/workflow_retrospective_0.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_retrospective_0.md)**：针对早早期 MVP（t001-t007）的实跑复盘，暴露了 spec 过早写死技术选型、审阅在简单 task 上过重、无单测框架导致 smoke 膨胀、横向系统性缺口未独立开 task 根治等根本根因。
-6. **\[docs_repo/workflow_session_analysis_2026-07.md\](file:///home/karon/karson_summary/repo_template/docs_repo/workflow_session_analysis_2026-07.md)**：针对 `omni_usage` 80MB+ 会话日志的深入实证分析，揭示了审阅 PASS 率低（29%-30%）、`/goal` hook 导致 context 溢出、TDD 顺序违规、503 错误缺少 blocked 出口、Electron ABI 脚本踩坑等运行态实证问题。
-7. **\[docs_repo/archive/workflow_skill_split_proposal.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/archive/workflow_skill_split_proposal.md)**：关于将 `AGENTS.md` 规则/状态机与 `/task_create`、`/task_run` 等按需 skill 拆分的候选设计方案。
+1. **\[docs_repo/workflow_feedback.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_feedback.md)**：基于 `omni_media`（t041-t055）实战的理论层面反思，指出 spec/plan 字段重叠、审阅形式主义、索引同步高开销、依靠 git 分支导致的隔离缺失等结构性缺陷。
+1. **\[docs_repo/workflow_record.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_record.md)**：对 t071 事故的专门分析，揭示了“创建 Git 分支 ≠ Git worktree 隔离”的问题，导致未提交代码在共享工作区中因 `git switch/reset` 被抹除。
+1. **\[docs_repo/workflow_retrospective.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_retrospective.md)**：基于 `omni_media` 21 个 task 的实战总结，聚焦多分支 merge 冲突（`tasks_index.json` 灾难）、审阅无差别浪费、plan.md 实际弃用、手写脚本破坏缩进等现实痛点。
+1. **\[docs_repo/workflow_retrospective_0.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/workflow_retrospective_0.md)**：针对早早期 MVP（t001-t007）的实跑复盘，暴露了 spec 过早写死技术选型、审阅在简单 task 上过重、无单测框架导致 smoke 膨胀、横向系统性缺口未独立开 task 根治等根本根因。
+1. **\[docs_repo/workflow_session_analysis_2026-07.md\](file:///home/karon/karson_summary/repo_template/docs_repo/workflow_session_analysis_2026-07.md)**：针对 `omni_usage` 80MB+ 会话日志的深入实证分析，揭示了审阅 PASS 率低（29%-30%）、`/goal` hook 导致 context 溢出、TDD 顺序违规、503 错误缺少 blocked 出口、Electron ABI 脚本踩坑等运行态实证问题。
+1. **\[docs_repo/archive/workflow_skill_split_proposal.md\](file:///home/karon/karson_ubuntu/repo_template/docs_repo/archive/workflow_skill_split_proposal.md)**：关于将 `AGENTS.md` 规则/状态机与 `/task_create`、`/task_run` 等按需 skill 拆分的候选设计方案。
 
 ______________________________________________________________________
 
@@ -29,8 +31,8 @@ ______________________________________________________________________
 ### 突出亮点
 
 1. **实证导向**：拒绝凭空想象，所有结论均由具体的错误日志、Git reflog、会话 Token 占用及审阅 Pass 率支撑。
-2. **根因剖析深入**：例如在分析“审阅 Pass 率仅 29%”时，没有盲目归咎于“模型不够聪明”或“审查太严格”，而是精确指出了**Prompt 角色框架的过度报倾向、信息不对称（缺上下文）、以及 Finding 缺少 AC 锚点导致判定无界**的深层原因。
-3. **闭环意识强**：对每次事故（如 t071 未提交代码丢失、t057 批量缩进破坏测试）都及时撰写复盘，给出了可操作的防护与改进手段。
+1. **根因剖析深入**：例如在分析“审阅 Pass 率仅 29%”时，没有盲目归咎于“模型不够聪明”或“审查太严格”，而是精确指出了**Prompt 角色框架的过度报倾向、信息不对称（缺上下文）、以及 Finding 缺少 AC 锚点导致判定无界**的深层原因。
+1. **闭环意识强**：对每次事故（如 t071 未提交代码丢失、t057 批量缩进破坏测试）都及时撰写复盘，给出了可操作的防护与改进手段。
 
 ______________________________________________________________________
 
@@ -62,8 +64,8 @@ ______________________________________________________________________
 
 - **认可**：审阅无差别派发是巨大的 Token 浪费，且首轮 FAIL 率过高（~70%）主因是判定无界。
 - **补充建议**：
-    1. **分级审查**：根据 Task 风险（`full` / `single` / `none`）智能选择派发 Reviewer 数量。
-    2. **Prompt 改造**：硬性要求 Reviewer Finding 必须挂钩 Spec 里的 AC（验收标准）或 Critical/Important 级别缺陷，禁止输出“建议加测”类 Non-blocking 判定。
+  1. **分级审查**：根据 Task 风险（`full` / `single` / `none`）智能选择派发 Reviewer 数量。
+  1. **Prompt 改造**：硬性要求 Reviewer Finding 必须挂钩 Spec 里的 AC（验收标准）或 Critical/Important 级别缺陷，禁止输出“建议加测”类 Non-blocking 判定。
 
 ______________________________________________________________________
 

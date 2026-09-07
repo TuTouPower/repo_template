@@ -1,11 +1,11 @@
 # Worker 静默监控 + `task.py` 模块化实施计划
 
-> 本文保留当时的模块化实施背景，不作为当前 attempt 命令权威。当前入口统一为 exact identity `(tid, attempt, execution_id)`：生命周期使用 `task.py attempt ...`，观察使用带 `--execution-id` 的 `observe`，单 task 合并使用 exact `integrate`，链式合并使用 `integrate-chain`。当前设计见 `plan_attempt_lifecycle_closure.md`、`plan_dispatch_control_plane.md` 与 `plan_worker_silence_monitoring.md`。
+> **过时（2026-09-07 迁 archive）**：本文保留当时的模块化实施背景，不是当前 attempt 命令权威。`observe` / `task-dispatch` 已于 L35 退役。现行入口：exact identity `(tid, attempt, execution_id)`，生命周期使用 `task.py attempt ...`。现行架构见 [`../../repo/.repo_template/docs/architecture.md`](../../repo/.repo_template/docs/architecture.md)。当时设计见同目录 `plan_attempt_lifecycle_closure.md`、`plan_dispatch_control_plane.md` 与 `plan_worker_silence_monitoring.md`。
 
 目标：直接在当前 `main` 工作区完成两项工作：
 
 1. 将“20 分钟无 commit 自动重派”替换为“每 5 分钟观察仓库状态指纹，连续 30 分钟无变化只告警用户”；worker 不主动写 heartbeat/progress，告警后不取消、不重派。
-2. 将 3433 行 `scripts/repo_template/task.py` 拆成正式的 `repo_task` 包；保留 `python3 scripts/repo_template/task.py ...` 命令兼容，`task.py` 收缩为薄 façade/入口。
+1. 将 3433 行 `scripts/repo_template/task.py` 拆成正式的 `repo_task` 包；保留 `python3 scripts/repo_template/task.py ...` 命令兼容，`task.py` 收缩为薄 façade/入口。
 
 执行位置：用户已明确要求直接修改当前 `main`；不创建 task/worktree，不执行 git commit、merge 或 push。
 
@@ -14,10 +14,10 @@
 - 运行当前 `tests/repo_template`，记录拆分前基线。
 - 盘点所有 `import task`、`from task import ...`、对 `task_mod` 的 monkeypatch 以及临时仓库中“只复制 task.py”的 fixture。
 - 保持以下外部契约不变：
-    - `python3 scripts/repo_template/task.py <command>`；
-    - 当前 CLI 子命令、参数、退出码和关键错误文本；
-    - task 状态机、worktree/merge/index 语义；
-    - `task.py` 对现有测试和潜在脚本使用者的常用函数 re-export。
+  - `python3 scripts/repo_template/task.py <command>`；
+  - 当前 CLI 子命令、参数、退出码和关键错误文本；
+  - task 状态机、worktree/merge/index 语义；
+  - `task.py` 对现有测试和潜在脚本使用者的常用函数 re-export。
 
 ## 2. 建立包化结构
 
@@ -222,10 +222,10 @@ CLI：
 
 - cron 从每 10 分钟改为每 5 分钟。
 - 每次唤醒：
-    1. 根据 current agent attempt 的 `host_worker_id` 查询宿主后台任务状态；
-    2. 对仍为 running 的 exact identity 执行带 `--execution-id` 的 `observe`；
-    3. 宿主终态后先执行 exact `attempt terminal`，再执行 exact `attempt report`；
-    4. 再运行 reconcile。
+  1. 根据 current agent attempt 的 `host_worker_id` 查询宿主后台任务状态；
+  1. 对仍为 running 的 exact identity 执行带 `--execution-id` 的 `observe`；
+  1. 宿主终态后先执行 exact `attempt terminal`，再执行 exact `attempt report`；
+  1. 再运行 reconcile。
 - worker 不写 heartbeat/progress，也不写 attempt 控制面，只写 handoff。
 - `alert-silent` 时报告：tid、attempt、execution_id、静默时长、`host_worker_id` 与宿主状态、最后变化时间、HEAD、worktree、dirty 摘要。
 - 报告后暂停/注销 cron，不取消、不重派、不 reserve 同 tid 新 attempt，等待用户。
@@ -236,9 +236,9 @@ CLI：
 - 新建 `docs_repo/plan_worker_silence_monitoring.md`，作为静默监控权威设计。
 - 更新 `docs_repo/plan_dispatch_control_plane.md`，删除 stalled 自动重派、20 分钟、10 分钟 cron 的旧语义并链接新设计。
 - 更新 `AGENTS.md`：
-    - 增加 `task.py observe` 示例；
-    - `scripts/repo_template/task.py` 是 façade，`repo_task/` 是实现包；
-    - 模板复制和维护必须保留整个工具链。
+  - 增加 `task.py observe` 示例；
+  - `scripts/repo_template/task.py` 是 façade，`repo_task/` 是实现包；
+  - 模板复制和维护必须保留整个工具链。
 - 更新 `README.md` 中工具链复制/入口说明；不再暗示 `task.py` 可作为单文件独立复制。
 - 扫描注释、docstring、测试名称，清除旧 `stalled → 自动 redispatch` 和“单文件可复制”表述。
 
@@ -276,13 +276,13 @@ repo_task/**
 ## 9. 实施顺序
 
 1. 跑全量基线并锁定 CLI/import/monkeypatch 清单。
-2. 创建 `repo_task` 包和 `context/git_ops/documents` 底层模块。
-3. 迁移 `store/ledger/scheduling`，每层迁移后跑相关测试。
-4. 在 `monitoring` 中实现 fingerprint、observe、silent reconcile 新语义。
-5. 迁移 `worktrees/lifecycle/integration/control/cli`。
-6. 收缩 `task.py` 为 façade并修复测试工具链复制。
-7. 更新 skill、设计文档、AGENTS、README。
-8. 运行定向和全量验证，清理旧语义残留。
+1. 创建 `repo_task` 包和 `context/git_ops/documents` 底层模块。
+1. 迁移 `store/ledger/scheduling`，每层迁移后跑相关测试。
+1. 在 `monitoring` 中实现 fingerprint、observe、silent reconcile 新语义。
+1. 迁移 `worktrees/lifecycle/integration/control/cli`。
+1. 收缩 `task.py` 为 façade并修复测试工具链复制。
+1. 更新 skill、设计文档、AGENTS、README。
+1. 运行定向和全量验证，清理旧语义残留。
 
 ## 10. 验证
 
