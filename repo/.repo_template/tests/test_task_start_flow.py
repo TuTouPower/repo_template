@@ -1679,6 +1679,26 @@ def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):
     ).returncode == 0
 
 
+def test_chain_start_base_names_uncommitted_finish_as_cause(git_repo):
+    """finish 未提交时，--base 拒绝信息须指明「完成状态尚未提交」而非「须先完成」。"""
+    first = _task_cli(git_repo, "start", "t001")
+    assert first.returncode == 0, first.stderr
+    worktree = git_repo.parent / "repo_t001"
+    assert _task_cli(worktree, "finish", "t001").returncode == 0
+
+    second = _task_cli(git_repo, "start", "t002", "--base", "t001_alpha")
+    assert second.returncode != 0
+    assert "status='backlog'" in second.stderr
+    assert "完成状态尚未提交" in second.stderr
+    assert second.stderr.index("有效状态为 done") < second.stderr.index("task commit 再重试")
+    # 对照：前置真正未完成（worktree 强制移除丢弃未提交 finish）时保持原报错，不带提示
+    _git(git_repo, "worktree", "remove", "--force", str(worktree))
+    plain = _task_cli(git_repo, "start", "t002", "--base", "t001_alpha")
+    assert plain.returncode != 0
+    assert "须先完成或 drop" in plain.stderr
+    assert "完成状态尚未提交" not in plain.stderr
+
+
 def test_cleanup_and_integrate_require_identity_at_parse_time(git_repo):
     cleanup = _task_cli(git_repo, "cleanup-worktree", "t001")
     integrate = _task_cli(git_repo, "integrate", "t001")

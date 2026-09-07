@@ -7,7 +7,7 @@ from pathlib import Path
 import repo_task.context as ctx
 
 from .git_ops import _get_head, _git, current_branch, default_branch, resolve_local_branch, worktree_paths
-from .store import load_task_at_ref
+from .store import discover_effective_sources, load_task_at_ref
 
 def link_local_env(worktree: Path) -> list[str]:
     """把主仓未入库的 .env 软链进 worktree（同相对路径）。
@@ -105,9 +105,21 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
             f"（应为 {expected_branch!r}）；拒绝伪装成 task 分支的普通分支"
         )
     if previous_fm.get("status") not in ctx.ARCHIVED_STATUSES:
+        # 分支 tip 状态由 finish 的归档移动 commit 决定。有效状态显示已完成
+        # 而分支 tip 仍是 backlog 时，真实原因是完成状态尚未提交，不是没完成。
+        hint = ""
+        try:
+            effective = discover_effective_sources().get(previous_tid)
+        except ctx.TaskDataError:
+            effective = None
+        if effective and effective["status"] in ctx.ARCHIVED_STATUSES:
+            hint = (
+                f"（{previous_tid} 有效状态为 {effective['status']}（来源 {effective['source']}），"
+                "完成状态尚未提交到分支；先在该 task worktree 提交 task commit 再重试）"
+            )
         raise ctx.TaskDataError(
             f"--base {base_branch!r} 对应 {previous_tid} status="
-            f"{previous_fm.get('status')!r}，须先完成或 drop"
+            f"{previous_fm.get('status')!r}，须先完成或 drop{hint}"
         )
     registered = [path for path, branch in worktree_paths().items() if branch == base_branch]
     if registered:
