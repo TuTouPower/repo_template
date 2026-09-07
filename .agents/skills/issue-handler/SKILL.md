@@ -1,6 +1,6 @@
 ---
 name: issue-handler
-description: 模板仓（工厂仓）处理消费仓上报的模板问题。扫描 ~/karson_ubuntu 下各消费仓 .scratch/repo_template_issues/ 的最新报告，复现并定位根因，向用户报告问题分析与修复计划，批准后改 repo/.repo_template/ 与 repo 根模板文件（AGENTS.md / CLAUDE.md）执行修复并跑测试。当有消费仓上报模板问题、用户让「处理/修复模板仓 issue」、或需要排查模板仓自身缺陷时调用。仅在模板仓本体运行，不进消费仓产物。
+description: 模板仓（工厂仓）处理 GitHub 上报的模板问题。优先读取远程 GitHub Issues，必要时回退扫描消费仓本地交接报告；复现并定位根因，向用户报告问题分析与修复计划，批准后改 repo/.repo_template/ 与 repo 根模板文件（AGENTS.md / CLAUDE.md）执行修复并跑测试。当有模板仓 GitHub issue、消费仓上报或用户让「处理/修复模板仓 issue」时调用。仅在模板仓本体运行，不进消费仓产物。
 ---
 
 # issue-handler
@@ -11,12 +11,12 @@ description: 模板仓（工厂仓）处理消费仓上报的模板问题。扫�
 
 ## 分工对照
 
-|角色|skill|职责|
-|---|---|---|
-|需求方|消费仓 `template-issue-report`|观察现象、写报告，不定位根因、不给方案|
-|实现方|本 skill（模板仓）|复现、读实现、定位根因、报告计划、修复|
+| 角色 | skill | 职责 |
+| --- | --- | --- |
+| 需求方 | 消费仓 `template-issue-report` | 观察现象、写报告，不定位根因、不给方案 |
+| 实现方 | 本 skill（模板仓） | 复现、读实现、定位根因、报告计划、修复 |
 
-消费仓报告只到「期望行为」为止；根因与方案由本 skill 补全。
+消费仓报告只到「期望行为」为止；根因与方案由本 skill 补全。GitHub Issue 是主交接渠道，本地 `.scratch/repo_template_issues/` 仅作离线回退和复现补充。
 
 ## 硬边界
 
@@ -27,19 +27,34 @@ description: 模板仓（工厂仓）处理消费仓上报的模板问题。扫�
 
 ## 流程
 
-### 1. 扫描报告
+### 1. 扫描远程 GitHub Issues（主入口）
 
-消费仓在 `~/karson_ubuntu/` 下，报告位于各消费仓 `.scratch/repo_template_issues/<YYYYMMDD>-<HHMMSS>.md`。
+先确认模板仓远程地址和 `gh` 登录状态：
+
+```bash
+git remote get-url origin
+gh auth status
+gh issue list --repo <owner>/<repo> --state open --limit 50 --json number,title,createdAt,updatedAt,url
+```
+
+- GitHub `open` Issue 是主待处理队列；用 `gh issue view <number> --repo <owner>/<repo>` 读取正文和评论。
+- 已关闭 Issue 默认跳过，除非用户明确要求复查。
+- 多个 open Issue 时列出编号、标题、更新时间，先让用户确认处理哪个；不要把同一 Issue 的重复本地文件当成多个问题。
+- 不要默认创建、修改或关闭 Issue；创建由消费仓 `template-issue-report` 完成，关闭/评论需在修复流程中按回执规则执行。
+
+### 1.1 GitHub 不可用时回退本地报告
+
+仅当 `gh` 不可用、未登录，或用户明确要求核对本地交接时，才扫描消费仓本地报告：
 
 ```bash
 find ~/karson_ubuntu -path '*/.scratch/repo_template_issues/*.md' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn
 ```
 
-列清单（路径 + 修改时间），默认取**最新一个**；多个待处理时先列给用户确认处理哪个。已含「## 处理结果」段的报告默认跳过。
+读取不带 `.issue.md` 的完整版；列清单（路径 + 修改时间），已含「## 处理结果」段的报告默认跳过。若 GitHub 和本地同时存在，以 GitHub Issue 为准，本地文件只用于补充复现上下文。
 
-### 2. 读报告
+### 2. 读 Issue / 报告
 
-理解：分类（`bug` / `需求`）、问题概述、现象（触发操作 + 报错原文）、涉及模板仓组成部分、期望行为。
+理解：分类（`bug` / `需求`）、问题概述、现象（触发操作 + 报错原文）、涉及模板仓组成部分、期望行为。GitHub Issue 正文优先；必要时读取对应消费仓本地完整版补充真实路径和状态。
 
 ### 3. 复现
 
@@ -75,7 +90,9 @@ pytest repo/.repo_template/tests -q
 
 ### 8. 回执
 
-在消费仓报告文件末尾追加「## 处理结果」段：修复结论 + 涉及的工厂仓改动文件 + 测试结果 + 修复 commit（若已提交）。这是交接回执，供消费仓 agent 与下次扫描识别。
+GitHub 可用时，在对应 Issue 追加评论，写明：修复结论、涉及的工厂仓改动文件、测试结果、修复 commit（若已提交）以及消费仓同步提示；修复已验证且用户确认关闭时再关闭 Issue。不要把 GitHub 回执写回消费仓生产文件。
+
+GitHub 不可用时，才在对应消费仓本地报告末尾追加「## 处理结果」段，内容同上，供人工交接。
 
 ### 9. 汇报与提交
 
