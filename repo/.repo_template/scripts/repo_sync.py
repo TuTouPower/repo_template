@@ -57,13 +57,19 @@ MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
 
 # 模板自有路径：不受消费仓 prettier 门禁约束（Issue #3）。
 # view_static/ 与 test_chain_plan_cases.js 用模板自有风格（2 空格/单引号），
-# package.json 缩进随消费仓 tabWidth 漂移，.opencode/package*.json 属本地生成
-#（prettier 不认 .gitignore）。由 merge_prettierignore 机械追加，消费独有规则保留。
+# package.json / sync_state.json 缩进随消费仓 tabWidth 漂移（sync_state.json 每轮 apply 重写），
+# tasks_index.json 系派生索引（store.py 写 indent=4，可重建），handoff.json 由 task 流程逐任务生成，
+# .opencode/package*.json 属本地生成（prettier 不认嵌套 .gitignore）。
+# 由 merge_prettierignore 机械追加，消费独有规则保留。
 PRETTIERIGNORE_TEMPLATE_RULES = (
     ".repo_template/scripts/package.json",
     ".repo_template/tests/package.json",
     ".repo_template/scripts/repo_task/view_static/",
     ".repo_template/tests/test_chain_plan_cases.js",
+    ".repo_template/sync_state.json",
+    "docs/tasks_index.json",
+    "docs/archive/tasks_index.json",
+    "docs/**/handoff.json",
     ".opencode/package.json",
     ".opencode/package-lock.json",
 )
@@ -618,12 +624,32 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
 _RETIRED_MERGE_GUARD_COMMAND = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'
 
 
+def _detect_json_indent(raw: str) -> int | str:
+    """从现有 JSON 文本推断缩进（首个 ^(空格|tab)+\" 行），无匹配回退 2。
+
+    同步改写消费仓 JSON（settings.json / MCP）时沿用原缩进，避免把消费仓
+    4 空格体例重排成 2 空格、反而弄红其 prettier 门禁。
+    """
+    for line in raw.splitlines():
+        if not line or line[0] not in (" ", "\t"):
+            continue
+        stripped = line.lstrip(" \t")
+        if stripped.startswith('"'):
+            prefix = line[: len(line) - len(stripped)]
+            if set(prefix) == {"\t"}:
+                return "\t"
+            if set(prefix) == {" "}:
+                return len(prefix)
+    return 2
+
+
 def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) -> None:
     settings = CONSUMER / ".claude/settings.json"
     if not settings.is_file():
         return
     try:
-        data = json.loads(settings.read_text(encoding="utf-8"))
+        raw = settings.read_text(encoding="utf-8")
+        data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
         raise SyncError(
             f"{_rel(settings)} 无法解析，不能安全移除已退役 merge guard PreToolUse（{error}）"
@@ -667,7 +693,7 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) 
     if not hooks:
         data.pop("hooks", None)
     temporary = settings.with_name(settings.name + ".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=_detect_json_indent(raw)) + "\n", encoding="utf-8")
     temporary.replace(settings)
     changed.add(settings)
     reports.append(f"{_rel(settings)} 已移除退役 merge guard PreToolUse")
@@ -1009,7 +1035,8 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             merged.append(_rel(dp))
             continue
         try:
-            ddata = json.loads(dp.read_text(encoding="utf-8"))
+            draw = dp.read_text(encoding="utf-8")
+            ddata = json.loads(draw)
         except (OSError, json.JSONDecodeError) as e:
             print(f"WARNING: 消费侧 {rel} 无法解析，跳过 MCP 合并（{e}）", file=sys.stderr)
             continue
@@ -1021,7 +1048,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
                 touched = True
         if touched:
             _stage_rollback(dp)
-            dp.write_text(json.dumps(ddata, ensure_ascii=False, indent=2) + "\n",
+            dp.write_text(json.dumps(ddata, ensure_ascii=False, indent=_detect_json_indent(draw)) + "\n",
                           encoding="utf-8", newline="\n")
             changed.add(dp)
             merged.append(_rel(dp))

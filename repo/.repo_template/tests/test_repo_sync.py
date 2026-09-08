@@ -392,6 +392,60 @@ def test_prettierignore_preserves_consumer_rules(env):
     assert pi in changed
 
 
+def test_prettierignore_covers_generated_artifacts(env):
+    # Issue #3 回访：同步状态、派生索引、任务产物缺一即红门禁
+    rules = set(rs.PRETTIERIGNORE_TEMPLATE_RULES)
+    assert ".repo_template/sync_state.json" in rules
+    assert "docs/tasks_index.json" in rules
+    assert "docs/archive/tasks_index.json" in rules
+    assert "docs/**/handoff.json" in rules
+
+
+def test_detect_json_indent(env):
+    assert rs._detect_json_indent('{\n  "a": 1\n}\n') == 2
+    assert rs._detect_json_indent('{\n    "a": 1\n}\n') == 4
+    assert rs._detect_json_indent('{\n\t"a": 1\n}\n') == "\t"
+    assert rs._detect_json_indent('{"a": 1}') == 2
+    assert rs._detect_json_indent('') == 2
+
+
+def test_mcp_merge_preserves_consumer_indent(env):
+    src, consumer = env["src"], env["consumer"]
+    (src / ".mcp.json").write_text(json.dumps({"mcpServers": {"tpl-server": {"command": "x"}}}))
+    dmcp = consumer / ".mcp.json"
+    dmcp.write_text('{\n    "mcpServers": {\n        "consumer-server": {"command": "y"}\n    }\n}\n')
+
+    changed: set[Path] = set()
+    rs.merge_mcp(src, changed)
+    raw = dmcp.read_text()
+    assert json.loads(raw)["mcpServers"]["tpl-server"] == {"command": "x"}
+    assert '\n    "mcpServers"' in raw  # 消费仓 4 空格体例保留，未被重排成 2 空格
+    assert dmcp in changed
+
+
+def test_settings_rewrite_preserves_consumer_indent(env):
+    consumer = env["consumer"]
+    settings = consumer / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({
+        'hooks': {'PreToolUse': [{
+            'matcher': 'Bash',
+            'hooks': [
+                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': 'echo keep'},
+            ],
+        }]},
+    }, ensure_ascii=False, indent=4) + "\n")
+    changed: set[Path] = set()
+    rs.repair_symlinks(changed)
+    raw = settings.read_text()
+    assert json.loads(raw)["hooks"]["PreToolUse"][0]["hooks"] == [
+        {"type": "command", "command": "echo keep"},
+    ]
+    assert '\n    "hooks"' in raw  # 退役项移除，但 4 空格体例保留
+    assert settings in changed
+
+
 def test_retired_template_warnings(env):
     consumer = env["consumer"]
     assert rs.retired_template_warnings() == []
