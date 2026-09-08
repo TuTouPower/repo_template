@@ -3,7 +3,7 @@
 SRC（模板）与 CONSUMER（消费项目）都在 tmp_path 下构造真实目录，monkeypatch
 模块级路径常量（CONSUMER / STATE_PATH / SKILLS_AGENTS / SKILLS_CLAUDE）重绑定，
 覆盖 state 字段级原子更新、user_prompts 管理、硬同步覆盖与多余删除、skill 覆盖
-与 sync_state.json 保护、软链、.gitignore / MCP 机械合并、apply 全流程与改动清单。
+与 sync_state.json 保护、软链、.gitignore / .prettierignore / MCP 机械合并、apply 全流程与改动清单。
 """
 
 import json
@@ -338,7 +338,7 @@ def test_prep_idempotent_no_changes(env):
 
 
 # ---------------------------------------------------------------------------
-# .gitignore / MCP 机械合并
+# .gitignore / .prettierignore / MCP 机械合并
 # ---------------------------------------------------------------------------
 
 def test_gitignore_merge_with_prompt_block(env):
@@ -356,6 +356,51 @@ def test_gitignore_merge_with_prompt_block(env):
     assert info["added"] == ["*.log"]
     assert info["removed"] == [".env"]
     assert gi in changed
+
+
+def test_prettierignore_merge_creates_and_dedupes(env):
+    consumer = env["consumer"]
+    pi = consumer / ".prettierignore"
+
+    changed: set[Path] = set()
+    info = rs.merge_prettierignore(changed)
+    text = pi.read_text()
+    for rule in rs.PRETTIERIGNORE_TEMPLATE_RULES:
+        assert rule in text.splitlines()
+    assert pi in changed
+
+    # 二次合并：去重，无改动
+    changed = set()
+    info = rs.merge_prettierignore(changed)
+    assert info["added"] == []
+    assert changed == set()
+    assert text == pi.read_text()
+
+
+def test_prettierignore_preserves_consumer_rules(env):
+    consumer = env["consumer"]
+    pi = consumer / ".prettierignore"
+    pi.write_text("pnpm-lock.yaml\n*.md\n")
+
+    changed: set[Path] = set()
+    rs.merge_prettierignore(changed)
+    lines = pi.read_text().splitlines()
+    assert "pnpm-lock.yaml" in lines             # 消费独有保留
+    assert "*.md" in lines
+    for rule in rs.PRETTIERIGNORE_TEMPLATE_RULES:
+        assert rule in lines
+    assert pi in changed
+
+
+def test_retired_template_warnings(env):
+    consumer = env["consumer"]
+    assert rs.retired_template_warnings() == []
+    stale = consumer / ".github/workflows/repo-template-ci.yml"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("name: repo-template\n")
+    warnings = rs.retired_template_warnings()
+    assert len(warnings) == 1
+    assert ".github/workflows/repo-template-ci.yml" in warnings[0]
 
 
 def test_mcp_merge_keywise(env):

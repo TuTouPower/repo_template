@@ -35,6 +35,7 @@
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，格式化本次 staged 的 `.md` 并重新暂存；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`（已有其它 hooksPath 须 `--force`）；临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
+- 消费仓 `prettier --check .` 豁免模板自有路径：`.repo_template/scripts/package.json`、`.repo_template/tests/package.json`、`view_static/`（看板 UI，模板自有 `2` 空格/单引号风格）、`tests/test_chain_plan_cases.js`，以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认 `.gitignore`）。`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`。`.github/workflows/repo-template-ci.yml` 已下线（`b3e5c8f` 起不再分发），残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。
 
 ## skill 调用

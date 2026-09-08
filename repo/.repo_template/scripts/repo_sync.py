@@ -2,7 +2,7 @@
 """repo_sync.py — repo-template-sync 机械化执行器。
 
 把 repo-template-sync skill 中可机械化对齐的部分下沉到脚本执行：硬同步清单
-树对树覆盖、skill 整目录覆盖、软链建修、.gitignore / MCP 机械合并、
+树对树覆盖、skill 整目录覆盖、软链建修、.gitignore / .prettierignore / MCP 机械合并、
 sync_state.json 字段级原子更新、差异评估与修改路径清单输出。
 
 非机械化裁定（AGENTS.md 等共享文稿的语义合并）由脚本给出
@@ -51,9 +51,25 @@ HARD_SYNC_FILES = (
 NOISE_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
 PROTECT_NAMES = {"sync_state.json"}
 
-# 裁定范围：可定制共享资产。.gitignore / MCP 机械合并；AGENTS.md 语义合并。
+# 裁定范围：可定制共享资产。.gitignore / .prettierignore / MCP 机械合并；AGENTS.md 语义合并。
 SHARED_FILES = ("AGENTS.md", ".gitignore")
 MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
+
+# 模板自有路径：不受消费仓 prettier 门禁约束（Issue #3）。
+# view_static/ 与 test_chain_plan_cases.js 用模板自有风格（2 空格/单引号），
+# package.json 缩进随消费仓 tabWidth 漂移，.opencode/package*.json 属本地生成
+#（prettier 不认 .gitignore）。由 merge_prettierignore 机械追加，消费独有规则保留。
+PRETTIERIGNORE_TEMPLATE_RULES = (
+    ".repo_template/scripts/package.json",
+    ".repo_template/tests/package.json",
+    ".repo_template/scripts/repo_task/view_static/",
+    ".repo_template/tests/test_chain_plan_cases.js",
+    ".opencode/package.json",
+    ".opencode/package-lock.json",
+)
+
+# 已下线模板产物：b3e5c8f 起不再分发，残留消费仓时只警告不自动删（防丢消费定制）。
+RETIRED_TEMPLATE_PATHS = (".github/workflows/repo-template-ci.yml",)
 
 
 class SyncError(Exception):
@@ -937,6 +953,42 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
     return {"added": added, "removed": removed, "dst": _rel(dst)}
 
 
+def merge_prettierignore(changed: set[Path]) -> dict:
+    """机械合并 .prettierignore：模板自有路径去重追加，消费独有规则保留。"""
+    dst = CONSUMER / ".prettierignore"
+    dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
+    dst_set = {ln.strip() for ln in dst_lines}
+    added: list[str] = []
+    for rule in PRETTIERIGNORE_TEMPLATE_RULES:
+        if rule not in dst_set:
+            added.append(rule)
+    if added:
+        if dst_lines and dst_lines[-1].strip():
+            dst_lines.append("")
+        dst_lines.append("# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束")
+        dst_lines.extend(added)
+        text = "\n".join(dst_lines)
+        if not text.endswith("\n"):
+            text += "\n"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _stage_rollback(dst)
+        dst.write_text(text, encoding="utf-8", newline="\n")
+        changed.add(dst)
+    return {"added": added, "dst": _rel(dst)}
+
+
+def retired_template_warnings() -> list[str]:
+    """已下线模板产物残留提醒：只读检查，不写盘。"""
+    warnings = []
+    for rel in RETIRED_TEMPLATE_PATHS:
+        if (CONSUMER / rel).exists():
+            warnings.append(
+                f"{rel} 为已下线模板产物（b3e5c8f 起不再分发），"
+                "确认无消费定制后手动删除，否则消费仓 format 门禁持续报红"
+            )
+    return warnings
+
+
 def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
     """按 server 键合并 MCP：模板新增键加入，已有键保留消费值（禁冲密钥）。"""
     merged: list[str] = []
@@ -1079,6 +1131,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"  migrate {path}")
     if not migration_errors and not worktrees and not migrations:
         print("  无")
+    print("\nformat 豁免 (.prettierignore):")
+    dst = CONSUMER / ".prettierignore"
+    existing = {ln.strip() for ln in dst.read_text(encoding="utf-8").splitlines()} if dst.exists() else set()
+    missing = [r for r in PRETTIERIGNORE_TEMPLATE_RULES if r not in existing]
+    if missing:
+        for rule in missing:
+            print(f"  缺失 {rule}（apply 追加）")
+    else:
+        print("  齐全")
+    for warning in retired_template_warnings():
+        print(f"  STALE: {warning}")
     return 0
 
 
@@ -1147,6 +1210,18 @@ def cmd_plan(args: argparse.Namespace) -> int:
         rows.append([f".claude/skills/{item['name']}", item["state"], mark])
     print(_md_table(["路径", "状态", "说明"], rows))
 
+    print("\n### format 豁免（.prettierignore 机械合并）")
+    dst = CONSUMER / ".prettierignore"
+    existing = {ln.strip() for ln in dst.read_text(encoding="utf-8").splitlines()} if dst.exists() else set()
+    missing = [r for r in PRETTIERIGNORE_TEMPLATE_RULES if r not in existing]
+    if missing:
+        rows = [[rule, "缺失", "apply 追加"] for rule in missing]
+        print(_md_table(["规则", "状态", "处置"], rows))
+    else:
+        print("齐全（模板自有路径已豁免）")
+    for warning in retired_template_warnings():
+        print(f"- STALE: {warning}")
+
     print("\n### workflow schema 强制迁移")
     migrations, worktrees, migration_errors = workflow_migration_status(src)
     if migration_errors:
@@ -1198,6 +1273,11 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
             print(f".gitignore 追加 {len(info['added'])} 条（模板独有）")
         if info["removed"]:
             print(f".gitignore 删除 {len(info['removed'])} 条（prompt 禁止 ignore）")
+    prettier_info = merge_prettierignore(changed)
+    if prettier_info["added"]:
+        print(f".prettierignore 追加 {len(prettier_info['added'])} 条（模板自有路径豁免 prettier）")
+    for warning in retired_template_warnings():
+        print(f"提示: {warning}")
     merge_mcp(src, changed)
 
     for unit in SHARED_FILES:
