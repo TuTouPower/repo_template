@@ -53,6 +53,12 @@ PROTECT_NAMES = {"sync_state.json"}
 
 # 裁定范围：可定制共享资产。.gitignore / .prettierignore / MCP 机械合并；AGENTS.md 语义合并。
 SHARED_FILES = ("AGENTS.md", ".gitignore")
+
+# AGENTS.md 同步协议：按固定标题识别三类内容。
+# 项目介绍永不更新；目录与读写规则只报告差异，由 agent 语义合并；开发原则每轮强制更新。
+AGENTS_INTRO_HEADING = "## 目录与读写规则"
+AGENTS_MERGE_HEADING = "## 目录与读写规则"
+AGENTS_FORCE_HEADING = "## 开发原则"
 MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
 
 # 模板自有路径：不受消费仓 prettier 门禁约束（Issue #3）。
@@ -1059,10 +1065,98 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
 # apply 组装
 # ---------------------------------------------------------------------------
 
+def _markdown_section(text: str, heading: str) -> tuple[int, int, str] | None:
+    """返回 heading 所在 section 的 (start, end, text)，section 结束于下一个同级标题。"""
+    lines = text.splitlines(keepends=True)
+    offsets: list[tuple[int, str]] = []
+    offset = 0
+    for line in lines:
+        if line.startswith("## "):
+            offsets.append((offset, line.strip()))
+        offset += len(line)
+    for index, (start, title) in enumerate(offsets):
+        if title != heading:
+            continue
+        end = offsets[index + 1][0] if index + 1 < len(offsets) else len(text)
+        return start, end, text[start:end]
+    return None
+
+
+def _agents_parts(text: str) -> dict[str, tuple[int, int, str]]:
+    """识别 AGENTS.md 的 intro、merge、force 三部分；缺少强制标题则拒绝同步。"""
+    merge = _markdown_section(text, AGENTS_MERGE_HEADING)
+    force = _markdown_section(text, AGENTS_FORCE_HEADING)
+    if merge is None or force is None:
+        raise SyncError("AGENTS.md 缺少 ## 目录与读写规则 或 ## 开发原则，拒绝猜测同步")
+    intro_end = merge[0]
+    return {"intro": (0, intro_end, text[:intro_end]), "merge": merge, "force": force}
+
+
+def _replace_agents_force(src_text: str, dst_text: str) -> tuple[str, bool, bool, bool]:
+    """仅替换开发原则；返回新文本、force 是否变化、merge 是否不同、intro 是否不同。"""
+    src_parts = _agents_parts(src_text)
+    dst_parts = _agents_parts(dst_text)
+    src_force = src_parts["force"]
+    dst_force = dst_parts["force"]
+    result = dst_text[:dst_force[0]] + src_text[src_force[0]:src_force[1]] + dst_text[dst_force[1]:]
+    return (
+        result,
+        result != dst_text,
+        src_parts["merge"][2] != dst_parts["merge"][2],
+        src_parts["intro"][2] != dst_parts["intro"][2],
+    )
+
+
+def agents_section_status(src: Path) -> dict[str, str] | None:
+    sp, dp = src / "AGENTS.md", CONSUMER / "AGENTS.md"
+    if not sp.exists() or not dp.exists():
+        return None
+    src_parts = _agents_parts(sp.read_text(encoding="utf-8"))
+    dst_path = dp.resolve() if dp.is_symlink() else dp
+    dst_parts = _agents_parts(dst_path.read_text(encoding="utf-8"))
+    return {
+        "intro": "protected" if src_parts["intro"][2] != dst_parts["intro"][2] else "same",
+        "merge": "different" if src_parts["merge"][2] != dst_parts["merge"][2] else "same",
+        "force": "different" if src_parts["force"][2] != dst_parts["force"][2] else "same",
+    }
+
+
+def _apply_agents_sectioned(src: Path, changed: set[Path]) -> bool:
+    sp, dp = src / "AGENTS.md", CONSUMER / "AGENTS.md"
+    if not sp.exists():
+        return False
+    src_text = sp.read_text(encoding="utf-8")
+    # 旧版模板源没有固定标题时，交回旧的整文件裁定逻辑。
+    try:
+        _agents_parts(src_text)
+    except SyncError:
+        return False
+    if not dp.exists():
+        raise SyncError("模板 AGENTS.md 已启用分区协议，但消费仓缺少 AGENTS.md")
+    target = dp.resolve() if dp.is_symlink() else dp
+    dst_text = target.read_text(encoding="utf-8")
+    result, force_changed, merge_diff, intro_diff = _replace_agents_force(src_text, dst_text)
+    if intro_diff:
+        print("提示: AGENTS.md 项目介绍与模板不同；按规则保护消费仓内容，不覆盖")
+    if merge_diff:
+        print("提示: AGENTS.md 目录与读写规则与模板不同；交由 agent 语义合并，脚本不覆盖")
+    if force_changed:
+        _stage_rollback(target)
+        target.write_text(result, encoding="utf-8", newline="\n")
+        changed.add(target)
+    return True
+
 def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[Path]) -> None:
+    # 标题协议下只自动更新开发原则；其余部分分别保护或交 Agent。
+    if unit == "AGENTS.md" and _apply_agents_sectioned(src, changed):
+        print("AGENTS.md 已按标题协议处理：开发原则强制更新，目录规则交 agent 合并，项目介绍保留")
+        return
     if not decision:
         print(f"裁定单元 {unit} 未提供决策，跳过（待 agent 处理）")
         return
+    if unit == "AGENTS.md":
+        if _apply_agents_sectioned(src, changed):
+            return
     if decision in ("merge", "merge_into_consumer"):
         print(f"裁定单元 {unit} 为 merge：由 agent 编辑消费文件完成语义合并，脚本不整文件覆盖")
         return
@@ -1216,7 +1310,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print("\n### 裁定同步 — 逐项（有 diff 必出现）")
     rows = []
     blocked = prompt_substrings(state)
+    agents_is_sectioned = agents_section_status(src) is not None
     for item in shared_status(src):
+        if item["unit"] == "AGENTS.md" and agents_is_sectioned:
+            continue
         if item["cls"] == "both_identical":
             continue
         if item["unit"] == ".gitignore" and item["cls"] in ("both_differ", "template_only"):
@@ -1229,6 +1326,17 @@ def cmd_plan(args: argparse.Namespace) -> int:
             disp = "ask_user / agent 决策"
         rows.append([item["unit"], item["cls"], disp])
     print(_md_table(["单元", "分类", "disposition"], rows))
+
+    print("\n### AGENTS.md 分区")
+    section_status = agents_section_status(src)
+    if section_status is None:
+        print("未识别到完整标题协议：需要 ## 目录与读写规则、## 开发原则")
+    else:
+        print(_md_table(["区段", "状态", "处置"], [
+            ["项目介绍", section_status["intro"], "绝不更新，保留消费仓内容"],
+            ["目录与读写规则", section_status["merge"], "agent 语义合并，脚本不覆盖"],
+            ["开发原则", section_status["force"], "每轮强制从模板更新"],
+        ]))
 
     print("\n### 软链")
     rows = []

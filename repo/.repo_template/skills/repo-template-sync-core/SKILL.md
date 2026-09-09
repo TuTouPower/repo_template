@@ -22,17 +22,21 @@ disable-model-invocation: true
 3. **plan**：运行 `repo_sync.py plan`，取得硬同步、共享文件、技能入口和删除候选；本步不修改待同步资产；URL 源解析会 clone/pull 本地缓存。
 4. **裁定**：
     - `.repo_template/`、模板配置和生成入口按脚本硬同步；
+
     - `.gitignore` / MCP 只做安全的键或规则合并；
-    - `AGENTS.md` 按语义合并，保留消费项目骨架和业务约定；批准后由 Agent 编辑，`--decision AGENTS.md:merge` 只记录处理方式，不替 Agent 合并正文；
+
+    - `AGENTS.md` 按标题分三类处理：`## 开发原则` 每次从模板强制更新；`## 目录与读写规则` 只由 Agent 做语义合并，脚本绝不覆盖；该标题之前的项目介绍绝不更新，消费仓可以在项目介绍和目录与读写规则中增加自定义内容。消费仓只允许定制这两处，其他模板规则由同步流程管理。
+
     - 宿主 settings 不自动覆盖，只合并明确需要且不含 secret/本机路径的片段；
+
     - 手写文件和用户 prompt 保护项保持不动，冲突交用户决定。
-5. **apply**：先保存本次会覆盖文件的未提交内容和当前 state，作为失败恢复基线；用户已有改动无法隔离时停止。把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、共享文件写入、workflow schema 强制更新和 state 字段级更新。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
+5. **apply**：先保存本次会覆盖文件的未提交内容和当前 state，作为失败恢复基线；用户已有改动无法隔离时停止。把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、AGENTS.md 的开发原则强制更新、workflow schema 强制更新和 state 字段级更新；目录与读写规则的语义合并须由 Agent 智能处理并复核，项目介绍不得改。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
 6. **验证**：运行同步后的 `.repo_template/tests` 和脚本报告的结构检查。写盘异常触发脚本回滚；内置测试返回失败则不推进 state，但保留已写入文件，不能声称已自动回滚。停止且不 commit，核对 diff 与预先保存的基线后修复重验；不要用 `--skip-tests` 绕过。若 apply 已成功推进 state 后的额外检查失败，报告实际 state，不伪称未推进。
 7. **审批**：列出实际改动、测试、模板源版本和仍待决定项，询问是否 commit；批准后只提交本轮同步内容。
 
 ## 保留的完整语义
 
-status/plan/apply 分离、模板源缓存、文件保护、apply 回滚、测试、state 推进、共享文件裁定和 commit 审批全部保留。详细文件矩阵和恢复信息以 `repo_sync.py` 输出及 `.repo_template/docs/usage.md` 为准。
+status/plan/apply 分离、模板源缓存、文件保护、apply 回滚、测试、state 推进、共享文件裁定和 commit 审批全部保留。详细文件矩阵、AGENTS.md 标题分区协议和恢复信息以 `repo_sync.py` 输出及 `.repo_template/docs/usage.md` 为准。
 
 ## 完成
 

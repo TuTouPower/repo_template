@@ -476,6 +476,48 @@ def test_mcp_merge_keywise(env):
 
 
 # ---------------------------------------------------------------------------
+# AGENTS.md 标题分区协议
+# ---------------------------------------------------------------------------
+
+def test_sectioned_agents_force_merge_intro_boundaries(env):
+    src, consumer = env["src"], env["consumer"]
+    source = """项目介绍模板，不能覆盖消费内容。
+
+## 目录与读写规则
+模板目录规则
+
+## 开发原则
+模板开发原则 v2
+"""
+    target = """消费仓项目介绍和自定义规则。
+
+## 目录与读写规则
+消费仓目录规则
+自定义目录规则
+
+## 开发原则
+旧开发原则
+"""
+    (src / "AGENTS.md").write_text(source)
+    (consumer / "AGENTS.md").write_text(target)
+    changed: set[Path] = set()
+    assert rs._apply_agents_sectioned(src, changed) is True
+    result = (consumer / "AGENTS.md").read_text()
+    assert "消费仓项目介绍和自定义规则。" in result
+    assert "消费仓目录规则" in result and "模板目录规则" not in result
+    assert "模板开发原则 v2" in result and "旧开发原则" not in result
+    assert consumer / "AGENTS.md" in changed
+
+
+def test_sectioned_agents_requires_headings(env):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text("legacy")
+    (consumer / "AGENTS.md").write_text("legacy")
+    # 旧版模板源继续交回旧的整文件裁定逻辑。
+    assert rs._apply_agents_sectioned(src, set()) is False
+
+
+# ---------------------------------------------------------------------------
 # apply 全流程 + 改动清单
 # ---------------------------------------------------------------------------
 
