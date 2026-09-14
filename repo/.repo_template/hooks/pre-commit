@@ -62,7 +62,6 @@ def main() -> int:
         changed = md_format.format_paths(rels)
     except md_format.MdFormatError as error:
         print(f"pre-commit: {error}", file=sys.stderr)
-        print("提示：md_kx 缺失时先安装（uv tool install md_kx）或加入 PATH。", file=sys.stderr)
         return 1
     if changed:
         result = subprocess.run(

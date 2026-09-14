@@ -30,7 +30,7 @@
 
 5. 按技术栈补充依赖、工具配置和 `.gitignore`。
 
-6. 安装 md_kx：`uv tool install md_kx`。`.md_kx.toml` 已随模板提供。
+6. 确认 md_kx 可用：`md_kx --version`。它是本模板约定的 Markdown 格式化器，来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装；本机缺失才装：`uv tool install md-kx`。`.md_kx.toml` 已随模板提供。
 
 7. 启用 commit 前格式化 hook：`python3 .repo_template/scripts/repo_sync.py install-hooks`（`core.hooksPath` 指向 `.repo_template/hooks`；已有其它 hooksPath 须 `--force`）。
 

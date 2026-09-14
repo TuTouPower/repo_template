@@ -93,7 +93,10 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     executable = find_md_kx()
     if not executable:
         raise MdFormatError(
-            "找不到 md_kx；请安装（uv tool install md_kx）或加入 PATH。"
+            "找不到 md_kx（项目约定的 Markdown 格式化器，来源 "
+            "https://github.com/TuTouPower/md_kx，PyPI 发行名 md-kx；"
+            "一般已全局安装：uv tool install md-kx）；未装或不在 PATH 时用 "
+            "`uv tool install md-kx` 安装，或把已装的 md_kx 加入 PATH。"
         )
     changed: list[str] = []
     for rel in rel_paths:
