@@ -36,6 +36,9 @@ from pathlib import Path
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 CONSUMER = TOOLKIT_ROOT.parent
 STATE_PATH = CONSUMER / ".repo_template/sync_state.json"
+# 旧布局 state（2026-08-15 a9453b1 前）：宿主 skill 目录下的真实目录。
+# 首次在新路径 init 时读一次并迁移，避免 user_prompts / last_synced_* 丢失。
+LEGACY_STATE_PATH = CONSUMER / ".agents/skills/repo-template-sync/sync_state.json"
 SKILLS_SRC = CONSUMER / ".repo_template/skills"
 SKILLS_AGENTS = CONSUMER / ".agents/skills"
 SKILLS_CLAUDE = CONSUMER / ".claude/skills"
@@ -1199,16 +1202,32 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not args.source:
         raise SyncError("init 需要 --source <path|url>")
     if not STATE_PATH.exists():
-        write_state({
+        # 旧布局 state 迁移：字段级带过 user_prompts / last_synced_*（新路径不存在时才读）。
+        legacy = None
+        if LEGACY_STATE_PATH.exists():
+            try:
+                legacy = json.loads(LEGACY_STATE_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                legacy = None
+        base = legacy if isinstance(legacy, dict) else {
             "template_source": None,
             "last_synced_commit": None,
             "last_synced_at": None,
             "user_prompts": [],
-        })
+        }
+        write_state(base)
+        if legacy is not None:
+            print(f"已迁移旧布局 state：{LEGACY_STATE_PATH.relative_to(CONSUMER).as_posix()} → {STATE_PATH.relative_to(CONSUMER).as_posix()}")
     data = read_state()
     kind = "path" if Path(args.source).expanduser().exists() else "url"
     data["template_source"] = {"kind": kind, "value": str(Path(args.source).expanduser().resolve() if kind == "path" else args.source)}
     write_state(data)
+    if LEGACY_STATE_PATH.exists():
+        try:
+            LEGACY_STATE_PATH.unlink()
+            print(f"旧布局 state 已移除：{LEGACY_STATE_PATH.relative_to(CONSUMER).as_posix()}")
+        except OSError:
+            pass
     print(f"template_source 已写：kind={kind}, value={data['template_source']['value']}")
     return 0
 
@@ -1618,7 +1637,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="读取状态与差异摘要").set_defaults(func=cmd_status)
     sub.add_parser("plan", help="计算差异预览（零写盘）").set_defaults(func=cmd_plan)
-    sub.add_parser("prep", help="同步工具自举：单向覆盖 core skill 与 scripts/repo_template，建软链").set_defaults(func=cmd_prep)
+    sub.add_parser("prep", help="同步工具自举：单向覆盖 core skill 与 .repo_template/scripts，建软链").set_defaults(func=cmd_prep)
 
     apply = sub.add_parser("apply", help="执行对齐写盘")
     apply.add_argument("--decision", action="append", default=[], metavar="UNIT:DISP",

@@ -74,6 +74,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr(rs, "CONSUMER", consumer)
     monkeypatch.setattr(rs, "STATE_PATH", state_file)
+    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
     monkeypatch.setattr(rs, "SKILLS_SRC", consumer / ".repo_template/skills")
     monkeypatch.setattr(rs, "SKILLS_AGENTS", consumer / ".agents/skills")
     monkeypatch.setattr(rs, "SKILLS_CLAUDE", consumer / ".claude/skills")
@@ -587,10 +588,33 @@ def test_init_writes_template_source(env, monkeypatch):
     consumer, state_file = env["consumer"], env["state_file"]
     monkeypatch.setattr(rs, "CONSUMER", consumer)
     monkeypatch.setattr(rs, "STATE_PATH", state_file)
+    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
     rs.cmd_init(Namespace(source=str(env["src"])))
     state = rs.read_state()
     assert state["template_source"]["kind"] == "path"
     assert state["template_source"]["value"] == str(env["src"])
+
+
+def test_init_migrates_legacy_state_and_prompts(env, monkeypatch):
+    consumer, state_file = env["consumer"], env["state_file"]
+    state_file.unlink()
+    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({
+        "template_source": {"kind": "path", "value": "/old/path"},
+        "last_synced_commit": "deadbeef",
+        "last_synced_at": "2026-01-01T00:00:00+08:00",
+        "user_prompts": [{"text": "保留我", "tags": ["x"], "revoked": False}],
+    }))
+    monkeypatch.setattr(rs, "STATE_PATH", state_file)
+    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", legacy)
+    rs.cmd_init(Namespace(source=str(env["src"])))
+    state = rs.read_state()
+    # prompt 与审计字段随迁移保留；template_source 以本次 --source 为准
+    assert state["user_prompts"][0]["text"] == "保留我"
+    assert state["last_synced_commit"] == "deadbeef"
+    assert state["template_source"]["value"] == str(env["src"])
+    assert not legacy.exists()
 
 
 def test_resolve_src_rejects_invalid(env):

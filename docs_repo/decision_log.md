@@ -50,6 +50,7 @@
 | L34 | 调度控制面边沿触发：worker 全灭无人察觉、integrate 后忘补位 | omni_media 两起事故（2026-08）、用户提出、多路 diff 审阅 | 边沿触发 → 水位触发：`task.py reconcile` 幂等 diff 唯一动作来源 + 空闲许可；调度账本记 attempt；handoff.json 机器验证；失败分类 + cron 兜底 | `archive/plan_dispatch_control_plane.md` | 已落地；被 L35 取代 |
 | L35 | 放弃 dispatch 自动并发，并发只留用户手动 | 用户决定（2026-08-06） | `task-dispatch` 退役；并发只允许用户手动多会话 `task-run`；`task.py view --serve` 只读看板；`start` 加 depends 硬拒与 conflicts 警告。dispatch 配套 API（`bind`/`escalate`/`observe`/`reconcile` 等）删除；executor 仅 `inline`。ledger、handoff.json、`verify_integrate_ready` 保留。~~merge_guard 保留~~ 已由 L36 删除 | `plans/plan_manual_concurrency.md`、`task.py view --serve`、`cmd_start` 调度门、`.repo_template/docs/architecture.md`、`usage.md` | 已落地；merge_guard 被 L36 取代 |
 | L36 | 工作流特殊机制与 skill 过度详细 | 用户逐项裁决（2026-09-06）、`plans/plan_workflow_simplification.md` | 严格模板、测试/黑盒/review、attempt、goal、一 task 一 commit、pending 子代理和同步能力保留；删除 merge token hook 与正式 blocked 状态；attempt report=blocked 继续审计；review/verify limit 均保留并用独立 limits 命令只增；合并改为 Git `merge --no-ff --no-commit` 验证后提交；调度删除 schedule_status、反向冲突边维护和复杂 tie-break；15 个 skill 改为结果与门禁导向，移除重复剧本 | `repo/.repo_template/skills/`、`repo_task/integration.py` / `lifecycle.py` / `scheduling.py`、task 模板、Claude settings、同步脚本 | 已落地 |
+| L37 | 消费仓首次追平大改版时同步脚本自举缺口 | md_kx 迁 Mac 实证（2026-09-14） | prep 只能刷新已存在且可跑的脚本：消费仓 `repo_sync.py` 若是旧布局版（旧 state 路径、旧硬同步清单、无 `prep`），调用即失败，无法自举。启动器显式加「先复制模板源 `repo_sync.py` 覆盖消费仓」步骤（任何子命令之前）；`init` 增加旧 state 迁移（带过 `user_prompts`/`last_synced_*`） | `repo/.repo_template/skills/repo-template-sync/SKILL.md`、`repo_sync.py` | 已落地 |
 
 ## 未闭环
 
