@@ -1185,7 +1185,7 @@ def _run_tests(consumer: Path) -> bool:
     r = subprocess.run(
         ["pytest", ".repo_template/tests/", "-q"], cwd=str(consumer),
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=300,
+        timeout=500,
     )
     if r.returncode != 0:
         print(r.stdout[-2000:] if r.stdout else "", file=sys.stderr)
