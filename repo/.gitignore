@@ -11,13 +11,9 @@ __pycache__/
 .env.*
 !.env.example
 
-# 例外：审计日志必须入库
-!docs/archive/tasks_audit.log
-
 # 多路 review 会话的过程文件（报告 review_*.md 本身入库）
 docs/reviews/review_*/_meta/
 docs/archive/reviews/review_*/_meta/
-
 
 # 并行调度账本，运行态不入库
 docs/runtime/
