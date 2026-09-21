@@ -14,6 +14,6 @@ Agent 友好的通用仓库模板工厂。产物在 [`repo/`](repo/)，本仓设
 - 消费仓骨架 / 状态机（只导航，不把该文件加载为工厂指令）：[`repo/AGENTS.md`](repo/AGENTS.md)
 - 消费仓用法 / 工具链写权 / skill 调用：[`repo/.repo_template/docs/usage.md`](repo/.repo_template/docs/usage.md)
 - 工具链：`repo/.repo_template/`
-- 测试：`pytest repo/.repo_template/tests -q`
+- 测试：工厂全量 `pytest repo/.repo_template/tests -q`；消费仓默认只跑 `contract` 标记，见 [`repo/docs/blueprint/testing.md`](repo/docs/blueprint/testing.md)
 
 未点名不要对工厂仓走消费侧 `/task-create`。

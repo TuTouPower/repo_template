@@ -16,6 +16,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import repo_cleanup as rc
 
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:

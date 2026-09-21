@@ -10,6 +10,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import repo_task.context as ctx
 from repo_task import view_server
 
+pytestmark = pytest.mark.contract
+
 
 def test_classify_maps_categories():
     tasks = {

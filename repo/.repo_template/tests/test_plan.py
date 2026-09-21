@@ -14,6 +14,8 @@ from repo_task.plan import (  # noqa: E402
     format_plan_text,
 )
 
+pytestmark = pytest.mark.contract
+
 
 def node(tid, category, title=None):
     return {

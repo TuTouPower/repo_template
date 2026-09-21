@@ -17,6 +17,8 @@ from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.store import rebuild_index, scan_tasks
 
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture
 def fake_repo(tmp_path, monkeypatch):

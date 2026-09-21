@@ -15,6 +15,8 @@ from repo_task.documents import (
     write_front_matter,
 )
 
+pytestmark = pytest.mark.contract
+
 
 # --- _quote / _unquote ---
 

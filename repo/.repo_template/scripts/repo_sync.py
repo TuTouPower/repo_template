@@ -57,6 +57,10 @@ PROTECT_NAMES = {"sync_state.json"}
 # 裁定范围：可定制共享资产。.gitignore / .prettierignore / MCP 机械合并；AGENTS.md 语义合并。
 SHARED_FILES = ("AGENTS.md", ".gitignore")
 
+# 消费仓 apply / 默认门禁只跑模板契约，不含工厂全量集成测试。
+CONSUMER_TEST_COMMAND = ("pytest", ".repo_template/tests/", "-q", "-m", "contract")
+CONSUMER_TEST_TIMEOUT = 60
+
 # AGENTS.md 同步协议：按固定标题识别三类内容。
 # 项目介绍永不更新；目录与读写规则只报告差异，由 agent 语义合并；开发原则每轮强制更新。
 AGENTS_INTRO_HEADING = "## 目录与读写规则"
@@ -1183,9 +1187,9 @@ def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[
 
 def _run_tests(consumer: Path) -> bool:
     r = subprocess.run(
-        ["pytest", ".repo_template/tests/", "-q"], cwd=str(consumer),
+        list(CONSUMER_TEST_COMMAND), cwd=str(consumer),
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=500,
+        timeout=CONSUMER_TEST_TIMEOUT,
     )
     if r.returncode != 0:
         print(r.stdout[-2000:] if r.stdout else "", file=sys.stderr)
@@ -1459,7 +1463,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     if not args.skip_tests:
         if not _run_tests(CONSUMER):
-            print("pytest .repo_template/tests/ 失败，不推进 state", file=sys.stderr)
+            print("pytest .repo_template/tests/ -m contract 失败，不推进 state", file=sys.stderr)
             _cleanup_rollback()
             return 1
     else:
@@ -1642,7 +1646,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply = sub.add_parser("apply", help="执行对齐写盘")
     apply.add_argument("--decision", action="append", default=[], metavar="UNIT:DISP",
                        help="裁定单元决策（可重复），如 AGENTS.md:update / AGENTS.md:keep")
-    apply.add_argument("--skip-tests", action="store_true", help="跳过 pytest 验证")
+    apply.add_argument("--skip-tests", action="store_true", help="跳过模板契约测试（-m contract）")
     apply.set_defaults(func=cmd_apply)
 
     prompt = sub.add_parser("prompt", help="管理 user_prompts")

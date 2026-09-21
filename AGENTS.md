@@ -14,3 +14,5 @@
 pytest repo/.repo_template/tests -q
 python3 repo/.repo_template/scripts/task.py --help
 ```
+
+工厂改模板必须跑全量（含未标记的集成测试）。消费仓默认门禁是 `pytest .repo_template/tests -q -m contract`，见 `repo/docs/blueprint/testing.md`。

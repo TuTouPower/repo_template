@@ -15,6 +15,8 @@ from check_review_status import (
     regression_rounds,
 )
 
+pytestmark = pytest.mark.contract
+
 
 # --- extract_verdicts ---
 

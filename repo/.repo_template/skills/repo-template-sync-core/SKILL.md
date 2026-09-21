@@ -31,7 +31,7 @@ disable-model-invocation: true
 
     - 手写文件和用户 prompt 保护项保持不动，冲突交用户决定。
 5. **apply**：先保存本次会覆盖文件的未提交内容和当前 state，作为失败恢复基线；用户已有改动无法隔离时停止。把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、AGENTS.md 的开发原则强制更新、workflow schema 强制更新和 state 字段级更新；目录与读写规则的语义合并须由 Agent 智能处理并复核，项目介绍不得改。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
-6. **验证**：运行同步后的 `.repo_template/tests` 和脚本报告的结构检查。写盘异常触发脚本回滚；内置测试返回失败则不推进 state，但保留已写入文件，不能声称已自动回滚。停止且不 commit，核对 diff 与预先保存的基线后修复重验；不要用 `--skip-tests` 绕过。若 apply 已成功推进 state 后的额外检查失败，报告实际 state，不伪称未推进。
+6. **验证**：`repo_sync.py apply` 内置跑模板契约测试（`pytest .repo_template/tests -q -m contract`），并核脚本报告的结构检查。这不是工厂全量集成测试。写盘异常触发脚本回滚；内置测试返回失败则不推进 state，但保留已写入文件，不能声称已自动回滚。停止且不 commit，核对 diff 与预先保存的基线后修复重验；不要用 `--skip-tests` 绕过。若 apply 已成功推进 state 后的额外检查失败，报告实际 state，不伪称未推进。
 7. **审批**：列出实际改动、测试、模板源版本和仍待决定项，询问是否 commit；批准后只提交本轮同步内容。
 
 ## 保留的完整语义

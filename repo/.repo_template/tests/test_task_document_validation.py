@@ -10,6 +10,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task.documents import parse_front_matter, validate_task_documents
 
+pytestmark = pytest.mark.contract
 
 SPEC_TEMPLATE = (REPO_ROOT / ".repo_template/docs/task_template/spec.md").read_text(encoding="utf-8")
 _, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / ".repo_template/docs/task_template/task.md")
