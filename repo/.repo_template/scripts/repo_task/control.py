@@ -13,7 +13,7 @@ from .attempts import (
 from .documents import tid_sort_key
 from .git_ops import require_primary_worktree
 from .ledger import ledger_append, ledger_read
-from .monitoring import compute_ps_rows
+from .monitoring import compute_ps_rows, verify_integrate_ready
 from .plan import build_board_model, chain_letter, compute_batch_plan
 from .scheduling import compute_schedule
 from .store import discover_effective_sources, discover_effective_tasks, scan_tasks
@@ -153,6 +153,13 @@ def cmd_attempt_terminal(args):
 
 def cmd_attempt_report(args):
     require_primary_worktree()
+    if args.status == "done":
+        try:
+            verdict, detail = verify_integrate_ready(args.tid, args.attempt, args.execution_id)
+        except ctx.TaskDataError as error:
+            sys.exit(f"report=done 拒绝：{error}；先补审证据并 amend 进同一执行 commit（见 recovery），仍卡在 committed_unreported")
+        if verdict != "ready":
+            sys.exit(f"report=done 拒绝：{detail}；先补审证据并 amend 进同一执行 commit（见 recovery），仍卡在 committed_unreported")
     _print_json(report_attempt(
         args.tid,
         args.attempt,
