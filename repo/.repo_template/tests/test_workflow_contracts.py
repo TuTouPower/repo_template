@@ -48,14 +48,11 @@ def test_start_rejects_dependency_merged_by_chain_but_missing_in_old_base(git_re
 
 
 def test_cleanup_rejects_finalization_changes_after_review(git_repo):
-    def mutate(w):
-        rel = 'docs/tasks/t001_alpha'
-        anchor = _git(w, 'rev-parse', 'HEAD').stdout.strip()
-        scope = review_scope_fingerprint(anchor, rel, repo_root=w)
-        for name in ('review_code.md', 'review_test.md'):
-            (w / rel / name).write_text(f'reviewed_scope: {scope}\nverdict: PASS\n')
-        (w / 'README.md').write_text('unreviewed finalization change\n')
-    identity, _, _ = _prepare_done(git_repo, 't001', 'alpha', mutate=mutate)
+    identity, _, _ = _prepare_done(git_repo, 't001', 'alpha')
+    w = _worktree(git_repo, 't001')
+    (w / 'README.md').write_text('unreviewed finalization change\n')
+    _git(w, 'add', '-A')
+    _git(w, 'commit', '--amend', '--no-edit')
     result = _task_cli(git_repo, 'cleanup-worktree', 't001', *_identity_args(identity))
     assert result.returncode != 0
     assert 'review' in result.stderr.lower()

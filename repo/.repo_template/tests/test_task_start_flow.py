@@ -371,13 +371,22 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
 def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
     _start(git_repo)
     identity = _reserve(git_repo, "t001")
-    _terminal(git_repo, "t001", identity)
-    # 未 finish 的 active worktree：task 终态校验先于 dirty 校验拒绝
+    assert _task_cli(
+        git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
+        "--status", "completed",
+    ).returncode == 0
+    # 未 finish 的 active 分支：report=done 先被同一门禁拒绝
+    not_done_report = _task_cli(
+        git_repo, "attempt", "report", "t001", *_identity_args(identity),
+        "--status", "done",
+        "--sha", _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
+    )
+    assert not_done_report.returncode != 0
+    assert "非终态" in not_done_report.stderr
     not_done = _task_cli(
         git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
     )
     assert not_done.returncode != 0
-    assert "须为 done/dropped" in not_done.stderr
 
     # 已 finish 且提交（分支 ref=done），但 worktree 新增脏改动：拒绝
     worktree = _worktree_path(git_repo)
@@ -386,6 +395,11 @@ def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t001): complete alpha")
+    head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    assert _task_cli(
+        git_repo, "attempt", "report", "t001", *_identity_args(identity),
+        "--status", "done", "--sha", head,
+    ).returncode == 0
     (worktree / "dirty.txt").write_text("x", encoding="utf-8")
     dirty = _task_cli(
         git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
@@ -601,14 +615,24 @@ def test_integrate_keeps_branch_when_requested(git_repo):
 def test_integrate_rejects_unfinished_task(git_repo):
     _start(git_repo, "t001")
     identity = _reserve(git_repo, "t001")
-    _terminal(git_repo, "t001", identity)
+    assert _task_cli(
+        git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
+        "--status", "completed",
+    ).returncode == 0
+    # 未 finish 的 active 分支：report=done 先被同一门禁拒绝，integrate 仍拒绝
+    not_done_report = _task_cli(
+        git_repo, "attempt", "report", "t001", *_identity_args(identity),
+        "--status", "done",
+        "--sha", _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
+    )
+    assert not_done_report.returncode != 0
+    assert "非终态" in not_done_report.stderr
 
     result = _task_cli(
         git_repo, "integrate", "t001", *_identity_args(identity)
     )
 
     assert result.returncode != 0
-    assert "须为 done/dropped" in result.stderr
 
 
 def test_integrate_rejects_registered_worktree(git_repo):
@@ -1036,14 +1060,24 @@ def test_cleanup_worktree_rejects_active_even_when_clean(git_repo):
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "checkpoint")
     assert _git(worktree, "status", "--porcelain").stdout.strip() == ""
-    _terminal(git_repo, "t001", identity)
+    assert _task_cli(
+        git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
+        "--status", "completed",
+    ).returncode == 0
+    # 未 finish 的 active 分支：report=done 先被同一门禁拒绝，cleanup 仍拒绝
+    not_done_report = _task_cli(
+        git_repo, "attempt", "report", "t001", *_identity_args(identity),
+        "--status", "done",
+        "--sha", _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
+    )
+    assert not_done_report.returncode != 0
+    assert "非终态" in not_done_report.stderr
 
     result = _task_cli(
         git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
     )
 
     assert result.returncode != 0
-    assert "须为 done/dropped" in result.stderr
     assert worktree.exists()
 
 

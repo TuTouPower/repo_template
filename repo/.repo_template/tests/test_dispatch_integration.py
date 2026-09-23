@@ -320,9 +320,11 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
 
 
 def test_handoff_rejects_wrong_field_type(git_repo):
-    identity, _, _ = _prepare_done(
-        git_repo, "t001", "alpha", handoff_overrides={"tests": ["pytest"]}
-    )
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    path = _handoff_path(git_repo, "t001", "alpha")
+    payload = json.loads(path.read_text("utf-8"))
+    payload["tests"] = ["pytest"]
+    _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
     verdict, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
@@ -333,9 +335,11 @@ def test_handoff_rejects_wrong_field_type(git_repo):
 
 
 def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
-    identity, _, _ = _prepare_done(
-        git_repo, "t001", "alpha", handoff_overrides={"base_sha": "HEAD"}
-    )
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    path = _handoff_path(git_repo, "t001", "alpha")
+    payload = json.loads(path.read_text("utf-8"))
+    payload["base_sha"] = "HEAD"
+    _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
     verdict, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
@@ -346,15 +350,14 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
 
 
 def test_handoff_rejects_diff_anchor_not_matching_execution_parent(git_repo):
-    def corrupt_diff_anchor(worktree):
-        task_path = worktree / "docs/tasks/t001_alpha/task.md"
-        fm, body = parse_front_matter(task_path)
-        fm["diff_anchor"] = "0" * 40
-        write_front_matter(task_path, fm, body)
-
-    identity, _, _ = _prepare_done(
-        git_repo, "t001", "alpha", mutate=corrupt_diff_anchor
-    )
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    worktree = _worktree(git_repo, "t001")
+    task_path = worktree / "docs/archive/tasks/t001_alpha/task.md"
+    fm, body = parse_front_matter(task_path)
+    fm["diff_anchor"] = "0" * 40
+    write_front_matter(task_path, fm, body)
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "--amend", "--no-edit")
     verdict, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
@@ -580,9 +583,14 @@ def test_integrate_chain_preflight_failure_has_zero_merge_and_zero_integrated(gi
     _cleanup(git_repo, "t001", first)
     second, _, _ = _prepare_done(
         git_repo, "t002", "beta", base=first_branch,
-        handoff_overrides={"execution_id": "wrong"},
     )
     worktree = _worktree(git_repo, "t002")
+    path = _handoff_path(git_repo, "t002", "beta")
+    payload = json.loads(path.read_text("utf-8"))
+    payload["execution_id"] = "wrong"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "--amend", "--no-edit")
     _git(git_repo, "worktree", "remove", str(worktree))
     before = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 
