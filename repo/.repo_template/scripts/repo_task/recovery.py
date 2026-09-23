@@ -87,11 +87,50 @@ def recovery_state(tid: str) -> dict:
     except (OSError, ValueError, KeyError, TypeError, AttributeError, ctx.TaskDataError) as error:
         state["action"] = f"停止：{error}"
         return state
+    tip_sha = head.stdout.strip()
+    diff_anchor = fm.get("diff_anchor", "")
+    if record.get("state") == "terminal" and record.get("terminal_status") == "completed":
+        verdict, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+        if verdict != "ready" and "review gate" in gate_detail:
+            action = _evidence_repair_action(
+                tid, record["attempt"], record["execution_id"],
+                tip_sha, diff_anchor, gate_detail, branch,
+            )
+            return phase("evidence_repair", action)
     if not record.get("report"):
         return phase("committed_unreported", "验证最终提交和 review gate；按原 identity 补缺失的 terminal/report，不重复写已有事件")
     if record.get("terminal_status") == "completed" and record["report"].get("status") == "done":
         return phase("reported_uncleaned", "按原 identity exact cleanup；脏改动或门禁失败时保留现场")
     return state
+
+
+def _tip_has_successor(tip_sha: str, current_branch: str) -> bool:
+    """tip 是否已被其它本地分支包含（后继分支或已合入）。"""
+    result = _git(["branch", "--format=%(refname:short)"])
+    if result.returncode != 0:
+        return False
+    for branch in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
+        if branch == current_branch:
+            continue
+        if _git(["merge-base", "--is-ancestor", tip_sha, branch]).returncode == 0:
+            return True
+    return False
+
+
+def _evidence_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str, detail: str, branch: str) -> str:
+    if _tip_has_successor(tip_sha, branch):
+        return (
+            f"证据修复：review 门禁失败（{detail}）。"
+            f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不 amend。"
+        )
+    return (
+        f"证据修复：review 门禁失败（{detail}）。"
+        f"在原 worktree 对当前 tip {tip_sha[:12]} 的交付内容重审；"
+        "只改 review 过程文件；"
+        f"git commit --amend 进同一个执行 commit，first parent 必须仍是 diff_anchor {diff_anchor[:12]}；"
+        "禁止第二个 commit、rewind、reserve；"
+        f"amend 后 worktree 必须干净，再按原 identity attempt={attempt} execution_id={execution_id} exact cleanup。"
+    )
 
 
 def cmd_recovery(args) -> None:
