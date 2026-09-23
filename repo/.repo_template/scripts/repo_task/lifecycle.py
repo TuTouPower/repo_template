@@ -563,8 +563,9 @@ def cmd_rewind(args):
     recorded = primary_fm["status"]
     if effective not in ctx.STATUS_ORDER:
         sys.exit(
-            f"{args.tid} status={effective}；rewind 只处理 {ctx.STATUS_ORDER}"
-            "（done/dropped 已归档不可 rewind：放弃用 drop，彻底删除用 purge）"
+            f"{args.tid} status={effective}；rewind 只处理 {ctx.STATUS_ORDER}。"
+            "已归档不可 rewind；review 证据问题见 recovery 证据修复"
+            "（amend 补审进同一执行 commit），禁止 rewind/reserve 新 attempt。"
         )
     target = args.to or ctx.DEFAULT_REWIND.get(effective)
     if target is None:
