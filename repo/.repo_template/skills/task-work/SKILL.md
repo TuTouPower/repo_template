@@ -25,7 +25,7 @@ description: none
 
 ### 独立 review
 
-按 `review_level` 渲染 prompt并派 reviewer。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。
+按 `review_level` 渲染 prompt并派 reviewer。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（amend 同一执行 commit），不 rewind。
 
 ## 实施
 

@@ -94,7 +94,7 @@
 
 创建有效性用 `preflight {tid} --creation`；执行就绪仍用 `preflight {tid} --allow-backlog`，执行期严格验证用 `--require-verified`。前者不能替代后两者。
 
-review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交或 finish 的目录迁移改变。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；handoff 的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅；如已提交或 cleanup，保留分支/证据并请用户决定恢复方式，不擅自 amend 或绕过门禁。
+review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交或 finish 的目录迁移改变。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；handoff 的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅；如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留分支/证据并请用户决定恢复方式，未经用户同意不得 amend；用户同意后唯一合法修复是把补审证据 amend 进同一个执行 commit（first parent 必须仍为 diff_anchor，只改 review 过程文件，禁止第二个 commit、rewind、reserve），amend 后 worktree 干净再按原 identity cleanup。
 
 workflow schema 不做运行时兼容。`repo-template-sync` 的 `apply` 会强制更新主仓 `docs/tasks/` 中的存量 spec/task 模板块（包括把旧 `status: blocked` 改为 `active`、补齐轮次上限字段）；存在已登记 task worktree 时拒绝 apply，必须先完成或 rewind，避免主仓与执行分支各用一套 schema。更新后工具链直接拒绝旧字段和旧状态，不保留双轨解析。
 
