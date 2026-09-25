@@ -18,5 +18,8 @@ docs/archive/reviews/review_*/_meta/
 # 并行调度账本，运行态不入库
 docs/runtime/
 
+# 模板同步状态，运行态不入库
+.repo_template/sync_state.json
+
 # CommandCode local runtime state
 .commandcode/

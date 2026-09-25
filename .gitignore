@@ -12,3 +12,4 @@ docs_repo/demos/app/node_modules/
 repo/.scratch/
 repo/docs/runtime/
 repo/.claude/state/
+repo/.repo_template/sync_state.json
