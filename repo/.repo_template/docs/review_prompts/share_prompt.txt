@@ -76,7 +76,7 @@ reviewed_scope: {review_scope_fingerprint}
 
 ### 重审追加
 
-Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DD HH:MM UTC+8)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `task-work` `max_review_round`。
+Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DDThh:mm:ss+08:00)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `task-work` `max_review_round`。
 
 ### 撤回配合
 

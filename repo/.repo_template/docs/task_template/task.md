@@ -30,7 +30,7 @@ front matter 只经 `task.py` 修改；reviewer 只写对应 `review_*.md`。
 
 每个结构化 finding 一行。`已修` 表示本 task 已修复；`遗留` 必须指向 `pNNN` 或 follow-up tid；`撤回` 必须写清理由。critical/important 未解决时不得 PASS。
 
-### Round N (YYYY-MM-DD HH:MM UTC+8)
+### Round N (YYYY-MM-DDThh:mm:ss+08:00)
 
 |finding_id|severity|status|rationale|fix_ref|
 |---|---|---|---|---|
