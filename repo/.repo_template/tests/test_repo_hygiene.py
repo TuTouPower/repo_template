@@ -48,9 +48,9 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _handoff_two_sections(repo: Path) -> None:
     (repo / "docs/handoff.md").write_text(
         "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-01 09:00 UTC+8 a → b\n\n- branch：`t001_x`\n"
+        "## 2026-08-01T09:00:00+08:00 a → b\n\n- branch：`t001_x`\n"
         "- head_commit：`aaa111`\n\n"
-        "## 2026-08-13 16:00 UTC+8 b → c\n\n- branch：`t002_y`\n"
+        "## 2026-08-13T16:00:00+08:00 b → c\n\n- branch：`t002_y`\n"
         "- head_commit：`bbb222`\n",
         encoding="utf-8",
     )
@@ -61,10 +61,10 @@ def test_archive_handoff_moves_stale_keeps_latest(repo):
     rh.cmd_archive_handoff(argparse.Namespace(write=True))
     handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
     archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-13 16:00" in handoff
-    assert "2026-08-01 09:00" not in handoff
-    assert "2026-08-01 09:00" in archive
-    assert "2026-08-13 16:00" not in archive
+    assert "2026-08-13T16:00:00+08:00" in handoff
+    assert "2026-08-01T09:00:00+08:00" not in handoff
+    assert "2026-08-01T09:00:00+08:00" in archive
+    assert "2026-08-13T16:00:00+08:00" not in archive
     assert "t002_y" in handoff
 
 
@@ -81,7 +81,7 @@ def test_archive_handoff_preserves_existing_archive_body(repo):
     text = archive.read_text(encoding="utf-8")
     assert "自定义备注，禁止改写。" in text
     assert "2026-07-01 旧段" in text
-    assert "2026-08-01 09:00" in text
+    assert "2026-08-01T09:00:00+08:00" in text
     assert text.index("自定义备注") < text.index("2026-08-01")
 
 
@@ -91,29 +91,29 @@ def test_archive_handoff_append_not_truncate(repo):
     # 第二轮：上一轮保留的 08-13 节 + 新 08-20 节 → 迁 08-13，追加归档不覆盖旧归档
     (repo / "docs/handoff.md").write_text(
         "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-13 16:00 UTC+8 b → c\n\n- head_commit：`bbb222`\n\n"
-        "## 2026-08-20 10:00 UTC+8 c → d\n\n- head_commit：`ccc333`\n",
+        "## 2026-08-13T16:00:00+08:00 b → c\n\n- head_commit：`bbb222`\n\n"
+        "## 2026-08-20T10:00:00+08:00 c → d\n\n- head_commit：`ccc333`\n",
         encoding="utf-8",
     )
     rh.cmd_archive_handoff(argparse.Namespace(write=True))
     archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-01 09:00" in archive
-    assert "2026-08-13 16:00" in archive
-    assert "2026-08-20 10:00" not in archive  # 最新节保留在 handoff
-    assert "2026-08-20 10:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    assert "2026-08-01T09:00:00+08:00" in archive
+    assert "2026-08-13T16:00:00+08:00" in archive
+    assert "2026-08-20T10:00:00+08:00" not in archive  # 最新节保留在 handoff
+    assert "2026-08-20T10:00:00+08:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
 
 
 def test_archive_handoff_dry_run_does_not_write(repo):
     _handoff_two_sections(repo)
     rh.cmd_archive_handoff(argparse.Namespace(write=False))
     assert not (repo / "docs/archive/handoff.md").exists()
-    assert "2026-08-01 09:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    assert "2026-08-01T09:00:00+08:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
 
 
 def test_archive_handoff_noop_single_section(repo):
     (repo / "docs/handoff.md").write_text(
         "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-13 16:00 UTC+8 b → c\n\n- head_commit：`bbb222`\n",
+        "## 2026-08-13T16:00:00+08:00 b → c\n\n- head_commit：`bbb222`\n",
         encoding="utf-8",
     )
     rh.cmd_archive_handoff(argparse.Namespace(write=True))
