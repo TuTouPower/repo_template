@@ -522,6 +522,48 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
     return reports
 
 
+CONVENTIONS_PATH = CONSUMER / "docs/blueprint/conventions.md"
+
+
+def _migrate_conventions_text(text: str) -> str:
+    # 替换旧导入语句
+    text = re.sub(
+        r"from\s+task\s+import\s+(_atomic_write_text|atomic_write_text)(?:（[^）\n]*）)?",
+        "from repo_task.documents import atomic_write_text",
+        text,
+    )
+    # 替换 helper 归属描述
+    text = re.sub(
+        r"([`'\"\(]?(?:\.repo_template/)?(?:scripts/)?task\.py\s*(?:的)?\s*)(_atomic_write_text|atomic_write_text)",
+        r"repo_task.documents 的 atomic_write_text",
+        text,
+    )
+    return text
+
+
+def conventions_migration_status() -> list[str]:
+    if not CONVENTIONS_PATH.is_file():
+        return []
+    before = CONVENTIONS_PATH.read_text(encoding="utf-8")
+    after = _migrate_conventions_text(before)
+    if after != before:
+        return [_rel(CONVENTIONS_PATH)]
+    return []
+
+
+def migrate_conventions(changed: set[Path]) -> list[str]:
+    if not CONVENTIONS_PATH.is_file():
+        return []
+    before = CONVENTIONS_PATH.read_text(encoding="utf-8")
+    after = _migrate_conventions_text(before)
+    if after != before:
+        _stage_rollback(CONVENTIONS_PATH)
+        CONVENTIONS_PATH.write_text(after, encoding="utf-8")
+        changed.add(CONVENTIONS_PATH)
+        return [f"{_rel(CONVENTIONS_PATH)} 已自动迁移原子写约定为 from repo_task.documents import atomic_write_text（保留消费仓自定义内容）"]
+    return []
+
+
 # ---------------------------------------------------------------------------
 # 硬同步（树对树 / 单文件）
 # ---------------------------------------------------------------------------
@@ -1264,6 +1306,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     for item in shared_status(src):
         print(f"  {item['cls']:14s} {item['unit']}")
     migrations, worktrees, migration_errors = workflow_migration_status(src)
+    conv_migrations = conventions_migration_status()
     print("\nworkflow schema 强制迁移:")
     if migration_errors:
         for error in migration_errors:
@@ -1273,7 +1316,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     if migrations:
         for path in migrations:
             print(f"  migrate {path}")
-    if not migration_errors and not worktrees and not migrations:
+    if conv_migrations:
+        for path in conv_migrations:
+            print(f"  migrate {path}（原子写约定）")
+    if not migration_errors and not worktrees and not migrations and not conv_migrations:
         print("  无")
     print("\nformat 豁免 (.prettierignore):")
     dst = CONSUMER / ".prettierignore"
@@ -1382,6 +1428,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
     print("\n### workflow schema 强制迁移")
     migrations, worktrees, migration_errors = workflow_migration_status(src)
+    conv_migrations = conventions_migration_status()
     if migration_errors:
         print("BLOCKED：以下文档无法自动迁移：")
         for error in migration_errors:
@@ -1393,7 +1440,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if migrations:
         for path in migrations:
             print(f"- {path}")
-    if not migration_errors and not worktrees and not migrations:
+    if conv_migrations:
+        for path in conv_migrations:
+            print(f"- {path}（更新原子写约定为 repo_task.documents.atomic_write_text，保留自定义内容）")
+    if not migration_errors and not worktrees and not migrations and not conv_migrations:
         print("无")
 
     print("\n### state 推进预期")
@@ -1418,6 +1468,8 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         sync_file(src / rel, CONSUMER / rel, changed)
 
     for report in force_migrate_workflow_tasks(changed):
+        print(f"提示: {report}")
+    for report in migrate_conventions(changed):
         print(f"提示: {report}")
     reports = repair_symlinks(changed)
     for r in reports:

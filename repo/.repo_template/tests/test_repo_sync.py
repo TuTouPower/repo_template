@@ -1023,3 +1023,38 @@ def test_force_migrate_workflow_rejects_registered_task_worktree(env):
 
     with pytest.raises(rs.SyncError, match='必须先完成或 rewind'):
         rs.force_migrate_workflow_tasks(set())
+
+
+def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env, monkeypatch):
+    consumer = env['consumer']
+    conv_file = consumer / "docs/blueprint/conventions.md"
+    conv_file.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(rs, "CONVENTIONS_PATH", conv_file)
+
+    original_text = (
+        "# 约定\n\n"
+        "## 项目自定义约定\n"
+        "- 保持现有 React 风格。\n\n"
+        "### 原子写\n"
+        "- 写权威/派生状态数据走 tmp 文件 + fsync + os.replace 原子写（.repo_template/scripts/task.py 的 _atomic_write_text），防中断半写。"
+        "t063 曾实现。脚本层跨模块复用时 from task import _atomic_write_text（task.py 有 __main__ guard，import 安全）。\n"
+    )
+    conv_file.write_text(original_text, encoding="utf-8")
+
+    assert rs.conventions_migration_status() == [rs._rel(conv_file)]
+
+    changed = set()
+    reports = rs.migrate_conventions(changed)
+    assert len(reports) == 1
+    assert conv_file in changed
+
+    migrated_text = conv_file.read_text(encoding="utf-8")
+    assert "保持现有 React 风格" in migrated_text
+    assert "t063 曾实现" in migrated_text
+    assert "from repo_task.documents import atomic_write_text" in migrated_text
+    assert "_atomic_write_text" not in migrated_text
+    assert "from task import" not in migrated_text
+
+    # 幂等：再次执行无迁移
+    assert rs.conventions_migration_status() == []
+    assert rs.migrate_conventions(set()) == []

@@ -74,10 +74,18 @@ def dump_front_matter(fm: dict) -> str:
 def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8") -> None:
     """tmp 文件 + fsync + os.replace 原子写，防掉电/中断产生半写状态。
 
-    使用同目录唯一临时文件，防止并发写入相互覆盖；写完后 os.replace 原子替换。
+    使用同目录唯一临时文件，防止并发写入相互覆盖；保留已有目标权限或应用系统 umask，
+    写完后 os.replace 原子替换。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        mode = path.stat().st_mode & 0o7777
+    else:
+        current_umask = os.umask(0)
+        os.umask(current_umask)
+        mode = 0o666 & ~current_umask
+
     temporary_file = tempfile.NamedTemporaryFile(
         mode="w",
         encoding=encoding,
@@ -93,6 +101,10 @@ def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8"
             temporary_file.write(content)
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
+        try:
+            os.chmod(temporary, mode)
+        except OSError:
+            pass
         os.replace(temporary, path)
     except BaseException:
         try:
@@ -112,11 +124,16 @@ def write_front_matter_many(files: list[tuple[Path, dict, str]]) -> None:
     单个 write_front_matter 已原子，但多个文件顺序写中途崩溃仍可能只更新一部分；
     两阶段把 conflict 关系清理等批量写的「部分更新」窗口缩到 replace 循环（RT-008）。
     """
-    staged: list[tuple[Path, Path]] = []
+    staged: list[tuple[Path, Path, int]] = []
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    default_mode = 0o666 & ~current_umask
+
     try:
         for path, fm, body in files:
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
+            mode = (path.stat().st_mode & 0o7777) if path.exists() else default_mode
             temporary_file = tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -128,15 +145,19 @@ def write_front_matter_many(files: list[tuple[Path, dict, str]]) -> None:
             )
             temporary = Path(temporary_file.name)
             # 在写入前登记清理对象，防止写入/fsync 异常导致临时文件残留（P3）
-            staged.append((path, temporary))
+            staged.append((path, temporary, mode))
             with temporary_file:
                 temporary_file.write(dump_front_matter(fm) + "\n" + body)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
-        for path, temporary in staged:
+        for path, temporary, mode in staged:
+            try:
+                os.chmod(temporary, mode)
+            except OSError:
+                pass
             os.replace(temporary, path)
     except BaseException:
-        for _, temporary in staged:
+        for _, temporary, _ in staged:
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:

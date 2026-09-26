@@ -229,3 +229,40 @@ def test_write_front_matter_many_fsync_failure_cleans_all_tmp(tmp_path, monkeypa
     assert not p2.exists()
     assert list(tmp_path.iterdir()) == []
 
+
+def test_atomic_write_preserves_existing_permissions(tmp_path):
+    """P2: 原子写保持已有文件权限，新文件不降为 0600。"""
+    import os
+    import stat
+    from repo_task.documents import atomic_write_text, write_front_matter_many
+
+    # 1. 已有 0644 文件保持 0644
+    target = tmp_path / "keep_644.txt"
+    target.write_text("old\n", encoding="utf-8")
+    os.chmod(target, 0o644)
+    atomic_write_text(target, "new\n")
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+    # 2. 已有 0755 文件保持 0755
+    script = tmp_path / "keep_755.sh"
+    script.write_text("echo old\n", encoding="utf-8")
+    os.chmod(script, 0o755)
+    atomic_write_text(script, "echo new\n")
+    assert stat.S_IMODE(script.stat().st_mode) == 0o755
+
+    # 3. 新文件按 umask 创建，绝不退化为 0600
+    new_file = tmp_path / "new_created.txt"
+    atomic_write_text(new_file, "created\n")
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    expected_mode = 0o666 & ~current_umask
+    assert stat.S_IMODE(new_file.stat().st_mode) == expected_mode
+
+    # 4. 批量写保持已有文件权限
+    batch_file = tmp_path / "batch.md"
+    batch_file.write_text("old\n", encoding="utf-8")
+    os.chmod(batch_file, 0o644)
+    write_front_matter_many([(batch_file, {"tid": "t001"}, "body")])
+    assert stat.S_IMODE(batch_file.stat().st_mode) == 0o644
+
+

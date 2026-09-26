@@ -39,18 +39,17 @@ def _fingerprint_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_facade_reexports_canonical_functions_without_legacy_attempt_api():
-    assert task.compute_schedule is scheduling.compute_schedule
-    assert task.repository_fingerprint is monitoring.repository_fingerprint
-    assert task.project_attempts is attempts.project_attempts
-    assert task.current_attempt_record is attempts.current_attempt_record
-    assert task.in_flight_attempts is attempts.in_flight_attempts
-    assert task.append_integrated_batch is attempts.append_integrated_batch
-    for legacy in (
-        "dispatch_events", "dispatch_for_attempt", "_resolve_chain", "_in_flight_attempts",
+def test_task_cli_entrypoint_is_clean_without_facade_reexports():
+    """task.py 仅作为纯粹命令行入口，不保留转导出兼容层与 __getattr__。"""
+    text = (SCRIPTS_DIR / "task.py").read_text(encoding="utf-8")
+    assert "main()" in text
+    assert len(text.splitlines()) < 30
+    for attr in (
+        "compute_schedule", "repository_fingerprint", "project_attempts",
+        "current_attempt_record", "in_flight_attempts", "append_integrated_batch",
+        "atomic_write_text", "_atomic_write_text",
     ):
-        assert not hasattr(task, legacy)
-    assert 100 <= len((SCRIPTS_DIR / "task.py").read_text(encoding="utf-8").splitlines()) <= 250
+        assert not hasattr(task, attr)
 
 
 def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):

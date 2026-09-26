@@ -30,9 +30,6 @@ from .scheduling import compute_schedule
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
 _DOC_NAMES = {"spec": "spec.md", "task": "task.md"}
 
-# 兼容旧测试与外部引用
-_classify = classify_node
-
 
 def _find_free_port(host: str) -> int:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -146,9 +143,10 @@ def _open_browser(url: str) -> None:
         if _open_browser_windows(url):
             return
     elif _is_windows():
-        if os.name == "nt":
+        startfile = getattr(os, "startfile", None)
+        if callable(startfile):
             try:
-                os.startfile(url)  # type: ignore[attr-defined]
+                startfile(url)
                 return
             except OSError:
                 pass
