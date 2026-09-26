@@ -51,7 +51,7 @@
 - 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。md_kx 来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装（`uv tool install md-kx`）；消费仓不逐仓安装，缺二进制时 `md_format.py` / pre-commit 会在报错里给出来源与安装入口。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，格式化本次 staged 的 `.md` 并重新暂存；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`（已有其它 hooksPath 须 `--force`）；临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
 - 消费仓 `prettier --check .` 豁免模板侧路径：分发静态文件（两 `package.json`、`view_static/` 看板 UI——模板自有 `2` 空格/单引号风格、`test_chain_plan_cases.js`）、同步状态（`.repo_template/sync_state.json`，每轮 `apply` 重写）、派生索引（`docs/tasks_index.json`、`docs/archive/tasks_index.json`，可重建）、任务产物（`docs/**/handoff.json`，逐任务生成），以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认嵌套 `.gitignore`）。`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。`.github/workflows/repo-template-ci.yml` 已下线（`b3e5c8f` 起不再分发），残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。
-- 原子写：权威/派生文件与待办维护走原子写（tmp + fsync + os.replace）。公共 helper 可从 task 门面导入：`from task import _atomic_write_text`（亦支持 `from repo_task.documents import atomic_write_text`）。
+- 原子写：权威/派生文件与待办维护走原子写（tmp + fsync + os.replace）。公共 helper：`from repo_task.documents import atomic_write_text`。
 
 ## skill 调用
 

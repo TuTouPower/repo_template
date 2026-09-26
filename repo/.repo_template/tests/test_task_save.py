@@ -121,29 +121,28 @@ def test_parse_strips_inline_comment_unquoted(tmp_path):
     assert fm["title"] == "含 # 号"
 
 
-# --- atomic_write_text / _atomic_write_text ---
+# --- atomic_write_text ---
 
-def test_atomic_write_export_compatibility():
-    """验证 task.py 与 repo_task.documents 的导出兼容性。"""
-    from task import _atomic_write_text as task_atomic_private, atomic_write_text as task_atomic_public
-    from repo_task.documents import _atomic_write_text as doc_atomic_private, atomic_write_text as doc_atomic_public
+def test_atomic_write_clean_api():
+    """验证 atomic_write_text 为 repo_task.documents 的公开 API，且 CLI task.py 不外漏 helper。"""
+    from repo_task.documents import atomic_write_text
+    import task
 
-    assert callable(task_atomic_private)
-    assert task_atomic_private is task_atomic_public
-    assert task_atomic_private is doc_atomic_private
-    assert task_atomic_private is doc_atomic_public
+    assert callable(atomic_write_text)
+    assert not hasattr(task, "atomic_write_text")
+    assert not hasattr(task, "_atomic_write_text")
 
 
 def test_atomic_write_roundtrip(tmp_path):
-    from task import _atomic_write_text
+    from repo_task.documents import atomic_write_text
 
     target = tmp_path / "subdir" / "note.txt"
-    _atomic_write_text(target, "first content\n")
+    atomic_write_text(target, "first content\n")
     assert target.read_text(encoding="utf-8") == "first content\n"
     assert list(target.parent.glob(".*.tmp")) == []
     assert list(target.parent.glob("*.tmp")) == []
 
-    _atomic_write_text(str(target), "updated content\n")
+    atomic_write_text(str(target), "updated content\n")
     assert target.read_text(encoding="utf-8") == "updated content\n"
     assert list(target.parent.glob(".*.tmp")) == []
     assert list(target.parent.glob("*.tmp")) == []
@@ -151,7 +150,7 @@ def test_atomic_write_roundtrip(tmp_path):
 
 def test_atomic_write_replace_failure_preserves_target_and_cleans_tmp(tmp_path, monkeypatch):
     import os
-    from task import _atomic_write_text
+    from repo_task.documents import atomic_write_text
 
     target = tmp_path / "status.txt"
     target.write_text("stable state\n", encoding="utf-8")
@@ -161,7 +160,7 @@ def test_atomic_write_replace_failure_preserves_target_and_cleans_tmp(tmp_path, 
 
     monkeypatch.setattr(os, "replace", _failing_replace)
     with pytest.raises(OSError, match="injected replace failure"):
-        _atomic_write_text(target, "half baked state\n")
+        atomic_write_text(target, "half baked state\n")
 
     assert target.read_text(encoding="utf-8") == "stable state\n"
     assert [p.name for p in target.parent.iterdir()] == ["status.txt"]
@@ -169,7 +168,7 @@ def test_atomic_write_replace_failure_preserves_target_and_cleans_tmp(tmp_path, 
 
 def test_atomic_write_fsync_failure_cleans_tmp(tmp_path, monkeypatch):
     import os
-    from task import _atomic_write_text
+    from repo_task.documents import atomic_write_text
 
     target = tmp_path / "fsync_fail.txt"
 
@@ -178,7 +177,7 @@ def test_atomic_write_fsync_failure_cleans_tmp(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "fsync", _failing_fsync)
     with pytest.raises(OSError, match="injected fsync failure"):
-        _atomic_write_text(target, "never written\n")
+        atomic_write_text(target, "never written\n")
 
     assert not target.exists()
     assert [p.name for p in target.parent.iterdir()] == []
@@ -187,14 +186,14 @@ def test_atomic_write_fsync_failure_cleans_tmp(tmp_path, monkeypatch):
 def test_atomic_write_concurrent_no_collision(tmp_path):
     """P2: 并发写入使用同目录唯一临时文件，防止相互覆盖与 FileNotFoundError。"""
     from concurrent.futures import ThreadPoolExecutor
-    from task import _atomic_write_text
+    from repo_task.documents import atomic_write_text
 
     target = tmp_path / "concurrent.txt"
     n_writers = 20
     contents = [f"content from writer {i}\n" for i in range(n_writers)]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_atomic_write_text, target, c) for c in contents]
+        futures = [pool.submit(atomic_write_text, target, c) for c in contents]
         for f in futures:
             f.result()
 

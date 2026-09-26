@@ -102,9 +102,6 @@ def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8"
         raise
 
 
-_atomic_write_text = atomic_write_text
-
-
 def write_front_matter(path: Path, fm: dict, body: str) -> None:
     text = dump_front_matter(fm) + "\n" + body
     atomic_write_text(path, text)
