@@ -38,6 +38,8 @@ from repo_task.documents import (
     _strip_inline_code,
     _unquote,
     _visible_markdown_lines,
+    atomic_write_text,
+    _atomic_write_text,
     dump_front_matter,
     dump_tid_list,
     parse_front_matter,

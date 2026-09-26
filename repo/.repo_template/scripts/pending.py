@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate, id_lock
 from md_format import format_new_file
+from task import _atomic_write_text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "p"
@@ -125,7 +126,7 @@ def set_field(path: Path, pattern: re.Pattern, line: str) -> None:
             break
     else:
         lines.append(line)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    _atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -192,8 +193,8 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                             for line in destination.read_text(encoding="utf-8").splitlines()
                             if not PARKED_RE.match(line)
                         ]
-                        destination.write_text(
-                            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+                        _atomic_write_text(
+                            destination, "\n".join(lines) + "\n"
                         )
                     # git mv 已 staged；正文状态字段随后变更未入索引，直接 commit 会留下旧状态。
                     # 对已跟踪文件 add，登记内容改动（未入库条目退化为普通 rename，由用户自行 add）。

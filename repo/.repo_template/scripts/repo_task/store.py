@@ -10,7 +10,7 @@ from pathlib import Path
 
 import repo_task.context as ctx
 
-from .documents import parse_front_matter, parse_front_matter_text, parse_tid_list
+from .documents import atomic_write_text, parse_front_matter, parse_front_matter_text, parse_tid_list
 from .git_ops import _get_head_short, _git, has_unmerged_commits, primary_worktree_path, require_primary_worktree, worktree_paths
 
 def task_schedule_references(target_tid: str, tasks: list[dict] | None = None) -> list[str]:
@@ -168,13 +168,10 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
             "workspace": ctx._rel(ctx.REPO_ROOT) or str(ctx.REPO_ROOT),
             "tasks": rows,
         }
-        # 临时文件 + os.replace：并发/崩溃下不落盘截断 JSON（RT-007）
-        temporary = path.with_name(path.name + ".tmp")
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=4) + "\n",
-            encoding="utf-8", newline="\n",
+        # 原子写：并发/崩溃下不落盘截断 JSON（RT-007）
+        atomic_write_text(
+            path, json.dumps(payload, ensure_ascii=False, indent=4) + "\n"
         )
-        os.replace(temporary, path)
     return tasks
 
 def find_task(tid: str, tasks: list[dict] | None = None) -> dict | None:

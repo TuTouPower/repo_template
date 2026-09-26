@@ -24,7 +24,7 @@ from datetime import datetime
 import repo_task.context as ctx
 
 from .attempts import attempts_for_tid
-from .documents import tid_sort_key
+from .documents import atomic_write_text, tid_sort_key
 from .git_ops import require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .monitoring import verify_integrate_ready
@@ -117,13 +117,11 @@ def _write_snapshot(queue: list[str]) -> dict:
         "created_at": datetime.now(ctx.TZ_CN).isoformat(timespec="seconds"),
         "queue": queue,
     }
-    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # 临时文件 + os.replace 原子写，防并发/崩溃截断（F41/RT-007）
-    temporary = QUEUE_PATH.with_name(QUEUE_PATH.name + ".tmp")
-    temporary.write_text(
-        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    # 临时文件 + fsync + os.replace 原子写，防并发/崩溃截断（F41/RT-007）
+    atomic_write_text(
+        QUEUE_PATH,
+        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
     )
-    os.replace(temporary, QUEUE_PATH)
     return snapshot
 
 

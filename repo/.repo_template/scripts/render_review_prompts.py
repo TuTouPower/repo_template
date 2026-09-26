@@ -24,7 +24,10 @@ import sys
 from pathlib import Path
 
 from repo_task.context import TaskDataError
-from repo_task.documents import parse_front_matter as _parse_front_matter
+from repo_task.documents import (
+    atomic_write_text,
+    parse_front_matter as _parse_front_matter,
+)
 from repo_task.monitoring import (
     REVIEW_PROMPT_OUTPUT_FILES,
     review_scope_fingerprint as monitoring_scope_fingerprint,
@@ -312,7 +315,7 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
         for filename, prompt in prompts.items():
             path = out_dir / filename
-            path.write_text(prompt, encoding="utf-8")
+            atomic_write_text(path, prompt)
             print(f"wrote {path}", file=sys.stderr)
     else:
         for filename, prompt in prompts.items():
