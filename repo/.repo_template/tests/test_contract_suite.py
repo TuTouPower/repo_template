@@ -78,6 +78,10 @@ def test_contract_collection_matches_allowlist():
 
 
 def test_testing_md_default_commands_use_contract_marker():
+    if (REPO_ROOT / ".repo_template/sync_state.json").is_file() or (
+        REPO_ROOT / ".agents/skills/repo-template-sync/sync_state.json"
+    ).is_file():
+        pytest.skip("消费仓已按自身技术栈定制 testing.md，跳过模板默认命令检查")
     text = (REPO_ROOT / "docs/blueprint/testing.md").read_text(encoding="utf-8")
     doctor = _section(text, "doctor_cmd")
     test_cmd = _section(text, "test_cmd")
