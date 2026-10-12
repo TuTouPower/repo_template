@@ -297,6 +297,26 @@ def test_sync_opencode_commands(env):
     assert any("task-run" in r for r in reports)
 
 
+def test_shipped_skills_have_real_descriptions():
+    """模板分发的每个 skill 必须有真实 description（命令文案与按描述路由依赖）。"""
+    skills_dir = Path(__file__).resolve().parents[1] / "skills"
+    missing: list[str] = []
+    for skill in sorted(skills_dir.iterdir()):
+        if not skill.is_dir():
+            continue
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        desc = ""
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end != -1:
+                for line in text[3:end].splitlines():
+                    if line.startswith("description:"):
+                        desc = line.split(":", 1)[1].strip()
+        if not desc or desc.lower() == "none":
+            missing.append(skill.name)
+    assert missing == []
+
+
 def test_prep_oneway_sync_tooling(env):
     src, consumer = env["src"], env["consumer"]
     # 模板侧 core skill 与工具链更新
@@ -567,6 +587,55 @@ def test_apply_src_dirty_does_not_advance_commit(env):
     state = rs.read_state()
     assert state["last_synced_commit"] is None
     assert state["last_synced_at"]
+
+
+def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monkeypatch, capsys):
+    """契约测试失败：完整回滚、保留备份、输出 changed 清单与可操作错误，state 不推进。"""
+    src, consumer = env["src"], env["consumer"]
+    old_agents = consumer / "AGENTS.md"
+    old_agents.write_text("CONSUMER OLD\n")
+
+    monkeypatch.setattr(rs, "_run_tests", lambda c: False)
+    rc = rs.cmd_apply(
+        Namespace(decision=["AGENTS.md:update"], skip_tests=False, decisions={"AGENTS.md": "update"})
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    # 已写入改动完整回滚
+    assert old_agents.read_text() == "CONSUMER OLD\n"
+    assert not (consumer / ".repo_template/scripts/task.py").exists()
+    # 备份保留（未被清理）
+    assert (consumer / ".scratch/repo_sync_rollback").exists()
+    # changed 清单输出 + 可操作错误
+    assert "本次写入清单" in captured.out
+    assert ".repo_template/scripts/task.py" in captured.out
+    assert "已完整回滚" in captured.err
+    assert rs.read_state()["last_synced_commit"] is None
+
+
+def test_sync_file_rejects_directory_target(env):
+    """目标同名目录：拒绝写入目录内部，保持目录内容原样。"""
+    src, consumer = env["src"], env["consumer"]
+    target = consumer / ".md_kx.toml"
+    target.mkdir(parents=True)
+    (target / "user_note.txt").write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(rs.SyncError, match="是目录"):
+        rs.sync_file(src / ".md_kx.toml", target, set())
+    assert (target / "user_note.txt").is_file()
+    assert not (target / ".md_kx.toml").exists()
+
+
+def test_sync_dir_rejects_file_target(env):
+    """目标同名为文件：明确报错停止，不静默覆盖。"""
+    src, consumer = env["src"], env["consumer"]
+    target = consumer / ".repo_template" / "docs"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("i am a file\n", encoding="utf-8")
+
+    with pytest.raises(rs.SyncError, match="类型不符"):
+        rs.sync_dir(src / ".repo_template/docs", target, set())
+    assert target.read_text() == "i am a file\n"
 
 
 # ---------------------------------------------------------------------------

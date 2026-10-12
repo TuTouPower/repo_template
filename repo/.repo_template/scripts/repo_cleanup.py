@@ -9,7 +9,8 @@ agent 只保留裁定语义：scratch 活跃引用路径（--keep 传入）、�
 类别：
   默认（scan/apply 未点名类别时）：pycache / pytest / logs / os / editor
   点名才清：node / scratch / artifacts / data
-  scratch / artifacts / data 清目录内容、保留目录本身。
+  scratch / artifacts / data 清目录内容、保留目录本身；
+  默认扫描不进入未点名的 node_modules 与这三棵目录树（防误删未点名内容）。
 
 保护（永不删）：.git/、AGENTS.md、README.md、CLAUDE.md、.gitignore、
 docs/archive/tasks_audit.log；docs/ 下仅 os/editor 类放行；src/tests/schemas/
@@ -121,7 +122,7 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
     hits: list[dict] = []
     skipped: list[str] = []
 
-    bulk_roots: set[str] = set()
+    bulk_roots: set[str] = set(BULK_CATEGORY_DIRS.values())
     for cat, rel_dir in BULK_CATEGORY_DIRS.items():
         if cat not in cats:
             continue
@@ -134,12 +135,17 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
                 skipped.append(rel)
                 continue
             hits.append({"path": rel, "category": cat, "kind": "dir" if p.is_dir() else "file"})
-        bulk_roots.add(rel_dir)
+
+    # 未点名类别的目录整树不进普通 walk：bulk 三类（.scratch/artifacts/data）只由
+    # 点名类别整树处理；node_modules 仅在点名 node 时接受 walk 分类。
+    prune = {".git", *bulk_roots}
+    if "node" not in cats:
+        prune.add("node_modules")
 
     for root, dirs, files in os.walk(repo):
         relroot = os.path.relpath(root, repo)
         relroot = "" if relroot == "." else relroot.replace(os.sep, "/")
-        dirs[:] = _prune(relroot, dirs, {".git", *bulk_roots})
+        dirs[:] = _prune(relroot, dirs, prune)
         entries = []
         for d in dirs:
             rel = f"{relroot}/{d}" if relroot else d

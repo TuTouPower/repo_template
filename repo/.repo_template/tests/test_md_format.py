@@ -88,6 +88,31 @@ def test_format_changes_file(repo, tmp_path, monkeypatch):
     assert "|---|---|" in (repo / "a.md").read_text(encoding="utf-8")
 
 
+def test_format_failure_rolls_back_already_formatted(repo, tmp_path, monkeypatch):
+    """中途失败：已格式化文件回滚，不留「已格式化未暂存」状态。"""
+    bin_dir = tmp_path / "bin_fail"
+    bin_dir.mkdir()
+    exe = bin_dir / "md_kx"
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "path = Path(sys.argv[-1])\n"
+        "if path.name == 'b.md':\n"
+        "    sys.exit(2)\n"
+        "text = path.read_text(encoding='utf-8')\n"
+        "path.write_text(text.replace('|------|------|', '|---|---|'), encoding='utf-8')\n"
+    )
+    exe.chmod(0o755)
+    monkeypatch.setattr(mdf, "find_md_kx", lambda: str(exe))
+    (repo / "b.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
+    before = (repo / "a.md").read_bytes()
+
+    with pytest.raises(mdf.MdFormatError, match="回滚"):
+        mdf.format_paths(["a.md", "b.md"])
+    assert (repo / "a.md").read_bytes() == before
+
+
 def test_check_detects_drift(repo, tmp_path, monkeypatch):
     exe = _fake_md_kx(tmp_path)
     monkeypatch.setattr(mdf, "find_md_kx", lambda: str(exe))

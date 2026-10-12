@@ -64,6 +64,40 @@ def test_extract_verdicts_ignores_shorter_fence_inside_block(tmp_path):
     assert extract_verdicts(p) == ["FAIL"]
 
 
+def test_extract_verdicts_info_string_fence_is_content_not_close(tmp_path):
+    """带 info string 的同宽围栏行是内容：不提前闭合外层 code block。"""
+    p = tmp_path / "r.md"
+    p.write_text(
+        "```markdown\n```python\nreviewed_scope: ffffffffffffffff\nverdict: FAIL\n```\n"
+        "reviewed_scope: 0123456789abcdef\nverdict: PASS\n",
+        encoding="utf-8",
+    )
+    assert extract_verdicts(p) == ["PASS"]
+    assert crs.reviewed_scope(p) == "0123456789abcdef"
+
+
+def test_reviewed_scope_ignores_fenced_example(tmp_path):
+    """fenced 示例中的 reviewed_scope 不算声明；取可见行最后一条。"""
+    p = tmp_path / "r.md"
+    p.write_text(
+        "reviewed_scope: 0123456789abcdef\n"
+        "verdict: PASS\n\n"
+        "```markdown\nreviewed_scope: ffffffffffffffff\n```\n",
+        encoding="utf-8",
+    )
+    assert crs.reviewed_scope(p) == "0123456789abcdef"
+
+
+def test_reviewed_scope_hint_ignores_fenced_only_mention(tmp_path):
+    p = tmp_path / "r.md"
+    p.write_text(
+        "```markdown\nreviewed_scope: not-hex\n```\nverdict: PASS\n",
+        encoding="utf-8",
+    )
+    assert crs.reviewed_scope(p) is None
+    assert crs.reviewed_scope_hint(p) is False
+
+
 # --- regression_rounds ---
 
 def test_regression_rounds_single_pass(tmp_path):

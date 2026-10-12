@@ -174,6 +174,12 @@ def _file_differs(a: Path, b: Path) -> bool:
     return a.read_bytes() != b.read_bytes()
 
 
+def _reject_dir_target(dst: Path, reason: str) -> None:
+    """目标须能承载文件：shutil.copy2 遇到同名目录会把文件静默写进目录内部。"""
+    if dst.is_dir() and not dst.is_symlink():
+        raise SyncError(f"{_rel(dst)} 是目录：{reason}。请人工处理该目录后重跑 apply")
+
+
 # ---------------------------------------------------------------------------
 # sync_state.json 读写（字段级原子更新纪律）
 # ---------------------------------------------------------------------------
@@ -572,6 +578,11 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
     """树对树同步：src 全量复制（含覆盖），dst 中 src 没有的非噪声条目删除。"""
     if not dst_dir.exists():
         dst_dir.mkdir(parents=True)
+    elif not dst_dir.is_dir():
+        raise SyncError(
+            f"{_rel(dst_dir)} 是文件/软链，模板源是目录；类型不符，停止。"
+            "请人工处理该路径后重跑 apply"
+        )
     for entry in src_dir.iterdir():
         if _is_noise(entry.name):
             continue
@@ -579,6 +590,7 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
         if entry.is_dir():
             sync_dir(entry, target, changed)
         else:
+            _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 _stage_rollback(target)
                 shutil.copy2(entry, target)
@@ -601,6 +613,11 @@ def sync_dir_oneway(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
         return
     if not dst_dir.exists():
         dst_dir.mkdir(parents=True)
+    elif not dst_dir.is_dir():
+        raise SyncError(
+            f"{_rel(dst_dir)} 是文件/软链，模板源是目录；类型不符，停止。"
+            "请人工处理该路径后重跑 apply"
+        )
     for entry in src_dir.iterdir():
         if _is_noise(entry.name):
             continue
@@ -608,6 +625,7 @@ def sync_dir_oneway(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
         if entry.is_dir():
             sync_dir_oneway(entry, target, changed)
         else:
+            _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 _stage_rollback(target)
                 shutil.copy2(entry, target)
@@ -618,10 +636,12 @@ def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
     """单文件：src 有 → 拷贝（相同则不动）；src 无 → 删 dst。"""
     if not src.exists():
         if dst.exists():
+            _reject_dir_target(dst, "模板已无此文件，拒绝删除同名目录")
             _stage_rollback(dst)
             dst.unlink()
             changed.add(dst)
         return
+    _reject_dir_target(dst, "模板源是文件，拒绝写入目录内部")
     if not dst.exists() or _file_differs(src, dst):
         dst.parent.mkdir(parents=True, exist_ok=True)
         _stage_rollback(dst)
@@ -637,6 +657,11 @@ def sync_skill(src_skill: Path, dst_skill: Path, changed: set[Path]) -> None:
     """整 skill 目录覆盖（含 front matter），保护 sync_state.json，不做 --delete。"""
     if not dst_skill.exists():
         dst_skill.mkdir(parents=True)
+    elif not dst_skill.is_dir():
+        raise SyncError(
+            f"{_rel(dst_skill)} 是文件/软链，模板源是目录；类型不符，停止。"
+            "请人工处理该路径后重跑 apply"
+        )
     for entry in src_skill.iterdir():
         if entry.name == "sync_state.json":
             continue
@@ -644,6 +669,7 @@ def sync_skill(src_skill: Path, dst_skill: Path, changed: set[Path]) -> None:
         if entry.is_dir():
             sync_dir(entry, target, changed)
         else:
+            _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 _stage_rollback(target)
                 shutil.copy2(entry, target)
@@ -1497,6 +1523,14 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         _apply_shared_unit(unit, decision, src, changed)
 
 
+def _print_changed(paths: set[Path], header: str) -> None:
+    print(header)
+    for path in sorted(paths, key=str):
+        print(_rel(path))
+    if not paths:
+        print("（无改动）")
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
     state = read_state()
     if not state:
@@ -1515,8 +1549,14 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     if not args.skip_tests:
         if not _run_tests(CONSUMER):
-            print("pytest .repo_template/tests/ -m contract 失败，不推进 state", file=sys.stderr)
-            _cleanup_rollback()
+            _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===")
+            _rollback_changes()
+            print(
+                "错误: 契约测试失败（pytest .repo_template/tests/ -q -m contract）；"
+                "已完整回滚本次写入，last_synced_commit 未推进；"
+                "回滚备份保留在 .scratch/repo_sync_rollback。修复后重跑 apply",
+                file=sys.stderr,
+            )
             return 1
     else:
         print("跳过测试验证（--skip-tests）")
@@ -1528,11 +1568,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     state["last_synced_at"] = _now_iso()
     write_state(state)
 
-    print("\n=== 改动路径清单（commit 门禁点名 add）===")
-    for path in sorted(changed, key=str):
-        print(_rel(path))
-    if not changed:
-        print("（无改动）")
+    _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===")
     print(f"\nstate 推进：last_synced_commit={'已更新' if not dirty else 'SRC dirty，未推进'}, "
           f"last_synced_at={state['last_synced_at']}")
     _cleanup_rollback()

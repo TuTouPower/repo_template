@@ -1,6 +1,6 @@
 ---
 name: task-preflight
-description: none
+description: 只读检查待做 task 的机器门禁与用户不可替代缺口，输出可开工/阻塞结论。用户要求检查某 task 能否开工或排查阻塞时调用。
 disable-model-invocation: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: task-run
-description: none
+description: 按用户给定顺序串行执行固定 task 队列：task-work 实施、attempt 收尾、exact cleanup；merge 不在启动授权内，整链完成后再询问。用户要求连续跑一批 task 或粘贴 /task-run 队列时调用。
 ---
 
 # task-run

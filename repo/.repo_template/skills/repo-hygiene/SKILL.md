@@ -1,6 +1,6 @@
 ---
 name: repo-hygiene
-description: none
+description: 整理已闭环或过时的文档状态：handoff 过时段落与已完结 spike/review 迁入 docs/archive/，先 dry-run。用户要求归档、整理文档状态或交接记录过长时调用。
 disable-model-invocation: true
 ---
 

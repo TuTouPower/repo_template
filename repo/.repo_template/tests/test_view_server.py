@@ -1,4 +1,5 @@
 """task 看板 view_server 纯函数测试。"""
+import subprocess
 import sys
 from pathlib import Path
 
@@ -115,6 +116,86 @@ def test_resolve_task_doc_rejects_path_traversal(repo_layout):
     tasks = {"t001": {"dir": "../../../etc"}}
     with pytest.raises(ctx.TaskDataError):
         view_server._resolve_task_doc(tasks, "t001", "spec")
+
+
+def test_read_task_doc_from_worktree_source(tmp_path):
+    """worktree 来源任务：读该 worktree 的文件，而非主仓过期副本。"""
+    main = tmp_path / "main"
+    (main / "docs/tasks/t001_x").mkdir(parents=True)
+    (main / "docs/tasks/t001_x/spec.md").write_text("# 主仓旧版\n", encoding="utf-8")
+    worktree = tmp_path / "main_t001"
+    (worktree / "docs/tasks/t001_x").mkdir(parents=True)
+    (worktree / "docs/tasks/t001_x/spec.md").write_text("# worktree 最新\n", encoding="utf-8")
+
+    schedule = {"tasks": {"t001": {"dir": "docs/tasks/t001_x"}}}
+    sources = {"t001": {"source": "worktree", "read_at": str(worktree)}}
+    body = view_server._read_task_doc(schedule, sources, "t001", "spec")
+    assert body.decode("utf-8") == "# worktree 最新\n"
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=True,
+    )
+
+
+def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
+    """branch 来源（done 未合并）：用 git show 读分支归档文档，不落主仓 404。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "t@e.c")
+    _git(repo, "config", "user.name", "t")
+    (repo / "base.txt").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "t001_x")
+    (repo / "docs/archive/tasks/t001_x").mkdir(parents=True)
+    (repo / "docs/archive/tasks/t001_x/task.md").write_text("# 分支归档 task\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "task")
+    _git(repo, "checkout", "main")
+
+    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
+    schedule = {"tasks": {"t001": {"dir": "docs/archive/tasks/t001_x"}}}
+    sources = {"t001": {"source": "branch", "read_at": "t001_x"}}
+    body = view_server._read_task_doc(schedule, sources, "t001", "task")
+    assert body.decode("utf-8") == "# 分支归档 task\n"
+    with pytest.raises(ctx.TaskDataError):
+        view_server._read_task_doc(schedule, sources, "t001", "spec")
+
+
+def test_handler_maps_system_exit_to_error_response():
+    """请求线程 SystemExit（worktree 运行）不再空响应：503 + 明确文本。"""
+
+    class FakeHandler:
+        path = "/"
+
+        def _route_get(self):
+            raise SystemExit("此命令只能在主工作区执行；请 cd 回主仓")
+
+        def _send_error_text(self, status, message):
+            self.result = (status, message)
+
+    handler = FakeHandler()
+    view_server._Handler.do_GET(handler)
+    assert handler.result == (503, "此命令只能在主工作区执行；请 cd 回主仓")
+
+
+def test_handler_maps_unexpected_exception_to_500():
+    class FakeHandler:
+        path = "/task-doc?tid=t001&doc=task"
+
+        def _route_get(self):
+            raise ValueError("boom")
+
+        def _send_error_text(self, status, message):
+            self.result = (status, message)
+
+    handler = FakeHandler()
+    view_server._Handler.do_GET(handler)
+    assert handler.result == (500, "内部错误：boom")
 
 
 

@@ -1,6 +1,6 @@
 ---
 name: repo-cleanup
-description: none
+description: 清理仓库缓存、构建产物与运行垃圾（pycache/pytest/logs/OS/编辑器），默认 dry-run；node 与 scratch/artifacts/data 须点名才清。用户要求清理仓库垃圾、释放空间或核对可清文件时调用。
 disable-model-invocation: true
 ---
 

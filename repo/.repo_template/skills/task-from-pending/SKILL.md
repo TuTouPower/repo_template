@@ -1,6 +1,6 @@
 ---
 name: task-from-pending
-description: none
+description: 把 docs/pending/todo/ 中仍有效、值得实施的条目聚合成 backlog task，并归档已转办条目。用户要求从 pending 立项或批量转办待办时调用。
 disable-model-invocation: true
 ---
 

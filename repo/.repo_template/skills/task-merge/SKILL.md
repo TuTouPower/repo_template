@@ -1,6 +1,6 @@
 ---
 name: task-merge
-description: none
+description: 把范围重叠或拆得过细的 backlog task 合并为一个，保留来源历史。用户要求合并重复或碎片化 backlog task 时调用。
 disable-model-invocation: true
 ---
 

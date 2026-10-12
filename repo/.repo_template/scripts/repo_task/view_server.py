@@ -26,6 +26,7 @@ from .plan import (
     compute_batch_plan,
 )
 from .scheduling import compute_schedule
+from .store import discover_effective_sources, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
 _DOC_NAMES = {"spec": "spec.md", "task": "task.md"}
@@ -54,22 +55,59 @@ def _render_html(model: dict) -> str:
     return template.replace("__BOARD_JSON__", payload)
 
 
-def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str) -> Path:
-    """校验并解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
+def _allowed_doc_roots(base: Path) -> tuple[Path, ...]:
+    """任务文档允许的根：主仓用 ctx 常量（测试可 monkeypatch），worktree 用其自身路径。"""
+    if base.resolve() == ctx.REPO_ROOT.resolve():
+        return (ctx.TASKS_DIR.resolve(), ctx.ARCHIVE_TASKS_DIR.resolve())
+    return (
+        (base / "docs" / "tasks").resolve(),
+        (base / "docs" / "archive" / "tasks").resolve(),
+    )
+
+
+def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str) -> Path:
+    """在给定工作区根下校验并解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
     if tid not in tasks:
         raise ctx.TaskDataError(f"未知任务 {tid!r}")
     filename = _DOC_NAMES.get(doc)
     if filename is None:
         raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 spec/task）")
     directory = tasks[tid].get("dir", "")
-    root = ctx.REPO_ROOT.resolve()
+    root = base.resolve()
     path = (root / directory / filename).resolve()
-    allowed = (ctx.TASKS_DIR.resolve(), ctx.ARCHIVE_TASKS_DIR.resolve())
-    if not any(path.is_relative_to(base) for base in allowed):
+    if not any(path.is_relative_to(allowed) for allowed in _allowed_doc_roots(root)):
         raise ctx.TaskDataError(f"任务 {tid} 文档路径越界：{path}")
     if not path.is_file():
         raise ctx.TaskDataError(f"任务 {tid} 无 {filename}")
     return path
+
+
+def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str) -> Path:
+    """主仓内解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
+    return _resolve_task_doc_in(ctx.REPO_ROOT, tasks, tid, doc)
+
+
+def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str) -> bytes:
+    """按有效状态来源读取任务文档：worktree 读该 worktree 文件、branch 用 git show、main 读主仓。
+
+    task 状态权威在其 worktree/未合并分支：主仓副本可能是过期 backlog，归档路径甚至不存在。
+    """
+    tasks = schedule["tasks"]
+    entry = sources.get(tid) or {}
+    if entry.get("source") == "branch" and entry.get("read_at"):
+        if tid not in tasks:
+            raise ctx.TaskDataError(f"未知任务 {tid!r}")
+        filename = _DOC_NAMES.get(doc)
+        if filename is None:
+            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 spec/task）")
+        rel = f"{tasks[tid].get('dir', '')}/{filename}"
+        return git_text_at_ref(entry["read_at"], rel).encode("utf-8")
+    base = (
+        Path(entry["read_at"])
+        if entry.get("source") == "worktree" and entry.get("read_at")
+        else ctx.REPO_ROOT
+    )
+    return _resolve_task_doc_in(base, tasks, tid, doc).read_bytes()
 
 
 def _is_wsl() -> bool:
@@ -173,6 +211,18 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self):
+        """请求级兜底：SystemExit（如非主工作区运行）与意外异常转明确文本响应。
+
+        http.server 对线程内未捕获异常只打 traceback 并关连接，客户端得到空响应。
+        """
+        try:
+            self._route_get()
+        except SystemExit as error:
+            self._send_error_text(503, str(error) or "服务不可用（运行环境不满足）")
+        except Exception as error:  # noqa: BLE001 - 请求级兜底，保证有明确错误响应
+            self._send_error_text(500, f"内部错误：{error}")
+
+    def _route_get(self):
         parts = urlsplit(self.path)
         path = parts.path
         if path in ("/", "/index.html"):
@@ -204,10 +254,9 @@ class _Handler(BaseHTTPRequestHandler):
             tid = (query.get("tid") or [""])[0]
             doc = (query.get("doc") or [""])[0]
             try:
-                doc_path = _resolve_task_doc(
-                    compute_schedule()["tasks"], tid, doc
+                body = _read_task_doc(
+                    compute_schedule(), discover_effective_sources(), tid, doc
                 )
-                body = doc_path.read_bytes()
             except ctx.TaskDataError as e:
                 self._send_error_text(404, str(e))
                 return

@@ -140,6 +140,32 @@ def test_added_lines_exclude_robust_to_diff_prefix_config(repo):
     assert "TODO in docs" not in lines
 
 
+def test_non_ascii_paths_raw_and_exclude_consistent(repo):
+    """非 ASCII 路径原样输出（非 C 转义引号形式），--exclude 对 tracked/untracked 均生效。"""
+    (repo / "中文_tracked.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add non-ascii tracked")
+    baseline = _baseline(repo)
+
+    (repo / "中文_tracked.md").write_text("base\nTODO tracked-cn\n", encoding="utf-8")
+    (repo / "docs" / "中文_untracked.md").write_text("TODO untracked-cn\n", encoding="utf-8")
+
+    result = _run(repo, "changed-files", baseline)
+    paths = set(result.stdout.splitlines())
+    assert paths == {"中文_tracked.md", "docs/中文_untracked.md"}
+
+    result = _run(repo, "changed-files", baseline, "--exclude", "docs/*")
+    assert set(result.stdout.splitlines()) == {"中文_tracked.md"}
+
+    lines = _run(repo, "added-lines", baseline).stdout.splitlines()
+    assert "TODO tracked-cn" in lines
+    assert "TODO untracked-cn" in lines
+
+    lines = _run(repo, "added-lines", baseline, "--exclude", "docs/*").stdout.splitlines()
+    assert "TODO tracked-cn" in lines
+    assert "TODO untracked-cn" not in lines
+
+
 def test_non_git_repo_errors(tmp_path):
     result = _run(tmp_path, "added-lines", "HEAD")
     assert result.returncode != 0

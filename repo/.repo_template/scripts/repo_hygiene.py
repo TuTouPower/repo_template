@@ -74,6 +74,16 @@ def _join_blocks(blocks: list[list[str]]) -> str:
     return "\n\n".join("\n".join(b).strip() for b in blocks) + "\n"
 
 
+def _replace_text(path: Path, text: str) -> None:
+    """临时文件 + rename 原子落盘：中断不留半截内容，重跑覆盖残留临时文件。"""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def cmd_archive_handoff(args: argparse.Namespace) -> None:
     if not HANDOFF.is_file():
         raise HygieneError(f"缺 {_rel(HANDOFF)}")
@@ -90,18 +100,24 @@ def cmd_archive_handoff(args: argparse.Namespace) -> None:
         print("dry-run；加 --write 落盘")
         return
     stale_text = _join_blocks(stale)
-    ARCHIVE_HANDOFF.parent.mkdir(parents=True, exist_ok=True)
-    if ARCHIVE_HANDOFF.is_file():
-        existing = ARCHIVE_HANDOFF.read_text(encoding="utf-8")
+    existing = (
+        ARCHIVE_HANDOFF.read_text(encoding="utf-8")
+        if ARCHIVE_HANDOFF.is_file()
+        else ARCHIVE_HANDOFF_HEADER
+    )
+    # 幂等：archive append 与 handoff 重写是两次写；若上一轮 append 后 handoff
+    # 重写失败，重跑时必须跳过已追加的内容，否则重复段落。
+    if existing.rstrip("\n").endswith(stale_text.rstrip("\n")):
+        print(f"{_rel(ARCHIVE_HANDOFF)} 已含待迁段落，跳过追加（上次中断前的 append 已生效）")
+    else:
         if existing and not existing.endswith("\n"):
             existing += "\n"
         if existing and not existing.endswith("\n\n"):
             existing += "\n"
-        ARCHIVE_HANDOFF.write_text(existing + stale_text, encoding="utf-8")
-    else:
-        ARCHIVE_HANDOFF.write_text(ARCHIVE_HANDOFF_HEADER + stale_text, encoding="utf-8")
+        ARCHIVE_HANDOFF.parent.mkdir(parents=True, exist_ok=True)
+        _replace_text(ARCHIVE_HANDOFF, existing + stale_text)
     body = "\n".join(header).strip()
-    HANDOFF.write_text((body + "\n\n" + _join_blocks([latest])) if body else _join_blocks([latest]), encoding="utf-8")
+    _replace_text(HANDOFF, (body + "\n\n" + _join_blocks([latest])) if body else _join_blocks([latest]))
     print(f"已迁 {len(stale)} 节到 {_rel(ARCHIVE_HANDOFF)}；handoff.md 保留最新节")
 
 

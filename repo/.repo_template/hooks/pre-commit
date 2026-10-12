@@ -20,29 +20,36 @@ md_format.REPO_ROOT = Path.cwd()
 
 
 def staged_md() -> list[str]:
-    """本次暂存且将提交的 .md 相对路径（扣黑名单）。"""
+    """本次暂存且将提交的 .md 相对路径（扣黑名单）。
+
+    -z：NUL 分隔且从不引号化，非 ASCII 文件名原样返回（core.quotePath 无效），
+    否则中文等路径会被引号化而在后续 is_file 判断中被静默跳过。
+    """
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM", "--", "*.md"],
+        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACM", "--", "*.md"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )
     if result.returncode != 0:
         print(f"pre-commit: git diff --cached 失败：{result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
-    return [rel for rel in result.stdout.splitlines() if rel and not md_format._is_blacklisted(rel)]
+    return [
+        rel for rel in result.stdout.split("\0")
+        if rel and not md_format._is_blacklisted(rel)
+    ]
 
 
 def dirty_vs_index(rels: list[str]) -> list[str]:
     """工作区相对 index 有未暂存改动的路径。"""
     result = subprocess.run(
-        ["git", "diff", "--name-only", "--", *rels],
+        ["git", "diff", "--name-only", "-z", "--", *rels],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )
     if result.returncode != 0:
         print(f"pre-commit: git diff 失败：{result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
-    return [rel for rel in result.stdout.splitlines() if rel]
+    return [rel for rel in result.stdout.split("\0") if rel]
 
 
 def main() -> int:

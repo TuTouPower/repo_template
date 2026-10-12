@@ -1,6 +1,6 @@
 ---
 name: task-schedule
-description: none
+description: 为 backlog task 写入真实的硬依赖 depends_on 与并发冲突 conflicts_with，执行计划由 task.py plan 只读计算。用户要求排依赖、标冲突或排出并发执行计划时调用。
 disable-model-invocation: true
 ---
 

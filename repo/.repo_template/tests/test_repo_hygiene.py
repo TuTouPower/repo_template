@@ -120,6 +120,31 @@ def test_archive_handoff_noop_single_section(repo):
     assert not (repo / "docs/archive/handoff.md").exists()
 
 
+def test_archive_handoff_retry_after_partial_failure_no_duplicate(repo, monkeypatch):
+    """两次写之间失败（archive 已 append、handoff 重写未完成）→ 重跑幂等，不重复追加。"""
+    _handoff_two_sections(repo)
+    real_replace = rh._replace_text
+
+    def flaky(path, text):
+        if path == rh.HANDOFF:
+            raise OSError("模拟 handoff 重写失败")
+        return real_replace(path, text)
+
+    monkeypatch.setattr(rh, "_replace_text", flaky)
+    with pytest.raises(OSError):
+        rh.cmd_archive_handoff(argparse.Namespace(write=True))
+    archive = repo / "docs/archive/handoff.md"
+    assert archive.read_text(encoding="utf-8").count("## 2026-08-01") == 1
+    assert "2026-08-01" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
+
+    monkeypatch.setattr(rh, "_replace_text", real_replace)
+    rh.cmd_archive_handoff(argparse.Namespace(write=True))
+    text = archive.read_text(encoding="utf-8")
+    assert text.count("## 2026-08-01") == 1  # 重跑不重复追加
+    handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    assert "2026-08-13" in handoff and "2026-08-01" not in handoff
+
+
 def _make_spike(repo: Path, name: str) -> None:
     d = repo / "docs/spikes" / name
     d.mkdir(parents=True)

@@ -70,8 +70,9 @@ def _warn_degraded(baseline: str) -> None:
 
 
 def _untracked_files(excludes: list[str]) -> list[str]:
-    result = _git(["ls-files", "--others", "--exclude-standard"], check=True)
-    paths = [line for line in result.stdout.splitlines() if line]
+    # -z：NUL 分隔且从不引号化，非 ASCII 路径原样输出（core.quotePath 无效）。
+    result = _git(["ls-files", "--others", "--exclude-standard", "-z"], check=True)
+    paths = [line for line in result.stdout.split("\0") if line]
     return [p for p in paths if not _excluded(p, excludes)]
 
 
@@ -80,8 +81,9 @@ def _excluded(path: str, excludes: list[str]) -> bool:
 
 
 def _diff_name_only(baseline: str, excludes: list[str]) -> list[str]:
-    result = _git(["diff", "--name-only", baseline], check=True)
-    paths = [line for line in result.stdout.splitlines() if line]
+    # -z：NUL 分隔且从不引号化，非 ASCII 路径原样输出（core.quotePath 无效）。
+    result = _git(["diff", "--name-only", "-z", baseline], check=True)
+    paths = [line for line in result.stdout.split("\0") if line]
     return [p for p in paths if not _excluded(p, excludes)]
 
 
@@ -136,8 +138,10 @@ def cmd_added_lines(args) -> int:
     else:
         # 锁定前缀格式：用户 config（diff.noprefix / diff.mnemonicPrefix）会改变
         # '+++ b/<path>' 头部形态，导致 --exclude 匹配失效。
+        # core.quotePath=false：非 ASCII 路径原样出现在头部，不转义为 C 引号形式。
         result = _git(
-            ["-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+            ["-c", "core.quotePath=false",
+             "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
              "diff", args.baseline],
             check=True,
         )

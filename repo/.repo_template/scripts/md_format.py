@@ -80,10 +80,24 @@ def collect_changed() -> list[str]:
     return [rel for rel in sorted(rels) if not _is_blacklisted(rel)]
 
 
+def _restore_snapshots(snapshots: dict[Path, bytes]) -> int:
+    """把快照路径恢复为原内容；返回实际恢复的文件数。"""
+    restored = 0
+    for path, data in snapshots.items():
+        try:
+            if path.is_file() and path.read_bytes() != data:
+                path.write_bytes(data)
+                restored += 1
+        except OSError:
+            continue
+    return restored
+
+
 def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     """对指定相对路径跑 md_kx；返回变更/漂移的文件列表。
 
     check=True 时判断漂移（md_kx --check 对漂移文件 exit 1）不写入。
+    非 check 路径中途失败时回滚本次已写入的格式化，不留「已格式化未暂存」残留。
     md_kx 缺失或非漂移类失败抛 MdFormatError（CLI 语义）。
     """
     # 黑名单先于缺二进制：拒绝归档路径不依赖本机是否安装 md_kx。
@@ -98,33 +112,43 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
             "一般已全局安装：uv tool install md-kx）；未装或不在 PATH 时用 "
             "`uv tool install md-kx` 安装，或把已装的 md_kx 加入 PATH。"
         )
+    snapshots: dict[Path, bytes] = {}
+    if not check:
+        for rel in rel_paths:
+            path = REPO_ROOT / rel
+            if path.is_file():
+                snapshots[path] = path.read_bytes()
     changed: list[str] = []
-    for rel in rel_paths:
-        path = REPO_ROOT / rel
-        if not path.is_file():
-            continue
-        if check:
-            result = subprocess.run(
-                [executable, "--check", str(path)], capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=30,
-            )
-            if result.returncode == 1:
-                changed.append(rel)
-            elif result.returncode != 0:
-                raise MdFormatError(
-                    f"md_kx --check 失败（{rel}）：{result.stderr.strip()}"
+    try:
+        for rel in rel_paths:
+            path = REPO_ROOT / rel
+            if not path.is_file():
+                continue
+            if check:
+                result = subprocess.run(
+                    [executable, "--check", str(path)], capture_output=True,
+                    text=True, encoding="utf-8", errors="replace", timeout=30,
                 )
-            continue
-        before = path.read_bytes()
-        result = subprocess.run(
-            [executable, str(path)], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
-        )
-        if result.returncode != 0:
-            raise MdFormatError(f"md_kx 失败（{rel}）：{result.stderr.strip()}")
-        after = path.read_bytes()
-        if before != after:
-            changed.append(rel)
+                if result.returncode == 1:
+                    changed.append(rel)
+                elif result.returncode != 0:
+                    raise MdFormatError(
+                        f"md_kx --check 失败（{rel}）：{result.stderr.strip()}"
+                    )
+                continue
+            before = snapshots[path]
+            result = subprocess.run(
+                [executable, str(path)], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
+            )
+            if result.returncode != 0:
+                raise MdFormatError(f"md_kx 失败（{rel}）：{result.stderr.strip()}")
+            after = path.read_bytes()
+            if before != after:
+                changed.append(rel)
+    except MdFormatError as error:
+        suffix = "；已回滚本次已格式化的文件" if _restore_snapshots(snapshots) else ""
+        raise MdFormatError(f"{error}{suffix}") from error
     return changed
 
 

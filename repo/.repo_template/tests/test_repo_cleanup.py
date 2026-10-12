@@ -146,6 +146,31 @@ def test_apply_unlinks_symlink_dir(tree):
     assert not link.is_symlink()
 
 
+def test_default_categories_do_not_enter_unnamed_dirs(tmp_path):
+    """默认类别不得命中未点名目录树（.scratch/artifacts/data/node_modules）内文件。"""
+    repo = tmp_path / "repo"
+    (repo / "artifacts/out/__pycache__").mkdir(parents=True)
+    (repo / "artifacts/out/__pycache__/m.pyc").write_bytes(b"x")
+    (repo / "artifacts/run.log").write_text("log\n")
+    (repo / ".scratch/exp").mkdir(parents=True)
+    (repo / ".scratch/exp/note.log").write_text("log\n")
+    (repo / "data/cache").mkdir(parents=True)
+    (repo / "data/cache/.DS_Store").write_bytes(b"x")
+    (repo / "node_modules/pkg").mkdir(parents=True)
+    (repo / "node_modules/pkg/.DS_Store").write_bytes(b"x")
+
+    hits, _ = rc.collect(repo, rc.DEFAULT_CATEGORIES, [])
+    assert {h["path"] for h in hits} == set()
+
+    # 点名类别仍能整树处理（不受剪枝影响）
+    hits, _ = rc.collect(repo, ["scratch", "artifacts", "data", "node"], [])
+    paths = {h["path"] for h in hits}
+    assert ".scratch/exp/note.log" in paths
+    assert "artifacts/run.log" in paths
+    assert "data/cache/.DS_Store" in paths
+    assert "node_modules" in paths
+
+
 def test_cli_scan_is_read_only(tree):
     before = {str(p) for p in tree.rglob("*")}
     r = subprocess.run(

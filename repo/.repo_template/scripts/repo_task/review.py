@@ -17,6 +17,8 @@ REVIEW_SCOPE_HINT_RE = re.compile(r"reviewed_scope", re.IGNORECASE)
 ROUND_HEADER_RE = re.compile(r"^##\s+Round\s+([0-9]+)(?:\s|$)", re.MULTILINE)
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
 FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+# 闭栏须为裸围栏（无 info string）；fence 内带 info 的围栏行是内容，不是提前闭栏。
+FENCE_CLOSE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[ \t]*$")
 FINDING_RE = re.compile(r"^(t[0-9]+)_(?:code|test|gen)_f[0-9]+$")
 STATUSES = ("已修", "遗留", "撤回")
 VALID_REVIEW_LEVELS = {"full", "single"}
@@ -31,20 +33,28 @@ def read(path: Path) -> str:
 
 
 def visible_markdown_lines(text: str) -> list[str]:
-    """移除 fenced code 与 blockquote，保留可参与结构解析的正文行。"""
+    """移除 fenced code 与 blockquote，保留可参与结构解析的正文行。
+
+    围栏规则与 repo_task.documents 一致：开栏可带 info string，闭栏须为裸围栏
+    且宽度 >= 开栏；fence 内带 info string 的围栏行是内容，不提前闭合代码块。
+    """
     lines = []
     fence_marker = None
     for line in text.splitlines():
-        fence = FENCE_RE.match(line)
-        if fence:
-            marker = fence.group(1)[0]
-            width = len(fence.group(1))
-            if fence_marker is None:
-                fence_marker = (marker, width)
-            elif marker == fence_marker[0] and width >= fence_marker[1]:
+        if fence_marker is not None:
+            close = FENCE_CLOSE_RE.match(line)
+            if (
+                close
+                and close.group(1)[0] == fence_marker[0]
+                and len(close.group(1)) >= fence_marker[1]
+            ):
                 fence_marker = None
             continue
-        if fence_marker is not None or line.lstrip().startswith(">"):
+        fence = FENCE_RE.match(line)
+        if fence:
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+            continue
+        if line.lstrip().startswith(">"):
             continue
         lines.append(line)
     return lines
@@ -240,14 +250,19 @@ def reported_findings(task_tid: str, *paths: Path) -> set[str]:
 
 
 def reviewed_scope(path: Path) -> str | None:
-    """报告最后一条 `reviewed_scope:` 指纹（对应最后 verdict 的被审 diff）。"""
-    scopes = REVIEW_SCOPE_RE.findall(read(path))
+    """报告可见正文最后一条 `reviewed_scope:` 指纹（对应最后 verdict 的被审 diff）。
+
+    只在可见行上扫描（与 verdict/文档校验一致）；fenced 示例里的 scope 不算声明。
+    """
+    text = "\n".join(visible_markdown_lines(read(path)))
+    scopes = REVIEW_SCOPE_RE.findall(text)
     return scopes[-1] if scopes else None
 
 
 def reviewed_scope_hint(path: Path) -> bool:
-    """报告提及 reviewed_scope 但宽容正则提取不到 → 写了但格式错。"""
-    return REVIEW_SCOPE_HINT_RE.search(read(path)) is not None
+    """报告可见正文提及 reviewed_scope 但宽容正则提取不到 → 写了但格式错。"""
+    text = "\n".join(visible_markdown_lines(read(path)))
+    return REVIEW_SCOPE_HINT_RE.search(text) is not None
 
 
 

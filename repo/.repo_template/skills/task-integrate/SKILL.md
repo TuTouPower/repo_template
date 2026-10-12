@@ -1,6 +1,6 @@
 ---
 name: task-integrate
-description: none
+description: 把已完成的单 task 分支或线性链尾合入本地主干（调用即视为用户批准本次 merge，不 push）。用户批准合并某 task 分支时调用。
 ---
 
 # task-integrate
