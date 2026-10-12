@@ -20,13 +20,13 @@
 
     任何步骤非零退出即停止，不重试覆盖。Windows PowerShell 无本步骤的直接等价物，用 WSL/Git Bash 执行；NTFS 上软链复制需开发者模式或管理员权限。
 
-    成功后在新项目目录执行 `test -L CLAUDE.md && test "$(readlink CLAUDE.md)" = AGENTS.md`，并核对第 4 步的 skill 软链；验证失败先修复复制结果。
+    成功后在新项目目录核对第 4 步的 skill 软链；验证失败先修复复制结果。
 
 02. 在新项目目录初始化版本控制；后续命令均在该目录执行。
 
 03. 替换本文件与 `AGENTS.md` 首行项目介绍。
 
-04. 保持软链：`CLAUDE.md -> AGENTS.md`；`.claude/skills/*` 与 `.agents/skills/*` 指向 `.repo_template/skills/*`。
+04. 保持软链：`.claude/skills/*` 与 `.agents/skills/*` 指向 `.repo_template/skills/*`。
 
 05. 按技术栈补充依赖、工具配置和 `.gitignore`。
 

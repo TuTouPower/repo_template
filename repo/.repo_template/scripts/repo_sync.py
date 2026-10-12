@@ -984,7 +984,7 @@ def shared_class(src_path: Path, dst_path: Path) -> str:
 
 
 def shared_status(src: Path) -> list[dict]:
-    """裁定单元分类（AGENTS.md 处理 CLAUDE.md 软链实体）。"""
+    """裁定单元分类（AGENTS.md 目的地为软链时解引用实体再比对）。"""
     out: list[dict] = []
     for unit in SHARED_FILES:
         s = src / unit

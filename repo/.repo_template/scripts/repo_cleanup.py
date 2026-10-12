@@ -12,7 +12,7 @@ agent 只保留裁定语义：scratch 活跃引用路径（--keep 传入）、�
   scratch / artifacts / data 清目录内容、保留目录本身；
   默认扫描不进入未点名的 node_modules 与这三棵目录树（防误删未点名内容）。
 
-保护（永不删）：.git/、AGENTS.md、README.md、CLAUDE.md、.gitignore、
+保护（永不删）：.git/、AGENTS.md、README.md、.gitignore、
 docs/archive/tasks_audit.log；docs/ 下仅 os/editor 类放行；src/tests/schemas/
 config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不因「目录」被误删）。
 
@@ -41,7 +41,6 @@ HARD_PROTECTED = {
     ".git",
     "AGENTS.md",
     "README.md",
-    "CLAUDE.md",
     ".gitignore",
     "docs/archive/tasks_audit.log",
 }
