@@ -230,22 +230,27 @@ def disposed_findings(task_md: Path) -> set[str]:
 
 
 def reported_findings(task_tid: str, *paths: Path) -> set[str]:
-    """从 review 报告提取本 task 的结构化 finding（表格行首精确匹配当前 tid）。
+    """从 review 报告提取本 task 的结构化 finding（表行或标题行精确匹配当前 tid）。
 
-    只取「行首即 finding_id」的表行，不扫描正文/代码块/其它 task 引用——
-    否则引用历史 finding（如 t099_code_f001）会被误要求处置，而处置表又拒绝
-    非当前 tid，造成无法闭环。
+    取「行首即 finding_id」的表行，以及 prompt 模板输出格式的
+    `### {tid}_{code|test|gen}_fNNN - 标题` 标题行；不扫描正文中段/代码块/
+    其它 task 引用——否则引用历史 finding（如 t099_code_f001）会被误要求处置，
+    而处置表又拒绝非当前 tid，造成无法闭环。
     """
     findings = set()
-    pattern = re.compile(
-        rf"^\|?\s*({re.escape(task_tid)}_(?:code|test|gen)_f[0-9]+)(?=$|[\s|])"
+    escaped = re.escape(task_tid)
+    patterns = (
+        re.compile(rf"^\|?\s*({escaped}_(?:code|test|gen)_f[0-9]+)(?=$|[\s|])"),
+        re.compile(rf"^#{{1,6}}[ \t]+({escaped}_(?:code|test|gen)_f[0-9]+)(?=$|[\s|:：-])"),
     )
     for path in paths:
         for line in visible_markdown_lines(read(path)):
             stripped = line.strip()
-            match = pattern.search(stripped)
-            if match and not stripped.startswith("t000_"):
-                findings.add(match.group(1))
+            for pattern in patterns:
+                match = pattern.search(stripped)
+                if match and not match.group(1).startswith("t000_"):
+                    findings.add(match.group(1))
+                    break
     return findings
 
 

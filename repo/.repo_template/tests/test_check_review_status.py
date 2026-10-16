@@ -337,6 +337,28 @@ def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
     assert "missing_disposition=t001_gen_f002" in out
 
 
+def test_main_reports_missing_disposition_for_heading_findings(tmp_path, monkeypatch, capsys):
+    """prompt 模板标题格式 finding 未处置 → 与表行格式同样进 missing_disposition。"""
+    task_dir = _scope_task_dir(tmp_path, monkeypatch, f"reviewed_scope: {SCOPE}\n")
+    report = task_dir / "review_general.md"
+    report.write_text(
+        report.read_text()
+        + "\n## Findings\n\n"
+        + "### t001_gen_f001 - 标题一\n\n- 严重度：important\n\n"
+        + "### t001_gen_f002 - 标题二\n\n- 严重度：minor\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args: SCOPE)
+    monkeypatch.setattr(
+        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "overall=INCOMPLETE" in out
+    assert "missing_disposition=t001_gen_f001,t001_gen_f002" in out
+    assert "next_action=complete_disposition" in out
+
+
 def test_disposition_legacy_requires_fix_ref(tmp_path):
     """status=遗留 缺 fix_ref（- 或空）→ 拒绝。"""
     p = tmp_path / "task.md"
@@ -416,6 +438,28 @@ def test_reported_findings_ignores_foreign_task(tmp_path):
         encoding="utf-8",
     )
     assert crs.reported_findings("t001", p) == {"t001_gen_f001"}
+
+
+def test_reported_findings_accepts_heading_format(tmp_path):
+    """prompt 模板标题格式 finding 与表行同等进入集合；代码块/引用块/正文提及不算。"""
+    p = tmp_path / "review_general.md"
+    p.write_text(
+        "# Task review t001\n\n"
+        "## Findings\n\n"
+        "### t001_gen_f001 - 标题一\n\n- 严重度：important\n\n"
+        "#### t001_gen_f002 - 二级标题\n\n"
+        "```markdown\n### t001_gen_f003 - 代码块示例\n```\n\n"
+        "> ### t001_gen_f004 - 引用块\n\n"
+        "### t001_gen_f005\n\n"
+        "### t099_code_f001 - 历史 task 标题\n\n"
+        "正文提及 t001_gen_f006 不计。\n\n"
+        "| finding_id | severity |\n|---|---|\n"
+        "| t001_gen_f007 | minor |\n",
+        encoding="utf-8",
+    )
+    assert crs.reported_findings("t001", p) == {
+        "t001_gen_f001", "t001_gen_f002", "t001_gen_f005", "t001_gen_f007",
+    }
 
 
 SCOPE = "abcdef0123456789"
