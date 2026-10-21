@@ -697,6 +697,7 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
     if link.exists():
         reports.append(f"{_rel(link)} 非本机制管理，跳过")
         return
+    _stage_rollback(link)
     link.parent.mkdir(parents=True, exist_ok=True)
     os.symlink(target_rel, link)
     changed.add(link)
@@ -781,12 +782,14 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) 
 
 
 def repair_symlinks(changed: set[Path]) -> list[str]:
-    """建/修宿主软链，指向 .repo_template/。非本机制链接报告不碰。"""
+    """建/修宿主软链，指向 .repo_template/。清理已删除 skill 的残留软链。非本机制链接报告不碰。"""
     reports: list[str] = []
+    valid_names = set()
     if SKILLS_SRC.exists():
         for entry in SKILLS_SRC.iterdir():
             if not entry.is_dir():
                 continue
+            valid_names.add(entry.name)
             expected = entry.resolve()
             _ensure_symlink(
                 SKILLS_CLAUDE / entry.name,
@@ -798,6 +801,26 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
                 expected, changed, reports,
             )
+    for host_dir in (SKILLS_CLAUDE, SKILLS_AGENTS):
+        if not host_dir.exists():
+            continue
+        for item in sorted(host_dir.iterdir()):
+            if not item.is_symlink() or item.name in valid_names:
+                continue
+            try:
+                target_resolved = item.resolve(strict=False)
+                skills_src_resolved = SKILLS_SRC.resolve()
+                is_managed = (
+                    target_resolved != skills_src_resolved
+                    and target_resolved.is_relative_to(skills_src_resolved)
+                )
+            except (OSError, ValueError):
+                is_managed = False
+            if is_managed:
+                _stage_rollback(item)
+                item.unlink()
+                changed.add(item)
+                reports.append(f"{_rel(item)} 已清理（对应 skill 已删除）")
     legacy_guard = CONSUMER / ".claude/hooks/merge_guard.py"
     retired_target = CONSUMER / ".repo_template/hooks/merge_guard.py"
     managed_retired_guard = (
@@ -956,18 +979,34 @@ def skill_status(src: Path) -> list[dict]:
 
 def symlink_status() -> list[dict]:
     out: list[dict] = []
-    if not SKILLS_SRC.exists():
-        return out
-    for entry in SKILLS_SRC.iterdir():
-        if not entry.is_dir():
-            continue
-        link = SKILLS_CLAUDE / entry.name
-        if link.is_symlink() and link.resolve() == entry.resolve():
-            out.append({"name": entry.name, "state": "ok"})
-        elif link.exists() and not link.is_symlink():
-            out.append({"name": entry.name, "state": "unmanaged"})
-        else:
-            out.append({"name": entry.name, "state": "repair"})
+    valid_names = set()
+    if SKILLS_SRC.exists():
+        for entry in SKILLS_SRC.iterdir():
+            if not entry.is_dir():
+                continue
+            valid_names.add(entry.name)
+            link = SKILLS_CLAUDE / entry.name
+            if link.is_symlink() and link.resolve() == entry.resolve():
+                out.append({"name": entry.name, "state": "ok"})
+            elif link.exists() and not link.is_symlink():
+                out.append({"name": entry.name, "state": "unmanaged"})
+            else:
+                out.append({"name": entry.name, "state": "repair"})
+    if SKILLS_CLAUDE.exists():
+        for entry in sorted(SKILLS_CLAUDE.iterdir()):
+            if not entry.is_symlink() or entry.name in valid_names:
+                continue
+            try:
+                target_resolved = entry.resolve(strict=False)
+                skills_src_resolved = SKILLS_SRC.resolve()
+                is_managed = (
+                    target_resolved != skills_src_resolved
+                    and target_resolved.is_relative_to(skills_src_resolved)
+                )
+            except (OSError, ValueError):
+                is_managed = False
+            if is_managed:
+                out.append({"name": entry.name, "state": "cleanup"})
     return out
 
 
@@ -1436,7 +1475,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print("\n### 软链")
     rows = []
     for item in symlink_status():
-        mark = {"ok": "正确", "repair": "需建/修", "unmanaged": "非本机制，不碰"}[item["state"]]
+        mark = {
+            "ok": "正确",
+            "repair": "需建/修",
+            "unmanaged": "非本机制，不碰",
+            "cleanup": "需清理（skill 已删除）",
+        }[item["state"]]
         rows.append([f".claude/skills/{item['name']}", item["state"], mark])
     print(_md_table(["路径", "状态", "说明"], rows))
 

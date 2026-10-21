@@ -7,6 +7,7 @@ SRC（模板）与 CONSUMER（消费项目）都在 tmp_path 下构造真实目�
 """
 
 import json
+import os
 import subprocess
 import sys
 from argparse import Namespace
@@ -242,6 +243,78 @@ def test_repair_symlinks_converts_stale_real_dir(env):
     assert stale.resolve() == dst.resolve()
     assert stale in changed
     assert any("旧真实目录已转软链" in r for r in reports)
+
+
+def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
+    src, consumer = env["src"], env["consumer"]
+    active_dst = consumer / ".repo_template/skills/active-skill"
+    active_dst.mkdir(parents=True)
+    (active_dst / "SKILL.md").write_text("active\n")
+
+    # 模拟有效 skill 初始软链
+    changed = set()
+    rs.repair_symlinks(changed)
+    assert (consumer / ".claude/skills/active-skill").is_symlink()
+    assert (consumer / ".agents/skills/active-skill").is_symlink()
+
+    # 模拟已被模板删除/更名的旧 skill 悬空软链
+    old_claude = consumer / ".claude/skills/old-skill"
+    old_claude.symlink_to("../../.repo_template/skills/old-skill")
+    old_agents = consumer / ".agents/skills/old-skill"
+    old_agents.symlink_to("../../.repo_template/skills/old-skill")
+
+    # 模拟外部自定义软链（非 .repo_template 管理）
+    ext_target = tmp_path / "ext_skill"
+    ext_target.mkdir()
+    ext_link = consumer / ".agents/skills/custom-ext"
+    ext_link.symlink_to(ext_target)
+
+    # 模拟手写本地目录
+    custom_dir = consumer / ".agents/skills/custom-local"
+    custom_dir.mkdir()
+
+    # 校验 symlink_status 报告
+    status = rs.symlink_status()
+    assert {"name": "active-skill", "state": "ok"} in status
+    assert {"name": "old-skill", "state": "cleanup"} in status
+
+    # 执行 repair_symlinks
+    changed = set()
+    reports = rs.repair_symlinks(changed)
+
+    # 旧模板软链应被清理
+    assert not old_claude.is_symlink()
+    assert not old_agents.is_symlink()
+    assert old_claude in changed
+    assert old_agents in changed
+    assert any(".claude/skills/old-skill 已清理" in r for r in reports)
+    assert any(".agents/skills/old-skill 已清理" in r for r in reports)
+
+    # 有效 skill、外部软链、本地目录保留
+    assert (consumer / ".claude/skills/active-skill").is_symlink()
+    assert ext_link.is_symlink()
+    assert ext_link not in changed
+    assert custom_dir.is_dir()
+    assert custom_dir not in changed
+
+
+def test_repair_symlinks_stale_symlinks_rollback(env):
+    src, consumer = env["src"], env["consumer"]
+    old_link = consumer / ".claude/skills/stale-skill"
+    old_link.parent.mkdir(parents=True, exist_ok=True)
+    old_link.symlink_to("../../.repo_template/skills/stale-skill")
+
+    rs._ROLLBACK.clear()
+    changed = set()
+    reports = rs.repair_symlinks(changed)
+    assert not old_link.is_symlink()
+
+    # 回滚
+    rs._rollback_changes()
+    assert old_link.is_symlink()
+    assert os.readlink(old_link) == "../../.repo_template/skills/stale-skill"
+    rs._ROLLBACK.clear()
+    rs._cleanup_rollback()
 
 
 def test_skill_status_reports_stale_real_dir(env):
