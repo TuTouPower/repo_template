@@ -63,8 +63,8 @@
 |`task-schedule`|分析依赖/冲突并落盘；可跑集由 `task.py view` 计算；本波链由 `task.py plan` 重算|
 |`task-run`|链式串行跑 task，链尾 `integrate-chain` 合主干|
 |`task-preflight`|只读汇总待做 task 缺口|
-|`task-bug`|复现/根因/同类位点扫描（仅 `.scratch/`）后建修复 task|
-|`pending-record`|持续澄清后派子代理登记 pending；bug 走 task-bug 分析再记|
+|`bug-to-pending`|复现/根因/同类位点扫描（仅 `.scratch/`）并登记 pending；用户批准后再建修复 task|
+|`pending-record`|持续澄清并登记待办；bug 派子代理按 bug-to-pending 研究记录，非 bug 普通记录|
 |`task-from-pending`|从 `docs/pending/todo/` 建 task 并归档条目|
 |`task-merge`|合并多个 backlog task（edit 目标 + drop 源）|
 |`repo-hygiene`|过时 handoff/pending 等迁 archive|
@@ -87,7 +87,7 @@
 |---|---|---|---|
 |task-create → preflight --creation|已批准创建的 backlog；可含已分类阻塞事项|结构/AC/占位符错误 FAIL；BLOCKING 为 WARN，仍禁止 start|task 目录 + 派生 index；用户同意后创建 commit|
 |task-run → task-work|tid、原 exact identity、登记 worktree、持久 review_limit/verify_limit；仅执行授权|执行 commit 或记录阻塞并关闭当前 attempt；中断先 recovery 读阶段|当前 worktree；一个执行 commit，不写主仓 attempt|
-|task-work → task-bug analysis-only|现象与父 task 写域，不传递立项/提交授权|pNNN 或分析阻断，仅执行分析登记模式，不进入立项和提交阶段|.scratch 与本次 pending；提交归父 task|
+|task-work → bug-to-pending analysis-only|现象与父 task 写域，不传递立项/提交授权|pNNN 或分析阻断，仅执行分析登记模式，不进入立项和提交阶段|.scratch 与本次 pending；提交归父 task|
 |task-work → review checker|实际 task_dir（finish 后为 archive）与最新报告|PASS / FAIL / INCOMPLETE，按 next_action 处理，exit 0 不等于 PASS|只读；checker 不修改报告或提高预算|
 |task-run → task-integrate|逐成员 exact cleanup；整链完成后用户另行批准合并|Git pending merge → 验证 → commit；失败 merge --abort|仅主仓；派生 index 进入同一个 merge commit|
 

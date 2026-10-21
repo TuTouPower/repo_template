@@ -21,4 +21,4 @@ description: 把用户需求拆成合格 backlog task。用户批准立项或要
 
 - 不实现、不 start、不 finish。
 - 只写本批 task 目录和脚本派生 index。
-- bug 分析走 `task-bug`；pending 转 task 走 `task-from-pending`。
+- bug 分析走 `bug-to-pending`；pending 转 task 走 `task-from-pending`。
