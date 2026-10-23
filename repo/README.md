@@ -8,19 +8,14 @@
 
 以下命令为 POSIX shell（Linux/macOS/WSL/Git Bash）。目标目录应为**不存在或空目录**，已有项目禁止直接覆盖。
 
-01. 安装 `rsync` 后从模板工厂复制产物。`--ignore-existing` 保证已有文件不被覆盖；统一用 `rsync -a` 保留软链，不用 `cp -r` 代替。复制前先确认目标为空：
+01. 从已提交的模板版本导出干净产物。仅 Git commit 中的 `repo/` 参与分发，忽略文件、未提交改动、本机状态不会复制；软链保留并检查目标。需要 Python 3.9+ 与 Git：
 
     ```bash
-    target=/path/to/new_project
-    [ -e "$target" ] && [ -n "$(ls -A "$target")" ] && echo "目标非空，停止" && exit 1
-    rsync -a --ignore-existing \
-      --exclude .git/ --exclude .scratch/ --exclude .pytest_cache/ --exclude __pycache__/ \
-      /path/to/repo_template/repo/ "$target/"
+    python3 /path/to/repo_template/repo/.repo_template/scripts/export_template.py \
+      --source /path/to/repo_template --target /path/to/new_project --ref HEAD
     ```
 
-    任何步骤非零退出即停止，不重试覆盖。Windows PowerShell 无本步骤的直接等价物，用 WSL/Git Bash 执行；NTFS 上软链复制需开发者模式或管理员权限。
-
-    成功后在新项目目录核对第 4 步的 skill 软链；验证失败先修复复制结果。
+    目标必须不存在或为空；导出失败即停止。调试未提交模板时先在隔离工厂副本提交，再导出该 commit，禁止把 dirty 工作区作为普通分发源。
 
 02. 在新项目目录初始化版本控制；后续命令均在该目录执行。
 
@@ -38,9 +33,11 @@
 
 09. 确认 `docs/tasks/` 无遗留 task 目录、`docs/specs_index.md` 无伪 active 数据。task 模板在 `.repo_template/docs/task_template/`。
 
-10. 登记模板源：复制不带 `.repo_template/sync_state.json`（按消费仓区分 `template_source`，无法预置），无此文件时 `status` / `plan` / `prep` / `apply` 均报未初始化。在新项目目录执行 `python3 .repo_template/scripts/repo_sync.py init --source <模板来源路径或 URL>`（本机路径接受产物根或含 `repo/` 的工厂根；URL 为 git remote），成功后用 `python3 .repo_template/scripts/repo_sync.py status` 核对 `template_source`。已有 state 不重跑；后续同步走 `/repo-template-sync`。
+10. 登记模板源：复制不带 `.repo_template/sync_state.json`（按消费仓区分 `template_source`，无法预置），无此文件时 `status` / `plan` / `apply` 均报未初始化。在新项目目录执行 `python3 .repo_template/scripts/repo_sync.py init --source <模板来源路径或 URL>`（本机路径接受产物根或含 `repo/` 的工厂根；URL 为 git remote），成功后用 `python3 .repo_template/scripts/repo_sync.py status` 核对 `template_source`。已有 state 不重跑；后续同步走 `/repo-template-sync`。
 
-复制完成后把本 README 改成项目自身介绍。
+11. 在 `testing.md` 明确项目测试与黑盒策略，把 `verification_policy` 改为 `project_configured`，在 `verification_notes` 写验证范围与不适用项理由；然后运行 doctor、`pytest .repo_template/tests -q -m contract` 和项目 test/blackbox。检查软链均有效，全部适用检查通过才算初始化完成。
+
+最短工作路径：初始化通过 → `/task-create` → 无依赖单 task 直接 `/task-run tNNN` → 执行结束后批准 merge。依赖图、多会话、goal、恢复与升级见 usage；自然语言不自动授权这些入口。复制完成后把本 README 改成项目自身介绍。
 
 ## 入口
 

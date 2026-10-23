@@ -2,11 +2,17 @@
 name: repo-cleanup
 description: 清理仓库缓存、构建产物与运行垃圾（pycache/pytest/logs/OS/编辑器），默认 dry-run；node 与 scratch/artifacts/data 须点名才清。用户要求清理仓库垃圾、释放空间或核对可清文件时调用。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # repo-cleanup
 
 清理缓存、构建产物和无用运行文件。默认 dry-run；脚本参数和分类以 `repo_cleanup.py --help` 为准。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 流程
 

@@ -16,6 +16,8 @@ rename 不自动改文档正文里的引用——slug 改动需人工核对 docs
 脚本只负责让文件名与新的 slug 一致。
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import subprocess

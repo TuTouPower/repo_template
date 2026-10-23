@@ -1,12 +1,20 @@
 # 测试
 
-模板仓默认门禁命令（复制新项目后按实际工具链替换）。章节名 `doctor_cmd` / `test_cmd` / `blackbox_verify` 是 preflight 与 skill 的机械锚点，不得改名；命令写在对应章节正文。未使用某类时章节保留，正文写「无」。
+模板仓默认门禁命令（复制新项目后按实际工具链替换）。章节名 `verification_policy` / `verification_notes` / `doctor_cmd` / `test_cmd` / `blackbox_verify` 是 preflight 与 skill 的机械锚点，不得改名；命令写在对应章节的 bash/sh 代码块，按 Bash 的 `-e -o pipefail` 执行；文字说明不作为可执行命令。未使用某类时章节保留，正文写「无」。
 
 默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂仓全量自测含调度 / 合并 / 同步集成，命令是 `pytest .repo_template/tests -q`（无 `-m`），只在模板工厂跑。
 
 下列默认命令在消费仓根（工厂验产物时为 `repo/`）的 POSIX shell（Linux/macOS/WSL/Git Bash）执行，需要 Python 3、PATH 中可运行的 pytest（及其所属 Python 环境）和 PATH 中的 md_kx。任一检查非零退出则停止后续验收，先区分「环境缺工具」与「shell 不兼容」（Windows 原生 shell 无 `command -v`），修复环境或测试后重跑；收集成功只证明可收集，不等于测试通过。
 
 项目自身测试落地后，把 `test_cmd` 换成项目技术栈命令，或在契约命令之后追加。不要把空的 `tests/` 写进命令：pytest 收集到 0 条会以退出码 5 失败。
+
+## verification_policy
+
+template_default
+
+## verification_notes
+
+尚未选择业务验证策略。消费项目必须填写验证范围，说明 doctor/test/blackbox 中不适用项的原因，再将 verification_policy 改为 project_configured。文档或工具链项目也须明确选择，可保留 contract 作为测试；“无黑盒”须写明替代验收方式。
 
 ## doctor_cmd
 

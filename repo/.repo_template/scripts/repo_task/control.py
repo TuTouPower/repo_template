@@ -13,6 +13,7 @@ from .attempts import (
 from .documents import tid_sort_key
 from .git_ops import require_primary_worktree
 from .ledger import ledger_append, ledger_read
+from .locks import control_locked
 from .monitoring import compute_ps_rows, verify_integrate_ready
 from .plan import build_board_model, chain_letter, compute_batch_plan
 from .scheduling import compute_schedule
@@ -139,11 +140,22 @@ def _print_json(event: dict) -> None:
     print(json.dumps(event, ensure_ascii=False))
 
 
+@control_locked
 def cmd_attempt_reserve(args):
     require_primary_worktree()
     _print_json(reserve_attempt(args.tid, args.executor, args.model))
 
 
+@control_locked
+def cmd_attempt_claim(args):
+    require_primary_worktree()
+    from .attempts import claim_execution
+    _print_json(claim_execution(args.tid, args.attempt, args.execution_id, args.owner_id,
+                               replace_owner=args.replace_owner,
+                               confirm_stopped=args.confirm_stopped))
+
+
+@control_locked
 def cmd_attempt_terminal(args):
     require_primary_worktree()
     _print_json(terminal_attempt(
@@ -151,6 +163,7 @@ def cmd_attempt_terminal(args):
     ))
 
 
+@control_locked
 def cmd_attempt_report(args):
     require_primary_worktree()
     if args.status == "done":

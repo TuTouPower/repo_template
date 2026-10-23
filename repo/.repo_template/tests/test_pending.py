@@ -246,7 +246,7 @@ def test_archive_writes_fix_ref(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
     archived = repo / "docs/archive/pending/p001_demo.md"
     assert "- 处理：t012" in archived.read_text(encoding="utf-8")
 
@@ -255,7 +255,7 @@ def test_archive_defaults_to_dry_run(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--fix-ref", "t012"])
+    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012"])
     assert (repo / "docs/pending/todo/p001_demo.md").is_file()
     assert not (repo / "docs/archive/pending/p001_demo.md").exists()
 
@@ -266,23 +266,23 @@ def test_archive_rejects_parked_entry(tmp_path, monkeypatch):
     pending_mod.main(["new", "--slug", "demo"])
     pending_mod.main(["park", "p001", "--reason", "later", "--write"])
     with pytest.raises(SystemExit, match="revive"):
-        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
 def test_archive_rejects_already_archived(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
     with pytest.raises(SystemExit, match="重复归档"):
-        pending_mod.main(["archive", "p001", "--fix-ref", "t013", "--write"])
+        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t013", "--write"])
 
 
 def test_archived_id_not_reused(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "first"])
-    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
     pending_mod.main(["new", "--slug", "second"])
     assert (repo / "docs/pending/todo/p002_second.md").is_file()
 
@@ -291,7 +291,7 @@ def test_missing_entry_reports_error(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     with pytest.raises(SystemExit, match="未找到 p001"):
-        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
 def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypatch):
@@ -316,7 +316,7 @@ def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypa
 
     monkeypatch.setattr(pending_mod, "move_entry", flaky)
     with pytest.raises(SystemExit, match="模拟第二条迁移失败"):
-        pending_mod.main(["archive", "p001", "p002", "--fix-ref", "t001", "--write"])
+        pending_mod.main(["archive", "p001", "p002", "--reason", "已核实处理结果", "--fix-ref", "t001", "--write"])
     # p001 已移回 todo，且正文恢复（未被 set_field 改成「处理：t001」）
     assert one.exists()
     assert one.read_bytes() == orig_one
@@ -615,7 +615,7 @@ def test_archive_uses_git_mv_and_preserves_history(tmp_path, monkeypatch):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "add p001")
 
-    pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
     staged = _git(repo, "diff", "--cached", "--name-status", "-M").stdout
     assert "docs/pending/todo/p001_demo.md" in staged
@@ -653,7 +653,7 @@ def test_move_refuses_to_overwrite_existing_destination(tmp_path, monkeypatch):
     (archived / "p001_demo.md").write_text("occupied\n", encoding="utf-8")
 
     with pytest.raises(SystemExit, match="同时存在于多处"):
-        pending_mod.main(["archive", "p001", "--fix-ref", "t012", "--write"])
+        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
 # ---------- legacy 单文件正文编号（旧格式分支） ----------
@@ -747,3 +747,53 @@ def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
     _git(repo, "checkout", "main")
     with pytest.raises(IdScanError, match="s012"):
         scan_max_id(repo, "s", SPIKE_DIRS, kind="dir")
+
+
+@pytest.mark.parametrize("reference", [None, "main", "abc123", "PR #42"])
+def test_archive_requires_only_explanation_and_accepts_optional_non_task_reference(tmp_path, monkeypatch, reference):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "main_fix"])
+    args = ["archive", "p001", "--reason", "按用户要求在 main 修复，专项测试通过", "--write"]
+    if reference is not None:
+        args += ["--fix-ref", reference]
+    pending_mod.main(args)
+    archived = repo / "docs/archive/pending/p001_main_fix.md"
+    text = archived.read_text(encoding="utf-8")
+    assert "resolution=resolved" in text
+    assert "reason=按用户要求在 main 修复，专项测试通过" in text
+    if reference is not None:
+        assert f"处理：{reference}；" in text
+    assert not (repo / "docs/pending/todo/p001_main_fix.md").exists()
+
+
+@pytest.mark.parametrize("resolution", ["transferred", "resolved", "obsolete", "duplicate"])
+def test_all_archive_resolutions_allow_no_reference_but_reject_blank_explanation(tmp_path, monkeypatch, resolution):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "closure"])
+    source = repo / "docs/pending/todo/p001_closure.md"
+    original = source.read_bytes()
+    with pytest.raises(SystemExit, match="非空 --reason"):
+        pending_mod.main(["archive", "p001", "--resolution", resolution, "--reason", "  ", "--write"])
+    assert source.read_bytes() == original
+    assert not (repo / "docs/archive/pending/p001_closure.md").exists()
+    pending_mod.main(["archive", "p001", "--resolution", resolution, "--reason", "已核实处理依据并记录结果", "--write"])
+    text = (repo / "docs/archive/pending/p001_closure.md").read_text(encoding="utf-8")
+    assert f"resolution={resolution}" in text
+    assert "reason=已核实处理依据并记录结果" in text
+
+
+@pytest.mark.parametrize("reference_args", [[], ["--fix-ref", "t012"]])
+def test_archive_missing_explanation_is_rejected_before_migration(tmp_path, monkeypatch, capsys, reference_args):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "unexplained"])
+    source = repo / "docs/pending/todo/p001_unexplained.md"
+    original = source.read_bytes()
+    with pytest.raises(SystemExit) as failure:
+        pending_mod.main(["archive", "p001", *reference_args, "--write"])
+    assert failure.value.code == 2
+    assert "--reason" in capsys.readouterr().err
+    assert source.read_bytes() == original
+    assert not (repo / "docs/archive/pending/p001_unexplained.md").exists()

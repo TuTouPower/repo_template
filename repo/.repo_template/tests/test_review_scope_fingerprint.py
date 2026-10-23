@@ -54,13 +54,29 @@ def _fingerprint(repo: Path, anchor: str) -> str:
     return fp
 
 
-@pytest.mark.parametrize("filename", REVIEW_PROCESS_FILES)
-def test_untracked_review_process_file_keeps_fingerprint(git_repo, filename):
-    """task 目录内 untracked review 流程文件（含 *_review_prompt.md 渲染产物）不进指纹。"""
+@pytest.mark.parametrize("filename", [name for name in REVIEW_PROCESS_FILES if name != "task.md"])
+def test_untracked_review_artifacts_keep_content_fingerprint(git_repo, filename):
     repo, anchor = git_repo
     before = _fingerprint(repo, anchor)
     (repo / TASK_REL / filename).write_text("untracked 流程内容\n", encoding="utf-8")
     assert _fingerprint(repo, anchor) == before
+
+
+def test_task_body_is_excluded_but_review_level_is_bound(git_repo):
+    repo, anchor = git_repo
+    path = repo / TASK_REL / "task.md"
+    path.write_text("---\nreview_level: full\n---\noriginal notes\n", encoding="utf-8")
+    before = _fingerprint(repo, anchor)
+    path.write_text("---\nreview_level: full\n---\nupdated notes\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) == before
+    path.write_text("---\nreview_level: single\n---\nupdated notes\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) != before
+
+
+def test_malformed_review_metadata_fails_closed(git_repo):
+    repo, anchor = git_repo
+    (repo / TASK_REL / "task.md").write_text("unstructured task metadata\n", encoding="utf-8")
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo) == ""
 
 
 def test_untracked_foreign_file_changes_fingerprint(git_repo):

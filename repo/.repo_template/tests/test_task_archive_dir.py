@@ -16,6 +16,7 @@ from repo_task import lifecycle, store, worktrees
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.store import rebuild_index, scan_tasks
+from review_support import configure_project_verification
 
 pytestmark = pytest.mark.contract
 
@@ -31,6 +32,7 @@ def fake_repo(tmp_path, monkeypatch):
     tasks.mkdir(parents=True)
     archive.mkdir(parents=True)
     template.mkdir()
+    configure_project_verification(tmp_path)
     # 模板目录必须含 task.md，scan_tasks 跳过 task_template/
     write_front_matter(
         template / "task.md",
@@ -52,8 +54,9 @@ def _make_task(tasks_dir, tid, slug, status):
     write_front_matter(
         d / "task.md",
         {"tid": tid, "slug": slug, "status": status},
-        "body\n",
+        "body\n\n- specs_index: not_applicable: isolated archive lifecycle test\n",
     )
+    (d / "spec.md").write_text("# isolated spec\n", encoding="utf-8")
     return d
 
 

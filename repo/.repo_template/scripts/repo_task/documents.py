@@ -1,5 +1,7 @@
 """Canonical documents implementation for the task toolchain."""
 
+from __future__ import annotations
+
 import os
 import re
 import tempfile

@@ -1,5 +1,7 @@
 """Canonical worktrees implementation for the task toolchain."""
 
+from __future__ import annotations
+
 import os
 import re
 from pathlib import Path

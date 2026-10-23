@@ -2,11 +2,17 @@
 name: template-issue-report
 description: 将消费仓发现的模板工具链或约定问题写成脱敏 issue；只描述现象和期望，不替模板仓定位根因。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # template-issue-report
 
 把消费仓观察到的模板问题交给模板仓维护者。报告模板和脱敏要求是硬契约。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 流程
 

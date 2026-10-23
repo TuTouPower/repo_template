@@ -10,18 +10,21 @@
 用法：
   python3 .repo_template/scripts/pending.py new --slug cli_exit_code [--kind bug]
   python3 .repo_template/scripts/pending.py list [--state todo|parked|archived|all]
-  python3 .repo_template/scripts/pending.py archive p047 p051 --fix-ref t012 [--write]
+  python3 .repo_template/scripts/pending.py archive p047 p051 --reason "已在 main 修复并验证" [--fix-ref main] [--write]
   python3 .repo_template/scripts/pending.py park p047 --reason "等外部依赖" [--write]
   python3 .repo_template/scripts/pending.py revive p047 [--write]
   python3 .repo_template/scripts/pending.py rename p047 --slug new_slug [--write]
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
-`archive` 要求 --fix-ref TID 作为闭环标识；parked 条目须先 revive 才能闭环。
+`archive` 必须以非空 --reason 说明闭环依据；--fix-ref 是可选引用，不要求 task ID。
+默认 resolution=resolved；转办时显式选择 transferred。parked 条目须先 revive 才能闭环。
 `rename` 改条目文件名（保留编号，仅换 slug）：已入库文件用 `git mv` 保留历史，
 未入库（新建尚未 git add）文件退化为普通改名；dry-run 默认，加 `--write` 落盘。
 rename 不自动改正文引用——slug 改动需人工核对 docs/ 与 src/ 内的 pNNN 引用。
 迁移用 git mv 保留历史；仓库无该文件记录时退化为普通移动。
 """
+
+from __future__ import annotations
 
 import argparse
 import re
@@ -227,7 +230,13 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
 
 
 def cmd_archive(args: argparse.Namespace) -> None:
-    tid = args.fix_ref.strip()
+    reference = (args.fix_ref or "").strip()
+    resolution = getattr(args, "resolution", "resolved")
+    reason = (getattr(args, "reason", "") or "").strip()
+    if not reason:
+        raise IdScanError("归档必须提供非空 --reason，说明处理结果与闭环依据")
+    note = f"处理：{reference}；resolution={resolution}" if reference else f"处理：resolution={resolution}"
+    note += f"；reason={reason}"
     actions: list[tuple[Path, Path, str]] = []
     for number in parse_ids(args.ids):
         state, path = find_entry(number)
@@ -237,7 +246,7 @@ def cmd_archive(args: argparse.Namespace) -> None:
             raise IdScanError(
                 f"p{number:03d} 在 parked（暂搁而非闭环）；如需闭环请先 revive"
             )
-        actions.append((path, ARCHIVE_DIR, f"处理：{tid}"))
+        actions.append((path, ARCHIVE_DIR, note))
     _apply(args, actions)
 
 
@@ -313,8 +322,10 @@ def main(argv: list[str] | None = None) -> None:
     archive_parser = sub.add_parser("archive", help="闭环：todo → archive")
     archive_parser.add_argument("ids", nargs="+", metavar="pNNN")
     archive_parser.add_argument(
-        "--fix-ref", required=True, metavar="TID", help="闭环 task id，写入 - 处理"
+        "--fix-ref", metavar="REF", help="可选引用，如 main、commit、PR、条目或 task；不要求 task ID"
     )
+    archive_parser.add_argument("--resolution", choices=("transferred", "resolved", "obsolete", "duplicate"), default="resolved")
+    archive_parser.add_argument("--reason", required=True, help="必填备注：处理结果与闭环依据，不能只填空白")
     archive_parser.add_argument("--write", action="store_true", help="落盘")
     archive_parser.set_defaults(func=cmd_archive)
 

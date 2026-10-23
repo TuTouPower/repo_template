@@ -8,26 +8,7 @@ from typing import Callable
 
 import repo_task.context as ctx
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
-
-
-def _ledger_lock_fh(fh) -> None:
-    fh.seek(0)
-    if os.name == "nt":
-        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-    else:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-
-
-def _ledger_unlock_fh(fh) -> None:
-    fh.seek(0)
-    if os.name == "nt":
-        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        fcntl.flock(fh, fcntl.LOCK_UN)
+from .locks import file_lock
 
 
 def _sanitize(event: dict) -> dict:
@@ -40,12 +21,13 @@ def _sanitize(event: dict) -> dict:
     return final
 
 
-def _read_unlocked() -> list[dict]:
-    if not ctx.LEDGER_PATH.is_file():
+def _read_unlocked(path=None) -> list[dict]:
+    path = path or ctx.LEDGER_PATH
+    if not path.is_file():
         return []
     events = []
     for line_no, line in enumerate(
-        ctx.LEDGER_PATH.read_text(encoding="utf-8").splitlines(), 1
+        path.read_text(encoding="utf-8").splitlines(), 1
     ):
         if not line.strip():
             continue
@@ -92,25 +74,17 @@ def _append_unlocked(event: dict) -> dict:
     return _append_many_unlocked([event])[0]
 
 
-def _with_lock(callback):
-    ctx.LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = ctx.LEDGER_PATH.with_suffix(".lock")
-    with lock_path.open("a+", encoding="utf-8") as lock_fh:
-        # 空 lock 文件上 Windows msvcrt.locking(1 字节) 会失败，先写入 1 字节。
-        # 注意：锁是 CLI 单进程独占使用，非线程安全（msvcrt 进程级、fcntl 描述符级）。
-        if lock_fh.tell() == 0:
-            lock_fh.write("\0")
-            lock_fh.flush()
-        _ledger_lock_fh(lock_fh)
-        try:
-            return callback()
-        finally:
-            _ledger_unlock_fh(lock_fh)
+def _with_lock(callback, path=None):
+    path = path or ctx.LEDGER_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+    with file_lock(lock_path):
+        return callback()
 
 
-def ledger_read() -> list[dict]:
+def ledger_read(path=None) -> list[dict]:
     """Read all valid JSON object events while holding the ledger lock."""
-    return _with_lock(_read_unlocked)
+    return _with_lock(lambda: _read_unlocked(path), path)
 
 
 def ledger_append(event: dict) -> dict:

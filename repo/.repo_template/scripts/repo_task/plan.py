@@ -439,17 +439,7 @@ def compute_serial_plan(data: dict) -> dict:
         if src in eligible_set and dst in eligible_set:
             deps[dst].add(src)
 
-    # 冲突：序号小者优先 → 大者依赖小者（串行强制序）
-    for edge in data["edges"]:
-        if edge.get("type") == "dep":
-            continue
-        a, b = edge["from"], edge["to"]
-        if a not in eligible_set or b not in eligible_set:
-            continue
-        if tid_sort_key_or_zero(a) < tid_sort_key_or_zero(b):
-            deps[b].add(a)
-        elif tid_sort_key_or_zero(b) < tid_sort_key_or_zero(a):
-            deps[a].add(b)
+    # 串行已经满足冲突互斥；冲突提示不能添加反向硬依赖而制造环。
 
     remaining = set(eligible)
     ordered: list[str] = []
@@ -462,8 +452,7 @@ def compute_serial_plan(data: dict) -> dict:
             key=tid_sort_key_or_zero,
         )
         if not ready:
-            # 环或异常：退化为 tid 序
-            ready = sorted(remaining, key=tid_sort_key_or_zero)
+            raise ctx.TaskDataError("invalid_graph: 串行队列存在依赖环")
         pick = ready[0]
         ordered.append(pick)
         remaining.remove(pick)

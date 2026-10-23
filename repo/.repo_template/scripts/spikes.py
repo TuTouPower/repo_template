@@ -11,6 +11,8 @@
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建目录」，并发 worker 不会撞号。
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import sys

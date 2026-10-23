@@ -1,43 +1,29 @@
 ---
 name: repo-template-sync-core
-description: 同步流程本体。保留完整 status/plan/apply、回滚、测试、state 和审批语义；由 repo-template-sync 刷新后调用。
+description: 同步流程本体。保留完整 status/plan/apply、回滚、测试、state 和审批语义；由 repo-template-sync 从固定来源直接读取。
 disable-model-invocation: true
+user-invocable: false
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # repo-template-sync-core
 
-将模板源工具链同步到当前消费项目。机械文件分类、保护、回滚和 state 更新由 `repo_sync.py` 实现；本 skill 负责需要 Agent 判断的共享文件裁定和用户审批。
+由显式同步启动器从固定来源直接读取；不通过原生 Skill 工具调用。输入：consumer、product、source（原始来源身份）、checkout、完整来源 SHA。每条命令均运行来源 `repo_sync.py --consumer "$consumer" --source "$source" --checkout "$checkout" <子命令>`。
 
-## 硬边界
+## 边界
 
-- 仅用户显式请求时运行；禁止在模板仓本体把自己同步给自己。
-- 共享资产裁定前不改这些资产；启动器 `init`/`prep` 已可能写入 state、脚本与入口，URL 源的 status/plan 也会更新 `.scratch/` 源缓存。这些写入属于同步准备的副作用。共享资产有歧义时必须先由用户裁定。
-- 不覆盖 secret、本机路径或消费项目业务内容。
-- apply 后测试通过且用户批准才 commit；不 push。
+不在模板仓把自己同步给自己。不覆盖 secret、本机路径或业务文件；不 push。status/plan 不改消费资产，准备写入仅限 `.scratch/` 来源缓存。内部流程不新增授权，共享裁定有歧义时询问用户。
 
 ## 流程
 
-1. **确认源**：读取 `sync_state.json` 和模板源状态；源缺失、同一性冲突或 dirty 影响版本判断时停止说明。
-2. **status**：运行 `repo_sync.py status`，报告模板版本、消费状态和漂移。
-3. **plan**：运行 `repo_sync.py plan`，取得硬同步、共享文件、技能入口和删除候选；本步不修改待同步资产；URL 源解析会 clone/pull 本地缓存。
-4. **裁定**：
-    - `.repo_template/`、模板配置和生成入口按脚本硬同步；
-
-    - `.gitignore` / MCP 只做安全的键或规则合并；
-
-    - `AGENTS.md` 按标题分三类处理：`## 开发原则` 每次从模板强制更新；`## 目录与读写规则` 只由 Agent 做语义合并，脚本绝不覆盖；该标题之前的项目介绍绝不更新，消费仓可以在项目介绍和目录与读写规则中增加自定义内容。消费仓只允许定制这两处，其他模板规则由同步流程管理。
-
-    - 宿主 settings 不自动覆盖，只合并明确需要且不含 secret/本机路径的片段；
-
-    - 手写文件和用户 prompt 保护项保持不动，冲突交用户决定。
-5. **apply**：先保存本次会覆盖文件的未提交内容和当前 state，作为失败恢复基线；用户已有改动无法隔离时停止。把完整裁定交给 `repo_sync.py apply`。脚本负责备份、回滚、硬同步、软链/OpenCode入口、AGENTS.md 的开发原则强制更新、workflow schema 强制更新和 state 字段级更新；目录与读写规则的语义合并须由 Agent 智能处理并复核，项目介绍不得改。存在已登记 task worktree 时先完成或 rewind；不保留旧 schema 的运行时兼容。
-6. **验证**：`repo_sync.py apply` 内置跑模板契约测试（`pytest .repo_template/tests -q -m contract`），并核脚本报告的结构检查。这不是工厂全量集成测试。写盘异常触发脚本回滚；内置测试返回失败则不推进 state，但保留已写入文件，不能声称已自动回滚。停止且不 commit，核对 diff 与预先保存的基线后修复重验；不要用 `--skip-tests` 绕过。若 apply 已成功推进 state 后的额外检查失败，报告实际 state，不伪称未推进。
-7. **审批**：列出实际改动、测试、模板源版本和仍待决定项，询问是否 commit；批准后只提交本轮同步内容。
-
-## 保留的完整语义
-
-status/plan/apply 分离、模板源缓存、文件保护、apply 回滚、测试、state 推进、共享文件裁定和 commit 审批全部保留。详细文件矩阵、AGENTS.md 标题分区协议和恢复信息以 `repo_sync.py` 输出及 `.repo_template/docs/usage.md` 为准。
+1. **核验**：来源 clean、固定 SHA 与输入相符。读取本机 state、共享 policy 与可移植 manifest；无 state 时 `--source` 提供临时身份，不提前 init。检查 active worktree；存在则先完成或 rewind，禁止混用 workflow schema。
+2. **预览**：status、plan。明确硬同步、共享裁定、保护项和删除候选。确认 `testing.md` 项目验证策略已选定；模板默认未确认不得作为业务绿灯。
+3. **裁定**：工具链/入口按模板；gitignore、prettierignore、MCP 做安全合并；宿主 settings 只合明确无 secret 片段。AGENTS 项目介绍保留，开发原则按模板，目录规则由 Agent 语义合并。语义结果先存 `.scratch/`，通过 `apply --agents-file <结果文件>` 纳入事务，不提前写消费资产；未完成裁定不 apply。
+4. **apply**：确认会覆盖的未提交内容已纳入事务，业务改动可隔离。运行 `apply --expected-commit {来源完整SHA}`，带完整 `--decision` 和适用的 `--agents-file`。不得跳过测试。正式写盘从该 commit 的 Git archive 快照读取，源工作区后续变化不影响本轮。来源变化、写盘、schema 迁移、内置 contract、项目 doctor/test/blackbox 或 state 写入任一失败，整个事务恢复到 apply 前；备份保留。以 transaction status 和实际 diff 为准，不猜恢复结果。
+5. **恢复**：apply 失败即停止且不 commit；异常中断运行 `transaction status`，先备份中断后的新改动，再 `transaction rollback --confirm-restore`。成功 apply 但用户放弃时 `transaction rollback`；现场后续变化会阻止静默覆盖。恢复失败保留日志和备份，报告人工恢复条件。
+6. **审批**：列出来源 SHA、全部实际路径、保护/跳过、contract 与项目测试、state/manifest、未决项，询问是否 commit。仅批准后提交本轮内容，提交包含 sync_manifest；随后 `transaction accept`。提交前拒绝则恢复，不把“未提交”等同于可恢复。批准的批量 commit 授权可复用，不重复询问。
 
 ## 完成
 
-报告同步来源、变更、保护/跳过、测试、state 和 commit 状态。任何未裁定共享冲突都意味着流程未完成。
+报告来源、变更、验证、事务、state 和 commit 状态。任何共享冲突、未选定项目验证、失败检查或未结束事务都表示同步尚未完成。详细恢复边界见 usage，机械事实以脚本和持久 transaction.json 为准。

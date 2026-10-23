@@ -1,5 +1,7 @@
 """Canonical store implementation for the task toolchain."""
 
+from __future__ import annotations
+
 import json
 import os
 import re

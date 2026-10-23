@@ -2,11 +2,17 @@
 name: pending-record
 description: 持续澄清并登记 pending 条目（需求/技术债/bug）。bug 派子代理按 bug-to-pending 研究记录，非 bug 普通记录；主会话不停聊。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # pending-record
 
 持续接收用户口述并登记 pending。输入清楚时一句复述后直接处理；只有歧义、park 或覆盖已有条目时才确认。主会话继续接下一条。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 路由
 

@@ -2,11 +2,17 @@
 name: task-preflight
 description: 只读检查待做 task 的机器门禁与用户不可替代缺口，输出可开工/阻塞结论。用户要求检查某 task 能否开工或排查阻塞时调用。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # task-preflight
 
 只读检查待做 task 的机器门禁和用户不可替代缺口。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 流程
 

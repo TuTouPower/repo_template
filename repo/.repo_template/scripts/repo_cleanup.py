@@ -23,6 +23,8 @@ config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不�
 默认不 commit；本脚本不写 git index / 不 commit。
 """
 
+from __future__ import annotations
+
 import argparse
 import fnmatch
 import os

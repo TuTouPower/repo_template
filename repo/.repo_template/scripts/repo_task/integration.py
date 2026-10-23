@@ -1,5 +1,7 @@
 """Task worktree creation, cleanup, and exact-identity integration."""
 
+from __future__ import annotations
+
 import functools
 import json
 import os
@@ -8,6 +10,8 @@ import sys
 from pathlib import Path
 
 import repo_task.context as ctx
+
+from .locks import control_locked
 
 from .attempts import (
     append_integrated,
@@ -121,8 +125,14 @@ def _dependency_implementations(dep: str) -> list[str]:
     )
 
 
+@control_locked
 def cmd_start(args):
     require_primary_worktree()
+    from .validation import load_policy, ValidationError
+    try:
+        load_policy(ctx.REPO_ROOT)
+    except ValidationError as error:
+        sys.exit(f"start=FAIL：{error}")
     # 前置验证 ledger 可读：创建 branch/worktree 后再追加 ledger 若因损坏
     # fail-closed 抛错，会留下完整副作用却返回非零。提前校验，失败即无副作用。
     ledger_read()
@@ -140,6 +150,10 @@ def cmd_start(args):
         sys.exit("start=FAIL：" + "；".join(problems))
 
     effective = discover_effective_tasks()
+    current = effective.get(args.tid)
+    if current and any(current.get(field, "") != ref_fm.get(field, "")
+                       for field in ("depends_on", "conflicts_with")):
+        sys.exit("start=FAIL：base 调度图滞后于当前 task；先提交图变更并选择包含该图的 base，禁止按旧图启动")
     depends_on = [t for t in str(ref_fm.get("depends_on", "")).split(",") if t.strip()]
     conflicts_with = [t for t in str(ref_fm.get("conflicts_with", "")).split(",") if t.strip()]
 
@@ -198,6 +212,15 @@ def cmd_start(args):
             problems, _ = validate_task_documents(spec_text, ref_task_body)
             if problems:
                 sys.exit("start=FAIL：" + "；".join(problems))
+            if current and any(current.get(field, "") != ref_fm.get(field, "")
+                               for field in ("depends_on", "conflicts_with")):
+                sys.exit("start=FAIL：自动选择的 base 调度图滞后；先整合图变更")
+
+    from .validation import parse_policy
+    try:
+        parse_policy(git_text_at_ref(base_sha, "docs/blueprint/testing.md"))
+    except (ValidationError, ctx.TaskDataError) as error:
+        sys.exit(f"start=FAIL：实际 base 的验证策略未就绪：{error}")
 
     # 实际起点（显式或自动选出的 base）须包含每个依赖的实现 SHA。
     # 用「实现是否 base 祖先」而非「是否已合入当前 main」推导——已合入 main 的
@@ -311,6 +334,7 @@ def _verify_exact_handoff(tid: str, attempt: int, execution_id: str) -> None:
         )
 
 
+@control_locked
 def cmd_cleanup_worktree(args):
     require_primary_worktree()
     if not ctx.TID_RE.fullmatch(args.tid):
@@ -588,6 +612,7 @@ def _commit_native_merge(expected_head: str, subject_prefix: str) -> str:
 
 
 @_chain_locked
+@control_locked
 def cmd_integrate(args):
     require_primary_worktree()
     try:
@@ -728,6 +753,7 @@ def _preflight_chain(tail_tid: str, *, continue_merge: bool = False) -> list[dic
 
 
 @_chain_locked
+@control_locked
 def cmd_integrate_chain(args):
     require_primary_worktree()
     try:

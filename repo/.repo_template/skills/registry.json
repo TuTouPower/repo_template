@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "skills": {
+    "bug-to-pending": {
+      "role": "public"
+    },
+    "pending-record": {
+      "role": "public"
+    },
+    "repo-cleanup": {
+      "role": "public"
+    },
+    "repo-hygiene": {
+      "role": "public"
+    },
+    "repo-template-sync": {
+      "role": "public"
+    },
+    "repo-template-sync-core": {
+      "role": "internal"
+    },
+    "task-create": {
+      "role": "public"
+    },
+    "task-from-pending": {
+      "role": "public"
+    },
+    "task-integrate": {
+      "role": "internal"
+    },
+    "task-merge": {
+      "role": "public"
+    },
+    "task-preflight": {
+      "role": "public"
+    },
+    "task-run": {
+      "role": "public"
+    },
+    "task-schedule": {
+      "role": "public"
+    },
+    "task-work": {
+      "role": "internal"
+    },
+    "template-issue-report": {
+      "role": "public"
+    }
+  },
+  "calls": [
+    {
+      "parent": "task-run",
+      "child": "task-work"
+    },
+    {
+      "parent": "task-run",
+      "child": "task-integrate"
+    },
+    {
+      "parent": "task-from-pending",
+      "child": "bug-to-pending"
+    },
+    {
+      "parent": "task-from-pending",
+      "child": "task-create"
+    },
+    {
+      "parent": "pending-record",
+      "child": "bug-to-pending"
+    },
+    {
+      "parent": "bug-to-pending",
+      "child": "task-create"
+    },
+    {
+      "parent": "repo-template-sync",
+      "child": "repo-template-sync-core"
+    }
+  ]
+}

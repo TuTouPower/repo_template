@@ -1,12 +1,19 @@
 ---
 name: task-integrate
-description: 把已完成的单 task 分支或线性链尾合入本地主干（调用即视为用户批准本次 merge，不 push）。用户批准合并某 task 分支时调用。
+description: 内部合并流程：task-run 取得用户明确 merge 授权后读取正文，合入本地主干，不 push。
 disable-model-invocation: true
+user-invocable: false
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # task-integrate
 
-将已完成的单 task 分支或线性链尾合入本地主干。调用本 skill 表示用户已明确批准本次 merge；不 push。
+将已完成的单 task 分支或线性链尾合入本地主干。进入本内部流程前必须已有用户明确批准本次 merge；不 push。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 合并前门禁
 

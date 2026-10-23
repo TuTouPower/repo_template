@@ -1,33 +1,30 @@
 ---
 name: repo-template-sync
-description: 同步启动器。先把模板源最新版 repo_sync.py 复制进消费仓，再跑 prep 刷新 core，最后由 core 完成同步。仅用户显式请求时运行。
+description: 同步启动器。直接运行固定来源中的同步器并读取 core，消费资产只在 apply 事务内修改。仅用户显式请求时运行。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # repo-template-sync
 
-确保本次同步使用模板源中的最新版脚本与 core 流程。消费仓现有的 `repo_sync.py` 可能是旧版（缺 `prep`、旧布局或旧 state 路径），**不能直接拿来跑**——任何子命令之前，必须先用模板源的脚本覆盖它。
+仅用户显式请求时同步。来源脚本与 core 直接读取，不复制到消费仓、不运行 prep。父子组合遵循 usage 与 registry：读取 canonical 正文，不调用宿主原生 Skill 工具。
 
-1. **确定模板源**：取用户输入；否则读消费仓 state（新路径 `.repo_template/sync_state.json`，缺失再看旧路径 `.agents/skills/repo-template-sync/sync_state.json`）的 `template_source`。核实是产物根，或含 `repo/` 的工厂根（两者都含 `.repo_template/scripts/task.py`）。无法确定时停止，不把拼错的本地路径当远程源尝试。
+1. 来源取用户输入，否则读本机 sync_state，缺失读可移植 sync_manifest。来源为本地产物根、工厂根或 Git URL；拼错路径不得当 URL。无法确定就停止。
 
-2. **先复制同步脚本（自举，必须在跑任何 `repo_sync.py` 子命令之前）**：用模板源的最新脚本覆盖消费仓新路径。工厂根的脚本在 `<src>/repo/.repo_template/scripts/`，产物根在 `<src>/.repo_template/scripts/`：
+2. 将来源解析为固定 clean checkout。URL 在消费仓 `.scratch/repo_template_sync_src` 首次 clone；已有缓存先核 remote 和 git status，干净且有网络时 fetch，按用户 ref 或远程默认分支解析 SHA 后 detach 到该 commit。离线只用已存在且可核验的 commit，不盲目重试 clone/pull。来源有 secret/凭据时沿用用户现有认证，不写入文档。
+
+3. 统一解析产物根：若 `<checkout>/.repo_template/scripts/task.py` 存在，product=checkout；否则若 `<checkout>/repo/.repo_template/scripts/task.py` 存在，product=checkout/repo；都无则停止。保存真实 consumer、checkout、product 与完整来源 SHA。本机来源必须 clean；不在来源工作区替用户切分支或丢弃改动，指定旧 ref 时另建隔离 checkout。
+
+4. 后续始终运行来源脚本，目标显式传入，source 保留原始 URL/来源身份，checkout 指向本轮固定 checkout。例如：
 
     ```bash
-    consumer=/path/to/consumer
-    src=/path/to/repo_template            # 产物根或工厂根
-    mkdir -p "$consumer/.repo_template/scripts"
-    cp "$src/.repo_template/scripts/repo_sync.py" \
-       "$consumer/.repo_template/scripts/repo_sync.py"
+    python3 "$product/.repo_template/scripts/repo_sync.py" \
+      --consumer "$consumer" --source "$source" --checkout "$checkout" status
     ```
 
-    跳过这步会让后续 `init` / `prep` 命中旧脚本而失败——旧脚本没有 `prep`，也没有本条自举指引。
+    `consumer`、`product`、`checkout` 均为已核实实际路径，`source` 保留用户给定 URL 或来源路径。此时不 init、不改消费仓脚本或入口。脚本将来源身份与 resolved_checkout 分开保存；可共享且无凭据 URL 自动进入 manifest，本机路径不入库。
 
-3. **首次接入**：无 state 时运行 `python3 .repo_template/scripts/repo_sync.py init --source <实际路径或URL>`；已有 state（含从旧路径读取）不重跑。`init` 会把旧路径 state 迁移到新路径并保留 `user_prompts`。
+5. 直接读取 `$product/.repo_template/skills/repo-template-sync-core/SKILL.md`，传入同一来源 SHA、脚本路径与 consumer，按 core 执行 status/plan、裁定、apply、验证和提交审批。apply 前再次核对来源 SHA 未变化。
 
-4. **刷新 core**：运行 `python3 .repo_template/scripts/repo_sync.py prep`，单向刷新消费仓中的同步脚本、`repo-template-sync-core` 和对应 skill 入口。
-
-5. 重新读取刷新后的 `repo-template-sync-core/SKILL.md`。
-
-6. 按 core 完成 status、plan、裁定、apply、测试和提交审批。
-
-启动器不自行裁定共享文件，也不在模板仓自身作为推送源运行。第 2 步自举与 prep 的写入随 core 最终审批一起处理。
+准备中止仅留下 `.scratch/` 缓存，无消费资产混合版本。禁止在模板源自身执行同步。来源信任与执行授权沿用用户本轮请求；共享文件裁定不明时停止。

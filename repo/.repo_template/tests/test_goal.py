@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from review_support import ensure_review_evidence
+from review_support import ensure_review_evidence, configure_project_verification
 
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -80,6 +80,7 @@ def git_repo(tmp_path):
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
+    configure_project_verification(repo)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo

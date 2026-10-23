@@ -1,4 +1,6 @@
 """消费仓契约套件边界：标记范围、默认门禁命令、同步验证命令。"""
+
+from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path

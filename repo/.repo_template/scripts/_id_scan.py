@@ -21,6 +21,8 @@ pending.py / findings.py 共用。条目以「一条目一文件」形式存放�
 释放锁时新条目已落盘，后续扫描必然可见，不存在两个进程取到同号的窗口。
 """
 
+from __future__ import annotations
+
 import re
 import subprocess
 import sys
@@ -60,7 +62,7 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
 def id_lock(repo_root: Path):
     """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。
 
-    委托 repo_task.locks.git_common_lock：锁文件先写 1 字节再锁，兼容 Windows
+    委托 repo_task.locks.git_common_lock：锁文件初始化与同线程重入由公共 helper 处理，兼容 Windows
     msvcrt（空文件锁 1 字节超 EOF 抛 OSError，RT-011）。git 失败包装为 IdScanError。
     """
     try:
@@ -221,7 +223,7 @@ def allocate(
         if path.exists():
             raise IdScanError(f"{path} 已存在；请先处理后重试")
         target_dir.mkdir(parents=True, exist_ok=True)
-        path.write_text(body.replace("{id}", entry_id), encoding="utf-8", newline="\n")
+        path.write_bytes(body.replace("{id}", entry_id).encode("utf-8"))
     return path
 
 
@@ -248,7 +250,5 @@ def allocate_dir(
             raise IdScanError(f"{path} 已存在；请先处理后重试")
         path.mkdir(parents=True)
         for name, content in files.items():
-            (path / name).write_text(
-                content.replace("{id}", entry_id), encoding="utf-8", newline="\n"
-            )
+            (path / name).write_bytes(content.replace("{id}", entry_id).encode("utf-8"))
     return path

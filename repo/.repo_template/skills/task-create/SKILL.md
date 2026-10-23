@@ -2,11 +2,17 @@
 name: task-create
 description: 把用户需求拆成合格 backlog task。用户批准立项或要求拆 task 时调用。
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: "false"
 ---
 
 # task-create
 
 把已确认需求拆成独立可验收的 backlog task。严格模板见 `.repo_template/docs/task_template/`，目录与写权见 `AGENTS.md` 和 `.repo_template/docs/usage.md`。
+
+## 组合契约
+
+仅用户显式授权入口或 registry.json 已登记父流程可执行。本流程作为子流程时，由父流程直接读取本 canonical `SKILL.md` 并执行正文，不调用宿主原生 Skill 工具；原样传递参数、exact identity、owner_id 和写域。父流程授权不扩大，缺少所需授权时停止。调用关系以 `.repo_template/skills/registry.json` 为权威。
 
 ## 流程
 

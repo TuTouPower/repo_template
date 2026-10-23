@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from review_support import ensure_review_evidence
+from review_support import ensure_review_evidence, configure_project_verification
 
 from repo_task import context as ctx
 from repo_task import integration, lifecycle, store
@@ -104,6 +104,7 @@ def git_repo(tmp_path, monkeypatch):
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
+    configure_project_verification(repo)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -881,7 +882,7 @@ def test_preflight_active_worktree_allows_implementation_files_without_warning(g
     (worktree / "tests" / "test_app.py").write_text("assert True\n", encoding="utf-8")
     (worktree / "docs" / "blueprint").mkdir(parents=True, exist_ok=True)
     (worktree / "docs" / "blueprint" / "testing.md").write_text(
-        "## doctor_cmd\npytest\n## test_cmd\npytest\n## blackbox_verify\npytest\n",
+        "## verification_policy\nproject_configured\n## verification_notes\n测试配置已明确\n## doctor_cmd\n```bash\npytest\n```\n## test_cmd\n```bash\npytest\n```\n## blackbox_verify\n```bash\npytest\n```\n",
         encoding="utf-8",
     )
 
@@ -1307,11 +1308,19 @@ def test_missing_testing_sections_parser_matrix():
 
 def test_preflight_ignores_placeholder_explanations_when_sections_are_filled(git_repo):
     testing = git_repo / "docs/blueprint/testing.md"
-    testing.parent.mkdir(parents=True)
+    testing.parent.mkdir(parents=True, exist_ok=True)
     testing.write_text(
         """# 测试
 
 `{doctor_cmd}` / `{test_cmd}` / `{blackbox_verify}` 的说明。
+
+## verification_policy
+
+project_configured
+
+## verification_notes
+
+该测试显式选择已填命令。
 
 ## doctor_cmd
 
@@ -1327,7 +1336,9 @@ pytest -q
 
 ## blackbox_verify
 
-运行 CLI 并检查 stdout。
+```bash
+python3 --version
+```
 """,
         encoding="utf-8",
     )
@@ -1938,3 +1949,22 @@ def test_effective_status_cli_output(git_repo, capsys):
     out = capsys.readouterr().out
     assert "worktree" in out
     assert str(_worktree_path(git_repo, "t001")) in out
+
+
+def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
+    from repo_task.graph import cmd_merge_backlog
+    from repo_task.ledger import ledger_read
+    ledger_read()  # Include the observational control lock in the initial baseline.
+    before = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
+    original_move = lifecycle.shutil.move
+
+    def fail_second_source(source, destination):
+        if 't002_beta' in str(source):
+            raise OSError('simulated second source archive failure')
+        return original_move(source, destination)
+
+    monkeypatch.setattr(lifecycle.shutil, 'move', fail_second_source)
+    with pytest.raises(ctx.TaskDataError, match='已恢复图与来源目录'):
+        cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002'))
+    after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
+    assert after == before

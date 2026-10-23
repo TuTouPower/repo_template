@@ -1,5 +1,7 @@
 """Canonical lifecycle implementation for the task toolchain."""
 
+from __future__ import annotations
+
 import os
 import re
 import shutil
@@ -8,6 +10,8 @@ from pathlib import Path
 
 import repo_task.context as ctx
 
+from .locks import control_locked
+
 from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
 from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
@@ -15,6 +19,7 @@ from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
 
+@control_locked
 def cmd_add(args):
     require_primary_worktree()
     if not ctx.SLUG_RE.match(args.slug):
@@ -73,6 +78,7 @@ def cmd_add(args):
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
     print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 spec.md / task.md）")
 
+@control_locked
 def cmd_edit(args):
     require_primary_worktree()
     field_names = (
@@ -425,6 +431,25 @@ def cmd_preflight(args):
                 "项目复制后须在 testing.md 填写实际命令"
             )
 
+    from .validation import load_policy, parse_policy, ValidationError
+    try:
+        if source_ref:
+            parse_policy(git_text_at_ref(ref_sha, "docs/blueprint/testing.md"))
+        else:
+            load_policy(ctx.REPO_ROOT)
+    except (ValidationError, ctx.TaskDataError) as error:
+        (warnings if creation else problems).append(str(error))
+
+    if not source_ref and fm["status"] == "active":
+        from .attempts import current_attempt_record
+        from .git_ops import primary_worktree_path
+        from .ledger import ledger_read
+        record = current_attempt_record(args.tid, ledger_read(primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"))
+        if record and record["state"] == "running":
+            owner = record.get("owner_id")
+            if not owner or owner != getattr(args, "owner_id", None):
+                problems.append("执行权未领取或 owner_id 不匹配；先在主仓 attempt claim，再携 --owner-id 验证")
+
     print(f"# preflight {args.tid}")
     if source_ref:
         print(f"  source_ref: {source_ref}")
@@ -464,6 +489,20 @@ def cmd_limits(args):
     print(f"{args.tid} limits updated: {', '.join(changes)}")
 
 
+def cmd_review_upgrade(args):
+    _, path, fm, body = load_task(args.tid)
+    require_status(fm, "active")
+    require_own_task_worktree(fm)
+    if not args.reason.strip():
+        sys.exit("review 升级必须记录 --reason")
+    if fm["review_level"] != "single":
+        sys.exit("仅允许 active single -> full；不支持降级或重复升级")
+    fm["review_level"] = "full"
+    append_note(fm, f"review single -> full: {args.reason.strip()}")
+    write_front_matter(path, fm, body)
+    print(f"{args.tid} review_level=full；旧 general review 不再满足门禁，须重审 code/test")
+
+
 def _close_task(args, status: str, note: str | None) -> None:
     """done / dropped 收尾：先做 git 侧动作，再单次写盘，最后归档目录。
 
@@ -475,6 +514,14 @@ def _close_task(args, status: str, note: str | None) -> None:
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm)
+        from .finalization import check_finalization
+        try:
+            from .validation import load_policy
+            load_policy(ctx.REPO_ROOT)
+            for warning in check_finalization(ctx.REPO_ROOT, args.tid, path.parent):
+                print(f"WARN: {warning}")
+        except ValueError as error:
+            sys.exit(f"finish=FAIL：{error}")
     elif fm["status"] in ctx.ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
@@ -558,6 +605,7 @@ def _close_task(args, status: str, note: str | None) -> None:
 def cmd_finish(args):
     _close_task(args, "done", None)
 
+@control_locked
 def cmd_drop(args):
     references = task_schedule_references(args.tid)
     if references:
@@ -567,6 +615,7 @@ def cmd_drop(args):
         )
     _close_task(args, "dropped", f"dropped: {args.reason}")
 
+@control_locked
 def cmd_rewind(args):
     task, path, fm, body = load_task(args.tid)
     primary_fm = dict(fm)
@@ -676,6 +725,7 @@ def cmd_rewind(args):
         rebuild_index()
     print(f"{args.tid} status={target} (rewound from {effective}){'; ' + wt_msg if wt_msg else ''}")
 
+@control_locked
 def cmd_purge(args):
     require_primary_worktree()
     references = task_schedule_references(args.tid)

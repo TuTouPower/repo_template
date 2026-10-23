@@ -3,7 +3,7 @@
 本报告必须含一行审查范围指纹，格式精确如下（整行照抄，禁止反引号、加粗或列表前缀等 markdown 修饰）：
 reviewed_scope: {review_scope_fingerprint}
 
-指纹按相对 `{diff_anchor}` 的完整 worktree 内容变化计算，包含未跟踪交付文件，排除 task.md / 处置表 / pending / findings 等流程文件。实施方派审前须对明确的新交付文件执行 `git add -N`，让它们同时出现在 reviewer 的 `git diff` 中。`check_review_status.py` 重算当前指纹比对：
+指纹按相对 `{diff_anchor}` 的完整 worktree 内容变化计算，包含未跟踪交付文件，绑定 review_level，排除 task.md 正文 / 处置表 / pending / findings 等流程文件。实施方派审前须对明确的新交付文件执行 `git add -N`，让它们同时出现在 reviewer 的 `git diff` 中。`check_review_status.py` 重算当前指纹比对：
 
 - 报告缺 `reviewed_scope` 行，或指纹与当前不一致 → 判定「审查后又改动，PASS 失效」，overall=INCOMPLETE，须重审。
 - 多轮追加时，`## Round N` 小节内写**本轮** reviewed_scope 行；脚本取全文最后一条与当前比对。
@@ -121,3 +121,7 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 ### minor
 
 风格、覆盖可更广、命名优化、注释补充、文件膨胀、测试结构清理。
+
+### 风险升级
+
+实际变更涉及鉴权、数据迁移、协议等高风险面而 review_level=single 时，报告 blocking finding，要求实施方通过 review-upgrade 升 full 后重新派审；reviewer 不自行改 front matter。

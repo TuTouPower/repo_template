@@ -148,7 +148,10 @@ def test_archive_handoff_retry_after_partial_failure_no_duplicate(repo, monkeypa
 def _make_spike(repo: Path, name: str) -> None:
     d = repo / "docs/spikes" / name
     d.mkdir(parents=True)
-    (d / "report.md").write_text("# report\n", encoding="utf-8")
+    (d / "report.md").write_text("# report\n\n## 结论\n验证完成。\n\n## 是否采纳\n- 决定：否\n- 无需后续理由：验证证实无需修改。\n\n## 关联 findings\n- d001\n", encoding="utf-8")
+    finding = repo / "docs/findings/d001_verified.md"
+    finding.parent.mkdir(parents=True, exist_ok=True)
+    finding.write_text("# 已验证结论\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", f"feat(spike): add {name}")
 
@@ -167,6 +170,14 @@ def test_archive_spike_moves_dir_with_git_mv(repo):
 def test_archive_spike_dry_run_does_not_move(repo):
     _make_spike(repo, "s001_uv_lock")
     rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=False))
+    assert (repo / "docs/spikes/s001_uv_lock").is_dir()
+
+
+def test_archive_spike_rejects_missing_closure_evidence(repo):
+    _make_spike(repo, "s001_uv_lock")
+    (repo / "docs/spikes/s001_uv_lock/report.md").write_text("# incomplete\n")
+    with pytest.raises(rh.HygieneError, match="findings"):
+        rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=True))
     assert (repo / "docs/spikes/s001_uv_lock").is_dir()
 
 

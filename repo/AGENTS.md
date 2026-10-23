@@ -17,7 +17,7 @@
 |`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；确认过时由 `repo-hygiene` 迁 `docs/archive/reviews/`|
 |`docs/spikes/{sid}_{slug}/`|当前 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`“实施”中的未知契约处理；结论入 `docs/findings/`；完结由 `repo-hygiene` 迁 `docs/archive/spikes/`|
 |`docs/guides/`|给人看的使用指南|给人读，不写 agent 行为规则|
-|`docs/archive/`|完结或终止的历史|镜像原路径；内部文件只准新增|
+|`docs/archive/`|完结或终止的历史|镜像原路径；内部文件只准新增；唯一窄例外：经用户批准的 done task 补审证据按 recovery 仅修改 review 过程文件并 amend 原执行 commit|
 |`schemas/`|跨服务接口契约|改契约走 task 流程|
 |`config/`|配置（默认 + 环境覆盖 +`.env.example`）|仅`.env.example` 入库；真值写本地 `.env`|
 |`src/` `tests/` `assets/`|源码、测试、静态源|仅在 task 执行期按 spec 修改；debug 复现不得写入|

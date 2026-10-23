@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from review_support import configure_project_verification
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -60,6 +61,7 @@ def schedule_repo(tmp_path, monkeypatch):
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "test")
+    configure_project_verification(repo)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo

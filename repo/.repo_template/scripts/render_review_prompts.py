@@ -16,6 +16,8 @@ reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 pr
 默认 stdout；--out-dir 时写入 code_review_prompt.md 与 test_review_prompt.md
 """
 
+from __future__ import annotations
+
 import argparse
 import difflib
 import re

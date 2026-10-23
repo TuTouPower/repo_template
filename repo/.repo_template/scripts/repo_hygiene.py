@@ -15,6 +15,8 @@
   repo_hygiene.py archive-review review_xxx [--write]
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import shutil
@@ -169,6 +171,11 @@ def cmd_archive_spike(args: argparse.Namespace) -> None:
                if p.is_dir() and p.name.startswith(sid + "_") and SPIKE_DIR_RE.match(p.name)]
     if len(matches) != 1:
         raise HygieneError(f"sid {sid} 匹配 {len(matches)} 个 spike 目录；期望恰好 1 个")
+    from repo_task.finalization import validate_spike
+    try:
+        validate_spike(REPO_ROOT, matches[0])
+    except ValueError as error:
+        raise HygieneError(str(error)) from error
     _move_dir(matches[0], ARCHIVE_SPIKES / matches[0].name, args.write)
 
 

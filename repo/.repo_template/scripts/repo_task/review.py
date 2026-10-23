@@ -1,4 +1,6 @@
 """Shared review evidence parser for the worktree checker and committed handoff gate."""
+
+from __future__ import annotations
 import re
 from pathlib import Path
 

@@ -2,10 +2,11 @@
 import json
 
 from . import context as ctx
-from .attempts import current_attempt_record, overlapping_attempts
+from .attempts import current_attempt_record, overlapping_attempts, validate_execution_context
 from .documents import parse_front_matter
 from .git_ops import _git, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
+from .locks import control_locked
 from .monitoring import verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
@@ -20,6 +21,7 @@ def recovery_state(tid: str) -> dict:
     state = {"tid": tid, "phase": "needs_attention", "action": "停止并报告状态冲突"}
     if record:
         state.update({name: record[name] for name in ("attempt", "execution_id")})
+        state["owner_id"] = record.get("owner_id", "")
     if overlapping_attempts(tid, events):
         state["action"] = "停止：存在 overlapping attempt，不猜 identity"
         return state
@@ -55,9 +57,15 @@ def recovery_state(tid: str) -> dict:
         return state
     if fm["status"] == "active":
         if record is None:
+            if (worktree / "docs/runtime/execution_context.json").exists():
+                return phase("runtime_missing", "worktree 留有执行 identity，但主仓 ledger 缺失；停止并恢复 runtime 备份，不 reserve、不猜补 active 历史")
             return phase("started_without_attempt", "只 reserve；不重复 start")
+        try:
+            validate_execution_context(worktree, tid, record)
+        except ctx.TaskDataError as error:
+            return phase("runtime_mismatch", str(error))
         if record["state"] == "running":
-            return phase("executing", "以原 identity 继续 task-work")
+            return phase("executing", "核对 owner_id；先原子 claim。跨会话接管必须确认原会话已停止，不得直接复用 identity 并行实施")
         if (record.get("report") or {}).get("status") in {"blocked", "failed"}:
             return phase("retry_ready", "task 保持 active；直接 reserve 新 identity 后继续")
         return state
@@ -135,3 +143,45 @@ def _evidence_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: 
 
 def cmd_recovery(args) -> None:
     print(json.dumps(recovery_state(args.tid), ensure_ascii=False, indent=2))
+
+
+@control_locked
+def cmd_ledger_import(args):
+    """Recover only a proven completed execution; never invent a running owner."""
+    require_primary_worktree()
+    if not args.confirm_stopped:
+        raise ctx.TaskDataError("导入前须确认原执行会话已停止：--confirm-stopped")
+    task = discover_effective_tasks().get(args.tid)
+    if not task or task["status"] != "done" or not task.get("branch"):
+        raise ctx.TaskDataError("仅可从现存 done task 分支及 committed handoff 重建；active 或缺证据须恢复 runtime 备份")
+    branch = task["branch"]
+    try:
+        handoff = json.loads(git_text_at_ref(branch, f"{task['dir']}/handoff.json"))
+    except (ValueError, ctx.TaskDataError) as error:
+        raise ctx.TaskDataError(f"拒绝导入：handoff 无法读取（{error}）") from error
+    if not isinstance(handoff, dict):
+        raise ctx.TaskDataError("拒绝导入：handoff 非 JSON 对象")
+    attempt, execution_id = handoff.get("attempt"), handoff.get("execution_id")
+    verdict, detail = verify_integrate_ready(args.tid, attempt, execution_id)
+    if verdict != "ready":
+        raise ctx.TaskDataError(f"拒绝导入：{detail}")
+    worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(args.tid)).resolve()
+    if str(worktree) in worktree_paths():
+        from .git_ops import porcelain_entries
+        if porcelain_entries(root=worktree):
+            raise ctx.TaskDataError("worktree 有未提交改动；先恢复或保存，不据 Git tip 猜测现场")
+    sha = _git(["rev-parse", branch]).stdout.strip()
+    from .ledger import ledger_locked_append_many
+
+    def build(events):
+        if any(event.get("tid") == args.tid for event in events):
+            raise ctx.TaskDataError("已有该 tid 的 ledger 事件；拒绝覆盖或猜补部分历史，请恢复备份")
+        identity = {"tid": args.tid, "attempt": attempt, "execution_id": execution_id,
+                    "recovered_from": sha}
+        return [{**identity, "event": "attempt_reserved", "executor": "inline", "state": "running"},
+                {**identity, "event": "attempt_terminal", "status": "completed"},
+                {**identity, "event": "report", "status": "done", "sha": sha}]
+
+    ledger_locked_append_many(build)
+    print(json.dumps({"tid": args.tid, "attempt": attempt, "execution_id": execution_id,
+                      "recovered_from": sha}, ensure_ascii=False))

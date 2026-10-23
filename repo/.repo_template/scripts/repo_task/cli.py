@@ -9,13 +9,15 @@ from .control import (
     cmd_attempt_report,
     cmd_attempt_reserve,
     cmd_attempt_terminal,
+    cmd_attempt_claim,
     cmd_effective_status,
     cmd_ledger_tail,
     cmd_ps,
     cmd_view,
 )
 from .goal import cmd_goal, cmd_goal_check
-from .recovery import cmd_recovery
+from .recovery import cmd_recovery, cmd_ledger_import
+from .graph import cmd_merge_backlog, cmd_graph_transaction
 from .plan import cmd_plan
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
@@ -29,6 +31,7 @@ from .lifecycle import (
     cmd_rewind,
     cmd_limits,
     cmd_show,
+    cmd_review_upgrade,
 )
 
 
@@ -67,6 +70,21 @@ def main():
     edit.add_argument("--conflicts-remove")
     edit.set_defaults(func=cmd_edit)
 
+    merge_backlog = sub.add_parser("merge-backlog", help="原子合并 backlog 图并归档来源；保留硬依赖并拒绝环")
+    merge_backlog.add_argument("tid", help="保留或新建的目标 tid")
+    merge_backlog.add_argument("--sources", required=True, help="逗号分隔来源 tid")
+    merge_backlog.set_defaults(func=cmd_merge_backlog)
+
+    graph_recover = sub.add_parser("graph-transaction", help="查询或恢复中断的 backlog 图事务")
+    graph_recover.add_argument("action", choices=("status", "rollback"))
+    graph_recover.add_argument("--confirm-restore", action="store_true")
+    graph_recover.set_defaults(func=cmd_graph_transaction)
+
+    upgrade = sub.add_parser("review-upgrade", help="在自身 worktree 将 active single 单调升级为 full")
+    upgrade.add_argument("tid")
+    upgrade.add_argument("--reason", required=True)
+    upgrade.set_defaults(func=cmd_review_upgrade)
+
     start = sub.add_parser("start", help="backlog -> active：创建 task branch/worktree")
     start.add_argument("tid")
     start.add_argument("--base", help="可选上一已完成 task 分支")
@@ -78,6 +96,7 @@ def main():
     preflight.add_argument("--creation", action="store_true", help="只验 backlog 创建有效性；已分类 BLOCKING 不阻断创建")
     preflight.add_argument("--ref")
     preflight.add_argument("--require-verified", action="store_true")
+    preflight.add_argument("--owner-id", help="当前会话执行权，须与 ledger claim 一致")
     preflight.set_defaults(func=cmd_preflight)
 
     limits = sub.add_parser("limits", help="增加 active task 的 review/verify 绝对上限")
@@ -167,6 +186,14 @@ def main():
     reserve.add_argument("--model")
     reserve.set_defaults(func=cmd_attempt_reserve)
 
+    claim = attempt_sub.add_parser("claim", help="原子领取执行权；接管须确认原会话已停止")
+    claim.add_argument("tid")
+    _add_identity(claim)
+    claim.add_argument("--owner-id", required=True)
+    claim.add_argument("--replace-owner")
+    claim.add_argument("--confirm-stopped", action="store_true")
+    claim.set_defaults(func=cmd_attempt_claim)
+
     terminal = attempt_sub.add_parser("terminal", help="标记 exact attempt 宿主终态")
     terminal.add_argument("tid")
     _add_identity(terminal)
@@ -215,7 +242,7 @@ def main():
     goal.add_argument(
         "--reset",
         action="store_true",
-        help="按 backlog ∪ active 升序重建默认队列并直接覆盖已有快照（免确认）",
+        help="按依赖拓扑重建 backlog ∪ active 默认队列并覆盖已有快照",
     )
     goal.add_argument(
         "--yes",
@@ -233,6 +260,11 @@ def main():
     tail.add_argument("--tid")
     tail.add_argument("-n", type=int, default=20)
     tail.set_defaults(func=cmd_ledger_tail)
+
+    restore = ledger_sub.add_parser("import", help="从严格验证的 done 分支/handoff 重建遗失 ledger")
+    restore.add_argument("tid")
+    restore.add_argument("--confirm-stopped", action="store_true")
+    restore.set_defaults(func=cmd_ledger_import)
 
     args = parser.parse_args()
     try:

@@ -1,5 +1,7 @@
 """Repository observation, handoff verification, and attempt-based monitoring."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -17,7 +19,7 @@ from .attempts import (
     overlapping_attempts,
     project_attempts,
 )
-from .documents import extract_ac_ids
+from .documents import extract_ac_ids, parse_front_matter_text
 from .git_ops import _git, _git_bytes, has_unmerged_commits, worktree_paths
 from .store import _task_branch_names, git_text_at_ref, load_task_at_ref
 
@@ -139,6 +141,25 @@ def review_scope_fingerprint(
         before = _review_tree(root, diff_anchor, task_name)
         after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
         digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
+        task_paths = [f"docs/tasks/{task_name}/task.md", f"docs/archive/tasks/{task_name}/task.md"]
+        review_level = "full"
+        for task_path in task_paths:
+            if ref:
+                result = _git(["show", f"{ref}:{task_path}"], root=root)
+                if result.returncode:
+                    continue
+                text = result.stdout
+            else:
+                path = root / task_path
+                if not path.exists():
+                    continue
+                text = path.read_text(encoding="utf-8")
+            fm, _ = parse_front_matter_text(text, source=task_path)
+            review_level = fm.get("review_level", "full")
+            if review_level not in ctx.REVIEW_LEVELS:
+                raise ctx.TaskDataError(f"review_level 非法：{review_level!r}")
+            break
+        _hash_part(digest, b"review_level", review_level.encode())
         for path in sorted(before.keys() | after.keys()):
             if before.get(path) == after.get(path):
                 continue

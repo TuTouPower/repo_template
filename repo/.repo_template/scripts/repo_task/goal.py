@@ -3,7 +3,7 @@
 goal 模式的提示词必须是可机器判定的终态，而不是过程指令。本模块提供一对命令：
 
 - ``goal``：查看或冻结 ``docs/runtime/goal_queue.json``（已 gitignore，仅主仓）。
-  无参且已有快照时只读展示，不改顺序；首次无快照才按 backlog ∪ active 升序冻结。
+  无参且已有快照时只读展示，不改顺序；首次无快照才按 backlog ∪ active 依赖拓扑冻结。
   重建须显式 tid 或 ``--reset``；显式 tid 覆盖且与旧队列不一致时须确认（或 ``--yes``），
   ``--reset`` 直接覆盖免确认。
 - ``goal-check``：只读判定器。权威 = ledger 投影 + 主干状态 + worktree 登记，
@@ -27,6 +27,7 @@ from .attempts import attempts_for_tid
 from .documents import atomic_write_text, tid_sort_key
 from .git_ops import require_primary_worktree, worktree_paths
 from .ledger import ledger_read
+from .locks import control_locked
 from .monitoring import verify_integrate_ready
 from .store import discover_effective_tasks, scan_tasks
 
@@ -66,11 +67,9 @@ def _compute_queue(args) -> list[str]:
                 raise ctx.TaskDataError(f"{tid} 已归档（{status}）；done/dropped 永不入队")
             queue.append(tid)
         return queue
-    queue = [
-        tid for tid, task in effective.items()
-        if task["status"] in ("backlog", "active")
-    ]
-    return sorted(queue, key=tid_sort_key)
+    from .plan import build_execution_plan
+    plan = build_execution_plan(mode="serial")
+    return [tid for chain in plan["chains"] for tid in chain["taskIds"]]
 
 
 def _format_queue(queue: list[str]) -> str:
@@ -160,6 +159,7 @@ def _clear_snapshot() -> None:
     print("队列为空：没有 backlog/active task；不生成 goal。")
 
 
+@control_locked
 def cmd_goal(args) -> None:
     require_primary_worktree()
     reset = bool(getattr(args, "reset", False))
@@ -323,6 +323,9 @@ def cmd_goal_check(args) -> None:
         print(f"GOAL_QUEUE_STOPPED: {detail}")
         sys.exit(3)
     if all(state in CLOSED_STATES for state in states):
+        awaiting = [tid for tid, state, _ in rows if state == "closed"]
+        print(f"execution_complete=true integrated={len(rows) - len(awaiting)}/{len(rows)}")
+        print(f"awaiting_merge={len(awaiting)} tids={','.join(awaiting) or '-'}")
         print("GOAL_QUEUE_COMPLETE")
         return
     closed_count = sum(1 for state in states if state in CLOSED_STATES)

@@ -22,6 +22,8 @@
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path

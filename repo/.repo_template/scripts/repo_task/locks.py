@@ -1,13 +1,15 @@
 """跨平台文件锁与 git 公共目录锁 helper。
 
 消除 _id_scan.id_lock / repo_task.ledger._with_lock / repo_task.integration._chain_locked
-多处重复的 fcntl/msvcrt 锁原语。锁文件先写 1 字节再锁，兼容 Windows msvcrt
-（空文件上锁 1 字节超出 EOF 会抛 OSError，RT-011）。
+多处重复的 fcntl/msvcrt 锁原语。同线程可重入，跨线程/进程仍互斥。
 """
 
 import os
+import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
+from functools import wraps
 
 if os.name == "nt":
     import msvcrt
@@ -15,6 +17,22 @@ else:
     import fcntl
 
 TASK_ID_LOCK_NAME = "repo_template_id.lock"
+CONTROL_LOCK_NAME = "repo_template_control.lock"
+VALIDATION_COMMON_DIR = "REPO_TEMPLATE_VALIDATION_COMMON_DIR"
+_registry_guard = threading.Lock()
+_thread_locks = {}
+_held = threading.local()
+
+
+def _reset_after_fork():
+    global _registry_guard, _thread_locks, _held
+    _registry_guard = threading.Lock()
+    _thread_locks = {}
+    _held = threading.local()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 def lock_fh(fh) -> None:
@@ -52,16 +70,70 @@ def git_common_dir(repo_root: Path) -> Path:
 
 
 @contextmanager
-def git_common_lock(repo_root: Path, name: str):
-    """在 git 公共目录上取排他锁，覆盖「扫描取号 → 建文件」全过程。"""
-    lock_path = git_common_dir(repo_root) / name
+def file_lock(lock_path: Path):
+    """Thread-reentrant OS lock. Never write the shared sentinel before locking."""
+    lock_path = lock_path.resolve()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as fh:
-        if fh.tell() == 0:
-            fh.write("\0")
-            fh.flush()
-        lock_fh(fh)
-        try:
+    with _registry_guard:
+        mutex = _thread_locks.setdefault(str(lock_path), threading.RLock())
+    with mutex:
+        held = getattr(_held, "paths", None)
+        if held is None:
+            held = _held.paths = set()
+        if str(lock_path) in held:
             yield
-        finally:
-            unlock_fh(fh)
+            return
+        if os.name == "nt" and not lock_path.exists():
+            # Publish a fully initialized inode atomically; competing creators
+            # never observe a half-written Windows one-byte lock file.
+            fd, temporary = tempfile.mkstemp(dir=lock_path.parent, prefix=".lock_init_")
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(b"\0")
+                try:
+                    os.link(temporary, lock_path)
+                except FileExistsError:
+                    pass
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as fh:
+            if os.name == "nt" and os.fstat(fh.fileno()).st_size == 0:
+                raise OSError(f"旧空锁文件需在所有会话停止后修复：{lock_path}")
+            lock_fh(fh)
+            try:
+                if os.fstat(fh.fileno()).st_size == 0:
+                    fh.write("\0")
+                    fh.flush()
+                held.add(str(lock_path))
+                yield
+            finally:
+                held.discard(str(lock_path))
+                unlock_fh(fh)
+
+
+@contextmanager
+def git_common_lock(repo_root: Path, name: str):
+    """Serialize Git shared state; validation children fail fast on this repo."""
+    common = git_common_dir(repo_root).resolve()
+    validating = os.environ.get(VALIDATION_COMMON_DIR)
+    if name == CONTROL_LOCK_NAME and validating and Path(validating).resolve() == common:
+        from .context import TaskDataError
+        raise TaskDataError("同步验证期间禁止修改当前仓库控制面；请在隔离 Git 仓库中测试 task CLI，避免父子进程锁死锁")
+    with file_lock(common / name):
+        yield
+
+
+def validation_environment(repo_root: Path):
+    environment = os.environ.copy()
+    environment[VALIDATION_COMMON_DIR] = str(git_common_dir(repo_root).resolve())
+    return environment
+
+
+def control_locked(function):
+    """Serialize main control-plane mutations across tasks and template upgrades."""
+    @wraps(function)
+    def locked(*args, **kwargs):
+        from . import context as ctx
+        with git_common_lock(ctx.REPO_ROOT, CONTROL_LOCK_NAME):
+            return function(*args, **kwargs)
+    return locked

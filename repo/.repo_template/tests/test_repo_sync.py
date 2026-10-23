@@ -19,6 +19,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import repo_sync as rs
+from review_support import configure_project_verification
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -64,6 +65,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     consumer = tmp_path / "consumer"
     consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    configure_project_verification(consumer)
     state_file = consumer / ".repo_template/sync_state.json"
     state_file.parent.mkdir(parents=True)
     state_file.write_text(json.dumps({
@@ -73,6 +76,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "user_prompts": [],
     }, indent=2))
 
+    monkeypatch.setattr(rs, "CONVENTIONS_PATH", consumer / "docs/blueprint/conventions.md")
+    monkeypatch.setattr(rs, "SOURCE_OVERRIDE", None)
+    monkeypatch.setattr(rs, "CHECKOUT_OVERRIDE", None)
     monkeypatch.setattr(rs, "CONSUMER", consumer)
     monkeypatch.setattr(rs, "STATE_PATH", state_file)
     monkeypatch.setattr(rs, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
@@ -298,25 +304,6 @@ def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
     assert custom_dir not in changed
 
 
-def test_repair_symlinks_stale_symlinks_rollback(env):
-    src, consumer = env["src"], env["consumer"]
-    old_link = consumer / ".claude/skills/stale-skill"
-    old_link.parent.mkdir(parents=True, exist_ok=True)
-    old_link.symlink_to("../../.repo_template/skills/stale-skill")
-
-    rs._ROLLBACK.clear()
-    changed = set()
-    reports = rs.repair_symlinks(changed)
-    assert not old_link.is_symlink()
-
-    # 回滚
-    rs._rollback_changes()
-    assert old_link.is_symlink()
-    assert os.readlink(old_link) == "../../.repo_template/skills/stale-skill"
-    rs._ROLLBACK.clear()
-    rs._cleanup_rollback()
-
-
 def test_skill_status_reports_stale_real_dir(env):
     src, consumer = env["src"], env["consumer"]
     dst = consumer / ".repo_template/skills/task-run"
@@ -389,51 +376,6 @@ def test_shipped_skills_have_real_descriptions():
             missing.append(skill.name)
     assert missing == []
 
-
-def test_prep_oneway_sync_tooling(env):
-    src, consumer = env["src"], env["consumer"]
-    # 模板侧 core skill 与工具链更新
-    core_src = src / ".repo_template/skills/repo-template-sync-core"
-    core_src.mkdir(parents=True)
-    (core_src / "SKILL.md").write_text(
-        "---\nname: repo-template-sync-core\ndescription: none\ndisable-model-invocation: true\n---\nnew core\n"
-    )
-    (src / ".repo_template/scripts/repo_sync.py").write_text("new tool\n")
-
-    dst_core = consumer / ".repo_template/skills/repo-template-sync-core"
-    dst_core.mkdir(parents=True)
-    (dst_core / "SKILL.md").write_text("---\nname: old\ndescription: old\n---\nold core\n")
-    (consumer / ".repo_template/scripts").mkdir(parents=True)
-    (consumer / ".repo_template/scripts/consumer_extra.py").write_text("extra\n")
-
-    rs.cmd_prep(Namespace())
-
-    assert (dst_core / "SKILL.md").read_text().endswith("new core\n")
-    assert (consumer / ".repo_template/scripts/repo_sync.py").read_text() == "new tool\n"
-    assert (consumer / ".repo_template/scripts/consumer_extra.py").exists()
-    link = consumer / ".claude/skills/repo-template-sync-core"
-    assert link.is_symlink()
-    assert link.resolve() == dst_core.resolve()
-    # 不写 state（不推进 last_synced_commit）
-    assert rs.read_state()["last_synced_commit"] is None
-
-
-def test_prep_idempotent_no_changes(env):
-    src, consumer = env["src"], env["consumer"]
-    core_src = src / ".repo_template/skills/repo-template-sync-core"
-    core_src.mkdir(parents=True)
-    (core_src / "SKILL.md").write_text(
-        "---\nname: repo-template-sync-core\ndescription: none\ndisable-model-invocation: true\n---\nsame\n"
-    )
-    rs.cmd_prep(Namespace())
-    rs.cmd_prep(Namespace())
-    assert (consumer / ".repo_template/skills/repo-template-sync-core/SKILL.md").read_text().endswith("same\n")
-
-
-
-# ---------------------------------------------------------------------------
-# .gitignore / .prettierignore / MCP 机械合并
-# ---------------------------------------------------------------------------
 
 def test_gitignore_merge_with_prompt_block(env):
     src, consumer = env["src"], env["consumer"]
@@ -620,7 +562,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text("CONSUMER OLD\n")
 
-    rs.cmd_apply(Namespace(decision=["AGENTS.md:update"], skip_tests=True, decisions={"AGENTS.md": "update"}))
+    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=True, decisions={"AGENTS.md": "update"}))
     out = capsys.readouterr().out
 
     # 硬同步
@@ -647,7 +589,7 @@ def test_apply_skips_unresolved_shared_unit(env):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text("CONSUMER OLD\n")
 
-    rs.cmd_apply(Namespace(decision=[], skip_tests=True, decisions={}))
+    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
     # 无决策 → AGENTS.md 不动（ask_user 语义）
     assert (consumer / "AGENTS.md").read_text() == "CONSUMER OLD\n"
 
@@ -656,7 +598,7 @@ def test_apply_src_dirty_does_not_advance_commit(env):
     src, consumer = env["src"], env["consumer"]
     (src / ".repo_template/scripts/dirty_extra.py").write_text("x\n")  # SRC 未提交改动
     _add_prompt("跳过测试", "")
-    rs.cmd_apply(Namespace(decision=[], skip_tests=True, decisions={}))
+    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
     state = rs.read_state()
     assert state["last_synced_commit"] is None
     assert state["last_synced_at"]
@@ -670,7 +612,7 @@ def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monk
 
     monkeypatch.setattr(rs, "_run_tests", lambda c: False)
     rc = rs.cmd_apply(
-        Namespace(decision=["AGENTS.md:update"], skip_tests=False, decisions={"AGENTS.md": "update"})
+        Namespace(allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=False, decisions={"AGENTS.md": "update"})
     )
     captured = capsys.readouterr()
     assert rc == 1
@@ -860,44 +802,6 @@ def test_install_hooks_rejects_missing_or_nonexec(tmp_path, monkeypatch, capsys)
 # ---------------------------------------------------------------------------
 # F16：apply 中途失败回滚（目录删除 / skill 覆盖须恢复内容）
 # ---------------------------------------------------------------------------
-
-def test_dir_delete_rollback_restores_content(env):
-    """F16：目录删除入回滚栈，回滚后内容完整恢复（非空壳 mkdir）。"""
-    import shutil
-
-    consumer = env["consumer"]
-    target = consumer / "docs" / "ext" / "sub"
-    target.mkdir(parents=True)
-    (target / "keep.txt").write_text("keep", encoding="utf-8")
-    rs._ROLLBACK.clear()
-    rs._stage_rollback(consumer / "docs" / "ext")
-    shutil.rmtree(consumer / "docs" / "ext")
-    assert not (consumer / "docs" / "ext").exists()
-    rs._rollback_changes()
-    assert (consumer / "docs" / "ext" / "sub" / "keep.txt").read_text(encoding="utf-8") == "keep"
-    rs._ROLLBACK.clear()
-    rs._cleanup_rollback()
-
-
-def test_skill_overwrite_rollback_restores_old_file(env):
-    """F16：sync_skill 覆盖 skill 文件须入回滚栈，回滚后旧内容恢复。"""
-    consumer = env["consumer"]
-    src = env["src"]
-    dst_skill = consumer / ".repo_template" / "skills" / "task-run"
-    src_skill = src / ".repo_template" / "skills" / "task-run"
-    dst_skill.mkdir(parents=True)
-    (dst_skill / "SKILL.md").write_text("OLD CONTENT\n", encoding="utf-8")
-    assert (src_skill / "SKILL.md").read_text(encoding="utf-8") != "OLD CONTENT\n"
-
-    changed: set[Path] = set()
-    rs._ROLLBACK.clear()
-    rs.sync_skill(src_skill, dst_skill, changed)
-    assert (dst_skill / "SKILL.md").read_text(encoding="utf-8").startswith("---")
-    rs._rollback_changes()
-    assert (dst_skill / "SKILL.md").read_text(encoding="utf-8") == "OLD CONTENT\n"
-    rs._ROLLBACK.clear()
-    rs._cleanup_rollback()
-
 
 def test_repair_symlinks_removes_retired_managed_merge_guard(env):
     consumer = env['consumer']

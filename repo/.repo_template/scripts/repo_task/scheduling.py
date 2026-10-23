@@ -1,5 +1,7 @@
 """Canonical scheduling implementation for the task toolchain."""
 
+from __future__ import annotations
+
 import repo_task.context as ctx
 
 from .documents import parse_tid_list, tid_sort_key
