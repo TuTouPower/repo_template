@@ -6,6 +6,8 @@
 index 不一致时拒绝（避免 git add 把未暂存 hunk 打进本次 commit）。
 """
 
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path

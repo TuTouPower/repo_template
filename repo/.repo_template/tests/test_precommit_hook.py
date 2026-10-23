@@ -171,3 +171,24 @@ def test_format_failure_rolls_back_without_misleading_dirty_state(repo, tmp_path
     result = _run_hook(repo, tmp_path, bin_dir=bin_dir)
     assert result.returncode == 1
     assert "不一致" not in result.stderr
+
+
+def test_precommit_hook_python39_compatibility(repo, tmp_path):
+    """验证使用系统 Python 3.9（若存在）执行 pre-commit 钩子不会因类型注解求值崩溃。"""
+    import shutil
+    system_python = shutil.which("python3.9") or "/usr/bin/python3"
+    if not Path(system_python).is_file():
+        pytest.skip("未找到测试用 python3.9 / /usr/bin/python3")
+    r = subprocess.run([system_python, "--version"], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip(f"{system_python} 无法执行")
+    env = dict(os.environ)
+    env["PATH"] = str(_fake_md_kx(tmp_path).parent) + os.pathsep + env["PATH"]
+    _stage_drifted_md(repo)
+    result = subprocess.run(
+        [system_python, str(HOOK_PATH)], cwd=str(repo), env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30,
+    )
+    assert "TypeError: unsupported operand type(s) for |" not in result.stderr
+    assert result.returncode == 0

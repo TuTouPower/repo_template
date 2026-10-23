@@ -329,7 +329,17 @@ def cmd_preflight(args):
     if fm["status"] in ctx.ARCHIVED_STATUSES:
         problems.append(f"status={fm['status']}，已归档不可执行")
     elif fm["status"] == "backlog" and not allow_backlog:
-        problems.append("status=backlog，须先 start")
+        msg = "status=backlog，须先 start"
+        if source_ref:
+            covered = task_effective_state(args.tid, fm)
+            if covered:
+                msg += (
+                    f"（快照滞后：{covered}；"
+                    "--ref 仅读取 Git 提交快照，请在 task worktree 内部直接运行 preflight）"
+                )
+            else:
+                msg += f"（ref 快照 {source_ref} 中仍为 backlog；--ref 仅读取 Git 提交快照）"
+        problems.append(msg)
     elif fm["status"] not in ("active", "backlog"):
         problems.append(f"status={fm['status']}，不可执行")
 
@@ -381,14 +391,27 @@ def cmd_preflight(args):
             )
 
         dirty = porcelain_entries()
-        foreign = [p for p in dirty
-                   if not p.startswith(task["dir"])
-                   and p not in ("docs/tasks_index.json", "docs/archive/tasks_index.json")
-                   and not p.startswith(".scratch/")]
-        if foreign:
-            warnings.append(
-                f"工作区有 {len(foreign)} 项与本 task 无关的改动：{', '.join(foreign[:5])}"
-            )
+        if fm["status"] == "backlog":
+            uncommitted = [
+                p for p in dirty
+                if not p.startswith(task["dir"])
+                and p not in ("docs/tasks_index.json", "docs/archive/tasks_index.json")
+                and not p.startswith(".scratch/")
+            ]
+            if uncommitted:
+                warnings.append(
+                    f"工作区有 {len(uncommitted)} 项未提交改动：{', '.join(uncommitted[:5])}；建议清理或提交后再 start"
+                )
+        elif fm["status"] == "active":
+            cross_task = [
+                p for p in dirty
+                if p.startswith("docs/tasks/")
+                and not p.startswith(task["dir"])
+            ]
+            if cross_task:
+                warnings.append(
+                    f"工作区混入其他 task 目录改动：{', '.join(cross_task[:5])}"
+                )
 
     # 5. testing.md 占位符 warn（不阻塞）
     testing_md = ctx.REPO_ROOT / "docs" / "blueprint" / "testing.md"

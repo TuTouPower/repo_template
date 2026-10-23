@@ -14,6 +14,8 @@
 警告，不阻断（CI 无二进制时现有测试不红）；CLI 缺二进制硬失败。
 """
 
+from __future__ import annotations
+
 import argparse
 import shutil
 import subprocess

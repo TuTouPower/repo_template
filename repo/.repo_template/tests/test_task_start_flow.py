@@ -870,6 +870,61 @@ def test_preflight_can_check_backlog_from_main_and_chain_ref(git_repo):
     assert "preflight=PASS" in chain_backlog.stdout
 
 
+def test_preflight_active_worktree_allows_implementation_files_without_warning(git_repo):
+    _set_spec(git_repo, "t001", "alpha", "外部行为：已核实")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+
+    (worktree / "src").mkdir(exist_ok=True)
+    (worktree / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    (worktree / "tests").mkdir(exist_ok=True)
+    (worktree / "tests" / "test_app.py").write_text("assert True\n", encoding="utf-8")
+    (worktree / "docs" / "blueprint").mkdir(parents=True, exist_ok=True)
+    (worktree / "docs" / "blueprint" / "testing.md").write_text(
+        "## doctor_cmd\npytest\n## test_cmd\npytest\n## blackbox_verify\npytest\n",
+        encoding="utf-8",
+    )
+
+    result = _task_cli(worktree, "preflight", "t001")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "preflight=PASS" in result.stdout
+    assert "与本 task 无关" not in result.stdout
+    assert "未提交改动" not in result.stdout
+    assert "混入其他 task 目录改动" not in result.stdout
+
+
+def test_preflight_active_worktree_warns_on_cross_task_directory_change(git_repo):
+    _set_spec(git_repo, "t001", "alpha", "外部行为：已核实")
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+
+    other_spec = worktree / "docs" / "tasks" / "t002_beta" / "spec.md"
+    other_spec.write_text("modified in t001 worktree\n", encoding="utf-8")
+
+    result = _task_cli(worktree, "preflight", "t001")
+    assert "工作区混入其他 task 目录改动" in result.stdout
+    assert "docs/tasks/t002_beta/spec.md" in result.stdout
+
+
+def test_preflight_backlog_warns_on_uncommitted_files(git_repo):
+    _set_spec(git_repo, "t001", "alpha", "外部行为：已核实")
+    (git_repo / "dirty_code.py").write_text("x = 1\n", encoding="utf-8")
+
+    result = _task_cli(git_repo, "preflight", "t001", "--allow-backlog")
+    assert "工作区有 1 项未提交改动：dirty_code.py" in result.stdout
+
+
+def test_preflight_ref_diagnostics_when_active_in_worktree(git_repo):
+    _set_spec(git_repo, "t001", "alpha", "外部行为：已核实")
+    _start(git_repo)
+
+    result = _task_cli(git_repo, "preflight", "t001", "--ref", "t001_alpha")
+    assert result.returncode != 0
+    assert "status=backlog" in result.stdout
+    assert "快照滞后" in result.stdout
+    assert "--ref 仅读取 Git 提交快照" in result.stdout
+
+
 def test_start_rejects_missing_scaffold_before_mutation(git_repo):
     spec = git_repo / "docs/tasks/t001_alpha/spec.md"
     # 按原始行扫描删除第一个 `<!-- 规范 -->` 块（含空行），
