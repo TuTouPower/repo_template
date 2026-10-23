@@ -46,7 +46,7 @@
 | L30 | 「不切分支，全在 main 上做」 | retro_t041_t061 §1 方案 C | **否决**为全局教条。它与 incident_t071 回答的不是同一问题：串行时 main 直做可行，并发或长未提交窗口必须 worktree。统一按 L4 处理 | — | 已否决 |
 | L31 | 已验证的技术发现无处沉淀，spike 结论随报告归档失传 | 用户提出 | `docs/findings/dNNN_{slug}.md` 记已验证事实（一条目一文件）；spike 收尾抽结论，报告全文归档。~~单文件 `docs/findings.md`~~ 已演化为目录 | `docs/findings/`、`findings.py`、`task-work`「实施」 | 已落地 |
 | L32 | `task-debt` 名字表达的是「捞技术债」，实际职责是「把总账条目转 task」 | 用户提出 | 改名 `task-from-pending`；入口 `docs/pending/todo/`，建完用 `pending.py archive --fix-ref {tid}` 归档 | `.repo_template/skills/task-from-pending/` | 已落地 |
-| L33 | skill 被 agent 按语义自动触发，绕过用户批准 | 用户提出 | 禁止模型按语义自动触发。原方案全部 `description: none` + `disable-model-invocation: true`。现行：用户入口 skill 可有斜杠用 description；执行链 skill 保持 `description: none`。`disable-model-invocation` 未在全部 skill 对齐 | 各 `SKILL.md` frontmatter、`usage.md`「skill 调用」 | 开放（原「全部 none」未恢复） |
+| L33 | skill 被 agent 按语义自动触发，绕过用户批准 | 用户提出 | 禁止模型按语义自动触发：全部消费仓 skill 统一设置 `disable-model-invocation: true`，保留 `description` 供 `/` 菜单与显式调用使用 | 各 `SKILL.md` frontmatter、`test_contract_suite.py` | 已落地 |
 | L34 | 调度控制面边沿触发：worker 全灭无人察觉、integrate 后忘补位 | omni_media 两起事故（2026-08）、用户提出、多路 diff 审阅 | 边沿触发 → 水位触发：`task.py reconcile` 幂等 diff 唯一动作来源 + 空闲许可；调度账本记 attempt；handoff.json 机器验证；失败分类 + cron 兜底 | `archive/plan_dispatch_control_plane.md` | 已落地；被 L35 取代 |
 | L35 | 放弃 dispatch 自动并发，并发只留用户手动 | 用户决定（2026-08-06） | `task-dispatch` 退役；并发只允许用户手动多会话 `task-run`；`task.py view --serve` 只读看板；`start` 加 depends 硬拒与 conflicts 警告。dispatch 配套 API（`bind`/`escalate`/`observe`/`reconcile` 等）删除；executor 仅 `inline`。ledger、handoff.json、`verify_integrate_ready` 保留。~~merge_guard 保留~~ 已由 L36 删除 | `plans/plan_manual_concurrency.md`、`task.py view --serve`、`cmd_start` 调度门、`.repo_template/docs/architecture.md`、`usage.md` | 已落地；merge_guard 被 L36 取代 |
 | L36 | 工作流特殊机制与 skill 过度详细 | 用户逐项裁决（2026-09-06）、`plans/plan_workflow_simplification.md` | 严格模板、测试/黑盒/review、attempt、goal、一 task 一 commit、pending 子代理和同步能力保留；删除 merge token hook 与正式 blocked 状态；attempt report=blocked 继续审计；review/verify limit 均保留并用独立 limits 命令只增；合并改为 Git `merge --no-ff --no-commit` 验证后提交；调度删除 schedule_status、反向冲突边维护和复杂 tie-break；15 个 skill 改为结果与门禁导向，移除重复剧本 | `repo/.repo_template/skills/`、`repo_task/integration.py` / `lifecycle.py` / `scheduling.py`、task 模板、Claude settings、同步脚本 | 已落地 |
@@ -60,5 +60,4 @@
 | 统一 task 服务（跨仓库/跨会话的状态服务） | 11111#3 提出，等用户决定。L1 已消除并发写冲突，该诉求优先级下降 |
 | 分级效果复测 | analysis 的 PASS 率与遗留数来自单一项目（Electron + 弱测试基础设施）样本。L2/L5 落地后应在非 Electron 项目复测，确认数值而非仅方向 |
 | L16 finding `category` | 已裁决未进模板与脚本；噪音控制目前靠 L2/L17 |
-| L33 skill 自动触发 | 用户入口 description 与 `disable-model-invocation` 未按原方案对齐 |
 | L24/L25 | skill 重复权威与 `review_level` 分级博弈，持续盯 |

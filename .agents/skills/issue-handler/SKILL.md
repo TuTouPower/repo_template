@@ -47,7 +47,7 @@ gh issue list --repo <owner>/<repo> --state open --limit 50 --json number,title,
 仅当 `gh` 不可用、未登录，或用户明确要求核对本地交接时，才扫描消费仓本地报告：
 
 ```bash
-find ~/karson_ubuntu -path '*/.scratch/repo_template_issues/*.md' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn
+python3 -c 'import pathlib; files = [p for p in pathlib.Path("~/kar/code").expanduser().glob("*/.scratch/repo_template_issues/*.md") if p.is_file() and not p.name.endswith(".issue.md")]; [print(f"{p.stat().st_mtime:.0f} {p}") for p in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)]'
 ```
 
 读取不带 `.issue.md` 的完整版；列清单（路径 + 修改时间），已含「## 处理结果」段的报告默认跳过。若 GitHub 和本地同时存在，以 GitHub Issue 为准，本地文件只用于补充复现上下文。

@@ -102,3 +102,18 @@ def test_sync_apply_runs_contract_suite():
     source = rs._run_tests.__code__.co_names
     assert "CONSUMER_TEST_COMMAND" in source
     assert "CONSUMER_TEST_TIMEOUT" in source
+
+
+def test_all_consumer_skills_disable_model_invocation():
+    skills_dir = REPO_ROOT / ".repo_template/skills"
+    skill_files = sorted(skills_dir.glob("*/SKILL.md"))
+    assert skill_files
+    for skill_md in skill_files:
+        text = skill_md.read_text(encoding="utf-8")
+        assert text.startswith("---\n"), f"{skill_md} missing frontmatter"
+        end = text.find("\n---\n", 4)
+        assert end != -1, f"{skill_md} unclosed frontmatter"
+        fm_lines = [ln.strip() for ln in text[4:end].splitlines() if ln.strip()]
+        assert "disable-model-invocation: true" in fm_lines, (
+            f"{skill_md.parent.name}/SKILL.md missing disable-model-invocation: true"
+        )

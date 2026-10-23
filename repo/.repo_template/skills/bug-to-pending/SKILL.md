@@ -1,6 +1,7 @@
 ---
 name: bug-to-pending
 description: 复现 bug、定位根因、扫描同类位点、分析测试缺口并登记 pending；不在本 skill 修生产代码。用户报告 bug、要求排查根因或分析缺陷影响面时调用。
+disable-model-invocation: true
 ---
 
 # bug-to-pending

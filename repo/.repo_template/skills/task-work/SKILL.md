@@ -1,6 +1,7 @@
 ---
 name: task-work
 description: 在已登记的 task worktree 中实施单个 task 并完成 review，止于一个执行 commit；主仓 attempt、cleanup、merge 由 task-run 负责。用户要求实施某个已启动的 task 时调用。
+disable-model-invocation: true
 ---
 
 # task-work
