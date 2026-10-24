@@ -248,3 +248,22 @@ def test_serial_conflict_sort_tolerates_non_tid_keys():
     }
     plan = compute_serial_plan(data)
     assert set(plan["chains"][0]["taskIds"]) == {"t001", "weird"}
+
+
+def test_plan_dependency_with_reverse_conflict_satisfies_hard_dependency():
+    """验证较小编号 task 硬依赖较大会话且登记反向冲突时，硬依赖始终在前（Issue #33）。"""
+    # t001 depends on t002, t001 conflicts with t002
+    data = {
+        "nodes": [
+            node("t001", "blocked_deps", title="dependent"),
+            node("t002", "runnable", title="dependency"),
+        ],
+        "edges": [
+            dep("t002", "t001"),
+            conflict("t001", "t002"),
+        ],
+    }
+    plan = compute_serial_plan(data)
+    tasks = plan["chains"][0]["taskIds"]
+    assert tasks.index("t002") < tasks.index("t001")
+

@@ -184,3 +184,27 @@ def test_actual_implementation_note_can_replace_default_none():
     problems, _ = validate_task_documents(_filled_spec(), task_body)
 
     assert problems == []
+
+
+def test_extract_ac_ids_ignores_fenced_code_examples():
+    """验证 extract_ac_ids 忽略围栏代码块中的示例 AC 编号（Issue #31）。"""
+    from repo_task.documents import extract_ac_ids
+
+    spec = """
+### 验收标准
+
+- [ ] AC-001: 正式验收项。
+
+```python
+# 示例代码块：
+# - [ ] AC-002: 假验收项
+print("AC-999")
+```
+
+~~~markdown
+- [ ] AC-003: 另一个代码块内的假验收项
+~~~
+"""
+    ids = extract_ac_ids(spec)
+    assert ids == ["AC-001"]
+

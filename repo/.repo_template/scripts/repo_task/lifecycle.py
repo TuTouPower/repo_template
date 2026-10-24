@@ -718,7 +718,16 @@ def cmd_rewind(args):
             f"rewind 审计写入失败（{error}）；note.md 未写仍为 {effective}。"
             "worktree/分支可能已清理；直接重试 rewind 将正常完成"
         )
-    write_front_matter(path, fm, body)
+    try:
+        write_front_matter(path, fm, body)
+    except (OSError, ctx.TaskDataError) as error:
+        try:
+            append_audit("rewind_failed", tid=args.tid, fr=target, to=effective, reason=f"write_front_matter failed: {error}")
+        except Exception:
+            pass
+        sys.exit(
+            f"rewind 状态写入失败（{error}）；权威状态仍处 {effective}，审计已记录失败标记，请排查原因后重试"
+        )
     if target == "backlog":
         rebuild_index()
     print(f"{args.tid} status={target} (rewound from {effective}){'; ' + wt_msg if wt_msg else ''}")
@@ -762,13 +771,17 @@ def cmd_purge(args):
             slug=fm.get("slug", ""), title=fm.get("title", ""),
         )
     except (OSError, ctx.TaskDataError) as error:
+        restored = False
         try:
             os.replace(tomb, task_dir)  # 恢复，避免已删但无审计
+            restored = True
+            rebuild_index()  # 目录恢复后重建派生索引，保持与权威目录严格一致（Issue #35）
         except OSError:
             pass
-        sys.exit(
-            f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理"
-        )
+        if restored:
+            sys.exit(f"purge 收尾失败（{error}）；任务目录及派生索引已完整恢复")
+        else:
+            sys.exit(f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理")
     try:
         shutil.rmtree(tomb)
     except OSError as error:

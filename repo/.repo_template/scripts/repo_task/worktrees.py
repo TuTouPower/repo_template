@@ -39,10 +39,11 @@ def link_local_env(worktree: Path) -> list[str]:
     if worktree_resolved and worktree_resolved != ctx.REPO_ROOT.resolve():
         registered_worktrees.add(worktree_resolved)
 
-    sources = [
-        src for src in ctx.REPO_ROOT.rglob(".env")
-        if src.is_file()
-    ]
+    sources = []
+    for root, dirs, files in os.walk(ctx.REPO_ROOT, followlinks=False):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        if ".env" in files:
+            sources.append(Path(root) / ".env")
     for src in sources:
         try:
             rel = src.relative_to(ctx.REPO_ROOT)

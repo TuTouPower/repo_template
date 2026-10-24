@@ -280,3 +280,85 @@ def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, ca
     assert audit_file.exists()
     assert "miscreated" in audit_file.read_text(encoding="utf-8")
 
+
+def test_purge_audit_failure_restores_directory_and_derived_index(fake_repo, monkeypatch):
+    """验证 purge 在审计阶段失败回滚后重新构建派生索引，保持索引与目录严格一致（Issue #35）。"""
+    import argparse
+    from contextlib import contextmanager
+
+    @contextmanager
+    def noop_lock(*args, **kwargs):
+        yield
+
+    monkeypatch.setattr("repo_task.locks.git_common_lock", noop_lock)
+
+    d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
+    store.rebuild_index()
+    assert any(t["tid"] == "t001" for t in json.loads(ctx.ACTIVE_PATH.read_text())["tasks"])
+
+    monkeypatch.setattr(lifecycle, "require_primary_worktree", lambda: None)
+    monkeypatch.setattr(lifecycle, "task_schedule_references", lambda tid: [])
+    monkeypatch.setattr(lifecycle, "tracked_anywhere", lambda p: False)
+    monkeypatch.setattr(lifecycle, "has_unmerged_commits", lambda b: False)
+    monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
+
+    def boom_audit(*args, **kwargs):
+        raise ctx.TaskDataError("simulated audit failure")
+
+    monkeypatch.setattr(lifecycle, "append_audit", boom_audit)
+
+    with pytest.raises(SystemExit, match="purge 收尾失败.*已完整恢复"):
+        lifecycle.cmd_purge(argparse.Namespace(tid="t001", reason="miscreated"))
+
+    # 目录恢复
+    assert d.exists()
+    # 派生索引也完整恢复包含 t001
+    active_data = json.loads(ctx.ACTIVE_PATH.read_text(encoding="utf-8"))
+    assert any(t["tid"] == "t001" for t in active_data["tasks"])
+
+
+def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch):
+    """验证 drop 移动失败后 note 不被污染，重试不会产生重复 dropped note（Issue #34）。"""
+    import argparse
+
+    d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "active")
+    write_front_matter(
+        d / "note.md",
+        {"tid": "t001", "slug": "alpha", "status": "active", "worktree": "worktrees/t001_wt", "note": "base note"},
+        "body\n",
+    )
+
+    should_fail = [True]
+    real_move = lifecycle.shutil.move
+
+    def flaky_move(src, dst):
+        if should_fail[0]:
+            raise OSError("flaky disk error")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(lifecycle.shutil, "move", flaky_move)
+    monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
+    monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
+    monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
+    monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
+
+    # 1. 首次 drop 失败
+    with pytest.raises(SystemExit, match="归档移动失败"):
+        lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: drop reason")
+
+    fm1, _ = parse_front_matter(d / "note.md")
+    # 失败后 note 保持原样
+    assert fm1["note"] == "base note"
+    assert "dropped:" not in fm1["note"]
+
+    # 2. 第二次重试成功
+    should_fail[0] = False
+    lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: drop reason")
+
+    archived_note = ctx.ARCHIVE_TASKS_DIR / "t001_alpha" / "note.md"
+    assert archived_note.is_file()
+    fm2, _ = parse_front_matter(archived_note)
+    # 重试成功后，note 仅追加了一次
+    assert fm2["note"].count("dropped: drop reason") == 1
+
+

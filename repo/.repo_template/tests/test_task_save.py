@@ -76,9 +76,9 @@ def test_dump_parse_roundtrip(tmp_path):
     fm = {
         "tid": "t042",
         "slug": "feature_x",
-        "title": '标题"含"引号',
+        "title": '标题"含"引号\n第二行标题\r\n第三行',
         "status": "active",
-        "note": "a; b",
+        "note": "第一行备注\n第二行备注",
     }
     body = "## 实施笔记\n\n无\n"
     p = tmp_path / "task.md"

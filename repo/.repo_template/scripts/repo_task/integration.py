@@ -245,8 +245,10 @@ def cmd_start(args):
         sys.exit(f"分支 {branch!r} 已存在；请先处理后再 start")
     if worktree.exists() or str(worktree) in worktree_paths():
         sys.exit(f"{worktree_rel} 已存在；请先处理后再 start")
+    created_worktree = False
     try:
         rel = create_worktree(ref_fm["tid"], branch, base_sha)
+        created_worktree = True
         task_path = worktree / task["dir"] / "note.md"
         fm, body = parse_front_matter(task_path)
         if fm.get("status") != "backlog":
@@ -258,15 +260,18 @@ def cmd_start(args):
         write_front_matter(task_path, fm, body)
         linked = link_local_env(worktree)
     except (OSError, ctx.TaskDataError) as error:
-        rollback_error = rollback_start(
-            base_sha=base_sha, branch=branch, worktree_rel=worktree_rel
-        )
+        rollback_error = None
+        if created_worktree:
+            rollback_error = rollback_start(
+                base_sha=base_sha, branch=branch, worktree_rel=worktree_rel
+            )
         if rollback_error:
             sys.exit(
                 f"start 失败（{error}）；自动补偿不完整：{rollback_error}。"
                 f"请检查 {worktree_rel}、分支 {branch!r} 与主仓 HEAD 后手动恢复"
             )
-        sys.exit(f"start 失败（{error}）；已清理本次新建分支与 worktree，主仓未修改")
+        msg = "已清理本次新建分支与 worktree，主仓未修改" if created_worktree else "主仓与外部资源未修改"
+        sys.exit(f"start 失败（{error}）；{msg}")
     print(
         f"{args.tid} status=active branch={branch} base={base_branch} "
         f"diff_anchor={fm['diff_anchor']}"

@@ -1465,6 +1465,29 @@ def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
     assert not (new_wt / "worktrees/t001_alpha/.env").exists()
 
 
+def test_rewind_write_failure_appends_failed_audit_marker(git_repo, monkeypatch):
+    """验证 rewind 状态写入失败时记录 rewind_failed 审计标记，权威状态与审计不分叉（Issue #36）。"""
+    from repo_task import lifecycle
+    import argparse
+
+    _start(git_repo, "t001")
+    audit_file = git_repo / "docs/archive/tasks_audit.log"
+
+    def fail_write(*args, **kwargs):
+        raise OSError("injected disk failure")
+
+    monkeypatch.setattr(lifecycle, "write_front_matter", fail_write)
+
+    # 尝试 rewind，预期失败退出
+    with pytest.raises(SystemExit, match="rewind 状态写入失败"):
+        lifecycle.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="test failure", yes=True))
+
+    audit_text = audit_file.read_text(encoding="utf-8")
+    assert "rewind_failed" in audit_text
+    assert "injected disk failure" in audit_text
+
+
+
 
 # --------------------------------------------------------------------------
 # task 调度图与 view
@@ -2060,4 +2083,23 @@ def test_find_merge_commit_handles_deep_merge_history(git_repo):
     # 4. _find_merge_commit 应当跨越这 55 个无关 merge 找到原 merge commit
     found = _find_merge_commit(second_parent, "task: integrate t001")
     assert found == merge_sha
+
+
+def test_start_failure_does_not_remove_preexisting_worktree(git_repo):
+    """验证并发/重复 start 失败时绝不移除已存在会话的合法 worktree 和分支（Issue #32）。"""
+    # 会话 A 成功启动
+    r1 = _task_cli(git_repo, "start", "t001")
+    assert r1.returncode == 0
+    wt1 = _worktree_path(git_repo, "t001")
+    assert wt1.is_dir()
+
+    # 会话 B 尝试再次启动同一 task，预期因 worktree/分支已存在而失败
+    r2 = _task_cli(git_repo, "start", "t001")
+    assert r2.returncode != 0
+
+    # 会话 A 的 worktree 和分支必须完好保留
+    assert wt1.is_dir()
+    branch_ref = _git(git_repo, "rev-parse", "--verify", "refs/heads/t001_alpha")
+    assert branch_ref.returncode == 0
+
 

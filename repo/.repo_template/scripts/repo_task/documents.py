@@ -12,8 +12,14 @@ import repo_task.context as ctx
 
 
 def _quote(value: str) -> str:
-    """YAML 双引号标量：转义反斜杠与双引号。"""
-    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    """YAML 双引号标量：转义反斜杠、双引号与换行符。"""
+    escaped = (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
     return f'"{escaped}"'
 
 def _unquote(value: str) -> str:
@@ -26,7 +32,19 @@ def _unquote(value: str) -> str:
         out, i = [], 0
         while i < len(inner):
             if inner[i] == "\\" and i + 1 < len(inner):
-                out.append(inner[i + 1])
+                nxt = inner[i + 1]
+                if nxt == "n":
+                    out.append("\n")
+                elif nxt == "r":
+                    out.append("\r")
+                elif nxt == "t":
+                    out.append("\t")
+                elif nxt == "\\":
+                    out.append("\\")
+                elif nxt == '"':
+                    out.append('"')
+                else:
+                    out.append(nxt)
                 i += 2
             else:
                 out.append(inner[i])
@@ -367,13 +385,35 @@ def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
 AC_ID_RE = re.compile(r"AC-\d{3}")
 
 
+def _strip_fenced_code(text: str) -> str:
+    """去除 Markdown 中围栏代码块（``` 或 ~~~），避免代码块内的示例内容被误解析。"""
+    lines = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not in_fence:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = True
+                fence_char = stripped[0]
+                fence_len = len(stripped) - len(stripped.lstrip(fence_char))
+                continue
+            lines.append(line)
+        else:
+            if stripped.startswith(fence_char * fence_len):
+                in_fence = False
+    return "\n".join(lines)
+
+
 def extract_ac_ids(spec_text: str) -> list[str]:
-    """从 spec 验收标准节提取 AC-NNN 编号，按出现顺序去重。"""
+    """从 spec 验收标准节提取 AC-NNN 编号，按出现顺序去重。跳过代码块示例（Issue #31）。"""
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
     if not acceptance:
         return []
+    cleaned = _strip_fenced_code(acceptance)
     seen: list[str] = []
-    for line in acceptance.splitlines():
+    for line in cleaned.splitlines():
         for match in AC_ID_RE.findall(line):
             if match not in seen:
                 seen.append(match)
