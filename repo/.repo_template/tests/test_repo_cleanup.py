@@ -253,3 +253,16 @@ def test_cleanup_does_not_follow_directory_symlink_outside_repo(tmp_path):
     assert sentinel_file.read_text(encoding="utf-8") == "critical outside data\n"
 
 
+def test_cli_apply_expected_count_blocks_on_change(tree):
+    """验证 apply 传入 --expected-count 时若候选数量不符则拒绝执行（Issue #18）。"""
+    # tree 当前存在 src/app/__pycache__
+    r = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "apply", "--expected-count", "999"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert r.returncode != 0
+    assert "清理候选数量发生变化" in r.stderr
+    assert (tree / "src/app/__pycache__").is_dir()
+
+
+

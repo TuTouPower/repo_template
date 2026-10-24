@@ -230,6 +230,14 @@ def test_archive_review_rejects_bad_prefix(repo):
         rh.cmd_archive_review(argparse.Namespace(dir="review_nonexistent", write=True))
 
 
+def test_archive_review_rejects_path_traversal_and_separators(repo):
+    """验证 archive-review 拒绝包含分隔符与父目录引用的参数（Issue #28）。"""
+    with pytest.raises(rh.HygieneError, match="不能包含路径分隔符"):
+        rh.cmd_archive_review(argparse.Namespace(dir="review_foo/../../sentinel", write=False))
+    with pytest.raises(rh.HygieneError, match="不能包含路径分隔符"):
+        rh.cmd_archive_review(argparse.Namespace(dir="review_sub/nested", write=False))
+
+
 def test_repo_hygiene_git_timeout(monkeypatch):
     """验证 git 调用超时时抛出 HygieneError 并包含超时时限信息（Issue #66）。"""
     def mock_run(*args, **kwargs):

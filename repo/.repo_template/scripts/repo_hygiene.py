@@ -185,6 +185,8 @@ def cmd_archive_spike(args: argparse.Namespace) -> None:
 
 def cmd_archive_review(args: argparse.Namespace) -> None:
     name = args.dir
+    if "/" in name or "\\" in name or ".." in name or Path(name).name != name:
+        raise HygieneError(f"review 目录名非法：{name!r} 不能包含路径分隔符或父目录引用")
     if not name.startswith("review_"):
         raise HygieneError(f"review 目录名应以 review_ 开头，收到 {name!r}")
     if not REVIEWS_DIR.is_dir():

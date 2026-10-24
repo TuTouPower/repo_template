@@ -131,3 +131,30 @@ def test_main_check_all_exits_nonzero_on_drift(repo, tmp_path, monkeypatch, caps
         mdf.main(["--check"])
     assert exc.value.code == 1
     assert "格式漂移" in capsys.readouterr().err
+
+
+def test_format_rejects_paths_outside_repo(repo):
+    """验证 format_paths 明确拒绝仓库外的路径（Issue #17）。"""
+    with pytest.raises(mdf.MdFormatError, match="越过仓库边界"):
+        mdf.format_paths(["../outside.md"])
+
+
+def test_format_timeout_rolls_back_already_formatted(repo, tmp_path, monkeypatch):
+    """验证批量格式化中途发生超时时完整回滚已格式化的文件快照（Issue #19）。"""
+    exe = _fake_md_kx(tmp_path)
+    monkeypatch.setattr(mdf, "find_md_kx", lambda: str(exe))
+    (repo / "b.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
+    before_a = (repo / "a.md").read_bytes()
+
+    real_run = subprocess.run
+    def flaky_run(cmd, *args, **kwargs):
+        if str(repo / "b.md") in cmd:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=30)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", flaky_run)
+
+    with pytest.raises(mdf.MdFormatError, match="已回滚"):
+        mdf.format_paths(["a.md", "b.md"])
+    assert (repo / "a.md").read_bytes() == before_a
+
