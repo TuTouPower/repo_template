@@ -134,12 +134,24 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
         base = repo / rel_dir
         if not base.is_dir():
             continue
-        for p in sorted(base.rglob("*")):
-            rel = p.relative_to(repo).as_posix()
-            if _kept(rel, keeps):
-                skipped.append(rel)
-                continue
-            hits.append({"path": rel, "category": cat, "kind": "dir" if p.is_dir() else "file"})
+        # 清理根本身若为指向仓库外的软链，防越界不递归（Issue #16, #55）
+        if base.is_symlink() and not base.resolve().is_relative_to(repo.resolve()):
+            continue
+        for root, dirs, files in os.walk(base, followlinks=False):
+            relroot = os.path.relpath(root, repo).replace(os.sep, "/")
+            for d in dirs:
+                full_d = Path(root) / d
+                rel = f"{relroot}/{d}"
+                if _kept(rel, keeps):
+                    skipped.append(rel)
+                    continue
+                hits.append({"path": rel, "category": cat, "kind": "dir" if full_d.is_dir() and not full_d.is_symlink() else "file"})
+            for f in files:
+                rel = f"{relroot}/{f}"
+                if _kept(rel, keeps):
+                    skipped.append(rel)
+                    continue
+                hits.append({"path": rel, "category": cat, "kind": "file"})
 
     # 未点名类别的目录整树不进普通 walk：bulk 三类（.scratch/artifacts/data）只由
     # 点名类别整树处理；node_modules 仅在点名 node 时接受 walk 分类。

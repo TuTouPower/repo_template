@@ -555,6 +555,30 @@ def test_mcp_merge_keywise(env):
     assert json.loads(dmcp.read_text())["mcpServers"]["tpl-server"] == {"command": "x"}
 
 
+def test_mcp_create_and_merge_sanitizes_environment_variables(env):
+    """验证新建 MCP 与新增 server 键时清理非占位环境变量，并提供审阅提示（Issue #54）。"""
+    src, consumer = env["src"], env["consumer"]
+    tpl_server = {
+        "command": "node",
+        "args": ["server.js"],
+        "env": {"SECRET_TOKEN": "super_secret_value", "ENDPOINT": "https://api.internal.corp"},
+    }
+    (src / ".mcp.json").write_text(json.dumps({"mcpServers": {"demo-server": tpl_server}}))
+    dmcp = consumer / ".mcp.json"
+    assert not dmcp.exists()
+
+    changed: set[Path] = set()
+    reports = rs.merge_mcp(src, changed)
+
+    assert dmcp in changed
+    assert any("需审阅" in r or "占位" in r for r in reports)
+    data = json.loads(dmcp.read_text(encoding="utf-8"))
+    env_vars = data["mcpServers"]["demo-server"]["env"]
+    assert env_vars["SECRET_TOKEN"] == "<SECRET_TOKEN_PLACEHOLDER>"
+    assert env_vars["ENDPOINT"] == "<ENDPOINT_PLACEHOLDER>"
+
+
+
 # ---------------------------------------------------------------------------
 # AGENTS.md 标题分区协议
 # ---------------------------------------------------------------------------

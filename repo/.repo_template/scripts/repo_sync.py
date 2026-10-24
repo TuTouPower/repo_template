@@ -1302,6 +1302,23 @@ def retired_template_warnings() -> list[str]:
     return warnings
 
 
+def _sanitize_mcp_servers(servers: dict) -> dict:
+    """清理 MCP 服务端参数中的非占位环境变量，转为显式占位符（Issue #54）。"""
+    clean = {}
+    for key, val in servers.items():
+        if not isinstance(val, dict):
+            clean[key] = val
+            continue
+        v_copy = json.loads(json.dumps(val))
+        env = v_copy.get("env")
+        if isinstance(env, dict):
+            for ek, ev in list(env.items()):
+                if isinstance(ev, str) and not (ev.startswith("${") or ev.startswith("<")):
+                    env[ek] = f"<{ek}_PLACEHOLDER>"
+        clean[key] = v_copy
+    return clean
+
+
 def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
     """按 server 键合并 MCP：模板新增键加入，已有键保留消费值（禁冲密钥）。"""
     merged: list[str] = []
@@ -1316,9 +1333,11 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             continue
         if not dp.exists():
             dp.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(sp, dp)
+            s_servers = sdata.get("mcpServers", {})
+            new_data = {**sdata, "mcpServers": _sanitize_mcp_servers(s_servers)}
+            dp.write_text(json.dumps(new_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             changed.add(dp)
-            merged.append(_rel(dp))
+            merged.append(f"{_rel(dp)}（新建，已占位化环境参数，需审阅）")
             continue
         try:
             draw = dp.read_text(encoding="utf-8")
@@ -1328,7 +1347,8 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             continue
         dservers = ddata.setdefault("mcpServers", {})
         touched = False
-        for key, val in sdata.get("mcpServers", {}).items():
+        sanitized_src = _sanitize_mcp_servers(sdata.get("mcpServers", {}))
+        for key, val in sanitized_src.items():
             if key not in dservers:
                 dservers[key] = val
                 touched = True

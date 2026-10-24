@@ -216,3 +216,40 @@ def test_repo_cleanup_git_timeout(monkeypatch):
     with pytest.raises(rc.CleanupError, match="超时（30s）"):
         rc.repo_root()
 
+
+def test_cleanup_does_not_follow_directory_symlink_outside_repo(tmp_path):
+    """验证中间目录软链绝不跟随进入仓库外，且 apply 仅删除软链本身不损毁外部文件（Issue #55）。"""
+    import repo_cleanup as rc
+
+    # 1. 仓库外的独立哨兵目录
+    sentinel = tmp_path / "sentinel"
+    sentinel.mkdir()
+    sentinel_file = sentinel / "sentinel_data.txt"
+    sentinel_file.write_text("critical outside data\n", encoding="utf-8")
+
+    # 2. 仓库内的点名 bulk 目录包含指向哨兵的软链
+    repo = tmp_path / "repo"
+    scratch = repo / ".scratch"
+    scratch.mkdir(parents=True)
+    link = scratch / "external_link"
+    link.symlink_to(sentinel)
+
+    # 3. collect 扫描
+    hits, skipped = rc.collect(repo, ["scratch"], [])
+    hit_paths = {h["path"] for h in hits}
+    # 候选只能是 external_link 本身，绝不能进入外部扫描出 sentinel_data.txt
+    assert ".scratch/external_link" in hit_paths
+    assert not any("sentinel_data" in p for p in hit_paths)
+
+    # 4. apply 删除
+    deleted = rc.apply_delete(repo, hits)
+    assert ".scratch/external_link" in deleted
+    assert not link.exists()
+    assert not link.is_symlink()
+
+    # 外部目标必须完好保留
+    assert sentinel.is_dir()
+    assert sentinel_file.is_file()
+    assert sentinel_file.read_text(encoding="utf-8") == "critical outside data\n"
+
+
