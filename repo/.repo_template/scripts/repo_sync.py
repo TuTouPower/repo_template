@@ -190,11 +190,16 @@ def read_state() -> dict | None:
 
 
 def source_identity(value: str) -> dict:
-    path = Path(value).expanduser()
+    if not value or not isinstance(value, str):
+        raise SyncError("模板源参数不能为空")
+    stripped = value.strip()
+    if stripped.startswith("-"):
+        raise SyncError(f"模板源参数非法：{value!r} 不能为以 '-' 开头的 option 格式参数")
+    path = Path(stripped).expanduser()
     if path.exists():
         return {"kind": "path", "value": str(path.resolve())}
-    if re.match(r"^(?:https?://|ssh://|git://|file://|[^/\s]+@[^:]+:)", value):
-        return {"kind": "url", "value": value}
+    if re.match(r"^(?:https?://|ssh://|git://|file://|[^/\s]+@[^:]+:)", stripped):
+        return {"kind": "url", "value": stripped}
     raise SyncError(f"模板源路径不存在：{value}；不把拼错路径当 URL")
 
 
@@ -722,19 +727,30 @@ def migrate_conventions(changed: set[Path]) -> list[str]:
 
 def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
     """树对树同步：src 全量复制（含覆盖），dst 中 src 没有的非噪声条目删除。"""
+    if dst_dir.is_symlink():
+        raise SyncError(
+            f"{_rel(dst_dir)} 是目录软链，拒绝向软链目标执行树对树同步以防越界。请人工处理后重跑 apply"
+        )
     if not dst_dir.exists():
         dst_dir.mkdir(parents=True)
     elif not dst_dir.is_dir():
         raise SyncError(
-            f"{_rel(dst_dir)} 是文件/软链，模板源是目录；类型不符，停止。"
+            f"{_rel(dst_dir)} 是文件，模板源是目录；类型不符，停止。"
             "请人工处理该路径后重跑 apply"
         )
     for entry in src_dir.iterdir():
         if _is_noise(entry.name):
             continue
         target = dst_dir / entry.name
-        if entry.is_dir():
+        if target.is_symlink() and entry.is_dir() and not entry.is_symlink():
+            raise SyncError(f"{_rel(target)} 是目录软链，模板源是真实目录，拒绝覆盖；停止")
+        if entry.is_dir() and not entry.is_symlink():
             sync_dir(entry, target, changed)
+        elif entry.is_symlink():
+            _reject_dir_target(target, "模板源是文件/软链，拒绝写入目录内部")
+            if not target.exists() or _file_differs(entry, target):
+                shutil.copy2(entry, target, follow_symlinks=False)
+                changed.add(target)
         else:
             _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
@@ -1875,10 +1891,21 @@ def cmd_apply(args: argparse.Namespace) -> int:
         write_state(state)
         transaction.applied(verified=not args.skip_tests)
     except (OSError, ValueError, SyncError, subprocess.SubprocessError) as error:
-        transaction.rollback(automatic=True)
-        _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===")
-        print(f"错误: {error}；已完整回滚本次写入与 state。"
-              "回滚备份保留在 .scratch/repo_sync_rollback", file=sys.stderr)
+        rollback_ok = False
+        try:
+            transaction.rollback(automatic=True)
+            rollback_ok = True
+        except Exception as rb_err:
+            print(f"WARNING: 事务自动回滚失败（{rb_err}），现场可能残留未恢复文件", file=sys.stderr)
+
+        if rollback_ok:
+            _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===")
+            print(f"错误: {error}；已完整回滚本次写入与 state。"
+                  "回滚备份保留在 .scratch/repo_sync_rollback", file=sys.stderr)
+        else:
+            _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===")
+            print(f"错误: {error}；自动回滚未完全成功，现场可能存在混合版本工具文件！"
+                  "备份保留在 .scratch/repo_sync_rollback，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
         return 1
     _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===")
     print("state 推进：last_synced_commit=" + ("已更新" if not dirty else "SRC dirty，未推进"))

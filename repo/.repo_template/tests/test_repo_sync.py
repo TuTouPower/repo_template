@@ -202,6 +202,33 @@ def test_sync_file_delete_when_src_missing(env):
     assert orphan in changed
 
 
+def test_sync_dir_rejects_symlink_destination(env, tmp_path):
+    """验证 sync_dir 目标为软链时拒绝同步，防止越界覆盖外部文件（Issue #43）。"""
+    src, consumer = env["src"], env["consumer"]
+    src_dir = src / ".repo_template/sub"
+    src_dir.mkdir(parents=True)
+    (src_dir / "file.txt").write_text("template data\n")
+
+    # 外部哨兵目录
+    sentinel = tmp_path / "sentinel_dir"
+    sentinel.mkdir()
+    (sentinel / "outside.txt").write_text("precious\n")
+
+    # 消费仓内软链指向哨兵目录
+    dst_link = consumer / ".repo_template/sub"
+    dst_link.parent.mkdir(parents=True, exist_ok=True)
+    dst_link.symlink_to(sentinel)
+
+    changed = set()
+    with pytest.raises(rs.SyncError, match="目录软链.*拒绝"):
+        rs.sync_dir(src_dir, dst_link, changed)
+
+    # 哨兵目录内容完好
+    assert (sentinel / "outside.txt").read_text() == "precious\n"
+    assert not (sentinel / "file.txt").exists()
+
+
+
 # ---------------------------------------------------------------------------
 # skill 覆盖 + sync_state.json 保护 + 软链
 # ---------------------------------------------------------------------------
@@ -790,6 +817,17 @@ def test_resolve_src_rejects_invalid(env):
     state["template_source"]["value"] = "/nonexistent/not_a_template"
     with pytest.raises(rs.SyncError):
         rs.resolve_src(state)
+
+
+def test_source_identity_rejects_option_like_string():
+    """验证 source 参数为 option-like 格式时被明确拒绝（Issue #40）。"""
+    with pytest.raises(rs.SyncError, match="option 格式参数"):
+        rs.source_identity("--upload-pack")
+    with pytest.raises(rs.SyncError, match="option 格式参数"):
+        rs.source_identity("-o")
+    with pytest.raises(rs.SyncError, match="不能为空"):
+        rs.source_identity("")
+
 
 
 # ---------------------------------------------------------------------------

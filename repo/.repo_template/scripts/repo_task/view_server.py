@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import platform
+import secrets
 import socket
 import subprocess
 import sys
@@ -32,6 +33,7 @@ from .store import discover_effective_sources, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
 _DOC_NAMES = {"task": "task.md", "note": "note.md", "spec": "task.md"}
+_SESSION_TOKEN = secrets.token_hex(16)
 
 
 def _find_free_port(host: str) -> int:
@@ -47,6 +49,7 @@ def _build_model():
     """
     model = build_board_model(compute_schedule())
     model["plan"] = compute_batch_plan(model)
+    model["token"] = _SESSION_TOKEN
     return model
 
 
@@ -285,6 +288,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/task-doc":
             query = parse_qs(parts.query)
+            token = (query.get("token") or [""])[0]
+            if _SESSION_TOKEN and token != _SESSION_TOKEN:
+                self._send_error_text(403, "禁止访问：缺少或无效的看板会话令牌")
+                return
             tid = (query.get("tid") or [""])[0]
             doc = (query.get("doc") or [""])[0]
             try:

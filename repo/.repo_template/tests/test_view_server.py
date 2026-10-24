@@ -396,3 +396,41 @@ def test_rendered_html_cache_debounce(monkeypatch):
     assert build_count["n"] == 1
 
 
+def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch):
+    """验证 /task-doc 接口校验 session token，未授权请求返回 403（Issue #44）。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "compute_schedule", lambda: {
+        "tasks": {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}},
+        "selected": ["t001"],
+    })
+    monkeypatch.setattr(view_server, "discover_effective_sources", lambda: {})
+
+    responses = []
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+        def _send_error_text(self, status, message):
+            responses.append((status, message))
+        def _send_bytes(self, status, body, ct):
+            responses.append((status, body))
+
+    # 1. 缺少 token 返回 403
+    h1 = MockHandler("/task-doc?tid=t001&doc=task")
+    view_server._Handler._route_get(h1)
+    assert responses[-1][0] == 403
+    assert "禁止访问" in responses[-1][1]
+
+    # 2. 错误 token 返回 403
+    h2 = MockHandler("/task-doc?tid=t001&doc=task&token=wrong_token")
+    view_server._Handler._route_get(h2)
+    assert responses[-1][0] == 403
+
+    # 3. 正确 token 返回 200
+    h3 = MockHandler(f"/task-doc?tid=t001&doc=task&token={view_server._SESSION_TOKEN}")
+    view_server._Handler._route_get(h3)
+    assert responses[-1][0] == 200
+    assert b"# task \xe6\xad\xa3\xe6\x96\x87" in responses[-1][1]
+
+
+

@@ -16,10 +16,10 @@ metadata:
 
 ## 授权与队列
 
-触发本 skill 即批准队列成员执行到各自执行 commit、attempt report 和 exact cleanup；不逐 task 询问 commit。merge 不在启动授权内，整链完成后只询问一次。
+执行范围严格限定在已获授权的队列成员内，队列外任务绝不执行。merge 不在启动授权内，整链完成后必须单独向用户请求明确授权。
 
-- 无参数：复用 `task.py plan --serial --json` 的依赖拓扑，纳入有效 backlog 与 active。
-- 指定 tid：严格按输入顺序。
+- 显式指定 tid 或 `/goal` 冻结队列：执行范围严格锁定为给定的成员序列；队列内成员按指定顺序执行到各自执行 commit、attempt report 和 exact cleanup，不逐 task 询问 commit。
+- 无参数调用：必须先列出 `task.py plan --serial --json` 拟定执行的成员清单（tid、title、顺序）并向用户确认，取得明确同意后方可开始执行，禁止静默全量执行。
 - done/dropped 不作为新执行成员。
 - 队列启动后成员和顺序固定；依赖必须位于依赖者之前。
 

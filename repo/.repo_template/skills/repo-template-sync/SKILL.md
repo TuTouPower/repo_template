@@ -14,7 +14,7 @@ metadata:
 
 2. 将来源解析为固定 clean checkout。URL 在消费仓 `.scratch/repo_template_sync_src` 首次 clone；已有缓存先核 remote 和 git status，干净且有网络时 fetch，按用户 ref 或远程默认分支解析 SHA 后 detach 到该 commit。离线只用已存在且可核验的 commit，不盲目重试 clone/pull。来源有 secret/凭据时沿用用户现有认证，不写入文档。
 
-3. 统一解析产物根：若 `<checkout>/.repo_template/scripts/task.py` 存在，product=checkout；否则若 `<checkout>/repo/.repo_template/scripts/task.py` 存在，product=checkout/repo；都无则停止。保存真实 consumer、checkout、product 与完整来源 SHA。本机来源必须 clean；不在来源工作区替用户切分支或丢弃改动，指定旧 ref 时另建隔离 checkout。
+3. 统一解析产物根：若 `<checkout>/.repo_template/scripts/task.py` 存在，product=checkout；否则若 `<checkout>/repo/.repo_template/scripts/task.py` 存在，product=checkout/repo；都无则停止。保存真实 consumer、checkout、product 与完整来源 SHA。本机来源必须 clean；不在来源工作区替用户切分支或丢弃改动，指定旧 ref 时另建隔离 checkout。向用户明确展示解析出的来源身份、完整来源 SHA 与产品根路径，取得用户确认授权后再继续运行后续工具链。
 
 4. 后续始终运行来源脚本，目标显式传入，source 保留原始 URL/来源身份，checkout 指向本轮固定 checkout。例如：
 
