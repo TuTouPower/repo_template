@@ -206,7 +206,7 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                         if add_result.returncode != 0:
                             raise IdScanError(f"git add 失败：{_rel(destination)}")
                     sys.stderr.write(f"已迁移：{_rel(destination)}\n")
-                except IdScanError as error:
+                except (IdScanError, OSError, subprocess.SubprocessError) as error:
                     # 失败时回滚已成功的 git mv + 恢复被 set_field 改过的正文（F19/RT-010）
                     for src, dst, orig_bytes in reversed(migrated):
                         try:
@@ -224,7 +224,9 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                         f"迁移失败于第 {index} 条（{_rel(path)}）：{error}；"
                         f"已回滚 {len(migrated)} 条已迁移条目（含正文）\n"
                     )
-                    raise
+                    if isinstance(error, IdScanError):
+                        raise
+                    raise IdScanError(f"迁移 I/O 或 Git 操作异常：{error}") from error
     except IdScanError:
         raise
 

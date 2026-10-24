@@ -323,6 +323,33 @@ def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypa
     assert not (repo / "docs/archive/pending/p001_one.md").exists()
 
 
+def test_archive_partial_io_failure_rolls_back_all(tmp_path, monkeypatch):
+    """验证批量迁移遇到底层 OSError 时依然完整回滚已移动条目与正文（Issue #20）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "one"])
+    pending_mod.main(["new", "--slug", "two"])
+    one = repo / "docs/pending/todo/p001_one.md"
+    two = repo / "docs/pending/todo/p002_two.md"
+    orig_one = one.read_bytes()
+
+    real_move = pending_mod.move_entry
+    calls = {"n": 0}
+    def flaky(path, target):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("simulated disk io error on second entry")
+        return real_move(path, target)
+
+    monkeypatch.setattr(pending_mod, "move_entry", flaky)
+    with pytest.raises(SystemExit, match="simulated disk io error"):
+        pending_mod.main(["archive", "p001", "p002", "--reason", "test io fail", "--write"])
+    assert one.exists()
+    assert one.read_bytes() == orig_one
+    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+
+
+
 def test_archive_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
     """验证 archive 与 park 显式拒绝包含换行符的 reason 或 fix-ref（Issue #52）。"""
     repo = _init_repo(tmp_path)

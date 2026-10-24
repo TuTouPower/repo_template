@@ -296,6 +296,9 @@ def main(argv: list[str] | None = None) -> None:
                        help=f"类别（默认 {DEFAULT_CATEGORIES}）；node/scratch/artifacts/data 须点名")
         p.add_argument("--keep", action="append", default=[], metavar="REL",
                        help="相对仓库根路径（glob 或前缀），排除不删（scratch 活跃引用）")
+        if cmd == "apply":
+            p.add_argument("--expected-count", type=int, default=None,
+                           help="核对候选总数；scan 到 apply 期间若候选变化则拒绝删除")
         p.set_defaults(_mode=cmd)
     args = parser.parse_args(argv)
     try:
@@ -305,6 +308,12 @@ def main(argv: list[str] | None = None) -> None:
         if args._mode == "scan":
             _print_scan(categories, hits, skipped)
         else:
+            if getattr(args, "expected_count", None) is not None:
+                if len(hits) != args.expected_count:
+                    raise CleanupError(
+                        f"清理候选数量发生变化（预期 {args.expected_count}，实际 {len(hits)}）；"
+                        "请重新运行 scan 确认后再执行 apply"
+                    )
             deleted = apply_delete(repo, hits, args.keep)
             _print_apply(deleted, skipped)
     except CleanupError as error:

@@ -197,6 +197,12 @@ def source_identity(value: str) -> dict:
         raise SyncError(f"模板源参数非法：{value!r} 不能为以 '-' 开头的 option 格式参数")
     path = Path(stripped).expanduser()
     if path.exists():
+        if not path.is_dir():
+            raise SyncError(f"模板源本地路径非目录：{value}")
+        try:
+            _as_product(path)
+        except SyncError as err:
+            raise SyncError(f"本地路径 {value} 不是有效模板源：{err}") from err
         return {"kind": "path", "value": str(path.resolve())}
     if re.match(r"^(?:https?://|ssh://|git://|file://|[^/\s]+@[^:]+:)", stripped):
         return {"kind": "url", "value": stripped}
@@ -216,12 +222,14 @@ def configure_consumer(path: Path) -> None:
 
 
 def write_state(data: dict) -> None:
+    from repo_task.documents import atomic_write_text
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.with_name(STATE_PATH.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        json.dump({key: value for key, value in data.items() if key != "_shared_user_prompts"}, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    tmp.replace(STATE_PATH)
+    text = json.dumps(
+        {key: value for key, value in data.items() if key != "_shared_user_prompts"},
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n"
+    atomic_write_text(STATE_PATH, text)
 
 
 def active_prompts(state: dict | None) -> list[dict]:
@@ -471,7 +479,7 @@ def _migrate_task_text(text: str, task_template: str) -> str:
 def _registered_task_worktrees() -> list[tuple[Path, str]]:
     result = _git(CONSUMER, "worktree", "list", "--porcelain")
     if result.returncode != 0:
-        return []
+        raise SyncError(f"无法查询 git worktree（{result.stderr.strip()}）；拒绝放行 schema 迁移")
     rows: list[tuple[Path, str]] = []
     root: Path | None = None
     for raw in result.stdout.splitlines() + [""]:
@@ -614,7 +622,10 @@ def workflow_migration_status(
 ) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
     task_template_path = src / ".repo_template/docs/task_template/task.md"
     note_template_path = src / ".repo_template/docs/task_template/note.md"
-    worktrees = _registered_task_worktrees()
+    try:
+        worktrees = _registered_task_worktrees()
+    except SyncError as err:
+        return [], [], [str(err)]
     if not task_template_path.is_file() or not note_template_path.is_file():
         return [], worktrees, []
     task_template = task_template_path.read_text(encoding="utf-8")
@@ -1366,6 +1377,9 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
         except (OSError, json.JSONDecodeError) as e:
             print(f"WARNING: 模板侧 {rel} 无法解析，跳过 MCP 合并（{e}）", file=sys.stderr)
             continue
+        if not isinstance(sdata, dict) or not isinstance(sdata.get("mcpServers"), dict):
+            print(f"WARNING: 模板侧 {rel} 结构不符合预期，跳过 MCP 合并", file=sys.stderr)
+            continue
         if not dp.exists():
             dp.parent.mkdir(parents=True, exist_ok=True)
             s_servers = sdata.get("mcpServers", {})
@@ -1380,7 +1394,15 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
         except (OSError, json.JSONDecodeError) as e:
             print(f"WARNING: 消费侧 {rel} 无法解析，跳过 MCP 合并（{e}）", file=sys.stderr)
             continue
-        dservers = ddata.setdefault("mcpServers", {})
+        if not isinstance(ddata, dict):
+            print(f"WARNING: 消费侧 {rel} 顶层非 JSON 对象，跳过 MCP 合并", file=sys.stderr)
+            continue
+        dservers = ddata.get("mcpServers")
+        if dservers is None:
+            dservers = ddata.setdefault("mcpServers", {})
+        elif not isinstance(dservers, dict):
+            print(f"WARNING: 消费侧 {rel} 的 mcpServers 非对象，跳过 MCP 合并", file=sys.stderr)
+            continue
         touched = False
         sanitized_src = _sanitize_mcp_servers(sdata.get("mcpServers", {}))
         for key, val in sanitized_src.items():
@@ -1510,11 +1532,15 @@ def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[
 
 
 def _run_tests(consumer: Path) -> bool:
-    r = subprocess.run(
-        list(CONSUMER_TEST_COMMAND), cwd=str(consumer),
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=CONSUMER_TEST_TIMEOUT, env=validation_environment(consumer),
-    )
+    try:
+        r = subprocess.run(
+            list(CONSUMER_TEST_COMMAND), cwd=str(consumer),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=CONSUMER_TEST_TIMEOUT, env=validation_environment(consumer),
+        )
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: 契约测试超时（超过 {CONSUMER_TEST_TIMEOUT}s）", file=sys.stderr)
+        return False
     if r.returncode != 0:
         print(r.stdout[-2000:] if r.stdout else "", file=sys.stderr)
         print(r.stderr[-2000:] if r.stderr else "", file=sys.stderr)

@@ -829,6 +829,42 @@ def test_source_identity_rejects_option_like_string():
         rs.source_identity("")
 
 
+def test_init_rejects_non_template_local_directory(env, tmp_path):
+    """验证 init 传入非模板的普通目录时拒绝并保留原有有效 state（Issue #23）。"""
+    not_a_template = tmp_path / "empty_dir"
+    not_a_template.mkdir()
+
+    orig_state = rs.read_state()
+    with pytest.raises(rs.SyncError, match="不是有效模板源"):
+        rs.source_identity(str(not_a_template))
+
+    # 验证原有 state 中的 template_source 保持不变
+    assert rs.read_state()["template_source"] == orig_state["template_source"]
+
+
+def test_mcp_merge_tolerates_non_dict_structure(env, capsys):
+    """验证遇到合法 JSON 但非对象的错误 MCP 结构时不崩溃并告警跳过（Issue #26）。"""
+    src, consumer = env["src"], env["consumer"]
+    (src / ".mcp.json").write_text(json.dumps({"mcpServers": {"tpl": {"command": "x"}}}))
+    dmcp = consumer / ".mcp.json"
+
+    # 1. 消费端为数组
+    dmcp.write_text("[]\n", encoding="utf-8")
+    changed = set()
+    rs.merge_mcp(src, changed)
+    err = capsys.readouterr().err
+    assert "非 JSON 对象" in err
+    assert dmcp not in changed
+
+    # 2. 消费端 mcpServers 为数组
+    dmcp.write_text(json.dumps({"mcpServers": [1, 2, 3]}), encoding="utf-8")
+    changed = set()
+    rs.merge_mcp(src, changed)
+    err = capsys.readouterr().err
+    assert "mcpServers 非对象" in err
+
+
+
 
 # ---------------------------------------------------------------------------
 # install-hooks：core.hooksPath 幂等设置
@@ -1280,3 +1316,36 @@ def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env,
     # 幂等：再次执行无迁移
     assert rs.conventions_migration_status() == []
     assert rs.migrate_conventions(set()) == []
+
+
+def test_workflow_migration_blocks_when_git_worktree_fails(env, monkeypatch):
+    """验证无法查询 git worktree 时拒绝放行 schema 迁移并 fail-closed 报错（Issue #22）。"""
+    _install_current_workflow_templates(env["consumer"])
+    real_git = rs._git
+    def fake_git(repo, *args, **kwargs):
+        if "worktree" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="simulated lock error")
+        return real_git(repo, *args, **kwargs)
+
+    monkeypatch.setattr(rs, "_git", fake_git)
+
+    # 1. workflow_migration_status 报告阻塞错误
+    _, _, errors = rs.workflow_migration_status(env["src"])
+    assert any("无法查询 git worktree" in err for err in errors)
+
+    # 2. force_migrate_workflow_tasks 抛出 SyncError 阻断写盘
+    with pytest.raises(rs.SyncError, match="无法查询 git worktree"):
+        rs.force_migrate_workflow_tasks(set())
+
+
+def test_run_tests_timeout_handling(env, monkeypatch, capsys):
+    """验证契约测试超时被捕获、打印明确超时诊断且返回 False 触发回滚（Issue #29）。"""
+    def mock_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    ret = rs._run_tests(env["consumer"])
+    assert ret is False
+    err = capsys.readouterr().err
+    assert "契约测试超时" in err
+
