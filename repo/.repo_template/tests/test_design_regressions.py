@@ -377,6 +377,8 @@ def test_registry_has_complete_roles_and_real_composition_edges():
 def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
     assert _task_cli(git_repo, "start", "t001").returncode == 0
     w = _worktree(git_repo, "t001")
+    spec = w / "docs/tasks/t001_alpha/task.md"
+    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     task = w / "docs/tasks/t001_alpha/note.md"
     task.write_text("\n".join(line for line in task.read_text().splitlines()
                               if not line.startswith("- specs_index: not_applicable:")) + "\n")

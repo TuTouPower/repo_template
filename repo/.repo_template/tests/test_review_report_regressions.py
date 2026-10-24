@@ -33,7 +33,7 @@ def test_finish_ignores_non_references_and_fenced_examples(git_repo, snippet):
     assert _task_cli(git_repo, "start", "t001").returncode == 0
     worktree = _worktree(git_repo, "t001")
     spec = worktree / "docs/tasks/t001_alpha/task.md"
-    spec.write_text(spec.read_text() + "\n" + snippet + "\n", encoding="utf-8")
+    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001") + "\n" + snippet + "\n", encoding="utf-8")
     result = _task_cli(worktree, "finish", "t001")
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -79,6 +79,8 @@ def test_finish_does_not_require_unrelated_historical_task_directories(git_repo)
         "|old|t999|2026-10-24T00:00:00+08:00|\n"
         "|feature|t001,t998|2026-10-24T00:00:00+08:00|\n"
         "|missing_historical_spec|t997|2026-10-24T00:00:00+08:00|\n", encoding="utf-8")
+    spec = worktree / "docs/tasks/t001_alpha/task.md"
+    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     result = _task_cli(worktree, "finish", "t001")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "WARN: 历史" in result.stdout

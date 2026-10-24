@@ -420,6 +420,28 @@ def extract_ac_ids(spec_text: str) -> list[str]:
     return seen
 
 
+def extract_ac_statuses(spec_text: str) -> list[tuple[str, bool]]:
+    """从 task.md(spec) 验收标准节提取 (AC-NNN, is_checked) 列表。
+
+    跳过代码块示例（Issue #31）。按行扫描 `- [ ]` 或 `- [x]` / `- [X]`。
+    """
+    acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
+    if not acceptance:
+        return []
+    cleaned = _strip_fenced_code(acceptance)
+    results: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for line in cleaned.splitlines():
+        match = re.match(r"^\s*-\s*\[([ xX])\]\s*(?:\[deploy\]\s*)?(AC-\d{3})", line)
+        if match:
+            box = match.group(1)
+            ac_id = match.group(2)
+            if ac_id not in seen:
+                seen.add(ac_id)
+                results.append((ac_id, box in ("x", "X")))
+    return results
+
+
 def _extract_guide_blocks(text: str) -> list[str]:
     """提取 spec 中所有 `<!-- 规范（门禁必留，不得删除） -->...<!-- /规范 -->` 块。
 
@@ -477,19 +499,20 @@ def validate_task_documents(
                 )
 
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
-    if not acceptance or not re.search(
-        r"^\s*-\s*\[ \]\s*\S", acceptance, re.MULTILINE
+    cleaned_acceptance = _strip_fenced_code(acceptance) if acceptance else ""
+    if not cleaned_acceptance or not re.search(
+        r"^\s*-\s*\[[ xX]\]\s*\S", cleaned_acceptance, re.MULTILINE
     ):
         problems.append("task.md 验收标准为空")
 
-    if acceptance:
+    if cleaned_acceptance:
         ac_ids: list[str] = []
-        for line in acceptance.splitlines():
+        for line in cleaned_acceptance.splitlines():
             stripped = line.strip()
-            if not stripped.startswith("- [ ]"):
+            if not (stripped.startswith("- [ ]") or stripped.startswith("- [x]") or stripped.startswith("- [X]")):
                 continue
             match = re.match(
-                r"-\s*\[\s*\]\s*(?:\[deploy\]\s*)?(AC-\d{3})", stripped
+                r"^-\s*\[([ xX])\]\s*(?:\[deploy\]\s*)?(AC-\d{3})", stripped
             )
             if not match:
                 problems.append(
@@ -497,7 +520,9 @@ def validate_task_documents(
                     f"[deploy] 位于编号前）：{stripped[:60]}"
                 )
                 continue
-            ac_id = match.group(1)
+            box, ac_id = match.group(1), match.group(2)
+            if creation and box in ("x", "X"):
+                problems.append(f"task.md AC 创建期不得提前勾选：{ac_id}")
             if ac_id in ac_ids:
                 problems.append(f"task.md AC 编号重复：{ac_id}")
             ac_ids.append(ac_id)

@@ -130,6 +130,8 @@ def test_recovery_distinguishes_start_reserve_finish_and_commit_boundaries(git_r
     assert _recovery(git_repo)['phase'] == 'executing'
     w = _worktree(git_repo, 't001')
     base = _git(w, 'rev-parse', 'HEAD').stdout.strip()
+    spec = w / 'docs/tasks/t001_alpha/task.md'
+    spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
     assert _task_cli(w, 'finish', 't001').returncode == 0
     archive = w / 'docs/archive/tasks/t001_alpha'
     (archive / 'handoff.json').write_text(json.dumps(_handoff('t001', 't001_alpha', identity, base)))
@@ -373,6 +375,8 @@ def test_recovery_rejects_wrong_handoff_identity(git_repo):
     identity = _reserve(git_repo, 't001')
     worktree = _worktree(git_repo, 't001')
     base = _git(worktree, 'rev-parse', 'HEAD').stdout.strip()
+    spec = worktree / 'docs/tasks/t001_alpha/task.md'
+    spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
     assert _task_cli(worktree, 'finish', 't001').returncode == 0
     handoff = _handoff('t001', 't001_alpha', identity, base)
     handoff['execution_id'] = 'wrong-execution-id'

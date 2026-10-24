@@ -208,3 +208,48 @@ print("AC-999")
     ids = extract_ac_ids(spec)
     assert ids == ["AC-001"]
 
+
+def test_extract_ac_statuses_tracks_checked_state():
+    """验证 extract_ac_statuses 正确提取勾选状态并跳过代码块。"""
+    from repo_task.documents import extract_ac_statuses
+
+    spec = """
+### 验收标准
+
+- [ ] AC-001: 待实现。
+- [x] AC-002: 已实现。
+- [X] AC-003: 大写已实现。
+
+```markdown
+- [x] AC-999: 假代码块
+```
+"""
+    statuses = extract_ac_statuses(spec)
+    assert statuses == [
+        ("AC-001", False),
+        ("AC-002", True),
+        ("AC-003", True),
+    ]
+
+
+def test_acceptance_checked_ac_allowed_in_implementation():
+    """实施期（creation=False）允许 AC 打勾。"""
+    spec = _filled_spec().replace(
+        "- [ ] AC-001：可验证行为。",
+        "- [x] AC-001：可验证行为。",
+        1,
+    )
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=False)
+    assert problems == []
+
+
+def test_acceptance_checked_ac_fails_during_creation():
+    """创建期（creation=True）禁止 AC 提前打勾。"""
+    spec = _filled_spec().replace(
+        "- [ ] AC-001：可验证行为。",
+        "- [x] AC-001：可验证行为。",
+        1,
+    )
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=True)
+    assert any("创建期不得提前勾选" in p and "AC-001" in p for p in problems)
+

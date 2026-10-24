@@ -19,7 +19,7 @@ metadata:
 
 - 当前在主仓主分支，且没有其它 merge 或已跟踪脏改动。
 - 待合成员 task 为 done，worktree 已 exact cleanup。
-- current attempt、terminal completed、report done、handoff identity、一个执行 commit、AC evidence 和最终 review PASS/scope 全部有效。
+- current attempt、terminal completed、report done、handoff identity、一个执行 commit、task.md AC 全勾和最终 review PASS/scope 全部有效。
 - 链式成员沿 first parent 线性连续，链尾包含全部成员。
 
 脚本负责机械校验；skill 不复制 handoff schema和 transaction 内部算法。

@@ -342,6 +342,19 @@ def test_no_drift_notice_when_only_context_changed(tmp_path, monkeypatch):
         assert "drift" not in content
 
 
+def test_no_drift_notice_when_only_ac_checkbox_checked(tmp_path, monkeypatch):
+    task_dir = _init_repo_with_task(
+        tmp_path, monkeypatch, contract="- [ ] AC-001: 可独立验证行为"
+    )
+    (task_dir / "task.md").write_text(
+        "# Spec\n## 契约区\n\n- [x] AC-001: 可独立验证行为\n\n## 上下文区\n\n策略\n",
+        encoding="utf-8",
+    )
+    out = render_review_prompts(task_dir)
+    for content in out.values():
+        assert "契约区 drift 警告" not in content
+
+
 def test_drift_check_skipped_outside_git_repo(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))

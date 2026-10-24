@@ -19,7 +19,7 @@ from .attempts import (
     overlapping_attempts,
     project_attempts,
 )
-from .documents import extract_ac_ids, parse_front_matter_text
+from .documents import extract_ac_ids, extract_ac_statuses, parse_front_matter_text
 from .git_ops import _git, _git_bytes, has_unmerged_commits, worktree_paths
 from .store import _task_branch_names, git_text_at_ref, load_task_at_ref
 
@@ -297,7 +297,6 @@ _HANDOFF_TYPES = {
     "tests": str,
     "blackbox": str,
     "review": str,
-    "ac_evidence": dict,
     "pending": list,
     "findings": list,
 }
@@ -359,25 +358,17 @@ def verify_integrate_ready(
         problem = _validate_string_list(key, handoff[key])
         if problem:
             return "contract", f"{handoff_path} {problem}"
-    ac_evidence = handoff["ac_evidence"]
-    for ac_id, refs in ac_evidence.items():
-        if not refs or not isinstance(refs, list) or any(
-            not isinstance(item, str) or not item for item in refs
-        ):
-            return "contract", f"{handoff_path} ac_evidence[{ac_id!r}] 值必须是非空字符串数组"
     spec_path = f"{task['dir']}/task.md"
     try:
-        expected_ac = extract_ac_ids(git_text_at_ref(branch, spec_path))
+        spec_text = git_text_at_ref(branch, spec_path)
     except ctx.TaskDataError:
         return "contract", f"分支 {branch!r} tip 缺 {spec_path}"
-    got, want = set(ac_evidence), set(expected_ac)
-    if got != want:
-        missing = sorted(want - got)
-        extra = sorted(got - want)
-        detail = ("缺 " + ", ".join(missing)) if missing else ""
-        if extra:
-            detail += ("；" if detail else "") + "未知 " + ", ".join(extra)
-        return "contract", f"{handoff_path} ac_evidence 与 task 验收标准 AC 不匹配：{detail}"
+    ac_statuses = extract_ac_statuses(spec_text)
+    if not ac_statuses:
+        return "contract", f"{spec_path} 验收标准未定义任何 AC"
+    uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
+    if uncompleted:
+        return "contract", f"{spec_path} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
     expected_values = {
         "tid": tid,
         "attempt": attempt,

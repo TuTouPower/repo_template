@@ -155,10 +155,15 @@ def _handoff(tid, branch, identity, base_sha, *, status="done"):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
-        "ac_evidence": {"AC-001": ["tests/test_x.py::test_y 通过"]},
         "pending": [],
         "findings": [],
     }
+
+
+def _check_ac(worktree, tid="t001", slug="alpha"):
+    spec = worktree / f"docs/tasks/{tid}_{slug}/task.md"
+    if spec.is_file():
+        spec.write_text(spec.read_text(encoding="utf-8").replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
 
 
 def _terminal(repo, tid, identity, status="completed"):
@@ -202,6 +207,7 @@ def _set_spec(repo, tid, slug, unknown_contract_item):
 def _finish_commit_cleanup(repo, tid, slug):
     identity = _reserve(repo, tid)
     worktree = _worktree_path(repo, tid)
+    _check_ac(worktree, tid, slug)
     finished = _task_cli(worktree, "finish", tid)
     assert finished.returncode == 0, finished.stderr
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
@@ -354,6 +360,7 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
     assert "status=backlog" in primary.stderr
 
     worktree = _worktree_path(git_repo)
+    _check_ac(worktree, "t001", "alpha")
     finished = _task_cli(worktree, "finish", "t001")
     assert finished.returncode == 0, finished.stderr
 
@@ -367,6 +374,15 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
     changed = _git(worktree, "diff", "--name-only").stdout.split()
     assert "docs/tasks_index.json" not in changed
     assert "docs/archive/tasks_index.json" not in changed
+
+
+def test_finish_rejects_uncompleted_ac(git_repo):
+    """finish 拦截未打勾的 AC。"""
+    _start(git_repo)
+    worktree = _worktree_path(git_repo)
+    finished = _task_cli(worktree, "finish", "t001")
+    assert finished.returncode != 0
+    assert "存在未完成 AC（未打勾）：AC-001" in finished.stderr
 
 
 def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
@@ -391,6 +407,7 @@ def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
 
     # 已 finish 且提交（分支 ref=done），但 worktree 新增脏改动：拒绝
     worktree = _worktree_path(git_repo)
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
@@ -428,6 +445,7 @@ def test_cleanup_worktree_rejects_wrong_registered_branch(git_repo):
     _start(git_repo)
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
@@ -470,7 +488,7 @@ def test_start_compensates_when_worktree_creation_fails(git_repo, monkeypatch):
 
     monkeypatch.setattr(integration, "create_worktree", fail_create)
 
-    with pytest.raises(SystemExit, match="主仓未修改"):
+    with pytest.raises(SystemExit, match="主仓.*未修改"):
         _start(git_repo)
 
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
@@ -487,7 +505,7 @@ def test_start_compensates_when_local_config_link_fails(git_repo, monkeypatch):
 
     monkeypatch.setattr(integration, "link_local_env", fail_link)
 
-    with pytest.raises(SystemExit, match="主仓未修改"):
+    with pytest.raises(SystemExit, match="主仓.*未修改"):
         _start(git_repo)
 
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial_head
@@ -640,6 +658,7 @@ def test_integrate_rejects_registered_worktree(git_repo):
     _start(git_repo, "t001")
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
@@ -808,6 +827,7 @@ def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
     identity = _reserve(git_repo, "t002")
     # t002 finish + handoff + commit + terminal，但不 cleanup-worktree
     worktree = _worktree_path(git_repo, "t002")
+    _check_ac(worktree, "t002", "beta")
     assert _task_cli(worktree, "finish", "t002").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t002", "beta", identity, base_sha)
@@ -1142,6 +1162,7 @@ def test_cleanup_worktree_rejects_prefix_collision_branch(git_repo):
     _start(git_repo)
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
@@ -1944,6 +1965,7 @@ def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):
     first = _task_cli(git_repo, "start", "t001")
     assert first.returncode == 0, first.stderr
     worktree = git_repo.parent / "repo_t001"
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t001): done")
@@ -1962,6 +1984,7 @@ def test_chain_start_base_names_uncommitted_finish_as_cause(git_repo):
     first = _task_cli(git_repo, "start", "t001")
     assert first.returncode == 0, first.stderr
     worktree = git_repo.parent / "repo_t001"
+    _check_ac(worktree, "t001", "alpha")
     assert _task_cli(worktree, "finish", "t001").returncode == 0
 
     second = _task_cli(git_repo, "start", "t002", "--base", "t001_alpha")

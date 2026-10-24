@@ -514,6 +514,17 @@ def _close_task(args, status: str, note: str | None) -> None:
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm)
+        task_md_path = path.parent / "task.md"
+        if task_md_path.is_file():
+            from .documents import extract_ac_statuses
+            ac_statuses = extract_ac_statuses(task_md_path.read_text(encoding="utf-8"))
+            if not ac_statuses:
+                sys.exit(f"finish=FAIL：{ctx._rel(task_md_path)} 验收标准未定义任何 AC")
+            uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
+            if uncompleted:
+                sys.exit(
+                    f"finish=FAIL：{ctx._rel(task_md_path)} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
+                )
         from .finalization import check_finalization
         try:
             from .validation import load_policy

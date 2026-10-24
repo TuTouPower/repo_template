@@ -47,7 +47,7 @@ front matter 只经 `task.py` 修改；reviewer 只写对应 `review_*.md`。
 - 测试：待执行时填写
 - 黑盒：待执行时填写
 - review：待执行时填写
-- AC 证据：见 `handoff.json`
+- AC 判定：见 `task.md` 行内打勾
 
 ### 结果摘要
 

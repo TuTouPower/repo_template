@@ -14,7 +14,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 
 按 diff 实际内容选关注点，需覆盖下方全量视角（仅 diff 引入或触及的路径，不做全仓扫描）：
 
-- **规格合规**：契约区每条 AC 是否实现；范围外内容是否偏航；不变量是否守住；技术约束类问题（版本号/目录结构/底层库）不判 blocking，发现不一致时在 finding 里说明、处置为改 spec
+- **规格合规与 AC 打勾复核（必查）**：核对实施 Agent 在契约区打勾（`- [x]`）声明完成的每条 AC，代码与测试是否真实完整覆盖；若发现打勾项实际未实现或测试为假绿，必须出 blocking finding（important/critical），阻断 PASS；范围外内容是否偏航；不变量是否守住；技术约束类问题（版本号/目录结构/底层库）不判 blocking，发现不一致时在 finding 里说明、处置为改 spec
 - **实现正确性**：bug、空值、边界、off-by-one、异常路径、并发时序、资源泄漏
 - **安全审视**：外部输入是否未经校验即拼接/执行（注入/路径遍历/SSRF）；输出是否缺编码致 XSS；是否存在越权/IDOR/会话问题、CORS 误配；secret/PII 是否硬编码或进日志；强信号直判 critical/important
 - **契约·类型·Breaking**：公开签名/配置键/schema 变更是否有迁移说明；类型是否滥用 `any`/`unknown`/强转；请求是否缺 schema 校验；新增查询是否 `SELECT *`/无 `LIMIT`

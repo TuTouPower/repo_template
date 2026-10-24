@@ -142,7 +142,6 @@ def _handoff(tid, branch, identity, base_sha, **overrides):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
-        "ac_evidence": {"AC-001": ["tests/test_x.py::test_y 通过"]},
         "pending": [],
         "findings": [],
     }
@@ -161,6 +160,10 @@ def _prepare_done(
     assert started.returncode == 0, started.stderr
     identity = _reserve(repo, tid)
     worktree = _worktree(repo, tid)
+    task_file = worktree / "docs" / "tasks" / f"{tid}_{slug}" / "task.md"
+    if task_file.is_file():
+        content = task_file.read_text(encoding="utf-8")
+        task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     if mutate:
         mutate(worktree)
     finished = _task_cli(worktree, "finish", tid)
@@ -269,9 +272,6 @@ def test_verify_incomplete_without_branch(git_repo):
         ("wrong-tid", "tid='t999'"),
         ("wrong-branch", "branch='t001_other'"),
         ("wrong-execution", "execution_id='wrong'"),
-        ("ac-evidence-empty", "缺 AC-001"),
-        ("ac-evidence-unknown", "未知 AC-002"),
-        ("ac-evidence-bad-value", "非空字符串数组"),
     ],
 )
 def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
@@ -303,12 +303,6 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
             payload["branch"] = "t001_other"
         elif defect == "wrong-execution":
             payload["execution_id"] = "wrong"
-        elif defect == "ac-evidence-empty":
-            payload["ac_evidence"] = {}
-        elif defect == "ac-evidence-unknown":
-            payload["ac_evidence"] = {"AC-002": ["x"]}
-        elif defect == "ac-evidence-bad-value":
-            payload["ac_evidence"] = {"AC-001": []}
         content = json.dumps(payload, ensure_ascii=False)
     _rewrite_handoff(git_repo, "t001", "alpha", content)
 
@@ -318,6 +312,23 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
 
     assert verdict == "contract"
     assert expected_detail in detail
+
+
+def test_verify_contract_on_uncompleted_ac(git_repo):
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    worktree = _worktree(git_repo, "t001")
+    spec_path = worktree / "docs" / "archive" / "tasks" / "t001_alpha" / "task.md"
+    content = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text(content.replace("- [x] AC-001", "- [ ] AC-001"), encoding="utf-8")
+    _git(worktree, "add", str(spec_path))
+    _git(worktree, "commit", "--amend", "--no-edit")
+
+    verdict, detail = monitoring.verify_integrate_ready(
+        "t001", identity["attempt"], identity["execution_id"]
+    )
+
+    assert verdict == "contract"
+    assert "存在未完成 AC（未打勾）：AC-001" in detail
 
 
 def test_handoff_rejects_wrong_field_type(git_repo):

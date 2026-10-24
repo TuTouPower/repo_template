@@ -139,9 +139,15 @@ def apply_placeholders(template: str, values: dict) -> str:
     return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
+def _normalize_checkboxes(text: str) -> str:
+    """归一化 markdown checkbox，将 - [x] / - [X] 替换为 - [ ]，以便仅对比契约语义漂移。"""
+    return re.sub(r"^(\s*-\s*)\[[xX]\]", r"\1[ ]", text, flags=re.MULTILINE)
+
+
 def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str) -> str:
     """契约区相对 diff_anchor 有变更时返回追加给 reviewer 的警告块。
 
+    忽略仅 checkbox 勾选状态（[ ] -> [x]）的变化。
     无变更返回 ""。anchor 已由调用方校验；历史版本没有该 spec 或 git show
     暂时失败时打 stderr 警告并返回 ""，不阻断渲染。
     """
@@ -161,7 +167,7 @@ def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str
         )
         return ""
     anchored = extract_section(r.stdout, CONTRACT_HEADING)
-    if anchored == current_contract:
+    if _normalize_checkboxes(anchored) == _normalize_checkboxes(current_contract):
         return ""
     diff = "\n".join(
         difflib.unified_diff(

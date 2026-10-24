@@ -1053,7 +1053,7 @@ def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
 
 def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
     old_spec = spec.replace(
-        '只写可观察、可独立验证的行为；每条使用稳定且不复用的 `AC-NNN`。需真实部署或人工环境验证时在编号前加 `[deploy]`。技术选型不作为行为 AC。',
+        '只写可观察、可独立验证的行为；每条使用稳定且不复用的 `AC-NNN`。需真实部署或人工环境验证时在编号前加 `[deploy]`。创建时均为未勾选（`- [ ]`）；实施验证通过后由实施 Agent 就地打勾（`- [x]`）；由 Review Agent 独立复核打勾真实性。技术选型不作为行为 AC。',
         '旧版规范文字，只写可观察行为和 AC-NNN。',
     )
     old_task = task.replace('status: backlog', 'status: blocked', 1)

@@ -119,6 +119,10 @@ def _prepare_done(repo, tid, slug):
     assert started.returncode == 0, started.stderr
     identity = _reserve(repo, tid)
     worktree = _worktree(repo, tid)
+    task_file = worktree / "docs" / "tasks" / f"{tid}_{slug}" / "task.md"
+    if task_file.is_file():
+        content = task_file.read_text(encoding="utf-8")
+        task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     finished = _cli(worktree, "finish", tid)
     assert finished.returncode == 0, finished.stderr
     branch = f"{tid}_{slug}"
@@ -135,7 +139,6 @@ def _prepare_done(repo, tid, slug):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
-        "ac_evidence": {"AC-001": ["tests/test_x.py::test_y 通过"]},
         "pending": [],
         "findings": [],
     }

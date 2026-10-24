@@ -33,18 +33,18 @@ metadata:
 
 ### 独立 review
 
-实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（amend 同一执行 commit），不 rewind。
+实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer（reviewer 负责审查代码质量并独立复核实施 Agent 的 AC 打勾真实性）。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（amend 同一执行 commit），不 rewind。
 
 ## 实施
 
 1. 读取 task.md、note.md、`AGENTS.md`、项目约定和现有现场，运行 preflight 并携 `--owner-id {owner_id}`。`UNVERIFIED-SPIKE` 先实验并将标记改写为结论；一次性实验仅写 .scratch，若建立正式 spike，必须记录 sid，补全 report、finding、采纳结论、后续 tid 或无需后续理由，并按 repo-hygiene 归档；随后必须运行 `task.py preflight {tid} --require-verified --owner-id {owner_id}`，严格 PASS 后再实施。
 2. Agent 自主决定阅读、调试和实现顺序。对可测试行为，默认先建立失败测试或复现证据；不适用时在实施笔记简述原因。
-3. 实现 AC，并依次通过项目测试和黑盒门禁。
+3. 实现 AC，依次通过项目测试和黑盒门禁；验证通过后在 `task.md` 验收标准中就地将对应条目勾选为 `- [x]`。
 4. 逐项检查 finalization：累积或更新 `docs/specs/<slug>.md`，同步 `docs/specs_index.md`（在表即生效）；废弃 spec 删除索引行并归档；不适用时在 note.md 明确理由（`- specs_index: not_applicable: 具体原因`）。更新因实现而过时的 blueprint、guides、README 或接口文档。派审前用 `git ls-files --others --exclude-standard` 找出本 task 新文件，剔除无关、临时和 `.scratch/` 内容后，对明确路径执行 `git add -N -- <path...>`，使新文件进入 reviewer 可见的 diff；然后完成最终 review。
 5. 收尾前检查新增调试输出、临时文件和未解释 TODO，运行项目定义的 lint/format/typecheck，并执行 `git diff --check`。检查方式按技术栈选择，不使用通用固定 grep。
 6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
 7. 更新 note.md 的实施、验证、review 和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。再次运行 `task.py preflight {tid} --require-verified --owner-id {owner_id}`（在 worktree 内直接运行，不带 `--ref`），防收尾重新引入未知契约。
-8. 写完整 `handoff.json`，其 identity、branch、base、测试、黑盒、review、AC evidence、pending 和 findings 与当前执行一致。
+8. 写完整 `handoff.json`，其 identity、branch、base、测试、黑盒、review、pending 和 findings 与当前执行一致（不再包含 ac_evidence）。
 9. `task.py finish {tid}`，用归档路径再次检查 review 状态，然后把本 task 全部改动提交为一个执行 commit。期间不创建正式中间 commit。
 
 ## 完成
