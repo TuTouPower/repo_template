@@ -761,7 +761,7 @@ def cmd_purge(args):
         rebuild_index()
         append_audit(
             "purge", tid=fm["tid"], fr="backlog", to="deleted", reason=args.reason,
-            slug=fm["slug"], title=fm["title"],
+            slug=fm.get("slug", ""), title=fm.get("title", ""),
         )
     except (OSError, ctx.TaskDataError) as error:
         try:
@@ -771,7 +771,14 @@ def cmd_purge(args):
         sys.exit(
             f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理"
         )
-    shutil.rmtree(tomb)
+    try:
+        shutil.rmtree(tomb)
+    except OSError as error:
+        print(
+            f"{args.tid} purged（tid 已释放；审计见 {ctx._rel(ctx.AUDIT_PATH)}）；"
+            f"警告：临时文件清理失败（{error}），残留于 {ctx._rel(tomb)}，请人工删除"
+        )
+        return
     print(f"{args.tid} purged（tid 已释放；审计见 {ctx._rel(ctx.AUDIT_PATH)}）")
 
 def cmd_list(args):

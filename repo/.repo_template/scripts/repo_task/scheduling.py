@@ -11,30 +11,32 @@ from .store import discover_effective_tasks, scan_tasks
 
 def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
     state: dict[str, int] = {}
-    stack: list[str] = []
 
-    def visit(tid: str) -> list[str] | None:
-        state[tid] = 1
-        stack.append(tid)
-        for dependency in dependencies.get(tid, []):
-            if dependency not in dependencies:
-                continue
-            if state.get(dependency, 0) == 0:
-                cycle = visit(dependency)
-                if cycle:
-                    return cycle
-            elif state.get(dependency) == 1:
-                start = stack.index(dependency)
-                return stack[start:] + [dependency]
-        stack.pop()
-        state[tid] = 2
-        return None
-
-    for tid in sorted(dependencies, key=tid_sort_key):
-        if state.get(tid, 0) == 0:
-            cycle = visit(tid)
-            if cycle:
-                return cycle
+    for start_tid in sorted(dependencies, key=tid_sort_key):
+        if state.get(start_tid, 0) != 0:
+            continue
+        stack = [start_tid]
+        state[start_tid] = 1
+        it_stack = [iter(dependencies.get(start_tid, []))]
+        while stack:
+            parent = stack[-1]
+            children_it = it_stack[-1]
+            try:
+                dep = next(children_it)
+                if dep not in dependencies:
+                    continue
+                dep_state = state.get(dep, 0)
+                if dep_state == 1:
+                    idx = stack.index(dep)
+                    return stack[idx:] + [dep]
+                elif dep_state == 0:
+                    state[dep] = 1
+                    stack.append(dep)
+                    it_stack.append(iter(dependencies.get(dep, [])))
+            except StopIteration:
+                stack.pop()
+                it_stack.pop()
+                state[parent] = 2
     return None
 
 def compute_schedule() -> dict:

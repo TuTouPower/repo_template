@@ -230,3 +230,42 @@ def test_list_rebuild_writes_index(fake_repo, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert ctx.ACTIVE_PATH.exists()
     assert "index rebuilt" in out
+
+
+def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, capsys, monkeypatch):
+    """验证 purge 最终临时文件清理失败时区分逻辑完成与物理清理，并告警残留位置（Issue #65）。"""
+    import argparse
+    from contextlib import contextmanager
+
+    @contextmanager
+    def noop_lock(*args, **kwargs):
+        yield
+
+    monkeypatch.setattr("repo_task.locks.git_common_lock", noop_lock)
+
+    d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
+    monkeypatch.setattr(lifecycle, "require_primary_worktree", lambda: None)
+    monkeypatch.setattr(lifecycle, "task_schedule_references", lambda tid: [])
+    monkeypatch.setattr(lifecycle, "tracked_anywhere", lambda p: False)
+    monkeypatch.setattr(lifecycle, "has_unmerged_commits", lambda b: False)
+    monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
+    audit_file = fake_repo / "docs/archive/tasks_audit.log"
+    monkeypatch.setattr(ctx, "AUDIT_PATH", audit_file)
+
+    def boom_rmtree(path):
+        raise OSError("locked tombstone")
+
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", boom_rmtree)
+
+    # 运行 purge，不应抛出未捕获异常退出
+    lifecycle.cmd_purge(argparse.Namespace(tid="t001", reason="miscreated"))
+    out = capsys.readouterr().out
+
+    # 逻辑完成：tid 已释放，审计日志已记录
+    assert "purged（tid 已释放" in out
+    assert "警告：临时文件清理失败" in out
+    assert "purge_t001_alpha" in out
+    assert not d.exists()
+    assert audit_file.exists()
+    assert "miscreated" in audit_file.read_text(encoding="utf-8")
+

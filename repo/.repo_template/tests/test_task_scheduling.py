@@ -72,6 +72,21 @@ def test_dependency_cycle_returns_stable_path():
     assert _dependency_cycle(dependencies) == ["t001", "t003", "t005", "t001"]
 
 
+def test_dependency_deep_chain_no_recursion_error():
+    """验证深依赖链使用迭代 DFS 遍历，不会触发 RecursionError（Issue #64）。"""
+    # 构造超过 Python 默认递归限制 1000 的深依赖链
+    deps = {f"t{i:04d}": [f"t{i+1:04d}"] for i in range(1, 1200)}
+    deps["t1200"] = []
+    assert _dependency_cycle(deps) is None
+
+    # 深依赖链包含环时，可稳定返回环路径
+    deps["t1200"] = ["t1100"]
+    cycle = _dependency_cycle(deps)
+    assert cycle is not None
+    assert cycle[0] == "t1100" and cycle[-1] == "t1100"
+
+
+
 def test_dependency_controls_readiness(schedule_repo):
     _write_task(ctx.TASKS_DIR, "t001", "alpha")
     _write_task(ctx.TASKS_DIR, "t002", "beta", depends_on="t001")
