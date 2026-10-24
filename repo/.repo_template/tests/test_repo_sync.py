@@ -43,7 +43,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (toolkit / "tests").mkdir(parents=True)
     (toolkit / "tests/test_x.py").write_text("def test_x():\n    pass\n")
     (toolkit / "docs/task_template").mkdir(parents=True)
-    (toolkit / "docs/task_template/spec.md").write_text("# spec\n")
+    (toolkit / "docs/task_template/task.md").write_text("# task\n")
+    (toolkit / "docs/task_template/note.md").write_text("---\ntid: t000\n---\n## 实施笔记\n无\n")
     (toolkit / "docs/review_prompts").mkdir(parents=True)
     (toolkit / "docs/review_prompts/general_prompt.txt").write_text("general\n")
     (toolkit / "docs/spike_report_template.md").write_text("# report\n")
@@ -922,11 +923,11 @@ def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
     source = SCRIPTS_DIR.parent / 'docs/task_template'
     target = consumer / '.repo_template/docs/task_template'
     target.mkdir(parents=True, exist_ok=True)
-    spec = (source / 'spec.md').read_text()
     task = (source / 'task.md').read_text()
-    (target / 'spec.md').write_text(spec)
+    note = (source / 'note.md').read_text()
     (target / 'task.md').write_text(task)
-    return spec, task
+    (target / 'note.md').write_text(note)
+    return task, note
 
 
 def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
@@ -968,13 +969,13 @@ def test_missing_guide_block_is_restored_and_reported(env):
     )
     task_dir = consumer / 'docs/tasks/t001_missing'
     task_dir.mkdir(parents=True)
-    (task_dir / 'spec.md').write_text(missing)
-    (task_dir / 'task.md').write_text(current_task)
+    (task_dir / 'task.md').write_text(missing)
+    (task_dir / 'note.md').write_text(current_task)
     migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
-    assert 'docs/tasks/t001_missing/spec.md' in migrations
+    assert 'docs/tasks/t001_missing/task.md' in migrations
     assert worktrees == [] and errors == []
     rs.force_migrate_workflow_tasks(set())
-    assert (task_dir / 'spec.md').read_text() == current_spec
+    assert (task_dir / 'task.md').read_text() == current_spec
 
 
 def test_migration_status_reports_malformed_spec_without_raising(env):
@@ -984,11 +985,11 @@ def test_migration_status_reports_malformed_spec_without_raising(env):
     malformed = current_spec.replace(rs._GUIDE_CLOSE, '', 1)
     task_dir = consumer / 'docs/tasks/t001_malformed'
     task_dir.mkdir(parents=True)
-    (task_dir / 'spec.md').write_text(malformed)
-    (task_dir / 'task.md').write_text(current_task)
+    (task_dir / 'task.md').write_text(malformed)
+    (task_dir / 'note.md').write_text(current_task)
     migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == []
-    assert len(errors) == 1 and 't001_malformed/spec.md' in errors[0]
+    assert len(errors) == 1 and 't001_malformed/task.md' in errors[0]
     assert rs.cmd_status(Namespace()) == 0
     assert rs.cmd_plan(Namespace()) == 0
     with pytest.raises(rs.SyncError, match='无法安全迁移'):
@@ -1006,16 +1007,51 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     current_spec, current_task = _install_current_workflow_templates(consumer)
     _install_current_workflow_templates(env['src'])
     old_spec, old_task = _old_task_documents(current_spec, current_task)
+
+    # 1. 活跃任务：构造真实旧版文件布局 (spec.md 为需求规格, task.md 为过程总账)
     task_dir = consumer / 'docs/tasks/t001_old'
     task_dir.mkdir(parents=True)
-    (task_dir / 'spec.md').write_text(old_spec)
-    (task_dir / 'task.md').write_text(old_task)
+    active_old_task = (
+        old_task.replace('tid: t000', 'tid: t001')
+        .replace('slug: example_slug', 'slug: old')
+    )
+    (task_dir / 'spec.md').write_text(old_spec, encoding="utf-8")
+    (task_dir / 'task.md').write_text(active_old_task, encoding="utf-8")
+
+    # 2. 归档任务：构造真实旧版文件布局 (spec.md + task.md)
+    archive_dir = consumer / 'docs/archive/tasks/t002_archived_old'
+    archive_dir.mkdir(parents=True)
+    archived_old_task = (
+        old_task.replace('tid: t000', 'tid: t002')
+        .replace('slug: example_slug', 'slug: archived_old')
+        .replace('status: blocked', 'status: done')
+    )
+    (archive_dir / 'spec.md').write_text(old_spec, encoding="utf-8")
+    (archive_dir / 'task.md').write_text(archived_old_task, encoding="utf-8")
+
+    # 迁移前：store.py 扫描会因为缺少 note.md 拒绝扫描
+    from repo_task import store as task_store, context as task_ctx
+    with pytest.raises(task_ctx.TaskDataError, match="缺 note.md"):
+        task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
+
+    # 迁移状态应检出活跃和归档下的旧文件
+    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    assert 'docs/tasks/t001_old/spec.md' in migrations
+    assert 'docs/tasks/t001_old/task.md' in migrations
+    assert 'docs/archive/tasks/t002_archived_old/spec.md' in migrations
+    assert 'docs/archive/tasks/t002_archived_old/task.md' in migrations
+    assert worktrees == [] and errors == []
 
     changed: set[Path] = set()
     reports = rs.force_migrate_workflow_tasks(changed)
 
-    migrated_spec = (task_dir / 'spec.md').read_text()
-    migrated_task = (task_dir / 'task.md').read_text()
+    # 验证活跃任务已完成布局转换
+    assert not (task_dir / 'spec.md').exists()
+    assert (task_dir / 'task.md').is_file()
+    assert (task_dir / 'note.md').is_file()
+
+    migrated_spec = (task_dir / 'task.md').read_text(encoding="utf-8")
+    migrated_task = (task_dir / 'note.md').read_text(encoding="utf-8")
     assert '旧版规范文字' not in migrated_spec
     for blocks in rs._guide_blocks_by_heading(current_spec).values():
         for block in blocks:
@@ -1027,13 +1063,32 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     for line in rs._implementation_guidance(current_task):
         assert line in migrated_task
     assert '旧版固定说明' not in migrated_task
-    assert task_dir / 'spec.md' in changed and task_dir / 'task.md' in changed
-    assert len(reports) == 2
+    assert task_dir / 'spec.md' in changed
+    assert task_dir / 'task.md' in changed
+    assert task_dir / 'note.md' in changed
+
+    # 验证归档任务已完成布局转换
+    assert not (archive_dir / 'spec.md').exists()
+    assert (archive_dir / 'task.md').is_file()
+    assert (archive_dir / 'note.md').is_file()
+    migrated_archive_task = (archive_dir / 'note.md').read_text(encoding="utf-8")
+    assert 'status: done' in migrated_archive_task or 'status: "done"' in migrated_archive_task
+    assert archive_dir / 'spec.md' in changed
+    assert archive_dir / 'task.md' in changed
+    assert archive_dir / 'note.md' in changed
+
+    # 幂等性：迁移后再查 status 为空，再次执行不写盘
     assert rs._replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
     assert rs._migrate_task_text(migrated_task, current_task) == migrated_task
     assert rs.force_migrate_workflow_tasks(set()) == []
     migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == [] and errors == []
+
+    # 迁移后：store.py 扫描正常解析活跃与归档任务
+    tasks = task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
+    assert [t['tid'] for t in tasks] == ['t001', 't002']
+    assert tasks[0]['status'] == 'active' and tasks[0]['dir'] == 'docs/tasks/t001_old'
+    assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
@@ -1057,8 +1112,8 @@ def test_force_migrate_workflow_rejects_registered_task_worktree(env):
     current_spec, current_task = _install_current_workflow_templates(consumer)
     task_dir = consumer / 'docs/tasks/t001_old'
     task_dir.mkdir(parents=True)
-    (task_dir / 'spec.md').write_text(current_spec)
-    (task_dir / 'task.md').write_text(current_task)
+    (task_dir / 'task.md').write_text(current_spec)
+    (task_dir / 'note.md').write_text(current_task)
     _git(consumer, 'init', '-b', 'main')
     _git(consumer, 'config', 'user.email', 'test@example.com')
     _git(consumer, 'config', 'user.name', 'test')

@@ -36,7 +36,7 @@ def _unquote(value: str) -> str:
 def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
     """从文本返回 (front matter dict, 正文)。"""
     if not text.startswith("---"):
-        raise ctx.TaskDataError(f"{source}: task.md 必须以 YAML front matter (---) 开头")
+        raise ctx.TaskDataError(f"{source}: note.md 必须以 YAML front matter (---) 开头")
     end = text.find("\n---", 3)
     if end == -1:
         raise ctx.TaskDataError(f"{source}: front matter 未闭合（缺结束的 ---）")
@@ -419,12 +419,12 @@ def validate_task_documents(
     missing_spec_headings = _missing_heading_sequence(spec_text, ctx.SPEC_REQUIRED_HEADINGS)
     if missing_spec_headings:
         problems.append(
-            "spec.md 缺必需标题、标题层级错误或顺序错误："
+            "task.md 缺必需标题、标题层级错误或顺序错误："
             + "、".join(missing_spec_headings)
         )
 
     # 规范块属于严格模板契约；repo-template-sync 负责先强制迁移存量 task。
-    template_spec_path = ctx.TEMPLATE_DIR / "spec.md"
+    template_spec_path = ctx.TEMPLATE_DIR / "task.md"
     if template_spec_path.is_file():
         template_blocks = _extract_guide_blocks(
             template_spec_path.read_text(encoding="utf-8")
@@ -434,7 +434,7 @@ def validate_task_documents(
             missing_blocks = [item for item in template_blocks if item not in spec_blocks]
             if missing_blocks:
                 problems.append(
-                    f"spec.md 缺或被改 {len(missing_blocks)} 个当前规范块；"
+                    f"task.md 缺或被改 {len(missing_blocks)} 个当前规范块；"
                     "先运行 repo-template-sync 强制迁移，规范块不得手改"
                 )
 
@@ -442,7 +442,7 @@ def validate_task_documents(
     if not acceptance or not re.search(
         r"^\s*-\s*\[ \]\s*\S", acceptance, re.MULTILINE
     ):
-        problems.append("spec.md 验收标准为空")
+        problems.append("task.md 验收标准为空")
 
     if acceptance:
         ac_ids: list[str] = []
@@ -455,19 +455,19 @@ def validate_task_documents(
             )
             if not match:
                 problems.append(
-                    "spec.md 验收标准条目缺 AC 编号（格式 `- [ ] AC-NNN：`，"
+                    "task.md 验收标准条目缺 AC 编号（格式 `- [ ] AC-NNN：`，"
                     f"[deploy] 位于编号前）：{stripped[:60]}"
                 )
                 continue
             ac_id = match.group(1)
             if ac_id in ac_ids:
-                problems.append(f"spec.md AC 编号重复：{ac_id}")
+                problems.append(f"task.md AC 编号重复：{ac_id}")
             ac_ids.append(ac_id)
 
     missing_task_headings = _missing_heading_sequence(task_body, ctx.TASK_REQUIRED_HEADINGS)
     if missing_task_headings:
         problems.append(
-            "task.md 缺必需标题、标题层级错误或顺序错误："
+            "note.md 缺必需标题、标题层级错误或顺序错误："
             + "、".join(missing_task_headings)
         )
 
@@ -477,7 +477,7 @@ def validate_task_documents(
         line for line in ctx.IMPLEMENTATION_NOTE_GUIDANCE if line not in visible_task_lines
     ]
     if missing_guidance:
-        problems.append("task.md 实施笔记缺当前模板固定说明；先运行 repo-template-sync 强制迁移")
+        problems.append("note.md 实施笔记缺当前模板固定说明；先运行 repo-template-sync 强制迁移")
 
     notes = _extract_markdown_section(task_body, 2, "实施笔记")
     if notes is not None:
@@ -487,14 +487,14 @@ def validate_task_documents(
             if line.strip() and line.strip() not in ctx.IMPLEMENTATION_NOTE_GUIDANCE
         ]
         if not payload_lines:
-            problems.append("task.md 实施笔记为空；无事项时写「无」")
+            problems.append("note.md 实施笔记为空；无事项时写「无」")
 
     if not allow_template_placeholders:
         visible_text = "\n".join(_visible_markdown_lines(spec_text + "\n" + task_body))
         placeholders = ctx.TEMPLATE_PLACEHOLDER_RE.findall(_strip_inline_code(visible_text))
         if placeholders:
             problems.append(
-                f"spec.md / task.md 残留 {len(placeholders)} 个模板占位符："
+                f"task.md / note.md 残留 {len(placeholders)} 个模板占位符："
                 + "、".join(sorted(set(placeholders))[:3])
             )
 

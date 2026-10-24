@@ -45,7 +45,7 @@ REVIEW_PROMPT_OUTPUT_FILES = {
 }
 # task 目录级 review 流程文件（review 门禁指纹排除全量）：过程文件 + prompt 渲染产物。
 REVIEW_PROCESS_FILES = (
-    "task.md",
+    "note.md",
     "review_code.md",
     "review_test.md",
     "review_general.md",
@@ -141,7 +141,7 @@ def review_scope_fingerprint(
         before = _review_tree(root, diff_anchor, task_name)
         after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
         digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
-        task_paths = [f"docs/tasks/{task_name}/task.md", f"docs/archive/tasks/{task_name}/task.md"]
+        task_paths = [f"docs/tasks/{task_name}/note.md", f"docs/archive/tasks/{task_name}/note.md"]
         review_level = "full"
         for task_path in task_paths:
             if ref:
@@ -352,7 +352,7 @@ def verify_integrate_ready(
             not isinstance(item, str) or not item for item in refs
         ):
             return "contract", f"{handoff_path} ac_evidence[{ac_id!r}] 值必须是非空字符串数组"
-    spec_path = f"{task['dir']}/spec.md"
+    spec_path = f"{task['dir']}/task.md"
     try:
         expected_ac = extract_ac_ids(git_text_at_ref(branch, spec_path))
     except ctx.TaskDataError:
@@ -364,7 +364,7 @@ def verify_integrate_ready(
         detail = ("缺 " + ", ".join(missing)) if missing else ""
         if extra:
             detail += ("；" if detail else "") + "未知 " + ", ".join(extra)
-        return "contract", f"{handoff_path} ac_evidence 与 spec 验收标准 AC 不匹配：{detail}"
+        return "contract", f"{handoff_path} ac_evidence 与 task 验收标准 AC 不匹配：{detail}"
     expected_values = {
         "tid": tid,
         "attempt": attempt,
@@ -402,11 +402,11 @@ def verify_integrate_ready(
         try:
             with tempfile.TemporaryDirectory(prefix="repo-task-review-") as tmp:
                 target = Path(tmp)
-                for name in ("task.md", "review_code.md", "review_test.md", "review_general.md"):
+                for name in ("note.md", "review_code.md", "review_test.md", "review_general.md"):
                     try:
                         text = git_text_at_ref(branch, f"{task['dir']}/{name}")
                     except ctx.TaskDataError:
-                        if name == "task.md":
+                        if name == "note.md":
                             raise
                         continue
                     (target / name).write_text(text, encoding="utf-8")

@@ -39,8 +39,8 @@ def _make_stale(repo):
 
 def _amend_review_only(worktree):
     """Refresh review evidence for the current tip without touching deliverables."""
-    task_md = worktree / REL / "task.md"
-    fm, _ = parse_front_matter(task_md)
+    note_md = worktree / REL / "note.md"
+    fm, _ = parse_front_matter(note_md)
     anchor = fm["diff_anchor"]
     scope = review_scope_fingerprint(anchor, REL, repo_root=worktree)
     assert scope

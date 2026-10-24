@@ -32,7 +32,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 def test_finish_ignores_non_references_and_fenced_examples(git_repo, snippet):
     assert _task_cli(git_repo, "start", "t001").returncode == 0
     worktree = _worktree(git_repo, "t001")
-    spec = worktree / "docs/tasks/t001_alpha/spec.md"
+    spec = worktree / "docs/tasks/t001_alpha/task.md"
     spec.write_text(spec.read_text() + "\n" + snippet + "\n", encoding="utf-8")
     result = _task_cli(worktree, "finish", "t001")
     assert result.returncode == 0, result.stdout + result.stderr

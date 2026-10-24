@@ -33,9 +33,9 @@ def fake_repo(tmp_path, monkeypatch):
     archive.mkdir(parents=True)
     template.mkdir()
     configure_project_verification(tmp_path)
-    # 模板目录必须含 task.md，scan_tasks 跳过 task_template/
+    # 模板目录必须含 note.md，scan_tasks 跳过 task_template/
     write_front_matter(
-        template / "task.md",
+        template / "note.md",
         {"tid": "t000", "slug": "example", "status": "backlog"},
         "模板正文\n",
     )
@@ -52,11 +52,11 @@ def _make_task(tasks_dir, tid, slug, status):
     d = tasks_dir / f"{tid}_{slug}"
     d.mkdir()
     write_front_matter(
-        d / "task.md",
+        d / "note.md",
         {"tid": tid, "slug": slug, "status": status},
         "body\n\n- specs_index: not_applicable: isolated archive lifecycle test\n",
     )
-    (d / "spec.md").write_text("# isolated spec\n", encoding="utf-8")
+    (d / "task.md").write_text("# isolated task\n", encoding="utf-8")
     return d
 
 
@@ -90,7 +90,7 @@ def test_scan_rejects_dirname_mismatch(fake_repo):
     d = ctx.TASKS_DIR / "t003_wrong"
     d.mkdir()
     write_front_matter(
-        d / "task.md",
+        d / "note.md",
         {"tid": "t003", "slug": "right", "status": "backlog"},
         "x\n",
     )
@@ -136,9 +136,9 @@ def test_rebuild_index_splits_active_archive(fake_repo):
     archive = json.loads(ctx.ARCHIVE_PATH.read_text(encoding="utf-8"))
     assert [t["tid"] for t in active["tasks"]] == ["t001", "t002"]
     assert [t["tid"] for t in archive["tasks"]] == ["t003"]
-    assert active["authority"] == "docs/tasks/{tid}_{slug}/task.md front matter"
+    assert active["authority"] == "docs/tasks/{tid}_{slug}/note.md front matter"
     assert archive["authority"] == (
-        "docs/archive/tasks/{tid}_{slug}/task.md front matter"
+        "docs/archive/tasks/{tid}_{slug}/note.md front matter"
     )
 
 
@@ -205,7 +205,7 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
     with pytest.raises(SystemExit, match="归档移动失败"):
         lifecycle._close_task(argparse.Namespace(tid="t001"), "done", None)
-    fm, _ = parse_front_matter(d / "task.md")
+    fm, _ = parse_front_matter(d / "note.md")
     assert fm["status"] == "active"  # 已回滚
     assert d.is_dir()  # 目录仍在活跃区
 

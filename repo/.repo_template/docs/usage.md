@@ -45,7 +45,7 @@
 - task 编号：占位 `{tid}`，值小写 `t001`、`t042`…。目录 / 分支 / finding / worktree：`docs/tasks/{tid}_{slug}/`、`{tid}_{slug}`、`{tid}_code_fNNN`、`../{repo}_{tid}`。`{repo}` 取消费仓目录名。
 - spike 编号：占位 `{sid}`，值小写 `s001`、`s003`…。目录：`docs/spikes/{sid}_{slug}/`。
 - 总账编号：待办与发现均为一条目一文件，文件名 `pNNN_{slug}.md` / `dNNN_{slug}.md`，编号来自文件名。条目只经 `.repo_template/scripts/pending.py new` 与 `findings.py new` 创建——脚本在 git 公共目录的排他锁内完成「扫描全部本地分支与 worktree 取号 → 建文件」，并发执行不会撞号。`pNNN` 跨 `docs/pending/todo/`、`docs/pending/parked/`、`docs/archive/pending/` 共享全局序列，`dNNN` 在 `docs/findings/` 内递增；历史编号均不复用，不维护索引文件。spike 是目录型条目（`docs/spikes/sNNN_{slug}/`），由 `.repo_template/scripts/spikes.py new` 同法锁内分配，`sNNN` 与 `docs/archive/spikes/` 共享序列。
-- AC 编号：spec 验收标准每条行为 AC 用 `AC-NNN`（三位十进制，task 内从 1 顺序编号）。编号一旦分配永久归属，删除后不复用（允许断号，不强制连续），新增用下一个编号。`handoff.json` 的 `ac_evidence` 键引用同一编号，须精确覆盖 spec 验收标准全部 AC——缺或多都阻断合入。编号规范属 spec 模板门禁，见 `.repo_template/docs/task_template/spec.md`。
+- AC 编号：spec 验收标准每条行为 AC 用 `AC-NNN`（三位十进制，task 内从 1 顺序编号）。编号一旦分配永久归属，删除后不复用（允许断号，不强制连续），新增用下一个编号。`handoff.json` 的 `ac_evidence` 键引用同一编号，须精确覆盖 spec 验收标准全部 AC——缺或多都阻断合入。编号规范属 task 模板门禁，见 `.repo_template/docs/task_template/task.md`。
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。md_kx 来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装（`uv tool install md-kx`）；消费仓不逐仓安装，缺二进制时 `md_format.py` / pre-commit 会在报错里给出来源与安装入口。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，格式化本次 staged 的 `.md` 并重新暂存；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`（已有其它 hooksPath 须 `--force`）；临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
@@ -163,7 +163,7 @@ pending 归档必须提供非空 `--reason`，说明处理结果、验证依据�
 python3 .repo_template/scripts/pending.py archive p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
 
-finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 task.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
+finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 note.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
 同步验证保持事务排他锁。同线程锁可重入；验证子进程不得写同一 Git common dir 的控制面，违规立即失败并回滚，不等待父进程释放锁。需要测试 task CLI 的项目测试应创建隔离 Git 仓库；普通只读 task 命令与隔离仓库不受此限制。
 

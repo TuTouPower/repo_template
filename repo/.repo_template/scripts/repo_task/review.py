@@ -299,7 +299,7 @@ def evaluate_review(task_dir: Path, fm: dict, current_scope: str | None) -> dict
         result[f"{name}_verdict"] = verdict
     overall = ("INCOMPLETE" if "MISSING" in verdicts else
                "FAIL" if "FAIL" in verdicts else "PASS")
-    stats, disposed = _parse_disposition_rows(task_dir / "task.md")
+    stats, disposed = _parse_disposition_rows(task_dir / "note.md")
     reported = reported_findings(fm.get("tid", ""), *reports)
     missing = sorted(reported - disposed)
     scopes = [reviewed_scope(report) for report in reports]

@@ -16,8 +16,8 @@
   general_verdict=PASS|FAIL|MISSING    # single 才有
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
-  max_review_round=N      # 来自 task.md review_limit；旧 task 默认 5
-  max_verify_round=N      # 来自 task.md verify_limit
+  max_review_round=N      # 来自 note.md review_limit；旧 task 默认 5
+  max_verify_round=N      # 来自 note.md verify_limit
   next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_disposition
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
 """
@@ -73,8 +73,8 @@ def resolve_task_dir(value: str) -> Path:
         raise ReviewDataError(f"task directory must stay inside repository: {value}") from e
     if not candidate.is_dir():
         raise ReviewDataError(f"task directory does not exist: {value}")
-    if not (candidate / "task.md").is_file():
-        raise ReviewDataError(f"missing task.md in: {value}")
+    if not (candidate / "note.md").is_file():
+        raise ReviewDataError(f"missing note.md in: {value}")
     return candidate
 
 
@@ -91,7 +91,7 @@ def main():
         if args.max_review_round is not None and args.max_review_round < 1:
             raise ReviewDataError("max-review-round must be at least 1")
         task_dir = resolve_task_dir(args.task_dir)
-        fm = parse_front_matter(task_dir / "task.md")
+        fm = parse_front_matter(task_dir / "note.md")
         if fm.get("review_level", "full") not in VALID_REVIEW_LEVELS:
             raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
         limits = review_limits(fm)

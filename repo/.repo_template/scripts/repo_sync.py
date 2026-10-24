@@ -432,7 +432,16 @@ def _migrate_task_text(text: str, task_template: str) -> str:
         if not has_verify:
             fields.append('verify_limit: "5"')
         migrated[close:close] = fields
-    return "\n".join(migrated).rstrip() + "\n"
+    migrated_text = "\n".join(migrated).rstrip() + "\n"
+    migrated_text = re.sub(
+        r"-\s*spec\s*[:：]\s*\[`?spec\.md`?\]\(spec\.md\)",
+        "- task：[`task.md`](task.md)",
+        migrated_text,
+    )
+    migrated_text = migrated_text.replace(
+        "无长期 spec 变更时在 task.md 写", "无长期 spec 变更时在 note.md 写"
+    )
+    return migrated_text
 
 
 def _registered_task_worktrees() -> list[tuple[Path, str]]:
@@ -452,51 +461,163 @@ def _registered_task_worktrees() -> list[tuple[Path, str]]:
             root = None
     return rows
 
+def _collect_workflow_task_dirs() -> list[Path]:
+    """返回消费仓所有需要检查的 task 目录（含 docs/tasks 与 docs/archive/tasks）。"""
+    dirs: list[Path] = []
+    for rel_parent in ("docs/tasks", "docs/archive/tasks"):
+        parent = CONSUMER / rel_parent
+        if not parent.is_dir():
+            continue
+        for child in sorted(parent.iterdir()):
+            if not child.is_dir():
+                continue
+            if rel_parent == "docs/tasks" and child.name == "task_template":
+                continue
+            dirs.append(child)
+    return dirs
+
+
+def _inspect_workflow_task_dir(
+    task_dir: Path,
+    task_template: str,
+    note_template: str,
+) -> tuple[list[str], list[str], dict]:
+    """分析单个 task 目录的 workflow schema 与布局迁移需求。
+
+    返回 (candidates, errors, plan)
+    plan 包含:
+      - 'write': list[tuple[Path, str]] 待写文件 (path, content)
+      - 'delete': list[Path] 待删文件
+    """
+    spec_path = task_dir / "spec.md"
+    task_path = task_dir / "task.md"
+    note_path = task_dir / "note.md"
+
+    candidates: list[str] = []
+    errors: list[str] = []
+    write_ops: list[tuple[Path, str]] = []
+    delete_ops: list[Path] = []
+
+    # 判断是否为旧版文件布局：
+    # 1. 存在 spec.md（旧版需求规格）
+    # 2. 或者尚无 note.md，但 task.md 存在且内容包含 front matter（旧版过程总账）
+    is_legacy_layout = False
+    if spec_path.is_file():
+        is_legacy_layout = True
+    elif not note_path.is_file() and task_path.is_file():
+        try:
+            head = task_path.read_text(encoding="utf-8")
+            if head.startswith("---") and ("status:" in head or "tid:" in head):
+                is_legacy_layout = True
+        except OSError:
+            pass
+
+    if is_legacy_layout:
+        # 旧版布局向新版 (task.md 需求规格, note.md 过程总账) 迁移
+        # 1. 过程总账：来源于旧 task.md（若存在且尚未有 note.md）或现存 note.md
+        if task_path.is_file() and not note_path.is_file():
+            candidates.append(_rel(task_path))
+            try:
+                old_note_text = task_path.read_text(encoding="utf-8")
+                new_note_text = _migrate_task_text(old_note_text, note_template)
+                write_ops.append((note_path, new_note_text))
+            except SyncError as error:
+                errors.append(f"{_rel(task_path)}: {error}")
+            except OSError as error:
+                errors.append(f"{_rel(task_path)}: {error}")
+        elif note_path.is_file():
+            try:
+                old_note_text = note_path.read_text(encoding="utf-8")
+                new_note_text = _migrate_task_text(old_note_text, note_template)
+                if new_note_text != old_note_text:
+                    candidates.append(_rel(note_path))
+                    write_ops.append((note_path, new_note_text))
+            except SyncError as error:
+                errors.append(f"{_rel(note_path)}: {error}")
+            except OSError as error:
+                errors.append(f"{_rel(note_path)}: {error}")
+
+        # 2. 需求规格：来源于旧 spec.md，迁移写入 task.md，并删除原 spec.md
+        if spec_path.is_file():
+            candidates.append(_rel(spec_path))
+            try:
+                old_spec_text = spec_path.read_text(encoding="utf-8")
+                new_task_text = _replace_guide_blocks(old_spec_text, task_template)
+                write_ops.append((task_path, new_task_text))
+                delete_ops.append(spec_path)
+            except SyncError as error:
+                errors.append(f"{_rel(spec_path)}: {error}")
+            except OSError as error:
+                errors.append(f"{_rel(spec_path)}: {error}")
+        elif not spec_path.is_file() and task_path.is_file() and not any(p == task_path for p, _ in write_ops):
+            delete_ops.append(task_path)
+    else:
+        # 新版布局：task.md 为需求规格，note.md 为过程总账
+        if task_path.is_file():
+            try:
+                before = task_path.read_text(encoding="utf-8")
+                after = _replace_guide_blocks(before, task_template)
+                if after != before:
+                    candidates.append(_rel(task_path))
+                    write_ops.append((task_path, after))
+            except SyncError as error:
+                errors.append(f"{_rel(task_path)}: {error}")
+            except OSError as error:
+                errors.append(f"{_rel(task_path)}: {error}")
+
+        if note_path.is_file():
+            try:
+                before = note_path.read_text(encoding="utf-8")
+                after = _migrate_task_text(before, note_template)
+                if after != before:
+                    candidates.append(_rel(note_path))
+                    write_ops.append((note_path, after))
+            except SyncError as error:
+                errors.append(f"{_rel(note_path)}: {error}")
+            except OSError as error:
+                errors.append(f"{_rel(note_path)}: {error}")
+
+    plan = {
+        "legacy": is_legacy_layout,
+        "write": write_ops,
+        "delete": delete_ops,
+    }
+    return candidates, errors, plan
+
+
 def workflow_migration_status(
     src: Path,
 ) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
-    spec_path = src / ".repo_template/docs/task_template/spec.md"
-    task_path = src / ".repo_template/docs/task_template/task.md"
+    task_template_path = src / ".repo_template/docs/task_template/task.md"
+    note_template_path = src / ".repo_template/docs/task_template/note.md"
     worktrees = _registered_task_worktrees()
-    if not spec_path.is_file() or not task_path.is_file():
+    if not task_template_path.is_file() or not note_template_path.is_file():
         return [], worktrees, []
-    spec_template = spec_path.read_text(encoding="utf-8")
-    task_template = task_path.read_text(encoding="utf-8")
-    if not _guide_blocks_by_heading(spec_template) or "## 实施笔记" not in task_template:
+    task_template = task_template_path.read_text(encoding="utf-8")
+    note_template = note_template_path.read_text(encoding="utf-8")
+    if not _guide_blocks_by_heading(task_template) or "## 实施笔记" not in note_template:
         return [], worktrees, []
+
     candidates: list[str] = []
     errors: list[str] = []
-    tasks_dir = CONSUMER / "docs/tasks"
-    if tasks_dir.is_dir():
-        for task_dir in tasks_dir.glob("t[0-9]*_*"):
-            if not task_dir.is_dir():
-                continue
-            for filename, transform in (
-                ("spec.md", lambda text: _replace_guide_blocks(text, spec_template)),
-                ("task.md", lambda text: _migrate_task_text(text, task_template)),
-            ):
-                path = task_dir / filename
-                if not path.is_file():
-                    continue
-                before = path.read_text(encoding="utf-8")
-                try:
-                    after = transform(before)
-                except SyncError as error:
-                    errors.append(f"{_rel(path)}: {error}")
-                    continue
-                if after != before:
-                    candidates.append(_rel(path))
+    for task_dir in _collect_workflow_task_dirs():
+        dir_candidates, dir_errors, _ = _inspect_workflow_task_dir(
+            task_dir, task_template, note_template
+        )
+        errors.extend(dir_errors)
+        if not dir_errors:
+            candidates.extend(dir_candidates)
     return sorted(candidates), worktrees, sorted(errors)
 
 
 def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
-    spec_template_path = CONSUMER / ".repo_template/docs/task_template/spec.md"
     task_template_path = CONSUMER / ".repo_template/docs/task_template/task.md"
-    if not spec_template_path.is_file() or not task_template_path.is_file():
+    note_template_path = CONSUMER / ".repo_template/docs/task_template/note.md"
+    if not task_template_path.is_file() or not note_template_path.is_file():
         return []
-    spec_template = spec_template_path.read_text(encoding="utf-8")
     task_template = task_template_path.read_text(encoding="utf-8")
-    if not _guide_blocks_by_heading(spec_template) or "## 实施笔记" not in task_template:
+    note_template = note_template_path.read_text(encoding="utf-8")
+    if not _guide_blocks_by_heading(task_template) or "## 实施笔记" not in note_template:
         return []
     registered = _registered_task_worktrees()
     if registered:
@@ -504,36 +625,34 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
         raise SyncError(
             "workflow schema 强制更新前必须先完成或 rewind 已登记 task worktree：" + detail
         )
-    planned: list[tuple[Path, str]] = []
-    errors: list[str] = []
-    tasks_dir = CONSUMER / "docs/tasks"
-    if not tasks_dir.is_dir():
-        return []
-    for task_dir in tasks_dir.glob("t[0-9]*_*"):
-        if task_dir.name == "task_template" or not task_dir.is_dir():
-            continue
-        for filename, transform in (
-            ("spec.md", lambda text: _replace_guide_blocks(text, spec_template)),
-            ("task.md", lambda text: _migrate_task_text(text, task_template)),
-        ):
-            path = task_dir / filename
-            if not path.is_file():
-                continue
-            before = path.read_text(encoding="utf-8")
-            try:
-                after = transform(before)
-            except SyncError as error:
-                errors.append(f"{_rel(path)}: {error}")
-                continue
-            if after != before:
-                planned.append((path, after))
-    if errors:
-        raise SyncError("workflow schema 无法安全迁移：" + "；".join(errors))
-    reports = []
-    for path, after in planned:
-        path.write_text(after, encoding="utf-8")
-        changed.add(path)
-        reports.append(f"{_rel(path)} 已强制迁移到当前 workflow schema")
+
+    all_errors: list[str] = []
+    all_plans = []
+    for task_dir in _collect_workflow_task_dirs():
+        _, errors, plan = _inspect_workflow_task_dir(
+            task_dir, task_template, note_template
+        )
+        all_errors.extend(errors)
+        if plan["write"] or plan["delete"]:
+            all_plans.append(plan)
+
+    if all_errors:
+        raise SyncError("workflow schema 无法安全迁移：" + "；".join(sorted(all_errors)))
+
+    reports: list[str] = []
+    for plan in all_plans:
+        sorted_writes = sorted(
+            plan["write"], key=lambda item: 0 if item[0].name == "note.md" else 1
+        )
+        for path, content in sorted_writes:
+            path.write_text(content, encoding="utf-8")
+            changed.add(path)
+            reports.append(f"{_rel(path)} 已强制迁移到当前 workflow schema")
+        for path in plan["delete"]:
+            if path.exists():
+                path.unlink()
+                changed.add(path)
+                reports.append(f"{_rel(path)} 已删除（迁移到 task.md）")
     return reports
 
 
@@ -1564,7 +1683,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     transaction = FileTransaction(CONSUMER, ".scratch/repo_sync_rollback")
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
-             "AGENTS.md", "docs/tasks", "docs/blueprint/conventions.md", *MCP_CANDIDATES]
+             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/blueprint/conventions.md", *MCP_CANDIDATES]
     try:
         transaction.begin(paths)
     except ValueError as error:

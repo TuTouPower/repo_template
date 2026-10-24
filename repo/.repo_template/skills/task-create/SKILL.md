@@ -19,7 +19,7 @@ metadata:
 1. 按 effective status 查重；已有等价 task 时复用，不重复创建。
 2. 只澄清代码库无法回答且会改变范围、AC 或产品行为的问题。没有可靠推荐时不要伪造推荐。
 3. 拆分 task：每个 task 有单一交付结果、可证伪 AC 和最小依赖，并适合一个工程意义明确的执行 commit。
-4. 用 `task.py add` 创建目录，严格填写 `spec.md` 和 `task.md`：只替换占位符，不删除模板规范块，不手改 front matter。
+4. 用 `task.py add` 创建目录，严格填写 `task.md` 和 `note.md`：只替换占位符，不删除模板规范块，不手改 front matter。
 5. 按风险设置 `review_level`：安全、鉴权、资金、并发、迁移、协议兼容用 `full`；其它通常用 `single`。
 6. 对每个 task 运行 `task.py preflight {tid} --creation`。结构、AC、占位符或裸 `UNVERIFIED` 为 FAIL；已分类的 `UNVERIFIED-BLOCKING` 可作为 backlog WARN，但仍不能 start。
 7. 列出新增 task、依赖建议和创建有效性结果，询问是否提交；同意后本批 task 和派生 index 用一个创建 commit 提交。

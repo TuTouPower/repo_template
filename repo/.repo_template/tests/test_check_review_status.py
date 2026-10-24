@@ -269,7 +269,7 @@ def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nreview_level: typo\n---\n## Review 处置\n",
         encoding="utf-8",
     )
@@ -314,7 +314,7 @@ def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nreview_level: single\n---\n## Review 处置\n\n"
         "| finding_id | severity | status | rationale | fix_ref |\n"
         "|---|---|---|---|---|\n"
@@ -405,7 +405,7 @@ def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nreview_level: single\ndiff_anchor: "
         + "0" * 40 + "\n---\n## Review 处置\n",
         encoding="utf-8",
@@ -469,7 +469,7 @@ def _scope_task_dir(tmp_path, monkeypatch, scope_line):
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs/tasks/t001_x"
     task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nreview_level: single\ndiff_anchor: "
         + "0" * 40 + "\n---\n## Review 处置\n",
         encoding="utf-8",
@@ -584,7 +584,7 @@ def test_main_scope_reports_format_error(tmp_path, monkeypatch, capsys):
 
 def test_checker_reads_persisted_budget_and_refuses_implicit_raise(tmp_path, monkeypatch, capsys):
     task_dir = _scope_task_dir(tmp_path, monkeypatch, f'reviewed_scope: {SCOPE}\n')
-    path = task_dir / 'task.md'
+    path = task_dir / 'note.md'
     path.write_text(path.read_text().replace('review_level: single', 'review_level: single\nreview_limit: 8\nverify_limit: 7'))
     monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: SCOPE)
     monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir)])

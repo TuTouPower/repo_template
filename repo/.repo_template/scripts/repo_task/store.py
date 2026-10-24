@@ -71,16 +71,16 @@ def _scan_tasks_in_directories(tasks_dir: Path, archive_dir: Path) -> list[dict]
         for directory in sorted(base.iterdir()):
             if not directory.is_dir() or (not archived and directory.name == ctx.TEMPLATE_DIR.name):
                 continue
-            task_md = directory / "task.md"
-            if not task_md.is_file():
-                raise ctx.TaskDataError(f"{task_md.parent}: 缺 task.md")
+            note_md = directory / "note.md"
+            if not note_md.is_file():
+                raise ctx.TaskDataError(f"{note_md.parent}: 缺 note.md")
             fm, _ = parse_front_matter_text(
-                task_md.read_text(encoding="utf-8"), source=str(task_md)
+                note_md.read_text(encoding="utf-8"), source=str(note_md)
             )
             tasks.append(_task_record(
                 fm,
                 directory=f"{rel_base}/{directory.name}",
-                source=str(task_md),
+                source=str(note_md),
                 archived=archived,
             ))
     return _validate_task_records(tasks)
@@ -106,7 +106,7 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
     """扫描指定 commit/ref 中的 task，不签出、不写工作区。
 
     与 scan_tasks() 一致：只枚举 docs/tasks 与 docs/archive/tasks 下一级目录，
-    每个目录必须存在根 task.md；嵌套 task.md 忽略，缺根 task.md 报数据损坏。
+    每个目录必须存在根 note.md；嵌套 note.md 忽略，缺根 note.md 报数据损坏。
     """
     r = _git([
         "ls-tree", "-r", "--name-only", ref, "--",
@@ -133,11 +133,11 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
         directory = (
             f"docs/archive/tasks/{name}" if archived else f"docs/tasks/{name}"
         )
-        path = f"{directory}/task.md"
+        path = f"{directory}/note.md"
         try:
             text = git_text_at_ref(ref, path)
         except ctx.TaskDataError:
-            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 task.md") from None
+            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 note.md") from None
         fm, _ = parse_front_matter_text(text, source=f"{ref}:{path}")
         tasks.append(_task_record(
             fm,
@@ -154,12 +154,12 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
         (
             ctx.ACTIVE_PATH,
             [t for t in tasks if t["status"] not in ctx.ARCHIVED_STATUSES],
-            "docs/tasks/{tid}_{slug}/task.md front matter",
+            "docs/tasks/{tid}_{slug}/note.md front matter",
         ),
         (
             ctx.ARCHIVE_PATH,
             [t for t in tasks if t["status"] in ctx.ARCHIVED_STATUSES],
-            "docs/archive/tasks/{tid}_{slug}/task.md front matter",
+            "docs/archive/tasks/{tid}_{slug}/note.md front matter",
         ),
     )
     for path, rows, authority in groups:
@@ -202,9 +202,9 @@ def task_effective_state(tid: str, primary_fm: dict) -> str | None:
     registered = worktree_paths().get(str(wt_path))
     if registered:
         task_dir = ctx.REPO_ROOT / "docs" / "tasks" / f"{tid}_{primary_fm.get('slug', '')}"
-        wt_task = wt_path / task_dir.relative_to(ctx.REPO_ROOT) / "task.md"
-        if wt_task.is_file():
-            wt_fm, _ = parse_front_matter(wt_task)
+        wt_note = wt_path / task_dir.relative_to(ctx.REPO_ROOT) / "note.md"
+        if wt_note.is_file():
+            wt_fm, _ = parse_front_matter(wt_note)
             wt_status = wt_fm.get("status", "")
             if wt_status != "backlog":
                 return (
@@ -243,7 +243,7 @@ def discover_effective_sources() -> dict[str, dict]:
     """每个有效 task 的状态 + 读取来源与位置。
 
     返回 tid -> {tid, slug, title, status, note, source, read_at}：
-    - source="worktree"：read_at=worktree 绝对路径（在其中读 task.md / 跑 show）
+    - source="worktree"：read_at=worktree 绝对路径（在其中读 note.md / 跑 show）
     - source="branch"：read_at=未合并分支 short name（用 show/list/preflight --ref）
     - source="main"：read_at=None（主干文档即权威）
     只读；供 skill 依「task 状态读取优先级」在正确位置读取 task。
@@ -300,7 +300,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
         if not match:
             continue
         owner_tid = match.group(1)
-        # 单个 worktree 的 task.md 损坏（agent 写一半崩溃）不得让整个
+        # 单个 worktree 的 note.md 损坏（agent 写一半崩溃）不得让整个
         # ps/reconcile/view 失败：标记为脏状态并继续观察其余 task。
         try:
             tasks = scan_tasks_in_worktree(path)
@@ -309,9 +309,9 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
             effective[owner_tid] = {
                 "tid": owner_tid,
                 "slug": "",
-                "title": "(worktree task.md 损坏)",
+                "title": "(worktree note.md 损坏)",
                 "status": "active",
-                "note": f"登记 worktree {path} 的 task.md 无法解析",
+                "note": f"登记 worktree {path} 的 note.md 无法解析",
             }
             sources[owner_tid] = ("worktree", str(path))
             continue
@@ -330,14 +330,14 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
     return [(tid, task, *sources[tid]) for tid, task in effective.items()]
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
-    """返回 (索引记录, task.md 路径, front matter, 正文)。"""
+    """返回 (索引记录, note.md 路径, front matter, 正文)。"""
     task = find_task(tid)
     if not task:
         sys.exit(
             f"{tid} 不存在于当前工作区（{ctx._rel(ctx.REPO_ROOT) or ctx.REPO_ROOT.name}）。"
             "进行中 task 的文档随其 worktree，请在对应 worktree 内执行"
         )
-    path = ctx.REPO_ROOT / task["dir"] / "task.md"
+    path = ctx.REPO_ROOT / task["dir"] / "note.md"
     fm, body = parse_front_matter(path)
     return task, path, fm, body
 
@@ -346,7 +346,7 @@ def load_task_at_ref(tid: str, ref: str) -> tuple[dict, dict, str]:
     task = find_task(tid, scan_tasks_at_ref(ref))
     if not task:
         raise ctx.TaskDataError(f"{tid} 不存在于 ref {ref!r}")
-    path = f"{task['dir']}/task.md"
+    path = f"{task['dir']}/note.md"
     fm, body = parse_front_matter_text(
         git_text_at_ref(ref, path),
         source=f"{ref}:{path}",

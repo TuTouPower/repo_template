@@ -52,7 +52,7 @@ def recovery_state(tid: str) -> dict:
         return state
     task_dir = worktree / task["dir"]
     state["task_dir"] = str(task_dir)
-    fm, _ = parse_front_matter(task_dir / "task.md")
+    fm, _ = parse_front_matter(task_dir / "note.md")
     if fm.get("branch") != branch or fm.get("tid") != tid:
         return state
     if fm["status"] == "active":

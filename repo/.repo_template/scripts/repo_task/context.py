@@ -61,12 +61,13 @@ SPEC_REQUIRED_HEADINGS = (
 )
 SPEC_GUIDE_OPEN = "<!-- 规范（门禁必留，不得删除） -->"
 SPEC_GUIDE_CLOSE = "<!-- /规范 -->"
-TASK_REQUIRED_HEADINGS = (
+NOTE_REQUIRED_HEADINGS = (
     (1, "Task 过程总账"),
     (2, "实施笔记"),
     (2, "Review 处置"),
     (2, "收尾报告"),
 )
+TASK_REQUIRED_HEADINGS = NOTE_REQUIRED_HEADINGS
 IMPLEMENTATION_NOTE_GUIDANCE = (
     "执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。",
     "创建期不预测实施步骤。只记有追溯价值的内容；无事项时写“无”。",

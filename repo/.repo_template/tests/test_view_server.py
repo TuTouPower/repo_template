@@ -69,10 +69,10 @@ def repo_layout(tmp_path, monkeypatch):
     tasks_dir.mkdir(parents=True)
     archive_dir.mkdir(parents=True)
     (tasks_dir / "t001_spec_doc").mkdir()
-    (tasks_dir / "t001_spec_doc" / "spec.md").write_text("# spec 正文\n", encoding="utf-8")
     (tasks_dir / "t001_spec_doc" / "task.md").write_text("# task 正文\n", encoding="utf-8")
+    (tasks_dir / "t001_spec_doc" / "note.md").write_text("# note 正文\n", encoding="utf-8")
     (archive_dir / "t002_archived").mkdir()
-    (archive_dir / "t002_archived" / "spec.md").write_text("# 归档 spec\n", encoding="utf-8")
+    (archive_dir / "t002_archived" / "task.md").write_text("# 归档 task\n", encoding="utf-8")
     monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(ctx, "TASKS_DIR", tasks_dir)
     monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive_dir)
@@ -81,20 +81,20 @@ def repo_layout(tmp_path, monkeypatch):
 
 def test_resolve_task_doc_ok(repo_layout):
     tasks = {"t001": {"dir": "docs/tasks/t001_spec_doc"}}
-    path = view_server._resolve_task_doc(tasks, "t001", "spec")
-    assert path.read_text(encoding="utf-8") == "# spec 正文\n"
-    assert view_server._resolve_task_doc(tasks, "t001", "task").name == "task.md"
+    path = view_server._resolve_task_doc(tasks, "t001", "task")
+    assert path.read_text(encoding="utf-8") == "# task 正文\n"
+    assert view_server._resolve_task_doc(tasks, "t001", "note").name == "note.md"
 
 
 def test_resolve_task_doc_archived_ok(repo_layout):
     tasks = {"t002": {"dir": "docs/archive/tasks/t002_archived"}}
-    path = view_server._resolve_task_doc(tasks, "t002", "spec")
-    assert path.read_text(encoding="utf-8") == "# 归档 spec\n"
+    path = view_server._resolve_task_doc(tasks, "t002", "task")
+    assert path.read_text(encoding="utf-8") == "# 归档 task\n"
 
 
 def test_resolve_task_doc_rejects_unknown_tid(repo_layout):
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc({}, "t999", "spec")
+        view_server._resolve_task_doc({}, "t999", "task")
 
 
 def test_resolve_task_doc_rejects_bad_doc(repo_layout):
@@ -109,27 +109,27 @@ def test_resolve_task_doc_rejects_missing_file(repo_layout):
     (tasks_dir / "t003_missing").mkdir()
     tasks3 = {"t003": {"dir": "docs/tasks/t003_missing"}}
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc(tasks3, "t003", "spec")
+        view_server._resolve_task_doc(tasks3, "t003", "task")
 
 
 def test_resolve_task_doc_rejects_path_traversal(repo_layout):
     tasks = {"t001": {"dir": "../../../etc"}}
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc(tasks, "t001", "spec")
+        view_server._resolve_task_doc(tasks, "t001", "task")
 
 
 def test_read_task_doc_from_worktree_source(tmp_path):
     """worktree 来源任务：读该 worktree 的文件，而非主仓过期副本。"""
     main = tmp_path / "main"
     (main / "docs/tasks/t001_x").mkdir(parents=True)
-    (main / "docs/tasks/t001_x/spec.md").write_text("# 主仓旧版\n", encoding="utf-8")
+    (main / "docs/tasks/t001_x/task.md").write_text("# 主仓旧版\n", encoding="utf-8")
     worktree = tmp_path / "main_t001"
     (worktree / "docs/tasks/t001_x").mkdir(parents=True)
-    (worktree / "docs/tasks/t001_x/spec.md").write_text("# worktree 最新\n", encoding="utf-8")
+    (worktree / "docs/tasks/t001_x/task.md").write_text("# worktree 最新\n", encoding="utf-8")
 
     schedule = {"tasks": {"t001": {"dir": "docs/tasks/t001_x"}}}
     sources = {"t001": {"source": "worktree", "read_at": str(worktree)}}
-    body = view_server._read_task_doc(schedule, sources, "t001", "spec")
+    body = view_server._read_task_doc(schedule, sources, "t001", "task")
     assert body.decode("utf-8") == "# worktree 最新\n"
 
 
@@ -152,7 +152,7 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     _git(repo, "commit", "-m", "init")
     _git(repo, "checkout", "-b", "t001_x")
     (repo / "docs/archive/tasks/t001_x").mkdir(parents=True)
-    (repo / "docs/archive/tasks/t001_x/task.md").write_text("# 分支归档 task\n", encoding="utf-8")
+    (repo / "docs/archive/tasks/t001_x/note.md").write_text("# 分支归档 note\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "task")
     _git(repo, "checkout", "main")
@@ -160,10 +160,10 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     schedule = {"tasks": {"t001": {"dir": "docs/archive/tasks/t001_x"}}}
     sources = {"t001": {"source": "branch", "read_at": "t001_x"}}
-    body = view_server._read_task_doc(schedule, sources, "t001", "task")
-    assert body.decode("utf-8") == "# 分支归档 task\n"
+    body = view_server._read_task_doc(schedule, sources, "t001", "note")
+    assert body.decode("utf-8") == "# 分支归档 note\n"
     with pytest.raises(ctx.TaskDataError):
-        view_server._read_task_doc(schedule, sources, "t001", "spec")
+        view_server._read_task_doc(schedule, sources, "t001", "task")
 
 
 def test_handler_maps_system_exit_to_error_response():

@@ -73,13 +73,13 @@ def check_finalization(root, tid, task_dir):
         included = True
     if included:
         matches = [path for parent in ("docs/tasks", "docs/archive/tasks")
-                   for path in (root / parent).glob(f"{tid}_*/task.md")]
+                   for path in (root / parent).glob(f"{tid}_*/note.md")]
         if len(matches) != 1 or matches[0].parent.resolve() != task_dir.resolve():
             raise ValueError(f"当前 specs_index task 引用缺失或重复：{tid}")
-    task_text = (task_dir / "task.md").read_text(encoding="utf-8")
-    if not included and not re.search(r"(?m)^- specs_index: not_applicable: \S.+$", task_text):
-        raise ValueError("当前 task 未进入 specs_index；无长期 spec 变更时在 task.md 写 - specs_index: not_applicable: 原因")
-    combined = task_text + "\n" + (task_dir / "spec.md").read_text(encoding="utf-8")
+    note_text = (task_dir / "note.md").read_text(encoding="utf-8")
+    if not included and not re.search(r"(?m)^- specs_index: not_applicable: \S.+$", note_text):
+        raise ValueError("当前 task 未进入 specs_index；无长期 spec 变更时在 note.md 写 - specs_index: not_applicable: 原因")
+    combined = note_text + "\n" + (task_dir / "task.md").read_text(encoding="utf-8")
     for sid in _references(combined, "s"):
         directories = [path for parent in ("docs/spikes", "docs/archive/spikes")
                        for path in (root / parent).glob(f"{sid}_*") if path.is_dir()]

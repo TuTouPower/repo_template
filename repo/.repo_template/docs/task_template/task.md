@@ -1,58 +1,70 @@
----
-tid: t000
-slug: example_slug
-title: "示例 task 标题"
-status: backlog
-branch: ""
-worktree: ""
-review_level: full
-review_limit: 5
-verify_limit: 5
-diff_anchor: ""
-depends_on: ""
-conflicts_with: ""
-note: ""
----
+# Task spec
 
-# Task 过程总账
+## 背景
 
-front matter 只经 `task.py` 修改；reviewer 只写对应 `review_*.md`。
+{为什么需要此变更。}
 
-## 实施笔记
+## 契约区
 
-执行期记录关键步骤、决策、验证、阻塞和用户批准的新轮次上限。
+### 范围
 
-创建期不预测实施步骤。只记有追溯价值的内容；无事项时写“无”。
+- {本 task 包含什么。}
 
-无
+### 非范围
 
-## Review 处置
+- {明确不做什么。}
 
-每个结构化 finding 一行。`已修` 表示本 task 已修复；`遗留` 必须指向 `pNNN` 或 follow-up tid；`撤回` 必须写清理由。critical/important 未解决时不得 PASS。
+### 验收标准
 
-### Round N (YYYY-MM-DDThh:mm:ss+08:00)
+<!-- 规范（门禁必留，不得删除） -->
 
-|finding_id|severity|status|rationale|fix_ref|
-|---|---|---|---|---|
-|t000_code_f001|critical/important/minor|已修/遗留/撤回|一句话|文件:行 / pNNN / tid|
+只写可观察、可独立验证的行为；每条使用稳定且不复用的 `AC-NNN`。需真实部署或人工环境验证时在编号前加 `[deploy]`。技术选型不作为行为 AC。
 
-无 finding 时写“Round N 零 finding”。
+<!-- /规范 -->
 
-## 收尾报告
+- [ ] AC-001：{可独立验证的行为结果。}
 
-### 验收与验证
+### 可测试性声明
 
-- spec：[`spec.md`](spec.md)
-- 结果：全部满足 / 未满足
-- 测试：待执行时填写
-- 黑盒：待执行时填写
-- review：待执行时填写
-- AC 证据：见 `handoff.json`
+<!-- 规范（门禁必留，不得删除） -->
 
-### 结果摘要
+逐条说明不可自动测试的 AC 及替代验证；全部可测则写“全部 AC 可自动测试”。
 
-- 待执行时填写；遗留只写引用，不复制正文
+<!-- /规范 -->
 
-### 长期文档闭环
+- AC-001：{不可测原因与替代验证方式}
 
-本 task 须出现在 specs_index 的关联 task 列；无长期 spec 变更时写 `- specs_index: not_applicable: 具体原因`。正式 spike 须有 report、现存 finding、采纳结论、后续 tid 或无需后续理由；finish 会检查这些引用。
+## 上下文区
+
+- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）
+
+### 有意不测
+
+- {分支或场景}：{不测原因}
+
+### 测试策略
+
+- {内容}
+
+### 未知契约清单
+
+<!-- 规范（门禁必留，不得删除） -->
+
+未核实的外部契约标为 `UNVERIFIED-BLOCKING` 或 `UNVERIFIED-SPIKE`；核实后改写为结论和验证方式。无则写“无”。
+
+<!-- /规范 -->
+
+- {契约}：{分类标记}，{待验证方式}
+
+### 风险与回退
+
+- 风险：{可能失败的地方}
+- 回退：{失败后如何恢复}
+
+### 依赖与约束
+
+- {前置依赖、平台、安全或兼容性约束；无则写「无」。}
+
+### Finalization 时更新的 blueprint
+
+- `{文件路径}`：{具体条目；无则写「无」}

@@ -25,5 +25,5 @@
 
 ## 原子写
 
-- 写权威/派生状态数据（`task.md` front matter、`docs/tasks_index.json` / `docs/archive/tasks_index.json`、`docs/pending/` / `docs/archive/pending/`、review prompt 文件等）必须走 tmp 文件 + fsync + `os.replace` 原子写，防中断/掉电产生半写状态。
+- 写权威/派生状态数据（`note.md` front matter、`docs/tasks_index.json` / `docs/archive/tasks_index.json`、`docs/pending/` / `docs/archive/pending/`、review prompt 文件等）必须走 tmp 文件 + fsync + `os.replace` 原子写，防中断/掉电产生半写状态。
 - 公共 helper：`from repo_task.documents import atomic_write_text`。

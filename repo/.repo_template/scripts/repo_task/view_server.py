@@ -29,7 +29,7 @@ from .scheduling import compute_schedule
 from .store import discover_effective_sources, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
-_DOC_NAMES = {"spec": "spec.md", "task": "task.md"}
+_DOC_NAMES = {"task": "task.md", "note": "note.md", "spec": "task.md"}
 
 
 def _find_free_port(host: str) -> int:
@@ -71,7 +71,7 @@ def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str)
         raise ctx.TaskDataError(f"未知任务 {tid!r}")
     filename = _DOC_NAMES.get(doc)
     if filename is None:
-        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 spec/task）")
+        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/note）")
     directory = tasks[tid].get("dir", "")
     root = base.resolve()
     path = (root / directory / filename).resolve()
@@ -99,7 +99,7 @@ def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str) -> bytes:
             raise ctx.TaskDataError(f"未知任务 {tid!r}")
         filename = _DOC_NAMES.get(doc)
         if filename is None:
-            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 spec/task）")
+            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/note）")
         rel = f"{tasks[tid].get('dir', '')}/{filename}"
         return git_text_at_ref(entry["read_at"], rel).encode("utf-8")
     base = (

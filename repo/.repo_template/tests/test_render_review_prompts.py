@@ -140,11 +140,11 @@ def _make_prompts_dir(tmp_path):
 def _make_task_dir(tmp_path, level="full", contract="AC1", context="策略"):
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         f'---\ntid: t001\nslug: foo\ndiff_anchor: "abc1234"\nreview_level: "{level}"\n---\nbody\n',
         encoding="utf-8",
     )
-    (task_dir / "spec.md").write_text(
+    (task_dir / "task.md").write_text(
         f"# Spec\n## 契约区\n\n{contract}\n\n## 上下文区\n\n{context}\n",
         encoding="utf-8",
     )
@@ -188,7 +188,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", repo)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: ../private.md\n---\nbody\n",
         encoding="utf-8",
@@ -206,7 +206,7 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
     (repo / "linked_spec.md").symlink_to(outside)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: linked_spec.md\n---\nbody\n",
         encoding="utf-8",
@@ -219,7 +219,7 @@ def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: docs\\spec.md\n---\nbody\n",
         encoding="utf-8",
@@ -233,11 +233,11 @@ def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         '---\ntid: t001\nslug: foo\ndiff_anchor: "abc"\n---\nx\n',
         encoding="utf-8",
     )
-    (task_dir / "spec.md").write_text("# Spec\n无契约区\n", encoding="utf-8")
+    (task_dir / "task.md").write_text("# Spec\n无契约区\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="契约区"):
         render_review_prompts(task_dir)
 
@@ -247,11 +247,11 @@ def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         '---\ntid: t001\nslug: foo\ndiff_anchor: ""\n---\nx\n',
         encoding="utf-8",
     )
-    (task_dir / "spec.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
+    (task_dir / "task.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="diff_anchor"):
         render_review_prompts(task_dir)
 
@@ -291,7 +291,7 @@ def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-m", "init")
     anchor = _git(tmp_path, "rev-parse", "--short", "HEAD").stdout.strip()
-    (task_dir / "task.md").write_text(
+    (task_dir / "note.md").write_text(
         f'---\ntid: t001\nslug: foo\ndiff_anchor: "{anchor}"\nreview_level: "full"\n---\nbody\n',
         encoding="utf-8",
     )
@@ -320,7 +320,7 @@ def test_validate_diff_anchor_rejects_unknown_revision(tmp_path, monkeypatch):
 
 def test_drift_notice_appended_when_contract_changed(tmp_path, monkeypatch):
     task_dir = _init_repo_with_task(tmp_path, monkeypatch)
-    (task_dir / "spec.md").write_text(
+    (task_dir / "task.md").write_text(
         "# Spec\n## 契约区\n\nAC1 改宽\n\n## 上下文区\n\n策略\n",
         encoding="utf-8",
     )
@@ -333,7 +333,7 @@ def test_drift_notice_appended_when_contract_changed(tmp_path, monkeypatch):
 
 def test_no_drift_notice_when_only_context_changed(tmp_path, monkeypatch):
     task_dir = _init_repo_with_task(tmp_path, monkeypatch)
-    (task_dir / "spec.md").write_text(
+    (task_dir / "task.md").write_text(
         "# Spec\n## 契约区\n\nAC1\n\n## 上下文区\n\n策略 v2\n",
         encoding="utf-8",
     )

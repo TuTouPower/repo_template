@@ -25,7 +25,7 @@ def _write_task(tasks_dir, tid, slug, *, status="backlog", depends_on="", confli
     task_dir = tasks_dir / f"{tid}_{slug}"
     task_dir.mkdir(parents=True)
     write_front_matter(
-        task_dir / "task.md",
+        task_dir / "note.md",
         {
             "tid": tid, "slug": slug, "title": slug, "status": status,
             "branch": "", "worktree": "", "review_level": "full",
@@ -45,7 +45,7 @@ def schedule_repo(tmp_path, monkeypatch):
     template.mkdir(parents=True)
     archive.mkdir(parents=True)
     write_front_matter(
-        template / "task.md",
+        template / "note.md",
         {"tid": "t000", "slug": "task_template", "title": "template", "status": "backlog"},
         "# template\n",
     )

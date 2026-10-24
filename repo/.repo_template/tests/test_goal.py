@@ -26,7 +26,7 @@ def _git(repo, *args, check=True):
 
 
 def _valid_spec():
-    text = (TASK_TEMPLATE_DIR / "spec.md").read_text(encoding="utf-8")
+    text = (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8")
     replacements = {
         "{为什么需要此变更。}": "测试背景。",
         "{本 task 包含什么。}": "测试范围。",
@@ -64,16 +64,16 @@ def git_repo(tmp_path):
     )
     shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
     shutil.copytree(TASK_TEMPLATE_DIR, template)
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "task.md")
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "note.md")
     for tid, slug in (("t001", "alpha"), ("t002", "beta")):
         task_dir = tasks / f"{tid}_{slug}"
         shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(task_dir / "task.md", {
+        write_front_matter(task_dir / "note.md", {
             "tid": tid, "slug": slug, "title": slug, "status": "backlog",
             "branch": "", "worktree": "", "review_level": "full",
             "diff_anchor": "", "note": "",
         }, body)
-        (task_dir / "spec.md").write_text(_valid_spec(), encoding="utf-8")
+        (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
     (repo / ".gitignore").write_text(
         "__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8"
     )

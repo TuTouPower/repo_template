@@ -3,7 +3,7 @@
 本报告必须含一行审查范围指纹，格式精确如下（整行照抄，禁止反引号、加粗或列表前缀等 markdown 修饰）：
 reviewed_scope: {review_scope_fingerprint}
 
-指纹按相对 `{diff_anchor}` 的完整 worktree 内容变化计算，包含未跟踪交付文件，绑定 review_level，排除 task.md 正文 / 处置表 / pending / findings 等流程文件。实施方派审前须对明确的新交付文件执行 `git add -N`，让它们同时出现在 reviewer 的 `git diff` 中。`check_review_status.py` 重算当前指纹比对：
+指纹按相对 `{diff_anchor}` 的完整 worktree 内容变化计算，包含未跟踪交付文件，绑定 review_level，排除 note.md 正文 / 处置表 / pending / findings 等流程文件。实施方派审前须对明确的新交付文件执行 `git add -N`，让它们同时出现在 reviewer 的 `git diff` 中。`check_review_status.py` 重算当前指纹比对：
 
 - 报告缺 `reviewed_scope` 行，或指纹与当前不一致 → 判定「审查后又改动，PASS 失效」，overall=INCOMPLETE，须重审。
 - 多轮追加时，`## Round N` 小节内写**本轮** reviewed_scope 行；脚本取全文最后一条与当前比对。
@@ -22,11 +22,11 @@ reviewed_scope: {review_scope_fingerprint}
 
 ### read-only 边界
 
-不改代码、不改测试、不改 `spec.md` / `task.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
+不改代码、不改测试、不改 `task.md` / `note.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
 
 ### 不信任 implementer 自述
 
-`task.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以相对 `{diff_anchor}` 的完整交付内容、`git -C '{repo_root}' diff {diff_anchor}`、`git status --short` 与代码/测试本身为准；若状态中仍有 reviewer 看不到的未跟踪交付文件，结论必须为 INCOMPLETE。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
+`note.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以相对 `{diff_anchor}` 的完整交付内容、`git -C '{repo_root}' diff {diff_anchor}`、`git status --short` 与代码/测试本身为准；若状态中仍有 reviewer 看不到的未跟踪交付文件，结论必须为 INCOMPLETE。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
 
 ### AC 复验披露（结论段必写）
 
@@ -91,9 +91,9 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 
 ### verdict 判定（仅本报告）
 
-`critical` / `important` 为 blocking finding；`minor` 非阻断，但仍须由 implementer 写入 `task.md` 处置表。
+`critical` / `important` 为 blocking finding；`minor` 非阻断，但仍须由 implementer 写入 `note.md` 处置表。
 
-- **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `task.md` 处置表填写；task 阻塞由实施者记录在实施笔记和 attempt report，不是 reviewer verdict。
+- **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `note.md` 处置表填写；task 阻塞由实施者记录在实施笔记和 attempt report，不是 reviewer verdict。
 - **PASS**：以 `git -C '{repo_root}' diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor）。
 - **FAIL**：仍存在未解决的 critical / important。
 - **Round N（N≥2）**：追加新 `## Round N` 小节并给**本轮** verdict（脚本取最后一条 `verdict`）。前轮 blocker 须用 diff/代码核实是否已消除或已按撤回流程作废，**不**采信处置表自称「已修」。前轮 blocker 仍在或本轮有新 blocker → FAIL；否则 PASS。

@@ -28,14 +28,14 @@ def cmd_add(args):
         sys.exit("title 不能为空")
     if not ctx.TEMPLATE_DIR.is_dir():
         sys.exit(f"缺模板目录 {ctx._rel(ctx.TEMPLATE_DIR)}")
-    template_spec = ctx.TEMPLATE_DIR / "spec.md"
     template_task = ctx.TEMPLATE_DIR / "task.md"
-    if not template_spec.is_file() or not template_task.is_file():
-        sys.exit(f"模板目录 {ctx._rel(ctx.TEMPLATE_DIR)} 缺 spec.md 或 task.md")
-    _, template_task_body = parse_front_matter(template_task)
+    template_note = ctx.TEMPLATE_DIR / "note.md"
+    if not template_task.is_file() or not template_note.is_file():
+        sys.exit(f"模板目录 {ctx._rel(ctx.TEMPLATE_DIR)} 缺 task.md 或 note.md")
+    _, template_note_body = parse_front_matter(template_note)
     template_problems, _ = validate_task_documents(
-        template_spec.read_text(encoding="utf-8"),
-        template_task_body,
+        template_task.read_text(encoding="utf-8"),
+        template_note_body,
         allow_template_placeholders=True,
     )
     if template_problems:
@@ -53,8 +53,8 @@ def cmd_add(args):
         if task_dir.exists():
             sys.exit(f"{ctx._rel(task_dir)} 已存在；请提示用户处理")
         shutil.copytree(ctx.TEMPLATE_DIR, task_dir)
-        task_md = task_dir / "task.md"
-        fm, body = parse_front_matter(task_md)
+        note_md = task_dir / "note.md"
+        fm, body = parse_front_matter(note_md)
         fm.update({
             "tid": tid,
             "slug": args.slug,
@@ -69,14 +69,14 @@ def cmd_add(args):
             "note": args.note or "",
         })
         fm.pop("schedule_status", None)
-        write_front_matter(task_md, fm, body)
+        write_front_matter(note_md, fm, body)
         try:
             rebuild_index()
         except (OSError, ctx.TaskDataError) as error:
             shutil.rmtree(task_dir, ignore_errors=True)
             sys.exit(f"add 失败（{error}）；已回滚新建目录 {ctx._rel(task_dir)}")
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
-    print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 spec.md / task.md）")
+    print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 task.md / note.md）")
 
 @control_locked
 def cmd_edit(args):
@@ -349,21 +349,21 @@ def cmd_preflight(args):
     elif fm["status"] not in ("active", "backlog"):
         problems.append(f"status={fm['status']}，不可执行")
 
-    # 2. spec 完整与未知契约
-    spec_rel = f"{task['dir']}/spec.md"
+    # 2. task 需求规格完整与未知契约
+    task_doc_rel = f"{task['dir']}/task.md"
     if source_ref:
         try:
-            text = git_text_at_ref(ref_sha, spec_rel)
+            text = git_text_at_ref(ref_sha, task_doc_rel)
         except ctx.TaskDataError:
             text = ""
-            problems.append("缺 spec.md")
+            problems.append("缺 task.md")
     else:
-        spec = task_dir / "spec.md"
-        if not spec.is_file():
+        task_doc = task_dir / "task.md"
+        if not task_doc.is_file():
             text = ""
-            problems.append("缺 spec.md")
+            problems.append("缺 task.md")
         else:
-            text = spec.read_text(encoding="utf-8")
+            text = task_doc.read_text(encoding="utf-8")
     if text:
         document_problems, document_warnings = validate_task_documents(
             text,
@@ -625,9 +625,9 @@ def cmd_rewind(args):
 
     # 新 start 不回写 main；从主仓 rewind 时读取登记 worktree 中的 active 状态。
     if fm["status"] == "backlog" and str(worktree) in worktree_paths():
-        worktree_task = worktree / task["dir"] / "task.md"
-        if worktree_task.is_file():
-            worktree_fm, _ = parse_front_matter(worktree_task)
+        worktree_note = worktree / task["dir"] / "note.md"
+        if worktree_note.is_file():
+            worktree_fm, _ = parse_front_matter(worktree_note)
             if worktree_fm.get("status") == "active":
                 fm = worktree_fm
 
@@ -711,13 +711,13 @@ def cmd_rewind(args):
             f"effective={effective} -> {target}（main 记录为 {recorded}）"
         )
     append_note(fm, f"rewound: {transition}; {args.reason}")
-    # 审计前移：audit 失败则状态未写（task.md 仍 active），rewind 可重试。
+    # 审计前移：audit 失败则状态未写（note.md 仍 active），rewind 可重试。
     # 若先写 front matter 再审计，失败后「状态已迁 + 审计缺失 + 不可重试」（F15）。
     try:
         append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
     except ctx.TaskDataError as error:
         sys.exit(
-            f"rewind 审计写入失败（{error}）；task.md 未写仍为 {effective}。"
+            f"rewind 审计写入失败（{error}）；note.md 未写仍为 {effective}。"
             "worktree/分支可能已清理；直接重试 rewind 将正常完成"
         )
     write_front_matter(path, fm, body)
@@ -814,11 +814,13 @@ def cmd_show(args):
         fields = dict(fm)
         fields["source_ref"] = f"{ref_name}@{ref_sha[:12]}"
         fields["dir"] = task["dir"]
-        fields["task_md"] = f"{ref_name}:{task['dir']}/task.md"
+        fields["note_md"] = f"{ref_name}:{task['dir']}/note.md"
+        fields["task_md"] = f"{ref_name}:{task['dir']}/note.md"
     else:
         task, path, fm, body = load_task(args.tid)
         fields = dict(fm)
         fields["dir"] = task["dir"]
+        fields["note_md"] = ctx._rel(path)
         fields["task_md"] = ctx._rel(path)
     width = max(len(k) for k in fields)
     for k, v in fields.items():

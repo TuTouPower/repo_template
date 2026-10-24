@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""render_review_prompts.py - 从 task.md front matter 渲染 code/test reviewer 完整 prompt。
+"""render_review_prompts.py - 从 note.md front matter 渲染 code/test reviewer 完整 prompt。
 
 提示词正文存于 .repo_template/docs/review_prompts/ 下三个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt）。
 
-reviewer 不再自行去读 spec：契约区与上下文区正文直接注入 prompt，消除信息不对称。
+reviewer 不再自行去读 task：契约区与上下文区正文直接注入 prompt，消除信息不对称。
 契约区自 diff_anchor 后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
 
 用法：
   python3 .repo_template/scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
-  python3 .repo_template/scripts/render_review_prompts.py --task docs/tasks/t001_my_slug/task.md
+  python3 .repo_template/scripts/render_review_prompts.py --note docs/tasks/t001_my_slug/note.md
   python3 .repo_template/scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
 
 必填 front matter：tid, slug, diff_anchor
-可选：spec_path（默认 <task_dir>/spec.md）、review_level
+可选：spec_path（默认 <task_dir>/task.md）、review_level
 默认 stdout；--out-dir 时写入 code_review_prompt.md 与 test_review_prompt.md
 """
 
@@ -185,7 +185,7 @@ def render_review_prompts(
     task_path: Path | None = None,
 ) -> dict[str, str]:
     task_dir, rel_task_dir = resolve_repo_path(task_dir, label="task directory")
-    task_path = task_path or task_dir / "task.md"
+    task_path = task_path or task_dir / "note.md"
     task_path, _ = resolve_repo_path(task_path, label="task file", require_file=True)
 
     template_paths = {
@@ -214,7 +214,7 @@ def render_review_prompts(
         )
     diff_anchor = validate_diff_anchor(fm["diff_anchor"])
 
-    spec_value = fm.get("spec_path") or f"{rel_task_dir}/spec.md"
+    spec_value = fm.get("spec_path") or f"{rel_task_dir}/task.md"
     if "\\" in spec_value:
         sys.exit(f"spec_path must use POSIX separators: {spec_value!r}")
     spec_input = Path(spec_value)
@@ -282,8 +282,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--task", help="task.md 路径")
-    parser.add_argument("--task-dir", help="task 目录（内含 task.md）")
+    parser.add_argument("--task", "--note", dest="task", help="note.md 路径")
+    parser.add_argument("--task-dir", help="task 目录（内含 note.md）")
     parser.add_argument("--out-dir", help="输出目录；不填则 stdout")
     args = parser.parse_args()
 

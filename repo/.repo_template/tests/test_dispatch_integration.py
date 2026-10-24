@@ -28,7 +28,7 @@ def _git(repo, *args, check=True):
 
 
 def _valid_spec():
-    text = (TASK_TEMPLATE_DIR / "spec.md").read_text(encoding="utf-8")
+    text = (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8")
     replacements = {
         "{为什么需要此变更。}": "测试背景。",
         "{本 task 包含什么。}": "测试范围。",
@@ -66,16 +66,16 @@ def git_repo(tmp_path, monkeypatch):
     )
     shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
     shutil.copytree(TASK_TEMPLATE_DIR, template)
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "task.md")
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "note.md")
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         task_dir = tasks / f"{tid}_{slug}"
         shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(task_dir / "task.md", {
+        write_front_matter(task_dir / "note.md", {
             "tid": tid, "slug": slug, "title": slug, "status": "backlog",
             "branch": "", "worktree": "", "review_level": "full",
             "diff_anchor": "", "note": "",
         }, body)
-        (task_dir / "spec.md").write_text(_valid_spec(), encoding="utf-8")
+        (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
     monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
     monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
     monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
@@ -353,7 +353,7 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
 def test_handoff_rejects_diff_anchor_not_matching_execution_parent(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     worktree = _worktree(git_repo, "t001")
-    task_path = worktree / "docs/archive/tasks/t001_alpha/task.md"
+    task_path = worktree / "docs/archive/tasks/t001_alpha/note.md"
     fm, body = parse_front_matter(task_path)
     fm["diff_anchor"] = "0" * 40
     write_front_matter(task_path, fm, body)

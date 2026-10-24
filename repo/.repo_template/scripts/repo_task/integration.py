@@ -140,11 +140,11 @@ def cmd_start(args):
     base_branch, base_sha = resolve_start_base(base_arg)
     task, ref_fm, ref_task_body = load_task_at_ref(args.tid, base_sha)
     require_status(ref_fm, "backlog")
-    spec_path = f"{task['dir']}/spec.md"
+    spec_path = f"{task['dir']}/task.md"
     try:
         spec_text = git_text_at_ref(base_sha, spec_path)
     except ctx.TaskDataError:
-        sys.exit("start=FAIL：缺 spec.md")
+        sys.exit("start=FAIL：缺 task.md")
     problems, _ = validate_task_documents(spec_text, ref_task_body)
     if problems:
         sys.exit("start=FAIL：" + "；".join(problems))
@@ -208,7 +208,7 @@ def cmd_start(args):
             try:
                 spec_text = git_text_at_ref(base_sha, spec_path)
             except ctx.TaskDataError:
-                sys.exit("start=FAIL：缺 spec.md")
+                sys.exit("start=FAIL：缺 task.md")
             problems, _ = validate_task_documents(spec_text, ref_task_body)
             if problems:
                 sys.exit("start=FAIL：" + "；".join(problems))
@@ -247,10 +247,10 @@ def cmd_start(args):
         sys.exit(f"{worktree_rel} 已存在；请先处理后再 start")
     try:
         rel = create_worktree(ref_fm["tid"], branch, base_sha)
-        task_path = worktree / task["dir"] / "task.md"
+        task_path = worktree / task["dir"] / "note.md"
         fm, body = parse_front_matter(task_path)
         if fm.get("status") != "backlog":
-            raise ctx.TaskDataError(f"{task['dir']}/task.md status={fm.get('status')!r}，需要 backlog")
+            raise ctx.TaskDataError(f"{task['dir']}/note.md status={fm.get('status')!r}，需要 backlog")
         fm["status"] = "active"
         fm["branch"] = branch
         fm["worktree"] = worktree_rel

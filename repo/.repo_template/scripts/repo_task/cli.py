@@ -42,7 +42,7 @@ def _add_identity(parser: argparse.ArgumentParser) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="task 状态入口（状态权威 = task.md；执行权威 = exact attempt identity）"
+        description="task 状态入口（状态权威 = note.md；执行权威 = exact attempt identity）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     recovery = sub.add_parser("recovery", help="只读判定 start/finish/commit/attempt 中断阶段（JSON）")
