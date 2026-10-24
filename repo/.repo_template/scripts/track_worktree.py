@@ -166,6 +166,12 @@ def main():
             return 0
         tool_input = payload.get("tool_input") or {}
         command = str(tool_input.get("command") or "")
+        # 快速短路：常规开发命令（不含 task/start/tid/track 调度关键词）立即零副作用退出（Issue #53）
+        if "track_worktree" not in command and "start" not in command and "--tid" not in command:
+            return 0
+        ledger_path = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
+        if not os.path.isfile(ledger_path):
+            return 0
         tid = extract_tid(command, args.tid)
         if not tid:
             return 0

@@ -235,6 +235,9 @@ def cmd_archive(args: argparse.Namespace) -> None:
     reason = (getattr(args, "reason", "") or "").strip()
     if not reason:
         raise IdScanError("归档必须提供非空 --reason，说明处理结果与闭环依据")
+    for name, val in (("fix_ref", reference), ("reason", reason), ("resolution", resolution)):
+        if "\n" in val or "\r" in val:
+            raise IdScanError(f"{name} 不能包含换行符（收到多行输入）")
     note = f"处理：{reference}；resolution={resolution}" if reference else f"处理：resolution={resolution}"
     note += f"；reason={reason}"
     actions: list[tuple[Path, Path, str]] = []
@@ -251,12 +254,15 @@ def cmd_archive(args: argparse.Namespace) -> None:
 
 
 def cmd_park(args: argparse.Namespace) -> None:
+    reason = (args.reason or "").strip()
+    if "\n" in reason or "\r" in reason:
+        raise IdScanError("reason 不能包含换行符（收到多行输入）")
     actions: list[tuple[Path, Path, str]] = []
     for number in parse_ids(args.ids):
         state, path = find_entry(number)
         if state != "todo":
             raise IdScanError(f"p{number:03d} 当前在 {state}；只有 todo 可暂搁")
-        actions.append((path, PARKED_DIR, f"暂搁：{args.reason.strip()}"))
+        actions.append((path, PARKED_DIR, f"暂搁：{reason}"))
     _apply(args, actions)
 
 

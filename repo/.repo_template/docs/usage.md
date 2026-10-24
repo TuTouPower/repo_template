@@ -155,6 +155,12 @@ ledger 丢失但 done 分支和 committed handoff 完整时，运行 `task.py le
 
 宿主版本发布前记录版本号并逐项实测：自然语言不自动执行入口；显式 task-run 可读取 work/integrate 正文且原样传递 identity/owner；merge 保持单独授权；同步从来源读取 core；同 tid 第二会话 claim 被拒绝。未完成该清单不宣称该宿主版本端到端受支持。
 
+## 状态行 Hook 与执行范围
+
+模板在 `.claude/settings.json` 中配置了 PostToolUse hook（调用 `track_worktree.py`），用于跟踪多 worktree 环境下各会话对应的 task 目录并输出到状态行。
+- **触发与范围**：仅当命令包含 task 调度关键词（`start` / `track_worktree` / `--tid`）且仓库存在调度账本（`docs/runtime/dispatch_ledger.jsonl`）时，才会将当前 session 的 worktree 映射写入 `.scratch/statusline_workdir.jsonl`；
+- **零副作用保证**：所有常规 shell 命令（如 `git`, `pytest`, `npm`, `ls` 等）在 hook 入口毫秒级短路退出，绝不改写仓库代码或生产状态。
+
 ## 附属生命周期闭环
 
 pending 归档必须提供非空 `--reason`，说明处理结果、验证依据或转办/去重去向；`--fix-ref` 可选，不要求 task ID，可记录 main、commit、PR、条目或 task。默认 resolution=resolved；转办显式用 `--resolution transferred`，其他类型为 obsolete/duplicate，所有类型均只强制备注，不强制引用。存在 task 时保留 pNNN 与 tid 双向关联；直接在 main 完成时如实写备注，不伪造 task ID。

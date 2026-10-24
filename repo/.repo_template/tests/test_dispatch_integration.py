@@ -798,3 +798,31 @@ def test_chain_locked_uses_shared_file_lock(tmp_path, monkeypatch):
     assert lock_calls[0] == tmp_path / "integrate.lock"
 
 
+def test_track_worktree_early_exit_on_regular_commands(tmp_path, monkeypatch):
+    """验证 track_worktree 在常规命令下快速短路退出且零副作用（Issue #53）。"""
+    import importlib.util
+    import json
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
+    tw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tw)
+
+    project = tmp_path / "proj"
+    project.mkdir(parents=True)
+
+    # 1. 常规无关命令 payload
+    payload = {
+        "session_id": "sess_1",
+        "cwd": str(project),
+        "tool_input": {"command": "git status"},
+    }
+    monkeypatch.setattr(tw, "read_payload", lambda: payload)
+    monkeypatch.setattr(sys, "argv", ["track_worktree.py", "--write", "--agent", "claude-code"])
+
+    ret = tw.main()
+    assert ret == 0
+    # 零副作用：未产生 statusline 文件
+    assert not (project / ".scratch" / "statusline_workdir.jsonl").exists()
+
+
+

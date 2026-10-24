@@ -323,6 +323,34 @@ def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypa
     assert not (repo / "docs/archive/pending/p001_one.md").exists()
 
 
+def test_archive_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
+    """验证 archive 与 park 显式拒绝包含换行符的 reason 或 fix-ref（Issue #52）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "clean_entry"])
+    entry = repo / "docs/pending/todo/p001_clean_entry.md"
+    orig_content = entry.read_text(encoding="utf-8")
+
+    # 1. archive 带多行 reason 被拒绝，原内容不变
+    with pytest.raises(SystemExit, match="不能包含换行符"):
+        pending_mod.main(["archive", "p001", "--reason", "line1\nline2", "--write"])
+    assert entry.is_file()
+    assert entry.read_text(encoding="utf-8") == orig_content
+
+    # 2. archive 带多行 fix-ref 被拒绝
+    with pytest.raises(SystemExit, match="不能包含换行符"):
+        pending_mod.main(["archive", "p001", "--reason", "valid", "--fix-ref", "t001\nfake", "--write"])
+    assert entry.is_file()
+    assert entry.read_text(encoding="utf-8") == orig_content
+
+    # 3. park 带多行 reason 被拒绝
+    with pytest.raises(SystemExit, match="不能包含换行符"):
+        pending_mod.main(["park", "p001", "--reason", "wait\nmore", "--write"])
+    assert entry.is_file()
+    assert entry.read_text(encoding="utf-8") == orig_content
+
+
+
 # ---------- CLI ----------
 
 
