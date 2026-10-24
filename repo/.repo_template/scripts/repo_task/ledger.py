@@ -21,30 +21,39 @@ def _sanitize(event: dict) -> dict:
     return final
 
 
-def _read_unlocked(path=None) -> list[dict]:
+def _read_unlocked(path=None, *, tid: str | None = None) -> list[dict]:
     path = path or ctx.LEDGER_PATH
     if not path.is_file():
         return []
     events = []
-    for line_no, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
-    ):
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as e:
-            # fail-closed：损坏行跳过会让后续事件基于缺失事件续写，导致
-            # attempt 号复用或 current identity 误判。拒绝继续，提示手动修复。
-            raise ctx.TaskDataError(
-                f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行损坏（{e}）；"
-                "拒绝继续以防 attempt 号复用。请手动修复该行后重试"
-            ) from None
-        if not isinstance(value, dict):
-            raise ctx.TaskDataError(
-                f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行非 JSON 对象；拒绝继续"
-            )
-        events.append(value)
+    tid_needle = f'"{tid}"' if tid else None
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            for line_no, raw_line in enumerate(stream, 1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                # 若指定了 tid，先通过快速子串预筛，跳过不含目标 tid 的无关行 JSON 解析开销（Issue #57）
+                if tid_needle and tid_needle not in line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError as e:
+                    # fail-closed：损坏行跳过会让后续事件基于缺失事件续写，导致
+                    # attempt 号复用或 current identity 误判。拒绝继续，提示手动修复。
+                    raise ctx.TaskDataError(
+                        f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行损坏（{e}）；"
+                        "拒绝继续以防 attempt 号复用。请手动修复该行后重试"
+                    ) from None
+                if not isinstance(value, dict):
+                    raise ctx.TaskDataError(
+                        f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行非 JSON 对象；拒绝继续"
+                    )
+                if tid and value.get("tid") != tid:
+                    continue
+                events.append(value)
+    except OSError:
+        return []
     return events
 
 
@@ -54,16 +63,16 @@ def _append_many_unlocked(events: list[dict]) -> list[dict]:
         return []
     payload = "".join(
         json.dumps(event, ensure_ascii=False) + "\n" for event in finals
-    )
-    # 无换行尾行（截断残留）会被新事件直接拼接；先补换行把坏尾行隔离为独立行
-    if ctx.LEDGER_PATH.is_file() and ctx.LEDGER_PATH.stat().st_size > 0:
-        with ctx.LEDGER_PATH.open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            stream.seek(-1, os.SEEK_END)
+    ).encode("utf-8")
+    # 单次 a+b 打开并在末尾检测尾字节是否缺换行（避免多次打开大文件）（Issue #57）
+    ctx.LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with ctx.LEDGER_PATH.open("a+b") as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        if size > 0:
+            stream.seek(size - 1)
             if stream.read(1) != b"\n":
-                with ctx.LEDGER_PATH.open("ab") as fix:
-                    fix.write(b"\n")
-    with ctx.LEDGER_PATH.open("a", encoding="utf-8") as stream:
+                stream.write(b"\n")
         stream.write(payload)
         stream.flush()
         os.fsync(stream.fileno())
@@ -82,9 +91,9 @@ def _with_lock(callback, path=None):
         return callback()
 
 
-def ledger_read(path=None) -> list[dict]:
+def ledger_read(path=None, *, tid: str | None = None) -> list[dict]:
     """Read all valid JSON object events while holding the ledger lock."""
-    return _with_lock(lambda: _read_unlocked(path), path)
+    return _with_lock(lambda: _read_unlocked(path, tid=tid), path)
 
 
 def ledger_append(event: dict) -> dict:
@@ -128,14 +137,15 @@ def ledger_allocate_attempt(
     builder: Callable[[int, list[dict]], dict],
 ) -> dict:
     """Atomically allocate the next integer attempt and append its event."""
-    def allocate(events: list[dict]) -> dict:
+    def allocate():
+        events = _read_unlocked(tid=tid)
         attempt = ledger_next_attempt(tid, events)
         event = builder(attempt, events)
         event["tid"] = tid
         event["attempt"] = attempt
-        return event
+        return _append_unlocked(event)
 
-    return ledger_locked_append(allocate)
+    return _with_lock(allocate)
 
 
 def _ledger_append_safely(event: dict) -> None:

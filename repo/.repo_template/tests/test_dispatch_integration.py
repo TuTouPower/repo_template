@@ -742,3 +742,59 @@ def test_track_worktree_reverse_lookup_and_dedup(tmp_path):
     tw.append_record(str(statusline), {**record, "tid": "t1000"})
     assert statusline.read_text(encoding="utf-8").count("\n") == 2
 
+
+def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
+    """验证大型账本下按 tid 快速预过滤读取与单次打开追加优化（Issue #57）。"""
+    from repo_task import context as ctx
+    from repo_task.ledger import ledger_allocate_attempt, ledger_append, ledger_read
+
+    runtime = tmp_path / "docs" / "runtime"
+    runtime.mkdir(parents=True)
+    ledger_path = runtime / "dispatch_ledger.jsonl"
+    monkeypatch.setattr(ctx, "LEDGER_PATH", ledger_path)
+    monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
+
+    # 1. 模拟写入 500 条其他任务记录
+    lines = [json.dumps({"tid": f"t{i:04d}", "attempt": 1, "event": "start"}) for i in range(1, 501)]
+    # 加入 t001 的 attempt 1 记录
+    lines.append(json.dumps({"tid": "t001", "attempt": 1, "event": "start"}))
+    ledger_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # 2. 仅读 t001 的记录
+    t001_events = ledger_read(tid="t001")
+    assert len(t001_events) == 1
+    assert t001_events[0]["tid"] == "t001"
+
+    # 3. 为 t001 分配下一个 attempt，应为 2
+    allocated = ledger_allocate_attempt("t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"})
+    assert allocated["attempt"] == 2
+    assert allocated["tid"] == "t001"
+
+    # 4. 再次按 tid 读，包含两条
+    t001_events2 = ledger_read(tid="t001")
+    assert len(t001_events2) == 2
+
+
+def test_chain_locked_uses_shared_file_lock(tmp_path, monkeypatch):
+    """验证 integration._chain_locked 统一使用 locks.file_lock（Issue #56）。"""
+    from repo_task import integration, locks
+
+    lock_calls = []
+
+    real_file_lock = locks.file_lock
+    def spy_file_lock(path):
+        lock_calls.append(path)
+        return real_file_lock(path)
+
+    monkeypatch.setattr(integration, "file_lock", spy_file_lock)
+    monkeypatch.setattr(integration, "_integration_lock_path", lambda: tmp_path / "integrate.lock")
+
+    @integration._chain_locked
+    def my_action(val):
+        return val * 2
+
+    assert my_action(21) == 42
+    assert len(lock_calls) == 1
+    assert lock_calls[0] == tmp_path / "integrate.lock"
+
+
