@@ -426,10 +426,18 @@ def _delete_branches(branches: list[str]) -> None:
 
 
 def _find_merge_commit(second_parent: str, subject_prefix: str) -> str | None:
-    result = _git(["rev-list", "--merges", "--max-count=50", "HEAD"])
-    if result.returncode != 0:
-        return None
-    for candidate in result.stdout.splitlines():
+    # 优先在 second_parent 到 HEAD 的祖先路径上查找，避免受后续无关 merge 数量截断（Issue #62）
+    candidates: list[str] = []
+    if _git(["cat-file", "-e", f"{second_parent}^{{commit}}"]).returncode == 0:
+        res = _git(["rev-list", "--merges", "--ancestry-path", f"{second_parent}..HEAD"])
+        if res.returncode == 0 and res.stdout.strip():
+            candidates = res.stdout.splitlines()
+    if not candidates:
+        res = _git(["rev-list", "--merges", "HEAD"])
+        if res.returncode == 0 and res.stdout.strip():
+            candidates = res.stdout.splitlines()
+
+    for candidate in candidates:
         second = _git(["rev-parse", f"{candidate}^2"])
         subject = _git(["show", "-s", "--format=%s", candidate])
         if (

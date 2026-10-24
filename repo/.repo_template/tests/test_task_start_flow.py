@@ -1968,3 +1968,37 @@ def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories
         cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002'))
     after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
     assert after == before
+
+
+def test_find_merge_commit_handles_deep_merge_history(git_repo):
+    """验证超过 50 个无关 merge 后较早的 task merge 依然能通过祖先路径正确识别（Issue #62）。"""
+    from repo_task.integration import _find_merge_commit
+
+    # 1. 创建 task 分支并提交一个 commit
+    _git(git_repo, "checkout", "-b", "t001_branch")
+    dummy = git_repo / "dummy.txt"
+    dummy.write_text("dummy\n")
+    _git(git_repo, "add", "dummy.txt")
+    _git(git_repo, "commit", "-m", "feat(task): work on t001")
+    second_parent = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    # 2. 合并入 main 并带前缀
+    _git(git_repo, "checkout", "main")
+    _git(git_repo, "merge", "--no-ff", "t001_branch", "-m", "task: integrate t001_alpha")
+    merge_sha = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    # 3. 产生 55 个无关的 merge commit
+    for i in range(55):
+        branch = f"unrelated_{i}"
+        _git(git_repo, "checkout", "-b", branch)
+        f = git_repo / f"file_{i}.txt"
+        f.write_text(f"{i}\n")
+        _git(git_repo, "add", f"file_{i}.txt")
+        _git(git_repo, "commit", "-m", f"commit {i}")
+        _git(git_repo, "checkout", "main")
+        _git(git_repo, "merge", "--no-ff", branch, "-m", f"merge {i}")
+
+    # 4. _find_merge_commit 应当跨越这 55 个无关 merge 找到原 merge commit
+    found = _find_merge_commit(second_parent, "task: integrate t001")
+    assert found == merge_sha
+

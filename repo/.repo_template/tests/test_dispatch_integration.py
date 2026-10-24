@@ -697,3 +697,48 @@ def test_concurrent_add_allocates_unique_tids(git_repo):
         assert match, stdout
         tids.append(match.group(1))
     assert len(set(tids)) == 2, f"并发 add 撞号：{tids}"
+
+
+def test_track_worktree_reverse_lookup_and_dedup(tmp_path):
+    """验证 track_worktree 逆序读取 ledger 与尾部查重（Issue #61）。"""
+    import importlib.util
+    import json
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
+    tw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tw)
+
+    project = tmp_path / "proj"
+    runtime = project / "docs" / "runtime"
+    runtime.mkdir(parents=True)
+    ledger = runtime / "dispatch_ledger.jsonl"
+
+    # 1. 填充 300 条历史无关事件
+    lines = [json.dumps({"tid": f"t{i:04d}", "event": "start", "worktree": f"wt_{i}"}) for i in range(1, 300)]
+    # 加入目标 t999 的 start 事件
+    lines.append(json.dumps({"tid": "t999", "event": "start", "worktree": "worktrees/t999_wt"}))
+    # 加入 300 条后续无关事件
+    lines.extend(json.dumps({"tid": f"t{i:04d}", "event": "report"}) for i in range(300, 600))
+    ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # 2. 逆序解析应当正确找到 t999 的 worktree
+    resolved = tw.resolve_worktree(str(project), "t999")
+    assert resolved == str((project / "worktrees/t999_wt").resolve())
+
+    # 3. 追加 t999 的 terminal 事件（report），解析立即闭合为 ""
+    with open(ledger, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"tid": "t999", "event": "report", "status": "done"}) + "\n")
+    assert tw.resolve_worktree(str(project), "t999") == ""
+
+    # 4. 尾部查重
+    statusline = project / ".scratch" / "statusline_workdir.jsonl"
+    record = {"tid": "t999", "agent": "test", "worktree": "some/path"}
+    tw.append_record(str(statusline), record)
+    assert statusline.read_text(encoding="utf-8").count("\n") == 1
+    # 相同记录再次追加应跳过
+    tw.append_record(str(statusline), record)
+    assert statusline.read_text(encoding="utf-8").count("\n") == 1
+    # 不同记录可以追加
+    tw.append_record(str(statusline), {**record, "tid": "t1000"})
+    assert statusline.read_text(encoding="utf-8").count("\n") == 2
+

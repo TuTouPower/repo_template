@@ -35,49 +35,87 @@ def read_payload():
 TERMINAL_EVENTS = {"report", "integrated", "attempt_terminal"}
 
 
+def _iter_lines_reverse(path, block_size=8192):
+    """从文件末尾向前逐行产出非空行。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            position = f.tell()
+            remainder = b""
+            while position > 0:
+                read_size = min(block_size, position)
+                position -= read_size
+                f.seek(position)
+                chunk = f.read(read_size) + remainder
+                lines = chunk.split(b"\n")
+                remainder = lines[0]
+                for line in reversed(lines[1:]):
+                    cleaned = line.strip()
+                    if cleaned:
+                        yield cleaned.decode("utf-8", errors="replace")
+            if remainder.strip():
+                yield remainder.strip().decode("utf-8", errors="replace")
+    except OSError:
+        return
+
+
 def resolve_worktree(project, tid):
     """Worktree path (absolute) for a tid from the attempt ledger, or ''.
 
+    逆序扫描账本（从后向前），匹配到该 tid 的最新状态即快速终止（Issue #61）。
     A `start` event opens the window; `attempt_reserved` with state=running
-    keeps it open; any terminal event (report/integrated/attempt_terminal) closes it,
-    so a merged or finished task no longer resolves to its (removed) worktree.
+    keeps it open; any terminal event (report/integrated/attempt_terminal) closes it.
     """
     ledger = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
     if not os.path.isfile(ledger):
         return ""
     worktree = ""
     active = False
-    try:
-        with open(ledger, encoding="utf-8") as handle:
-            for line_no, raw_line in enumerate(handle, 1):
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    # ledger 损坏行静默跳过会让该 tid 的 worktree 解析丢失；
-                    # 打 WARNING 带行号，与 ledger 的 fail-closed 语义对齐可见性（F35）
-                    print(
-                        f"WARNING: attempt 账本损坏行已跳过（{ledger} 第 {line_no} 行）",
-                        file=sys.stderr,
-                    )
-                    continue
-                if rec.get("tid") != tid:
-                    continue
-                event = rec.get("event")
-                if event == "start":
-                    worktree = str(rec.get("worktree") or "")
-                    active = True
-                elif event == "attempt_reserved" and rec.get("state") == "running":
-                    active = True
-                elif event in TERMINAL_EVENTS:
-                    active = False
-    except OSError:
-        return ""
+    saw_latest = False
+    for line in _iter_lines_reverse(ledger):
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("tid") != tid:
+            continue
+        event = rec.get("event")
+        if not saw_latest:
+            saw_latest = True
+            if event in TERMINAL_EVENTS:
+                return ""
+            if event == "start":
+                worktree = str(rec.get("worktree") or "")
+                active = True
+                break
+            elif event == "attempt_reserved" and rec.get("state") == "running":
+                active = True
+                # attempt_reserved 无 worktree 字段，继续向前找到对应 start 事件
+            else:
+                return ""
+        else:
+            if event == "start":
+                worktree = str(rec.get("worktree") or "")
+                break
     if not active or not worktree:
         return ""
     return os.path.normpath(os.path.join(project, worktree))
+
+
+def _read_last_line(path):
+    """O(1) 读取文件最后一行用于去重（Issue #61）。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size == 0:
+                return ""
+            buffer_size = min(size, 4096)
+            f.seek(size - buffer_size)
+            lines = f.read().splitlines()
+            return lines[-1].decode("utf-8", errors="replace") if lines else ""
+    except OSError:
+        return ""
 
 
 def append_record(path, record):
@@ -86,16 +124,9 @@ def append_record(path, record):
     except OSError:
         return
     line = json.dumps(record, ensure_ascii=False)
-    # De-dup: skip when the last record is identical.
-    try:
-        with open(path, encoding="utf-8") as handle:
-            last_line = ""
-            for existing in handle:
-                last_line = existing
-        if last_line.strip() == line:
-            return
-    except OSError:
-        pass
+    # De-dup: skip when the last record is identical (O(1) tail check).
+    if _read_last_line(path).strip() == line:
+        return
     try:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
