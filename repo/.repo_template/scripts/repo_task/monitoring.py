@@ -90,6 +90,9 @@ def _review_tree(root: Path, ref: str, task_name: str) -> dict[str, tuple[str, s
     return tree
 
 
+_REVIEW_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB 单文件上限（Issue #50）
+
+
 def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
     data = _required_git_bytes(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root)
     algorithm = _required_git_bytes(["rev-parse", "--show-object-format"], root).decode().strip()
@@ -108,19 +111,29 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
             raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
         if stat.S_ISLNK(mode):
             content, git_mode = os.fsencode(os.readlink(source)), "120000"
+            blob = f"blob {len(content)}\0".encode() + content
+            tree[path] = (git_mode, hashlib.new(algorithm, blob).hexdigest())
         elif stat.S_ISREG(mode):
-            content = source.read_bytes()
             git_mode = "100755" if mode & 0o111 else "100644"
+            size = source.stat().st_size
+            if size > _REVIEW_MAX_FILE_SIZE:
+                raise ctx.TaskDataError(
+                    f"review scope 文件过大（{physical} 达到 {size // (1024 * 1024)}MB，上限 50MB）；"
+                    "请将其放入 .gitignore 或划入排除目录"
+                )
+            h = hashlib.new(algorithm)
+            h.update(f"blob {size}\0".encode())
+            with open(source, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            tree[path] = (git_mode, h.hexdigest())
         elif stat.S_ISDIR(mode):
             # Gitlinks are opaque dependencies. Bind their checked-out commit.
             git_mode = "160000"
             oid = _required_git_bytes(["rev-parse", "HEAD"], source).decode().strip()
             tree[path] = (git_mode, oid)
-            continue
         else:
             raise ctx.TaskDataError(f"review scope 不支持文件类型：{physical}")
-        blob = f"blob {len(content)}\0".encode() + content
-        tree[path] = (git_mode, hashlib.new(algorithm, blob).hexdigest())
     return tree
 
 

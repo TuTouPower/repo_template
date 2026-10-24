@@ -155,3 +155,25 @@ def test_scope_tracks_mode_and_symlink_target(git_repo):
     reviewed = _fingerprint(repo, anchor)
     _git(repo, 'commit', '-m', 'mode and link')
     assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == reviewed
+
+
+def test_review_scope_large_file_limit_and_streaming(git_repo, monkeypatch):
+    """验证 review scope 流式计算且当单文件超过安全上限时报错（Issue #50）。"""
+    from repo_task import monitoring
+
+    repo, anchor = git_repo
+
+    # 1. 模拟将上限调小为 100 字节以进行超限验证
+    monkeypatch.setattr(monitoring, "_REVIEW_MAX_FILE_SIZE", 100)
+
+    oversized = repo / "huge.bin"
+    oversized.write_bytes(b"x" * 150)
+
+    # 超过限制时，review_scope_fingerprint 因捕获 TaskDataError 返回空字符串 fail-closed
+    fp = monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+    assert fp == ""
+
+    # 直接调用 _review_worktree 应触发 TaskDataError 并指出文件过大
+    with pytest.raises(monitoring.ctx.TaskDataError, match="review scope 文件过大"):
+        monitoring._review_worktree(repo, "t001_first")
+

@@ -190,23 +190,34 @@ def test_managed_env_link_stays_identifiable_after_source_removed(fake_repo):
 
 
 def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
-    """归档移动失败时 front matter 回滚，避免「已写 done、目录未归档」死锁。"""
+    """归档 move 失败时完整回滚 front matter（含 status/worktree/note），避免中间态（Issue #51）。"""
     import argparse
 
     d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "active")
+    write_front_matter(
+        d / "note.md",
+        {
+            "tid": "t001", "slug": "alpha", "status": "active",
+            "worktree": "worktrees/t001_wt", "note": "original note",
+        },
+        "body\n",
+    )
 
     def boom(src, dst):
         raise OSError("模拟移动失败")
 
     monkeypatch.setattr(lifecycle.shutil, "move", boom)
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
-    # fake_repo 非 git 仓库，worktree_paths 会抛 fail-closed；模拟无登记 worktree
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
+    monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
     monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
     with pytest.raises(SystemExit, match="归档移动失败"):
-        lifecycle._close_task(argparse.Namespace(tid="t001"), "done", None)
+        lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: reason")
     fm, _ = parse_front_matter(d / "note.md")
-    assert fm["status"] == "active"  # 已回滚
+    # 全部字段完整回滚原状
+    assert fm["status"] == "active"
+    assert fm["worktree"] == "worktrees/t001_wt"
+    assert fm["note"] == "original note"
     assert d.is_dir()  # 目录仍在活跃区
 
 

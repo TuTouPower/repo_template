@@ -551,8 +551,8 @@ def _close_task(args, status: str, note: str | None) -> None:
             ctx.effective_worktree(fm), expected_branch=fm.get("branch")
         )
 
+    orig_fm = dict(fm)
     fm = dict(fm)
-    orig_status = fm["status"]
     fm["status"] = status
     if note:
         append_note(fm, note)
@@ -566,13 +566,11 @@ def _close_task(args, status: str, note: str | None) -> None:
     try:
         shutil.move(str(src), str(dst))
     except (OSError, shutil.Error) as e:
-        # 移动失败：front matter 已写成目标状态但目录仍在原处。回滚 front matter
-        # 避免「状态已迁 + 目录未归档」的中间态；回滚本身失败则如实报告现场。
+        # 移动失败：front matter 已写成目标状态但目录仍在原处。完整回滚原始 front matter（Issue #51）
         rollback_note = ""
         if src.exists():
             try:
-                fm["status"] = orig_status
-                write_front_matter(path, fm, body)
+                write_front_matter(path, orig_fm, body)
                 rollback_note = "；front matter 已回滚"
             except (OSError, ctx.TaskDataError) as rb:
                 rollback_note = f"；front matter 回滚失败（{rb}），仍是 status={status}"
