@@ -20,7 +20,7 @@ metadata:
 1. **核验**：来源 clean、固定 SHA 与输入相符。读取本机 state、共享 policy 与可移植 manifest；无 state 时 `--source` 提供临时身份，不提前 init。检查 active worktree；存在则先完成或 rewind，禁止混用 workflow schema。
 2. **预览**：status、plan。明确硬同步、共享裁定、保护项和删除候选。确认 `testing.md` 项目验证策略已选定；模板默认未确认不得作为业务绿灯。
 3. **裁定**：工具链/入口按模板；gitignore、prettierignore、MCP 做安全合并；宿主 settings 只合明确无 secret 片段。AGENTS 项目介绍保留，开发原则按模板，目录规则由 Agent 语义合并。语义结果先存 `.scratch/`，通过 `apply --agents-file <结果文件>` 纳入事务，不提前写消费资产；未完成裁定不 apply。
-4. **apply**：确认会覆盖的未提交内容已纳入事务，业务改动可隔离。运行 `apply --expected-commit {来源完整SHA}`，带完整 `--decision` 和适用的 `--agents-file`。不得跳过测试。正式写盘从该 commit 的 Git archive 快照读取，源工作区后续变化不影响本轮。来源变化、写盘、schema 迁移、内置 contract、项目 doctor/test/blackbox 或 state 写入任一失败，整个事务恢复到 apply 前；备份保留。以 transaction status 和实际 diff 为准，不猜恢复结果。
+4. **apply**：确认会覆盖的未提交内容已纳入事务，业务改动可隔离。运行 `apply --expected-commit {来源完整SHA}`，带完整 `--decision` 和适用的 `--agents-file`。不得跳过测试。正式写盘从该 commit 的 Git archive 快照读取，源工作区后续变化不影响本轮。内置 contract 或项目验证测试失败时，工具链保证全量自动回滚到 apply 前基线状态，state 绝不推进，备份保留在 `.scratch/repo_sync_rollback` 供排查，绝不在消费仓保留半同步或测试失败的文件。以 transaction status 和实际 diff 为准，不猜恢复结果。
 5. **恢复**：apply 失败即停止且不 commit；异常中断运行 `transaction status`，先备份中断后的新改动，再 `transaction rollback --confirm-restore`。成功 apply 但用户放弃时 `transaction rollback`；现场后续变化会阻止静默覆盖。恢复失败保留日志和备份，报告人工恢复条件。
 6. **审批**：列出来源 SHA、全部实际路径、保护/跳过、contract 与项目测试、state/manifest、未决项，询问是否 commit。仅批准后提交本轮内容，提交包含 sync_manifest；随后 `transaction accept`。提交前拒绝则恢复，不把“未提交”等同于可恢复。批准的批量 commit 授权可复用，不重复询问。
 

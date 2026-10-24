@@ -433,4 +433,28 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
     assert b"# task \xe6\xad\xa3\xe6\x96\x87" in responses[-1][1]
 
 
+def test_find_free_port_and_serve_ipv6_loopback(monkeypatch):
+    """验证 IPv6 loopback (::1) 能够正确分配空闲端口并识别 AF_INET6（Issue #38）。"""
+    port = view_server._find_free_port("::1")
+    assert isinstance(port, int)
+    assert port > 0
+
+    started = []
+    class FakeServer:
+        def __init__(self, addr, handler):
+            started.append((addr, self.address_family if hasattr(self, "address_family") else None))
+        def serve_forever(self):
+            raise KeyboardInterrupt
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
+    monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
+
+    view_server.serve(host="::1", port=port)
+    assert len(started) == 1
+    assert started[0][0] == ("::1", port)
+
+
+
 

@@ -37,7 +37,12 @@ _SESSION_TOKEN = secrets.token_hex(16)
 
 
 def _find_free_port(host: str) -> int:
-    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+    try:
+        infos = socket.getaddrinfo(host, 0, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+        family = infos[0][0] if infos else socket.AF_INET
+    except socket.gaierror:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with contextlib.closing(socket.socket(family, socket.SOCK_STREAM)) as s:
         s.bind((host, 0))
         return s.getsockname()[1]
 
@@ -338,7 +343,19 @@ def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
             file=sys.stderr,
         )
     try:
-        httpd = ThreadingHTTPServer((host, port), _Handler)
+        infos = socket.getaddrinfo(host, 0, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+        family = infos[0][0] if infos else socket.AF_INET
+    except socket.gaierror:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+
+    server_cls = ThreadingHTTPServer
+    if family == socket.AF_INET6:
+        class _IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+            address_family = socket.AF_INET6
+        server_cls = _IPv6ThreadingHTTPServer
+
+    try:
+        httpd = server_cls((host, port), _Handler)
     except OSError as error:
         sys.exit(f"看板端口 {port} 绑定失败（{error}）；改用 --port 0 自动选空闲端口")
     print(f"task 看板已启动：{url}")
