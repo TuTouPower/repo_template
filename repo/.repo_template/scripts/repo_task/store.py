@@ -114,25 +114,26 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
     ])
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
-    dirs: dict[str, bool] = {}
+    discovered_dirs: set[tuple[str, str, bool]] = set()
     for path in sorted(r.stdout.splitlines()):
         if path.startswith("docs/tasks/"):
             archived = False
+            rel_base = "docs/tasks"
             rest = path[len("docs/tasks/"):]
         elif path.startswith("docs/archive/tasks/"):
             archived = True
+            rel_base = "docs/archive/tasks"
             rest = path[len("docs/archive/tasks/"):]
         else:
             continue
         if "/" in rest:
-            dirs[rest.split("/", 1)[0]] = archived
+            name = rest.split("/", 1)[0]
+            discovered_dirs.add((rel_base, name, archived))
     tasks = []
-    for name, archived in sorted(dirs.items()):
+    for rel_base, name, archived in sorted(discovered_dirs):
         if not archived and name == ctx.TEMPLATE_DIR.name:
             continue
-        directory = (
-            f"docs/archive/tasks/{name}" if archived else f"docs/tasks/{name}"
-        )
+        directory = f"{rel_base}/{name}"
         path = f"{directory}/note.md"
         try:
             text = git_text_at_ref(ref, path)

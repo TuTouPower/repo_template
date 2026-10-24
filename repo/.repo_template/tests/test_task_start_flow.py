@@ -1407,6 +1407,65 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
         store.scan_tasks_at_ref("t002_beta")
 
 
+def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_repo):
+    """验证 scan_tasks_at_ref 在同一 ref 中出现同名 active/archive 时显式报错（Issue #47）。"""
+    _git(git_repo, "checkout", "-b", "branch_with_dup")
+    active_t001 = git_repo / "docs/tasks/t001_dup"
+    archive_t001 = git_repo / "docs/archive/tasks/t001_dup"
+    active_t001.mkdir(parents=True, exist_ok=True)
+    archive_t001.mkdir(parents=True, exist_ok=True)
+    write_front_matter(
+        active_t001 / "note.md",
+        {"tid": "t001", "slug": "dup", "status": "backlog"},
+        "active t001\n",
+    )
+    write_front_matter(
+        archive_t001 / "note.md",
+        {"tid": "t001", "slug": "dup", "status": "done"},
+        "archive t001\n",
+    )
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "commit with dup t001")
+
+    with pytest.raises(ctx.TaskDataError, match="重复 tid"):
+        store.scan_tasks_at_ref("branch_with_dup")
+
+
+def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
+    """验证 link_local_env 排除已存在 worktree、artifacts、scratch 等目录内的 .env（Issue #46）。"""
+    from repo_task import worktrees
+
+    # 1. 主仓根目录合法 .env
+    root_env = git_repo / ".env"
+    root_env.write_text("ROOT=1\n")
+
+    # 2. 其它目录中的无关 .env
+    (git_repo / ".scratch").mkdir(parents=True, exist_ok=True)
+    (git_repo / ".scratch/.env").write_text("SCRATCH=1\n")
+    (git_repo / "artifacts").mkdir(parents=True, exist_ok=True)
+    (git_repo / "artifacts/.env").write_text("ARTIFACTS=1\n")
+    (git_repo / "docs").mkdir(parents=True, exist_ok=True)
+    (git_repo / "docs/.env").write_text("DOCS=1\n")
+
+    # 3. 其它已登记 worktree 内部的 .env
+    other_wt = git_repo / "worktrees/t001_alpha"
+    other_wt.mkdir(parents=True, exist_ok=True)
+    (other_wt / ".env").write_text("OTHER_WT=1\n")
+
+    new_wt = git_repo / "worktrees/t002_beta"
+    new_wt.mkdir(parents=True, exist_ok=True)
+
+    linked = worktrees.link_local_env(new_wt)
+
+    # 只有根目录的 .env 被链入
+    assert linked == [".env"]
+    assert (new_wt / ".env").is_symlink()
+    assert not (new_wt / ".scratch/.env").exists()
+    assert not (new_wt / "artifacts/.env").exists()
+    assert not (new_wt / "worktrees/t001_alpha/.env").exists()
+
+
+
 # --------------------------------------------------------------------------
 # task 调度图与 view
 # --------------------------------------------------------------------------

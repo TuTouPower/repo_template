@@ -19,11 +19,26 @@ def link_local_env(worktree: Path) -> list[str]:
     在遍历中把刚创建的软链当新源导致级联嵌套。
     """
     linked = []
-    skip_dirs = {".git", "node_modules", ".scratch", "__pycache__", "venv", ".venv", "target"}
+    skip_dirs = {
+        ".git", "node_modules", ".scratch", "__pycache__", "venv", ".venv",
+        "target", "worktrees", "artifacts", "data", "docs", ".repo_template",
+    }
     try:
         worktree_resolved = worktree.resolve()
     except OSError:
         worktree_resolved = None
+
+    try:
+        repo_root_res = ctx.REPO_ROOT.resolve()
+        registered_worktrees = {
+            Path(p).resolve() for p in worktree_paths().keys()
+            if Path(p).resolve() != repo_root_res
+        }
+    except Exception:
+        registered_worktrees = set()
+    if worktree_resolved and worktree_resolved != ctx.REPO_ROOT.resolve():
+        registered_worktrees.add(worktree_resolved)
+
     sources = [
         src for src in ctx.REPO_ROOT.rglob(".env")
         if src.is_file()
@@ -35,12 +50,12 @@ def link_local_env(worktree: Path) -> list[str]:
             continue
         if any(part in skip_dirs for part in rel.parts[:-1]):
             continue
-        if worktree_resolved is not None:
-            try:
-                src.resolve().relative_to(worktree_resolved)
-                continue  # 跳过目标 worktree 自身内的 .env
-            except ValueError:
-                pass
+        try:
+            src_res = src.resolve()
+            if any(src_res.is_relative_to(wt) for wt in registered_worktrees):
+                continue
+        except (ValueError, OSError):
+            pass
         dst = worktree / rel
         if dst.exists() or dst.is_symlink():
             continue
