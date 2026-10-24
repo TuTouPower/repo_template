@@ -266,3 +266,60 @@ def test_atomic_write_preserves_existing_permissions(tmp_path):
     assert stat.S_IMODE(batch_file.stat().st_mode) == 0o644
 
 
+def test_atomic_write_rejects_symlink(tmp_path):
+    """验证原子写和批量写显式拒绝软链目标（Issue #69 方案 A）。"""
+    from repo_task.documents import atomic_write_text, write_front_matter_many
+
+    target = tmp_path / "target.txt"
+    target.write_text("orig target\n", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to(target.name)
+
+    # 1. atomic_write_text 拒绝符号链接
+    with pytest.raises(ValueError, match="does not support writing to symlink"):
+        atomic_write_text(link, "new content\n")
+
+    # 验证软链依然存在，且目标文件内容未被修改
+    assert link.is_symlink()
+    assert target.read_text(encoding="utf-8") == "orig target\n"
+
+    # 2. 拒绝悬空符号链接
+    broken_link = tmp_path / "broken_link.txt"
+    broken_link.symlink_to("non_existent.txt")
+    with pytest.raises(ValueError, match="does not support writing to symlink"):
+        atomic_write_text(broken_link, "content\n")
+    assert broken_link.is_symlink()
+
+    # 3. write_front_matter_many 拒绝符号链接
+    with pytest.raises(ValueError, match="does not support writing to symlink"):
+        write_front_matter_many([(link, {"tid": "t001"}, "body")])
+    assert link.is_symlink()
+
+
+def test_atomic_write_does_not_mutate_or_query_umask(tmp_path, monkeypatch):
+    """验证写新文件时利用内核 O_CREAT 机制，绝不调用或修改全局 umask（Issue #68）。"""
+    import os
+    from repo_task.documents import atomic_write_text, write_front_matter_many
+
+    umask_called = []
+
+    def mock_umask(mask):
+        umask_called.append(mask)
+        return 0o022
+
+    monkeypatch.setattr(os, "umask", mock_umask)
+
+    # 1. atomic_write_text 写新文件
+    f1 = tmp_path / "f1.txt"
+    atomic_write_text(f1, "hello\n")
+    assert f1.read_text(encoding="utf-8") == "hello\n"
+    assert umask_called == []
+
+    # 2. write_front_matter_many 写新文件
+    f2 = tmp_path / "f2.txt"
+    write_front_matter_many([(f2, {"tid": "t002"}, "body")])
+    assert "t002" in f2.read_text(encoding="utf-8")
+    assert umask_called == []
+
+
+
