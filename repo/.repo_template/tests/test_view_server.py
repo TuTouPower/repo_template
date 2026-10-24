@@ -373,3 +373,26 @@ def test_handler_sends_security_headers():
     assert hdr_dict.get("X-Frame-Options") == "DENY"
     assert "Content-Security-Policy" in hdr_dict
 
+
+def test_rendered_html_cache_debounce(monkeypatch):
+    """验证高频并发请求复用短缓存，避免重复跑全量拓扑计算（Issue #48）。"""
+    build_count = {"n": 0}
+
+    def fake_build():
+        build_count["n"] += 1
+        return {"project": "demo", "nodes": [], "edges": [], "summary": {}}
+
+    monkeypatch.setattr(view_server, "_build_model", fake_build)
+    # 重置缓存时间
+    view_server._CACHED_HTML = ""
+    view_server._LAST_RENDER_TIME = 0.0
+
+    # 1. 连续 5 次快速请求
+    for _ in range(5):
+        html = view_server._get_rendered_html()
+        assert "window.__BOARD__ =" in html
+
+    # 只调用了一次全量构建
+    assert build_count["n"] == 1
+
+

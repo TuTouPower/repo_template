@@ -145,6 +145,22 @@ def test_prompt_substrings_only_active(env):
     assert set(rs.prompt_substrings(rs.read_state())) == {".gitignore", ".env"}
 
 
+def test_corrupt_sync_state_raises_sync_error_with_recovery_guidance(env):
+    """验证 sync_state.json 损坏或格式错误时抛出 SyncError 并附带恢复指引（Issue #49）。"""
+    consumer = env["consumer"]
+    state_file = consumer / ".repo_template/sync_state.json"
+
+    # 1. 截断/非法 JSON
+    state_file.write_text("{corrupt: json truncated...", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="损坏"):
+        rs.read_state()
+
+    # 2. 非 JSON 对象（如 JSON 数组）
+    state_file.write_text("[1, 2, 3]\n", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="格式错误.*预期为 JSON 对象"):
+        rs.read_state()
+
+
 # ---------------------------------------------------------------------------
 # 硬同步覆盖与多余删除
 # ---------------------------------------------------------------------------

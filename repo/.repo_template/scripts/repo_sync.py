@@ -154,10 +154,26 @@ def _reject_dir_target(dst: Path, reason: str) -> None:
 
 def read_state() -> dict | None:
     path = STATE_PATH if STATE_PATH.exists() else LEGACY_STATE_PATH
-    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    data = None
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise SyncError(
+                f"状态文件 {_rel(path)} 损坏（{error}）；"
+                f"请核对 JSON 内容、从备份恢复或重新运行 init --source <path|url>"
+            ) from error
+        if not isinstance(data, dict):
+            raise SyncError(
+                f"状态文件 {_rel(path)} 格式错误（预期为 JSON 对象）；"
+                "请修复或重新运行 init --source <path|url>"
+            )
     manifest = CONSUMER / ".repo_template/sync_manifest.json"
     if data is None and manifest.exists():
-        portable = json.loads(manifest.read_text(encoding="utf-8"))
+        try:
+            portable = json.loads(manifest.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise SyncError(f"清单文件 {_rel(manifest)} 损坏（{error}）") from error
         data = {"last_synced_commit": portable["resolved_commit"], "user_prompts": []}
         if portable.get("source_url"):
             data["template_source"] = {"kind": "url", "value": portable["source_url"]}
@@ -166,7 +182,10 @@ def read_state() -> dict | None:
         data["template_source"] = source_identity(SOURCE_OVERRIDE)
     policy = CONSUMER / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
-        data["_shared_user_prompts"] = json.loads(policy.read_text(encoding="utf-8")).get("user_prompts", [])
+        try:
+            data["_shared_user_prompts"] = json.loads(policy.read_text(encoding="utf-8")).get("user_prompts", [])
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise SyncError(f"策略文件 {_rel(policy)} 损坏（{error}）") from error
     return data
 
 

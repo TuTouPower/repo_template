@@ -12,6 +12,8 @@ import platform
 import socket
 import subprocess
 import sys
+import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,6 +61,26 @@ def _render_html(model: dict) -> str:
         .replace("\u2029", "\\u2029")
     )
     return template.replace("__BOARD_JSON__", payload)
+
+
+_RENDER_CACHE_LOCK = threading.Lock()
+_CACHED_HTML: str = ""
+_LAST_RENDER_TIME: float = 0.0
+_RENDER_CACHE_TTL = 0.5  # 500ms 内的并发请求复用渲染结果，平抑高并发资源冲击（Issue #48）
+
+
+def _get_rendered_html() -> str:
+    global _CACHED_HTML, _LAST_RENDER_TIME
+    now = time.monotonic()
+    if _CACHED_HTML and (now - _LAST_RENDER_TIME < _RENDER_CACHE_TTL):
+        return _CACHED_HTML
+    with _RENDER_CACHE_LOCK:
+        now = time.monotonic()
+        if _CACHED_HTML and (now - _LAST_RENDER_TIME < _RENDER_CACHE_TTL):
+            return _CACHED_HTML
+        _CACHED_HTML = _render_html(_build_model())
+        _LAST_RENDER_TIME = now
+        return _CACHED_HTML
 
 
 def _allowed_doc_roots(base: Path) -> tuple[Path, ...]:
@@ -239,7 +261,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = parts.path
         if path in ("/", "/index.html"):
             try:
-                html = _render_html(_build_model())
+                html = _get_rendered_html()
             except Exception as e:
                 self._send_error_text(500, f"渲染失败：{e}")
                 return
