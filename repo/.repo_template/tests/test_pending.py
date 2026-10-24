@@ -585,6 +585,54 @@ def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
     assert report.read_text(encoding="utf-8") == "# s001 spike 报告\n"
 
 
+def test_spikes_new_formats_report_file(tmp_path, monkeypatch):
+    """验证 spikes new 传入的具体格式化目标为 report.md 文件而非目录（Issue #58）。"""
+    repo = _init_repo(tmp_path)
+    _init_spikes(repo)
+    _bind(monkeypatch, repo)
+    formatted = []
+    monkeypatch.setattr(spikes_mod, "format_new_file", lambda rel: formatted.append(rel) or True)
+    spikes_mod.main(["new", "--slug", "verify_format"])
+    assert formatted == ["docs/spikes/s001_verify_format/report.md"]
+
+
+def test_allocate_atomicity_and_cleanup_on_failure(tmp_path, monkeypatch):
+    """验证 allocate 与 allocate_dir 写入中途中断时不残留残缺文件/目录，编号不被误占（Issue #59）。"""
+    import os
+    from _id_scan import allocate, allocate_dir
+
+    repo = _init_repo(tmp_path)
+    target = repo / "docs/pending/todo"
+    target.mkdir(parents=True, exist_ok=True)
+
+    class InjectedError(Exception): pass
+
+    def fail_replace(src, dst):
+        raise InjectedError("replace failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    # 1. allocate 写入替换失败
+    with pytest.raises(InjectedError):
+        allocate(repo, prefix="p", dirs=("docs/pending/todo",), target_dir=target, slug="flaky", body="# {id}\n")
+
+    # 目标路径与临时文件均不存在
+    assert not (target / "p001_flaky.md").exists()
+    assert not (target / ".tmp_p001_flaky.md").exists()
+    assert scan_max_id(repo, "p", ("docs/pending/todo",)) == 0
+
+    # 2. allocate_dir 目录创建替换失败
+    spike_target = repo / "docs/spikes"
+    files = {"report.md": "ok"}
+    with pytest.raises(InjectedError):
+        allocate_dir(repo, prefix="s", dirs=("docs/spikes",), target_dir=spike_target, slug="flaky_dir", files=files)
+
+    assert not (spike_target / "s001_flaky_dir").exists()
+    assert not (spike_target / ".tmp_s001_flaky_dir").exists()
+    assert scan_max_id(repo, "s", ("docs/spikes",), kind="dir") == 0
+
+
+
 def test_spikes_new_requires_template(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)

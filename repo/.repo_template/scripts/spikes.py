@@ -43,7 +43,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         slug=args.slug,
         files={"report.md": TEMPLATE_PATH.read_text(encoding="utf-8")},
     )
-    format_new_file(path.relative_to(REPO_ROOT).as_posix())
+    format_new_file((path / "report.md").relative_to(REPO_ROOT).as_posix())
     print(path.relative_to(REPO_ROOT).as_posix())
 
 

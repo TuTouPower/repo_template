@@ -23,7 +23,9 @@ pending.py / findings.py 共用。条目以「一条目一文件」形式存放�
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -223,7 +225,13 @@ def allocate(
         if path.exists():
             raise IdScanError(f"{path} 已存在；请先处理后重试")
         target_dir.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(body.replace("{id}", entry_id).encode("utf-8"))
+        tmp_path = target_dir / f".tmp_{entry_id}_{slug}.md"
+        try:
+            tmp_path.write_bytes(body.replace("{id}", entry_id).encode("utf-8"))
+            os.replace(tmp_path, path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
     return path
 
 
@@ -248,7 +256,18 @@ def allocate_dir(
         path = target_dir / f"{entry_id}_{slug}"
         if path.exists():
             raise IdScanError(f"{path} 已存在；请先处理后重试")
-        path.mkdir(parents=True)
-        for name, content in files.items():
-            (path / name).write_bytes(content.replace("{id}", entry_id).encode("utf-8"))
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = target_dir / f".tmp_{entry_id}_{slug}"
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+            tmp_dir.mkdir(parents=True)
+            for name, content in files.items():
+                dest_file = tmp_dir / name
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                dest_file.write_bytes(content.replace("{id}", entry_id).encode("utf-8"))
+            os.replace(tmp_dir, path)
+        except BaseException:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
     return path
