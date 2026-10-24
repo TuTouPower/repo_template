@@ -52,11 +52,15 @@ class CleanupError(Exception):
     pass
 
 
-def repo_root() -> Path:
-    r = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+def repo_root(timeout: int = 30) -> Path:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as err:
+        raise CleanupError(f"git rev-parse 超时（{timeout}s）") from err
     if r.returncode != 0:
         raise CleanupError(f"不在 git 仓库：{r.stderr.strip()}")
     return Path(r.stdout.strip())

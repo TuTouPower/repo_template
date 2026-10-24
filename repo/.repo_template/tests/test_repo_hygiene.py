@@ -228,3 +228,14 @@ def test_archive_review_rejects_bad_prefix(repo):
         rh.cmd_archive_review(argparse.Namespace(dir="prompts", write=True))
     with pytest.raises(rh.HygieneError):
         rh.cmd_archive_review(argparse.Namespace(dir="review_nonexistent", write=True))
+
+
+def test_repo_hygiene_git_timeout(monkeypatch):
+    """验证 git 调用超时时抛出 HygieneError 并包含超时时限信息（Issue #66）。"""
+    def mock_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    with pytest.raises(rh.HygieneError, match="超时（30s）"):
+        rh._git("status")
+

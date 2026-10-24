@@ -203,3 +203,16 @@ def test_cli_unknown_category_rejected(tree):
     )
     assert r.returncode != 0
     assert "未知类别" in r.stderr
+
+
+def test_repo_cleanup_git_timeout(monkeypatch):
+    """验证 repo_root 获取仓库顶层超时时抛出 CleanupError 并包含时限信息（Issue #66）。"""
+    import repo_cleanup as rc
+
+    def mock_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    with pytest.raises(rc.CleanupError, match="超时（30s）"):
+        rc.repo_root()
+

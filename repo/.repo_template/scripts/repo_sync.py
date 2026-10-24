@@ -949,6 +949,89 @@ def _skill_description(skill_dir: Path, name: str) -> str:
     return desc.replace('"', "'")
 
 
+def _expected_opencode_command_content(name: str) -> str:
+    return (
+        "---\n"
+        f'description: "{_skill_description(SKILLS_SRC / name, name)}"\n'
+        "---\n"
+        f"> {COMMAND_MARKER} '{name}'. Do not edit directly.\n\n"
+        f"Load and execute the `{name}` skill via the `skill` tool, "
+        "following its SKILL.md instructions.\n\n"
+        "User arguments: $ARGUMENTS\n"
+    )
+
+
+def opencode_commands_status() -> list[dict]:
+    """返回 opencode 命令薄层状态：[{"name": ..., "rel": ..., "state": ..., "desc": ...}]。"""
+    items = []
+    if not SKILLS_SRC.exists():
+        return items
+    names = sorted(e.name for e in SKILLS_SRC.iterdir() if e.is_dir())
+    registry_path = SKILLS_SRC / "registry.json"
+    if registry_path.exists():
+        roles = json.loads(registry_path.read_text(encoding="utf-8"))["skills"]
+        names = [name for name in names if roles.get(name, {}).get("role") == "public"]
+    for name in names:
+        dest = COMMANDS_OPENCODE / f"{name}.md"
+        expected = _expected_opencode_command_content(name)
+        if not dest.exists():
+            items.append({
+                "name": name,
+                "rel": _rel(dest),
+                "state": "create",
+                "desc": "缺失命令薄层（apply 生成）",
+            })
+        elif not dest.is_file():
+            items.append({
+                "name": name,
+                "rel": _rel(dest),
+                "state": "unmanaged",
+                "desc": "非文件目标，跳过",
+            })
+        else:
+            try:
+                existing = dest.read_text(encoding="utf-8")
+                if existing == expected:
+                    items.append({
+                        "name": name,
+                        "rel": _rel(dest),
+                        "state": "same",
+                        "desc": "一致",
+                    })
+                elif COMMAND_MARKER not in existing:
+                    items.append({
+                        "name": name,
+                        "rel": _rel(dest),
+                        "state": "unmanaged",
+                        "desc": "疑似手写命令，跳过",
+                    })
+                else:
+                    items.append({
+                        "name": name,
+                        "rel": _rel(dest),
+                        "state": "update",
+                        "desc": "描述或正文已漂移（apply 更新）",
+                    })
+            except OSError:
+                continue
+
+    if COMMANDS_OPENCODE.exists() and COMMANDS_OPENCODE.is_dir():
+        for md in sorted(COMMANDS_OPENCODE.glob("*.md")):
+            if md.stem not in names:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                    if COMMAND_MARKER in text:
+                        items.append({
+                            "name": md.stem,
+                            "rel": _rel(md),
+                            "state": "cleanup",
+                            "desc": "skill 已移除，残留薄层（apply 清理）",
+                        })
+                except OSError:
+                    continue
+    return items
+
+
 def sync_opencode_commands(changed: set[Path]) -> list[str]:
     """项目级 opencode 命令薄层：每个 skill 生成同名 /<skill> 命令。
 
@@ -967,15 +1050,7 @@ def sync_opencode_commands(changed: set[Path]) -> list[str]:
         roles = json.loads(registry_path.read_text(encoding="utf-8"))["skills"]
         names = [name for name in names if roles[name]["role"] == "public"]
     for name in names:
-        content = (
-            "---\n"
-            f'description: "{_skill_description(SKILLS_SRC / name, name)}"\n'
-            "---\n"
-            f"> {COMMAND_MARKER} '{name}'. Do not edit directly.\n\n"
-            f"Load and execute the `{name}` skill via the `skill` tool, "
-            "following its SKILL.md instructions.\n\n"
-            "User arguments: $ARGUMENTS\n"
-        )
+        content = _expected_opencode_command_content(name)
         dest = COMMANDS_OPENCODE / f"{name}.md"
         if dest.exists() and not dest.is_file():
             continue
@@ -1485,6 +1560,16 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"  缺失 {rule}（apply 追加）")
     else:
         print("  齐全")
+    print("\nopencode 命令薄层 (.opencode/commands):")
+    cmd_items = opencode_commands_status()
+    drifted_cmds = [it for it in cmd_items if it["state"] != "same"]
+    if not cmd_items:
+        print("  无")
+    elif not drifted_cmds:
+        print("  一致")
+    else:
+        for item in drifted_cmds:
+            print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
     for warning in retired_template_warnings():
         print(f"  STALE: {warning}")
     return 0
@@ -1584,6 +1669,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print(_md_table(["规则", "状态", "处置"], rows))
     else:
         print("齐全（模板自有路径已豁免）")
+    print("\n### opencode 命令薄层 (.opencode/commands)")
+    cmd_items = opencode_commands_status()
+    drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
+    if not drifted_cmds:
+        print("齐全一致（各 public skill 与 .opencode/commands 描述一致）")
+    else:
+        rows = [[item["rel"], item["state"], item["desc"]] for item in drifted_cmds]
+        print(_md_table(["路径", "状态", "处置"], rows))
     for warning in retired_template_warnings():
         print(f"- STALE: {warning}")
 

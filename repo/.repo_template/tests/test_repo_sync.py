@@ -358,6 +358,49 @@ def test_sync_opencode_commands(env):
     assert any("task-run" in r for r in reports)
 
 
+def test_opencode_commands_status_detects_description_drift(env, capsys):
+    """验证 skill 文案修改后 status/plan 能检出 opencode 命令薄层漂移（Issue #67）。"""
+    src, consumer = env["src"], env["consumer"]
+    skill_dir = consumer / ".repo_template/skills/task-sample"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: task-sample\ndescription: Original description\n---\nbody\n")
+
+    # 1. 首次状态应为 create
+    items = rs.opencode_commands_status()
+    sample_item = next(it for it in items if it["name"] == "task-sample")
+    assert sample_item["state"] == "create"
+
+    # 2. 生成命令薄层后状态应为 same
+    changed = set()
+    rs.sync_opencode_commands(changed)
+    items = rs.opencode_commands_status()
+    sample_item = next(it for it in items if it["name"] == "task-sample")
+    assert sample_item["state"] == "same"
+
+    # 3. 仅修改 skill description，不执行 link/sync
+    (skill_dir / "SKILL.md").write_text("---\nname: task-sample\ndescription: Updated new description\n---\nbody\n")
+
+    # 4. opencode_commands_status 必须检出 update 漂移
+    items = rs.opencode_commands_status()
+    sample_item = next(it for it in items if it["name"] == "task-sample")
+    assert sample_item["state"] == "update"
+    assert "漂移" in sample_item["desc"]
+
+    # 5. cmd_status 能打印提示
+    rs.cmd_status(Namespace())
+    out = capsys.readouterr().out
+    assert "opencode 命令薄层" in out
+    assert "update" in out and "/task-sample" in out
+
+    # 6. sync 之后恢复一致
+    changed = set()
+    rs.sync_opencode_commands(changed)
+    items = rs.opencode_commands_status()
+    sample_item = next(it for it in items if it["name"] == "task-sample")
+    assert sample_item["state"] == "same"
+
+
+
 def test_shipped_skills_have_real_descriptions():
     """模板分发的每个 skill 必须有真实 description（命令文案与按描述路由依赖）。"""
     skills_dir = Path(__file__).resolve().parents[1] / "skills"

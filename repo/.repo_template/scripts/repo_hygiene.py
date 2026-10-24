@@ -43,11 +43,15 @@ class HygieneError(Exception):
     pass
 
 
-def _git(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as err:
+        raise HygieneError(f"git {' '.join(args)} 超时（{timeout}s）") from err
 
 
 def _rel(path: Path) -> str:
