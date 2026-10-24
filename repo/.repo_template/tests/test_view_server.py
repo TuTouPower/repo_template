@@ -332,3 +332,44 @@ def test_build_model_has_no_schedule_status(monkeypatch):
     assert {node['id'] for node in model['nodes']} == {'t001', 't002'}
     assert all('schedule_status' not in node for node in model['nodes'])
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
+
+
+def test_serve_rejects_out_of_range_port():
+    """验证非法端口在启动前明确拒绝，避免原始 OverflowError 崩溃（Issue #63）。"""
+    with pytest.raises(SystemExit, match="看板端口非法：-1；端口必须在 0 到 65535 之间"):
+        view_server.serve(port=-1)
+    with pytest.raises(SystemExit, match="看板端口非法：70000；端口必须在 0 到 65535 之间"):
+        view_server.serve(port=70000)
+
+
+def test_render_html_escapes_html_comments_and_separators():
+    """验证标题包含 HTML 注释与特殊 Unicode 分隔符时被转义（Issue #60）。"""
+    model = {
+        "project": "demo",
+        "nodes": [{"id": "t001", "title": "<!-- comment --> test\u2028split", "category": "runnable"}],
+        "edges": [],
+        "summary": {"active": 0, "runnable": 1},
+    }
+    html = view_server._render_html(model)
+    assert "<!-- comment -->" not in html
+    assert "<\\!-- comment -->" in html
+    assert "\u2028" not in html
+    assert "\\u2028" in html
+
+
+def test_handler_sends_security_headers():
+    """验证看板 HTTP 响应包含基础安全头（nosniff, X-Frame-Options, CSP）（Issue #60）。"""
+    headers = []
+
+    class DummyHandler:
+        def send_response(self, status): pass
+        def send_header(self, k, v): headers.append((k, v))
+        def end_headers(self): pass
+        wfile = type("DummyWFile", (), {"write": lambda self, b: None})()
+
+    view_server._Handler._send_bytes(DummyHandler(), 200, b"ok", "text/html")
+    hdr_dict = dict(headers)
+    assert hdr_dict.get("X-Content-Type-Options") == "nosniff"
+    assert hdr_dict.get("X-Frame-Options") == "DENY"
+    assert "Content-Security-Policy" in hdr_dict
+

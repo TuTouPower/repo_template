@@ -49,9 +49,15 @@ def _build_model():
 
 
 def _render_html(model: dict) -> str:
-    """纯函数：读取模板，注入模型 JSON（转义 </script> 防闭合注入）。"""
+    """纯函数：读取模板，注入模型 JSON（转义 </script>、<!-- 与 Unicode 分隔符防注入）。"""
     template = (_STATIC_DIR / "board.html").read_text(encoding="utf-8")
-    payload = json.dumps(model, ensure_ascii=False).replace("</", "<\\/")
+    payload = (
+        json.dumps(model, ensure_ascii=False)
+        .replace("</", "<\\/")
+        .replace("<!--", "<\\!--")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
     return template.replace("__BOARD_JSON__", payload)
 
 
@@ -202,6 +208,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -278,6 +290,8 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
+    if not isinstance(port, int) or port < 0 or port > 65535:
+        sys.exit(f"看板端口非法：{port!r}；端口必须在 0 到 65535 之间（0 为自动选空闲端口）")
     port = port or _find_free_port(host)
     # ThreadingHTTPServer 对 IPv6 字面量需要方括号才能当 URL host
     url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
