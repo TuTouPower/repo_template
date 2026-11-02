@@ -5,7 +5,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from . import context as ctx
-from .documents import dump_tid_list, parse_tid_list, write_front_matter_many
+from .documents import dump_tid_list, parse_front_matter, parse_tid_list, write_front_matter_many
 from .git_ops import require_primary_worktree
 from .locks import CONTROL_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle, compute_schedule
@@ -78,6 +78,25 @@ def cmd_merge_backlog(args):
             for tid in retired:
                 _close_task(Namespace(tid=tid), "dropped", f"merged into {args.tid}")
             rebuild_index()
+            for path, fm, _body in updates:
+                if any(path.is_relative_to(ctx.REPO_ROOT / d) for d in source_dirs):
+                    continue
+                actual, _ = parse_front_matter(path)
+                if (
+                    actual.get("depends_on", "") != fm["depends_on"]
+                    or actual.get("conflicts_with", "") != fm["conflicts_with"]
+                ):
+                    raise ctx.TaskDataError(
+                        f"合并后校验失败：{ctx._rel(path)} 依赖/冲突与预期不符"
+                    )
+            for directory in source_dirs:
+                name = Path(directory).name
+                if (ctx.TASKS_DIR / name).exists():
+                    raise ctx.TaskDataError(f"合并后校验失败：docs/tasks/{name} 仍存在")
+                if not (ctx.ARCHIVE_TASKS_DIR / name).is_dir():
+                    raise ctx.TaskDataError(
+                        f"合并后校验失败：docs/archive/tasks/{name} 不存在"
+                    )
             transaction.applied()
             transaction.accept()
         except (OSError, ctx.TaskDataError, SystemExit) as error:

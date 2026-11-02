@@ -35,9 +35,9 @@ import sys
 import tempfile
 from functools import wraps
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from export_template import export_template
+from export_template import export_template, is_non_distributable
 from repo_task.context import TaskDataError
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock, validation_environment
 from repo_task.file_transaction import FileTransaction, fingerprint
@@ -118,12 +118,15 @@ def consumer_locked(function):
     return locked
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=30,
-    )
+def _git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SyncError(f"git {' '.join(args)} 超时（{timeout}s）") from error
 
 
 def _rel(path: Path) -> str:
@@ -142,9 +145,13 @@ def _file_differs(a: Path, b: Path) -> bool:
     return a.read_bytes() != b.read_bytes()
 
 
-def _reject_dir_target(dst: Path, reason: str) -> None:
-    """目标须能承载文件：shutil.copy2 遇到同名目录会把文件静默写进目录内部。"""
-    if dst.is_dir() and not dst.is_symlink():
+def _reject_unsafe_target(dst: Path, reason: str) -> None:
+    """拒绝目录与软链目标：copy2 会跟随文件软链写仓外，也会把文件写进同名目录。"""
+    if dst.is_symlink():
+        raise SyncError(
+            f"{_rel(dst)} 是软链：{reason}。同步不得经软链写到仓外；请人工处理后重跑 apply"
+        )
+    if dst.is_dir():
         raise SyncError(f"{_rel(dst)} 是目录：{reason}。请人工处理该目录后重跑 apply")
 
 
@@ -152,29 +159,37 @@ def _reject_dir_target(dst: Path, reason: str) -> None:
 # sync_state.json 读写（字段级原子更新纪律）
 # ---------------------------------------------------------------------------
 
+def _load_json_object(path: Path, label: str) -> dict:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise SyncError(f"{label} 无法读取（{error}）；请核对权限后重试") from error
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SyncError(
+            f"{label} 损坏（{error}）；请核对 JSON 内容、从备份恢复或重新运行 init --source <path|url>"
+        ) from error
+    if not isinstance(data, dict):
+        raise SyncError(
+            f"{label} 格式错误（预期为 JSON 对象）；请修复或重新运行 init --source <path|url>"
+        )
+    return data
+
+
 def read_state() -> dict | None:
     path = STATE_PATH if STATE_PATH.exists() else LEGACY_STATE_PATH
-    data = None
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise SyncError(
-                f"状态文件 {_rel(path)} 损坏（{error}）；"
-                f"请核对 JSON 内容、从备份恢复或重新运行 init --source <path|url>"
-            ) from error
-        if not isinstance(data, dict):
-            raise SyncError(
-                f"状态文件 {_rel(path)} 格式错误（预期为 JSON 对象）；"
-                "请修复或重新运行 init --source <path|url>"
-            )
+    data = _load_json_object(path, f"状态文件 {_rel(path)}") if path.exists() else None
     manifest = CONSUMER / ".repo_template/sync_manifest.json"
     if data is None and manifest.exists():
-        try:
-            portable = json.loads(manifest.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise SyncError(f"清单文件 {_rel(manifest)} 损坏（{error}）") from error
-        data = {"last_synced_commit": portable["resolved_commit"], "user_prompts": []}
+        portable = _load_json_object(manifest, f"清单文件 {_rel(manifest)}")
+        resolved = portable.get("resolved_commit")
+        if not isinstance(resolved, str) or not resolved.strip():
+            raise SyncError(
+                f"清单文件 {_rel(manifest)} 缺 resolved_commit；"
+                "请修复或重新运行 init --source <path|url>"
+            )
+        data = {"last_synced_commit": resolved, "user_prompts": []}
         if portable.get("source_url"):
             data["template_source"] = {"kind": "url", "value": portable["source_url"]}
     if SOURCE_OVERRIDE:
@@ -182,10 +197,11 @@ def read_state() -> dict | None:
         data["template_source"] = source_identity(SOURCE_OVERRIDE)
     policy = CONSUMER / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
-        try:
-            data["_shared_user_prompts"] = json.loads(policy.read_text(encoding="utf-8")).get("user_prompts", [])
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise SyncError(f"策略文件 {_rel(policy)} 损坏（{error}）") from error
+        policy_data = _load_json_object(policy, f"策略文件 {_rel(policy)}")
+        prompts = policy_data.get("user_prompts", [])
+        if not isinstance(prompts, list):
+            raise SyncError(f"策略文件 {_rel(policy)} 的 user_prompts 必须是数组")
+        data["_shared_user_prompts"] = prompts
     return data
 
 
@@ -250,7 +266,8 @@ def prompt_substrings(state: dict | None) -> list[str]:
     return out
 
 
-def resolve_src(state: dict | None) -> Path:
+def resolve_src(state: dict | None, *, refresh: bool = True) -> Path:
+    """解析模板源。URL 源 refresh=False 时只读缓存，不 clone/pull（Issue #72）。"""
     if not state or not state.get("template_source", {}).get("value"):
         raise SyncError("未初始化：缺少 template_source。先运行 init --source <path|url>")
     ts = state["template_source"]
@@ -266,6 +283,7 @@ def resolve_src(state: dict | None) -> Path:
     if kind == "url":
         cache = CONSUMER / ".scratch/repo_template_sync_src"
         if not (cache / ".git").exists():
+            # 首次没有缓存只能 clone；有缓存后 refresh=False 完全离线。
             cache.parent.mkdir(parents=True, exist_ok=True)
             r = _git(cache.parent, "clone", value, cache.name)
             if r.returncode != 0:
@@ -274,9 +292,10 @@ def resolve_src(state: dict | None) -> Path:
             origin = _git(cache, "remote", "get-url", "origin")
             if origin.returncode or origin.stdout.strip() != value:
                 raise SyncError("来源缓存 origin 与 template_source 不符；保留缓存，先核实来源并使用独立缓存或本地 checkout")
-            r = _git(cache, "pull", "--ff-only")
-            if r.returncode != 0:
-                raise SyncError(f"更新模板源失败：{r.stderr.strip()}")
+            if refresh:
+                r = _git(cache, "pull", "--ff-only")
+                if r.returncode != 0:
+                    raise SyncError(f"更新模板源失败：{r.stderr.strip()}")
         src = cache.resolve()
     else:
         src = Path(value).expanduser().resolve()
@@ -758,12 +777,12 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path]) -> None:
         if entry.is_dir() and not entry.is_symlink():
             sync_dir(entry, target, changed)
         elif entry.is_symlink():
-            _reject_dir_target(target, "模板源是文件/软链，拒绝写入目录内部")
+            _reject_unsafe_target(target, "模板源是文件/软链，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 shutil.copy2(entry, target, follow_symlinks=False)
                 changed.add(target)
         else:
-            _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
+            _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 shutil.copy2(entry, target)
                 changed.add(target)
@@ -783,11 +802,11 @@ def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
     """单文件：src 有 → 拷贝（相同则不动）；src 无 → 删 dst。"""
     if not src.exists():
         if dst.exists():
-            _reject_dir_target(dst, "模板已无此文件，拒绝删除同名目录")
+            _reject_unsafe_target(dst, "模板已无此文件，拒绝删除同名目录")
             dst.unlink()
             changed.add(dst)
         return
-    _reject_dir_target(dst, "模板源是文件，拒绝写入目录内部")
+    _reject_unsafe_target(dst, "模板源是文件，拒绝写入目录内部")
     if not dst.exists() or _file_differs(src, dst):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
@@ -814,7 +833,7 @@ def sync_skill(src_skill: Path, dst_skill: Path, changed: set[Path]) -> None:
         if entry.is_dir():
             sync_dir(entry, target, changed)
         else:
-            _reject_dir_target(target, "模板源是文件，拒绝写入目录内部")
+            _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部")
             if not target.exists() or _file_differs(entry, target):
                 shutil.copy2(entry, target)
                 changed.add(target)
@@ -1007,16 +1026,37 @@ def _expected_opencode_command_content(name: str) -> str:
     )
 
 
+def _load_skill_roles() -> dict | None:
+    path = SKILLS_SRC / "registry.json"
+    if not path.exists():
+        return None
+    data = _load_json_object(path, "skills/registry.json")
+    roles = data.get("skills")
+    if not isinstance(roles, dict):
+        raise SyncError("skills/registry.json 结构错误：缺 skills 对象")
+    return roles
+
+
+def _public_skill_names(names: list[str]) -> list[str]:
+    """校验 registry 覆盖全部 skill；未登记即 fail-closed，status 与 apply 同口径。"""
+    roles = _load_skill_roles()
+    if roles is None:
+        return names
+    missing = sorted(name for name in names if name not in roles)
+    if missing:
+        raise SyncError(
+            "skills/registry.json 未登记 skill：" + ", ".join(missing) + "；先补登记后重跑"
+        )
+    return [name for name in names if roles[name].get("role") == "public"]
+
+
 def opencode_commands_status() -> list[dict]:
     """返回 opencode 命令薄层状态：[{"name": ..., "rel": ..., "state": ..., "desc": ...}]。"""
     items = []
     if not SKILLS_SRC.exists():
         return items
     names = sorted(e.name for e in SKILLS_SRC.iterdir() if e.is_dir())
-    registry_path = SKILLS_SRC / "registry.json"
-    if registry_path.exists():
-        roles = json.loads(registry_path.read_text(encoding="utf-8"))["skills"]
-        names = [name for name in names if roles.get(name, {}).get("role") == "public"]
+    names = _public_skill_names(names)
     for name in names:
         dest = COMMANDS_OPENCODE / f"{name}.md"
         expected = _expected_opencode_command_content(name)
@@ -1091,10 +1131,7 @@ def sync_opencode_commands(changed: set[Path]) -> list[str]:
         return reports
     COMMANDS_OPENCODE.mkdir(parents=True, exist_ok=True)
     names = sorted(e.name for e in SKILLS_SRC.iterdir() if e.is_dir())
-    registry_path = SKILLS_SRC / "registry.json"
-    if registry_path.exists():
-        roles = json.loads(registry_path.read_text(encoding="utf-8"))["skills"]
-        names = [name for name in names if roles[name]["role"] == "public"]
+    names = _public_skill_names(names)
     for name in names:
         content = _expected_opencode_command_content(name)
         dest = COMMANDS_OPENCODE / f"{name}.md"
@@ -1204,7 +1241,7 @@ def symlink_status() -> list[dict]:
             if link.is_symlink() and link.resolve() == entry.resolve():
                 out.append({"name": entry.name, "state": "ok"})
             elif link.exists() and not link.is_symlink():
-                out.append({"name": entry.name, "state": "unmanaged"})
+                out.append({"name": entry.name, "state": "convert"})
             else:
                 out.append({"name": entry.name, "state": "repair"})
     if SKILLS_CLAUDE.exists():
@@ -1313,6 +1350,13 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
     return {"added": added, "removed": removed, "dst": _rel(dst)}
 
 
+_PRETTIERIGNORE_OLD_HEADER = "# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束"
+_PRETTIERIGNORE_HEADER = (
+    "# 同步自模板（repo-template-sync）：模板自有/本地生成路径不受消费仓 format 门禁约束；",
+    "# 部分条目（sync_manifest.json / sync_policy.json / .opencode/package*.json）按需生成，不存在时仅为预留",
+)
+
+
 def merge_prettierignore(changed: set[Path]) -> dict:
     """机械合并 .prettierignore：模板自有路径去重追加，消费独有规则保留。"""
     dst = CONSUMER / ".prettierignore"
@@ -1322,11 +1366,18 @@ def merge_prettierignore(changed: set[Path]) -> dict:
     for rule in PRETTIERIGNORE_TEMPLATE_RULES:
         if rule not in dst_set:
             added.append(rule)
-    if added:
-        if dst_lines and dst_lines[-1].strip():
-            dst_lines.append("")
-        dst_lines.append("# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束")
-        dst_lines.extend(added)
+    header_changed = False
+    if _PRETTIERIGNORE_OLD_HEADER in dst_lines:
+        index = dst_lines.index(_PRETTIERIGNORE_OLD_HEADER)
+        dst_lines[index:index + 1] = list(_PRETTIERIGNORE_HEADER)
+        header_changed = True
+    if added or header_changed:
+        if added:
+            if dst_lines and dst_lines[-1].strip():
+                dst_lines.append("")
+            if _PRETTIERIGNORE_HEADER[0] not in dst_lines:
+                dst_lines.extend(_PRETTIERIGNORE_HEADER)
+            dst_lines.extend(added)
         text = "\n".join(dst_lines)
         if not text.endswith("\n"):
             text += "\n"
@@ -1348,8 +1399,70 @@ def retired_template_warnings() -> list[str]:
     return warnings
 
 
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(api[-_]?key|apikey|token|password|passwd|secret|auth|credential)"
+)
+
+
+def _sanitize_mcp_args(args: list) -> list:
+    out = list(args)
+    index = 0
+    while index < len(out):
+        item = out[index]
+        if isinstance(item, str) and item.startswith("-") and "=" in item:
+            flag, _value = item.split("=", 1)
+            if _SECRET_KEY_RE.search(flag):
+                out[index] = f"{flag}=<{flag.lstrip('-')}_PLACEHOLDER>"
+        elif (
+            isinstance(item, str)
+            and item.startswith("-")
+            and _SECRET_KEY_RE.search(item)
+            and index + 1 < len(out)
+            and isinstance(out[index + 1], str)
+            and not out[index + 1].startswith("-")
+        ):
+            out[index + 1] = f"<{item.lstrip('-')}_PLACEHOLDER>"
+            index += 1
+        index += 1
+    return out
+
+
+def _sanitize_mcp_url(value: str) -> str:
+    parts = urlsplit(value)
+    changed = False
+    netloc = parts.netloc
+    if parts.username is not None or parts.password is not None:
+        host = parts.hostname or ""
+        port = f":{parts.port}" if parts.port else ""
+        if parts.password is not None:
+            netloc = f"<url_user_PLACEHOLDER>:<url_password_PLACEHOLDER>@{host}{port}"
+        else:
+            netloc = f"<url_user_PLACEHOLDER>@{host}{port}"
+        changed = True
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    new_pairs = []
+    for key, val in pairs:
+        if _SECRET_KEY_RE.search(key):
+            new_pairs.append((key, f"<{key}_PLACEHOLDER>"))
+            changed = True
+        else:
+            new_pairs.append((key, val))
+    if not changed:
+        return value
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(new_pairs), parts.fragment))
+
+
+def _sanitize_mcp_headers(headers: dict) -> dict:
+    for key, val in list(headers.items()):
+        if _SECRET_KEY_RE.search(key) or (
+            isinstance(val, str) and val.lower().startswith(("bearer ", "basic "))
+        ):
+            headers[key] = f"<{key}_PLACEHOLDER>"
+    return headers
+
+
 def _sanitize_mcp_servers(servers: dict) -> dict:
-    """清理 MCP 服务端参数中的非占位环境变量，转为显式占位符（Issue #54）。"""
+    """占位化 MCP 服务端的 env/args/url/headers 凭据（Issue #54、#80）。"""
     clean = {}
     for key, val in servers.items():
         if not isinstance(val, dict):
@@ -1361,6 +1474,15 @@ def _sanitize_mcp_servers(servers: dict) -> dict:
             for ek, ev in list(env.items()):
                 if isinstance(ev, str) and not (ev.startswith("${") or ev.startswith("<")):
                     env[ek] = f"<{ek}_PLACEHOLDER>"
+        args = v_copy.get("args")
+        if isinstance(args, list):
+            v_copy["args"] = _sanitize_mcp_args(args)
+        url = v_copy.get("url")
+        if isinstance(url, str):
+            v_copy["url"] = _sanitize_mcp_url(url)
+        headers = v_copy.get("headers")
+        if isinstance(headers, dict):
+            v_copy["headers"] = _sanitize_mcp_headers(headers)
         clean[key] = v_copy
     return clean
 
@@ -1386,7 +1508,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             new_data = {**sdata, "mcpServers": _sanitize_mcp_servers(s_servers)}
             dp.write_text(json.dumps(new_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             changed.add(dp)
-            merged.append(f"{_rel(dp)}（新建，已占位化环境参数，需审阅）")
+            merged.append(f"{_rel(dp)}（新建，已占位化 env/args/url/headers 中的凭据，需审阅全部字段）")
             continue
         try:
             draw = dp.read_text(encoding="utf-8")
@@ -1552,19 +1674,51 @@ def _run_tests(consumer: Path) -> bool:
 # 子命令
 # ---------------------------------------------------------------------------
 
+def _merge_legacy_state(data: dict, legacy: dict) -> list[str]:
+    """把 legacy 中未被新 state 吸收的字段并入 data，返回并入的键。"""
+    merged = []
+    for key, value in legacy.items():
+        if key == "user_prompts":
+            continue
+        if key not in data or data[key] in (None, "", [], {}):
+            data[key] = value
+            merged.append(key)
+    current = data.setdefault("user_prompts", [])
+    if not isinstance(current, list):
+        current = []
+        data["user_prompts"] = current
+    seen = {(str(item.get("at", "")), str(item.get("text", "")))
+            for item in current if isinstance(item, dict)}
+    for item in legacy.get("user_prompts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("at", "")), str(item.get("text", "")))
+        if key not in seen:
+            current.append(item)
+            seen.add(key)
+            merged.append("user_prompts")
+    return merged
+
+
 @consumer_locked
 def cmd_init(args: argparse.Namespace) -> int:
     if not args.source:
         raise SyncError("init 需要 --source <path|url>")
     identity = source_identity(args.source)
+    legacy = None
+    legacy_readable = True
+    if LEGACY_STATE_PATH.exists():
+        try:
+            legacy = json.loads(LEGACY_STATE_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            legacy = None
+            legacy_readable = False
+            print(
+                f"WARNING: 旧布局 state 无法解析，保留原文件不删除："
+                f"{LEGACY_STATE_PATH.relative_to(CONSUMER).as_posix()}",
+                file=sys.stderr,
+            )
     if not STATE_PATH.exists():
-        # 旧布局 state 迁移：字段级带过 user_prompts / last_synced_*（新路径不存在时才读）。
-        legacy = None
-        if LEGACY_STATE_PATH.exists():
-            try:
-                legacy = json.loads(LEGACY_STATE_PATH.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                legacy = None
         base = legacy if isinstance(legacy, dict) else read_state() or {
             "template_source": None,
             "last_synced_commit": None,
@@ -1572,13 +1726,18 @@ def cmd_init(args: argparse.Namespace) -> int:
             "user_prompts": [],
         }
         write_state(base)
-        if legacy is not None:
+        if isinstance(legacy, dict):
             print(f"已迁移旧布局 state：{LEGACY_STATE_PATH.relative_to(CONSUMER).as_posix()} → {STATE_PATH.relative_to(CONSUMER).as_posix()}")
+        legacy = None
     data = read_state()
     data["template_source"] = identity
+    if isinstance(legacy, dict):
+        merged = _merge_legacy_state(data, legacy)
+        if merged:
+            print("旧布局 state 已合并字段：" + ", ".join(sorted(set(merged))))
     kind = data["template_source"]["kind"]
     write_state(data)
-    if LEGACY_STATE_PATH.exists():
+    if LEGACY_STATE_PATH.exists() and legacy_readable:
         try:
             LEGACY_STATE_PATH.unlink()
             print(f"旧布局 state 已移除：{LEGACY_STATE_PATH.relative_to(CONSUMER).as_posix()}")
@@ -1594,7 +1753,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     if not state:
         print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
         return 0
-    src = resolve_src(state)
+    src = resolve_src(state, refresh=getattr(args, "fetch", False))
+    if state["template_source"].get("kind") == "url" and not getattr(args, "fetch", False):
+        print("来源缓存：未联网刷新（--fetch 刷新；首次会自动建缓存）")
     head = _git(src, "rev-parse", "HEAD").stdout.strip() or "?"
     dirty = src_dirty(src)
     prompts = active_prompts(state)
@@ -1669,8 +1830,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if not state:
         print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
         return 0
-    src = resolve_src(state)
+    src = resolve_src(state, refresh=getattr(args, "fetch", False))
     assert_not_self(src)
+    if state["template_source"].get("kind") == "url" and not getattr(args, "fetch", False):
+        print("来源缓存：未联网刷新（--fetch 刷新；首次会自动建缓存）")
     head = _git(src, "rev-parse", "HEAD").stdout.strip() or "?"
     dirty = src_dirty(src)
     prompts = active_prompts(state)
@@ -1736,6 +1899,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "ok": "正确",
             "repair": "需建/修",
             "unmanaged": "非本机制，不碰",
+            "convert": "需转软链（原内容入回滚栈）",
             "cleanup": "需清理（skill 已删除）",
         }[item["state"]]
         rows.append([f".claude/skills/{item['name']}", item["state"], mark])
@@ -1787,6 +1951,32 @@ def cmd_plan(args: argparse.Namespace) -> int:
     else:
         print(f"apply 通过后推进 last_synced_commit -> {head}")
     return 0
+
+
+def _assert_distributable_tree(src: Path) -> None:
+    """dirty 源绕过 export_template，写盘前用同一策略扫描将同步的产物树。"""
+    candidates: list[Path] = []
+    for rel in HARD_SYNC_DIRS:
+        base = src / rel
+        if base.is_dir():
+            candidates.extend(path for path in base.rglob("*") if not path.is_dir())
+    for rel in HARD_SYNC_FILES:
+        path = src / rel
+        if path.exists():
+            candidates.append(path)
+    for path in candidates:
+        rel = path.relative_to(src)
+        if any(
+            part in NOISE_NAMES or part in PROTECT_NAMES or part.endswith(".pyc")
+            for part in rel.parts
+        ):
+            continue
+        relpath = rel.as_posix()
+        if is_non_distributable(relpath):
+            raise SyncError(
+                f"模板源含不可分发文件：{relpath}；dirty 同步拒绝。"
+                "请删除或移出产物树后重试"
+            )
 
 
 def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str]) -> None:
@@ -1865,6 +2055,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     try:
         template_agents = None
         if dirty:
+            _assert_distributable_tree(src)
             if (src / "AGENTS.md").exists():
                 template_agents = (src / "AGENTS.md").read_text(encoding="utf-8")
             _apply_sync_write(src, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state))
@@ -2062,8 +2253,30 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
 @consumer_locked
 def cmd_link_skills(args: argparse.Namespace) -> int:
     changed: set[Path] = set()
-    reports = repair_symlinks(changed)
-    reports += sync_opencode_commands(changed)
+    transaction = FileTransaction(CONSUMER, ".scratch/repo_sync_rollback")
+    paths = [".claude/skills", ".agents/skills", ".opencode/commands"]
+    try:
+        transaction.begin(paths)
+    except ValueError as error:
+        raise SyncError(str(error)) from error
+    try:
+        reports = repair_symlinks(changed)
+        reports += sync_opencode_commands(changed)
+        transaction.applied()
+        transaction.accept()
+    except (OSError, ValueError, SyncError, subprocess.SubprocessError) as error:
+        rollback_ok = True
+        try:
+            transaction.rollback(automatic=True)
+        except Exception as rollback_error:
+            rollback_ok = False
+            print(
+                f"WARNING: link-skills 回滚失败（{rollback_error}），"
+                "备份保留在 .scratch/repo_sync_rollback",
+                file=sys.stderr,
+            )
+        suffix = "已回滚" if rollback_ok else "回滚未完成，请人工恢复"
+        raise SyncError(f"link-skills 失败（{error}）；{suffix}") from error
     for r in reports:
         print(f"提示: {r}")
     if not changed:
@@ -2099,8 +2312,12 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--source", help="模板源：本机路径或 git remote URL")
     init.set_defaults(func=cmd_init)
 
-    sub.add_parser("status", help="读取状态与差异摘要").set_defaults(func=cmd_status)
-    sub.add_parser("plan", help="计算差异预览（零写盘）").set_defaults(func=cmd_plan)
+    status_parser = sub.add_parser("status", help="读取状态与差异摘要")
+    status_parser.add_argument("--fetch", action="store_true", help="URL 源联网刷新缓存（默认离线只读）")
+    status_parser.set_defaults(func=cmd_status)
+    plan_parser = sub.add_parser("plan", help="计算差异预览（不改消费仓受管资产；URL 首次会建 .scratch 缓存）")
+    plan_parser.add_argument("--fetch", action="store_true", help="URL 源联网刷新缓存（默认离线只读）")
+    plan_parser.set_defaults(func=cmd_plan)
     transaction = sub.add_parser("transaction", help="持久同步事务的查询、恢复与接受")
     transaction.add_argument("action", choices=("status", "rollback", "accept"))
     transaction.add_argument("--confirm-restore", action="store_true")

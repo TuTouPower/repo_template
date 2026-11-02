@@ -192,7 +192,10 @@ def main(argv: list[str] | None = None) -> None:
         if args.changed and args.all:
             raise MdFormatError("--changed 与 --all 互斥")
         if args.paths:
-            rels = [p for p in args.paths if not _is_blacklisted(p)]
+            rejected = [p for p in args.paths if _is_blacklisted(p)]
+            if rejected:
+                raise MdFormatError(f"{', '.join(rejected)} 在黑名单，拒绝格式化")
+            rels = args.paths
         elif args.changed:
             rels = collect_changed()
         elif args.all or args.check:

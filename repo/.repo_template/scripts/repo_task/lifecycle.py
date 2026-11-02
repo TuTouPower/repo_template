@@ -289,7 +289,11 @@ def _missing_testing_sections(text: str) -> list[str]:
     for line in text.splitlines():
         if fence_marker is not None:
             fence = ctx.FENCE_CLOSE_RE.match(line)
-            if fence and fence.group(1)[0] == fence_marker:
+            if (
+                fence
+                and fence.group(1)[0] == fence_marker[0]
+                and len(fence.group(1)) >= fence_marker[1]
+            ):
                 fence_marker = None
                 if current:
                     found[current] = True
@@ -298,7 +302,7 @@ def _missing_testing_sections(text: str) -> list[str]:
         if fence:
             if current:
                 found[current] = True
-            fence_marker = fence.group(1)[0]
+            fence_marker = (fence.group(1)[0], len(fence.group(1)))
             continue
         heading = ctx.HEADING_RE.fullmatch(line)
         if heading:
@@ -725,9 +729,23 @@ def cmd_rewind(args):
     try:
         append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
     except ctx.TaskDataError as error:
+        append_note(fm, f"rewind audit failed: {error}")
+        if recorded == target:
+            state_hint = f"main 记录已是 {recorded}，重试会以「已是 {target}」退出"
+        else:
+            state_hint = f"note.md 仍为 {effective}"
+        try:
+            write_front_matter(path, fm, body)
+        except (OSError, ctx.TaskDataError) as write_error:
+            sys.exit(
+                f"rewind 审计写入失败（{error}）；{state_hint}；"
+                f"结果写回 note.md 也失败（{write_error}）。"
+                "worktree/分支可能已清理，请人工核查后补记审计与状态"
+            )
         sys.exit(
-            f"rewind 审计写入失败（{error}）；note.md 未写仍为 {effective}。"
-            "worktree/分支可能已清理；直接重试 rewind 将正常完成"
+            f"rewind 审计写入失败（{error}）；{state_hint}；"
+            "已把 rewind 结果与审计失败写入 note.md 供追溯，"
+            "本次不会自动补审计，请人工补记"
         )
     try:
         write_front_matter(path, fm, body)
@@ -844,13 +862,16 @@ def cmd_show(args):
         fields["source_ref"] = f"{ref_name}@{ref_sha[:12]}"
         fields["dir"] = task["dir"]
         fields["note_md"] = f"{ref_name}:{task['dir']}/note.md"
-        fields["task_md"] = f"{ref_name}:{task['dir']}/note.md"
+        fields["task_md"] = f"{ref_name}:{task['dir']}/task.md"
     else:
         task, path, fm, body = load_task(args.tid)
         fields = dict(fm)
         fields["dir"] = task["dir"]
         fields["note_md"] = ctx._rel(path)
-        fields["task_md"] = ctx._rel(path)
+        task_md = path.parent / "task.md"
+        fields["task_md"] = (
+            ctx._rel(task_md) if task_md.is_file() else f"{ctx._rel(task_md)}（缺失）"
+        )
     width = max(len(k) for k in fields)
     for k, v in fields.items():
         print(f"{k.ljust(width)}: {v}")

@@ -63,8 +63,9 @@ def resolve_worktree(project, tid):
     """Worktree path (absolute) for a tid from the attempt ledger, or ''.
 
     逆序扫描账本（从后向前），匹配到该 tid 的最新状态即快速终止（Issue #61）。
-    A `start` event opens the window; `attempt_reserved` with state=running
-    keeps it open; any terminal event (report/integrated/attempt_terminal) closes it.
+    A `start` event opens the window; any non-terminal event
+    (attempt_reserved / execution_claimed 等) keeps it open; terminal events
+    (report/integrated/attempt_terminal) close it.
     """
     ledger = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
     if not os.path.isfile(ledger):
@@ -88,11 +89,8 @@ def resolve_worktree(project, tid):
                 worktree = str(rec.get("worktree") or "")
                 active = True
                 break
-            elif event == "attempt_reserved" and rec.get("state") == "running":
-                active = True
-                # attempt_reserved 无 worktree 字段，继续向前找到对应 start 事件
-            else:
-                return ""
+            # 非终态事件不携带 worktree，继续向前找到对应 start 事件
+            active = True
         else:
             if event == "start":
                 worktree = str(rec.get("worktree") or "")

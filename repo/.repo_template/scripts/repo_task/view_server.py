@@ -1,8 +1,9 @@
 """task 调度看板本地服务。
 
-只读；stdlib http.server；无 WebSocket、无后台轮询。每次请求重新计算
-schedule，页面通过注入 JSON 交给客户端 JS 渲染；静态资源（board.css /
-board.js）从同目录 view_static/ 读取，无构建、无 CDN 依赖。
+只读；stdlib http.server；无 WebSocket、无后台轮询。首页 HTML 在 500ms TTL
+内复用渲染结果；`/task-doc` 每次请求重新计算 schedule。页面通过注入 JSON 交给
+客户端 JS 渲染；静态资源（board.css / board.js）从同目录 view_static/ 读取，
+无构建、无 CDN 依赖。
 """
 
 import contextlib
@@ -29,7 +30,7 @@ from .plan import (
     compute_batch_plan,
 )
 from .scheduling import compute_schedule
-from .store import discover_effective_sources, git_text_at_ref
+from .store import discover_effective_bundle, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
 _DOC_NAMES = {"task": "task.md", "note": "note.md", "spec": "task.md"}
@@ -267,7 +268,12 @@ class _Handler(BaseHTTPRequestHandler):
     def _route_get(self):
         parts = urlsplit(self.path)
         path = parts.path
+        query = parse_qs(parts.query)
         if path in ("/", "/index.html"):
+            token = (query.get("token") or [""])[0]
+            if _SESSION_TOKEN and token != _SESSION_TOKEN:
+                self._send_error_text(403, "禁止访问：缺少或无效的看板会话令牌")
+                return
             try:
                 html = _get_rendered_html()
             except Exception as e:
@@ -292,7 +298,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_bytes(200, body, content_type)
             return
         if path == "/task-doc":
-            query = parse_qs(parts.query)
             token = (query.get("token") or [""])[0]
             if _SESSION_TOKEN and token != _SESSION_TOKEN:
                 self._send_error_text(403, "禁止访问：缺少或无效的看板会话令牌")
@@ -300,9 +305,8 @@ class _Handler(BaseHTTPRequestHandler):
             tid = (query.get("tid") or [""])[0]
             doc = (query.get("doc") or [""])[0]
             try:
-                body = _read_task_doc(
-                    compute_schedule(), discover_effective_sources(), tid, doc
-                )
+                tasks, sources = discover_effective_bundle()
+                body = _read_task_doc(compute_schedule(tasks), sources, tid, doc)
             except ctx.TaskDataError as e:
                 self._send_error_text(404, str(e))
                 return
@@ -329,7 +333,7 @@ def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
     port = port or _find_free_port(host)
     # ThreadingHTTPServer 对 IPv6 字面量需要方括号才能当 URL host
     url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    url = f"http://{url_host}:{port}/"
+    url = f"http://{url_host}:{port}/?token={_SESSION_TOKEN}"
     if not _is_loopback_host(host):
         if not allow_non_loopback:
             sys.exit(

@@ -59,7 +59,9 @@ def _in_git_repo() -> bool:
 def _baseline_ok(baseline: str) -> bool:
     if not baseline or baseline == "no-git":
         return False
-    return _git(["rev-parse", "--verify", "--quiet", f"{baseline}^{{commit}}"]).returncode == 0
+    return _git(
+        ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{baseline}^{{commit}}"]
+    ).returncode == 0
 
 
 def _warn_degraded(baseline: str) -> None:
@@ -82,7 +84,7 @@ def _excluded(path: str, excludes: list[str]) -> bool:
 
 def _diff_name_only(baseline: str, excludes: list[str]) -> list[str]:
     # -z：NUL 分隔且从不引号化，非 ASCII 路径原样输出（core.quotePath 无效）。
-    result = _git(["diff", "--name-only", "-z", baseline], check=True)
+    result = _git(["diff", "--name-only", "-z", "--end-of-options", baseline], check=True)
     paths = [line for line in result.stdout.split("\0") if line]
     return [p for p in paths if not _excluded(p, excludes)]
 
@@ -100,7 +102,9 @@ def cmd_deliverable(args) -> int:
         if any(line for line in untracked):
             print("present — untracked new file")
             return 0
-        stat = _git(["diff", "--stat", args.baseline, "--", args.path], check=True).stdout.strip()
+        stat = _git(
+            ["diff", "--stat", "--end-of-options", args.baseline, "--", args.path], check=True
+        ).stdout.strip()
         if stat:
             print(f"present — changed vs baseline ({stat.splitlines()[-1].strip()})")
             return 0
@@ -142,7 +146,7 @@ def cmd_added_lines(args) -> int:
         result = _git(
             ["-c", "core.quotePath=false",
              "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
-             "diff", args.baseline],
+             "diff", "--end-of-options", args.baseline],
             check=True,
         )
         current_path = ""
@@ -156,17 +160,27 @@ def cmd_added_lines(args) -> int:
                 continue
             if line.startswith("+") and not line.startswith("+++"):
                 print(line[1:])
+    failed = False
     for path in _untracked_files(args.exclude):
         file_path = Path(path)
-        if not file_path.is_file():
-            continue
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except FileNotFoundError:
+            print(
+                f"WARNING: 未跟踪文件读取时已消失，新增行未计入：{path}",
+                file=sys.stderr,
+            )
+            continue
+        except OSError as error:
+            print(
+                f"WARNING: 未跟踪文件读取失败，新增行未计入：{path}（{error}）",
+                file=sys.stderr,
+            )
+            failed = True
             continue
         for line in content.splitlines():
             print(line)
-    return 0
+    return 1 if failed else 0
 
 
 def main() -> None:

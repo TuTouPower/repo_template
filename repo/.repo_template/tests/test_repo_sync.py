@@ -1349,3 +1349,187 @@ def test_run_tests_timeout_handling(env, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "契约测试超时" in err
 
+
+
+# ---------------------------------------------------------------------------
+# 目标软链、registry、legacy、离线源与结构错误（Issue #72）
+# ---------------------------------------------------------------------------
+
+def test_sync_file_rejects_symlink_and_broken_symlink_target(env, tmp_path):
+    consumer = env["consumer"]
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-safe\n", encoding="utf-8")
+    source = env["src"] / "asset.txt"
+    source.write_text("template\n", encoding="utf-8")
+
+    link = consumer / "asset.txt"
+    link.symlink_to(outside)
+    with pytest.raises(rs.SyncError, match="软链"):
+        rs.sync_file(source, link, set())
+    assert outside.read_text(encoding="utf-8") == "outside-safe\n"
+
+    broken_target = tmp_path / "missing-dir" / "created.txt"
+    broken = consumer / "broken.txt"
+    broken.symlink_to(broken_target)
+    broken_source = env["src"] / "broken.txt"
+    broken_source.write_text("template\n", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="软链"):
+        rs.sync_file(broken_source, broken, set())
+    assert not broken_target.exists()
+
+
+def _install_consumer_skill(consumer: Path, name: str) -> None:
+    skill = consumer / ".repo_template/skills" / name
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: none\n---\nrun\n", encoding="utf-8"
+    )
+
+
+def test_link_skills_backs_up_and_rolls_back_real_directory(env, monkeypatch):
+    consumer = env["consumer"]
+    _install_consumer_skill(consumer, "task-run")
+    (consumer / ".repo_template/skills/registry.json").write_text(
+        json.dumps({"skills": {"task-run": {"role": "public"}}}), encoding="utf-8"
+    )
+    real = consumer / ".claude/skills/task-run"
+    real.mkdir(parents=True)
+    (real / "sentinel.txt").write_text("keep\n", encoding="utf-8")
+
+    real_symlink = rs.os.symlink
+
+    def fail_symlink(*args, **kwargs):
+        raise OSError("simulated symlink failure")
+
+    monkeypatch.setattr(rs.os, "symlink", fail_symlink)
+    with pytest.raises(rs.SyncError, match="link-skills 失败"):
+        rs.cmd_link_skills(Namespace())
+    monkeypatch.setattr(rs.os, "symlink", real_symlink)
+
+    assert real.is_dir() and not real.is_symlink()
+    assert (real / "sentinel.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_registry_missing_skill_fails_closed_in_status_and_apply(env):
+    consumer = env["consumer"]
+    _install_consumer_skill(consumer, "task-run")
+    _install_consumer_skill(consumer, "unregistered")
+    (consumer / ".repo_template/skills/registry.json").write_text(
+        json.dumps({"skills": {"task-run": {"role": "public"}}}), encoding="utf-8"
+    )
+    with pytest.raises(rs.SyncError, match="未登记 skill"):
+        rs.opencode_commands_status()
+    with pytest.raises(rs.SyncError, match="未登记 skill"):
+        rs.sync_opencode_commands(set())
+
+
+def test_init_merges_legacy_state_before_removing_it(env):
+    legacy = rs.LEGACY_STATE_PATH
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps({
+        "last_synced_commit": "legacy-sha",
+        "last_synced_at": "2020-01-01T00:00:00+08:00",
+        "user_prompts": [{"at": "2020-01-01", "text": "legacy prompt", "tags": []}],
+    }), encoding="utf-8")
+    rs.cmd_init(Namespace(source=str(env["src"])))
+    state = json.loads(env["state_file"].read_text())
+    assert state["last_synced_commit"] == "legacy-sha"
+    assert state["last_synced_at"] == "2020-01-01T00:00:00+08:00"
+    assert any(p.get("text") == "legacy prompt" for p in state["user_prompts"])
+    assert not legacy.exists()
+
+
+def test_url_status_plan_use_cache_without_pull(env, monkeypatch):
+    consumer = env["consumer"]
+    cache = consumer / ".scratch/repo_template_sync_src"
+    (cache / ".git").mkdir(parents=True)
+    (cache / ".repo_template/scripts").mkdir(parents=True)
+    (cache / ".repo_template/scripts/task.py").write_text("print('task')\n", encoding="utf-8")
+    state = {"template_source": {"kind": "url", "value": "https://example.invalid/repo.git"}}
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "https://example.invalid/repo.git\n"
+        stderr = ""
+
+    def fake_git(repo, *args, **kwargs):
+        calls.append(args)
+        if "pull" in args:
+            raise AssertionError("refresh=False 不应 pull")
+        return Result()
+
+    monkeypatch.setattr(rs, "_git", fake_git)
+    assert rs.resolve_src(state, refresh=False) == cache.resolve()
+    assert not any("pull" in args for args in calls)
+
+
+def test_manifest_missing_commit_and_policy_non_object_raise_sync_error(env):
+    env["state_file"].unlink()
+    manifest = env["consumer"] / ".repo_template/sync_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="resolved_commit"):
+        rs.read_state()
+
+    env["state_file"].write_text(json.dumps({
+        "template_source": {"kind": "path", "value": str(env["src"])},
+        "last_synced_commit": None,
+        "user_prompts": [],
+    }), encoding="utf-8")
+    policy = env["consumer"] / ".repo_template/sync_policy.json"
+    policy.write_text("[]", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="JSON 对象"):
+        rs.read_state()
+
+
+def test_git_timeout_is_reported_as_sync_error(env):
+    def timeout(*args, **kwargs):
+        raise rs.subprocess.TimeoutExpired(cmd="git", timeout=30)
+
+    old = rs.subprocess.run
+    rs.subprocess.run = timeout
+    try:
+        with pytest.raises(rs.SyncError, match="超时"):
+            rs._git(env["consumer"], "status")
+    finally:
+        rs.subprocess.run = old
+
+
+def test_mcp_sanitizes_args_url_and_headers(env):
+    servers = {
+        "demo": {
+            "command": "demo",
+            "args": ["--api-key=SECRET-A", "--token", "SECRET-B", "--verbose", "x"],
+            "url": "https://user:SECRET-C@example.invalid/path?token=SECRET-D&x=1",
+            "headers": {"Authorization": "Bearer SECRET-E", "X-Trace": "keep"},
+            "env": {"API_TOKEN": "SECRET-F"},
+        }
+    }
+    clean = rs._sanitize_mcp_servers(servers)
+    text = json.dumps(clean)
+    for secret in ("SECRET-A", "SECRET-B", "SECRET-C", "SECRET-D", "SECRET-E", "SECRET-F"):
+        assert secret not in text
+    assert "--verbose" in clean["demo"]["args"] and "x" in clean["demo"]["args"]
+    assert clean["demo"]["headers"]["X-Trace"] == "keep"
+    assert "x=1" in clean["demo"]["url"]
+
+
+def test_dirty_tree_rejects_secret_files(env):
+    (env["src"] / ".repo_template/dummy.pem").write_text("secret\n", encoding="utf-8")
+    with pytest.raises(rs.SyncError, match="不可分发"):
+        rs._assert_distributable_tree(env["src"])
+    _git(env["src"], "add", "-A")
+    _git(env["src"], "commit", "-m", "add secret")
+    with pytest.raises(ValueError, match="不可分发"):
+        rs.export_template(env["src"], env["consumer"] / ".scratch/export-target")
+
+
+def test_prettierignore_header_marks_conditional_entries(env):
+    """旧的单行豁免头升级为说明条件性条目的两行头（Issue #83）。"""
+    ignore = env["consumer"] / ".prettierignore"
+    ignore.write_text(rs._PRETTIERIGNORE_OLD_HEADER + "\n", encoding="utf-8")
+    rs.merge_prettierignore(set())
+    text = ignore.read_text(encoding="utf-8")
+    assert rs._PRETTIERIGNORE_OLD_HEADER not in text
+    assert "按需生成" in text
+    assert ".repo_template/sync_manifest.json" in text

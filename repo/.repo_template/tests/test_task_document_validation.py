@@ -9,6 +9,7 @@ REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task.documents import parse_front_matter, validate_task_documents
+from review_support import fill_spec_text
 
 pytestmark = pytest.mark.contract
 
@@ -17,24 +18,7 @@ _, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / ".repo_template/docs/task
 
 
 def _fill_spec_text(text: str) -> str:
-    replacements = {
-        "{为什么需要此变更。}": "测试背景。",
-        "{本 task 包含什么。}": "测试范围。",
-        "{明确不做什么。}": "无。",
-        "{可独立验证的行为结果。}": "可验证行为。",
-        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
-        "- {分支或场景}：{不测原因}": "- 无",
-        "- {内容}": "- 按项目默认",
-        "- {契约}：{分类标记}，{待验证方式}": "- 无",
-        "- 风险：{可能失败的地方}": "- 风险：无",
-        "- 回退：{失败后如何恢复}": "- 回退：无",
-        "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
-        "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
-        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
+    return fill_spec_text(text, contract_item="无")
 
 
 def _filled_spec() -> str:

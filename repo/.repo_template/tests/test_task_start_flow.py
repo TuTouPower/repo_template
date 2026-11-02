@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from review_support import ensure_review_evidence, configure_project_verification
+from review_support import ensure_review_evidence, configure_project_verification, valid_spec
 
 from repo_task import context as ctx
 from repo_task import integration, lifecycle, store
@@ -22,30 +22,12 @@ from repo_task.documents import parse_front_matter, write_front_matter
 
 def _git(repo, *args, check=True):
     return subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=check
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=check, timeout=120
     )
 
 
 def _valid_spec(unknown_contract_item="外部行为：已核实"):
-    text = (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8")
-    replacements = {
-        "{为什么需要此变更。}": "测试背景。",
-        "{本 task 包含什么。}": "测试范围。",
-        "{明确不做什么。}": "无。",
-        "{可独立验证的行为结果。}": "可验证行为。",
-        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
-        "- {分支或场景}：{不测原因}": "- 无",
-        "- {内容}": "- 按项目默认",
-        "- {契约}：{分类标记}，{待验证方式}": f"- {unknown_contract_item}",
-        "- 风险：{可能失败的地方}": "- 风险：无",
-        "- 回退：{失败后如何恢复}": "- 回退：无",
-        "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
-        "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
-        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
+    return valid_spec(unknown_contract_item)
 
 
 def _valid_task_body():
@@ -121,6 +103,7 @@ def _task_cli(repo, *args):
         capture_output=True,
         text=True,
         encoding="utf-8", errors="replace",
+        timeout=120,
     )
 
 
@@ -580,8 +563,11 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
     invalid = _task_cli(git_repo, "list", "--ref", branch, "--rebuild")
 
     assert "status" in main_show.stdout and "backlog" in main_show.stdout
+    assert "note_md" in main_show.stdout and "task_md" in main_show.stdout
+    assert "task.md" in main_show.stdout and "note.md" in main_show.stdout
     assert ref_show.returncode == 0 and "done" in ref_show.stdout
     assert "source_ref" in ref_show.stdout
+    assert "task.md" in ref_show.stdout
     assert ref_list.returncode == 0 and "t001" in ref_list.stdout
     assert invalid.returncode != 0 and "不能与 --rebuild 同用" in invalid.stderr
 
@@ -1232,36 +1218,23 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
 
 
 def test_drop_keeps_archived_state_when_index_rebuild_fails(git_repo, monkeypatch):
-    """归档成功后索引重建失败：不反向搬动目录/front matter，报索引待修复。"""
-    calls = {"n": 0}
-
-    def fake_rebuild_index(tasks=None, _real=store.rebuild_index):
-        if calls["n"] == 0:
-            calls["n"] += 1
-            return _real(tasks)
-        raise OSError("disk full")
-
-    # drop 内 rebuild 前已 move 完目录；用 patch 源头函数并借 _task_cli 子进程外的
-    # sitecustomize 不可行，改为在主仓 patch 后经进程内调用验证。
+    """归档成功后索引重建失败：经真实 cmd_drop 驱动，保持 dropped 且报索引待修复。"""
     from repo_task import lifecycle as lifecycle_mod
+
     monkeypatch.setattr(
         lifecycle_mod, "rebuild_index",
         lambda: (_ for _ in ()).throw(OSError("disk full")),
     )
-    task, _, fm, body = store.load_task("t001")
-    src = git_repo / task["dir"]
-    dst = git_repo / "docs/archive/tasks" / f"{fm['tid']}_{fm['slug']}"
-    git_repo.joinpath("docs/archive/tasks").mkdir(parents=True, exist_ok=True)
-    import shutil as _shutil
-    _shutil.move(str(src), str(dst))
-    try:
-        lifecycle_mod.rebuild_index()
-    except OSError as e:
-        assert "disk full" in str(e)
-    # 现场即修复后语义要求保持的状态：目录在 archive、front matter 为 dropped
-    got, _ = parse_front_matter(dst / "note.md")
-    assert got["status"] in ("dropped", "backlog")
-    assert not src.exists()
+    with pytest.raises(SystemExit) as excinfo:
+        lifecycle_mod.cmd_drop(argparse.Namespace(tid="t001", reason="不需要了"))
+    message = str(excinfo.value)
+    assert "派生索引重建失败" in message
+    assert "归档状态已生效" in message
+    archived = git_repo / "docs/archive/tasks/t001_alpha/note.md"
+    assert archived.is_file()
+    fm, _ = parse_front_matter(archived)
+    assert fm["status"] == "dropped"
+    assert not (git_repo / "docs/tasks/t001_alpha").exists()
 
 
 def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypatch):
@@ -1322,9 +1295,51 @@ def test_missing_testing_sections_parser_matrix():
                      ["{doctor_cmd}", "{blackbox_verify}"]),
         "大写反引号标题": ("## `DOCTOR_CMD`\n\npytest\n",
                        ["{test_cmd}", "{blackbox_verify}"]),
+        "四反引号内三反引号与伪标题": (
+            "## doctor_cmd\n\n````bash\necho ```\n## fake\n````\n\n"
+            "## test_cmd\n\n```bash\npytest -q\n```\n\n## blackbox_verify\n\n无\n",
+            [],
+        ),
     }
     for name, (text, expected) in matrix.items():
         assert _missing_testing_sections(text) == expected, name
+
+
+def test_parse_policy_respects_fence_length_and_extracts_bash_blocks():
+    """testing.md 章节解析与 documents 口径一致：闭栏须同字符且不短于开栏（Issue #78）。"""
+    from repo_task.validation import parse_policy
+
+    text = """# 测试
+
+## verification_policy
+
+project_configured
+
+## verification_notes
+
+全部门禁可执行。
+
+## doctor_cmd
+
+````bash
+echo ```
+echo doctor
+````
+
+## test_cmd
+
+```bash
+pytest -q
+```
+
+## blackbox_verify
+
+无
+"""
+    commands = parse_policy(text)
+    assert "echo ```" in commands["doctor_cmd"]
+    assert commands["test_cmd"] == "pytest -q"
+    assert commands["blackbox_verify"] == ""
 
 
 def test_preflight_ignores_placeholder_explanations_when_sections_are_filled(git_repo):
@@ -1484,6 +1499,40 @@ def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
     assert not (new_wt / ".scratch/.env").exists()
     assert not (new_wt / "artifacts/.env").exists()
     assert not (new_wt / "worktrees/t001_alpha/.env").exists()
+
+
+def test_rewind_audit_failure_persists_trace_and_reports_real_state(git_repo, monkeypatch):
+    """审计失败时按实际状态提示，并把结果写入 note 以便追溯（Issue #76）。"""
+    _start(git_repo, "t001")
+
+    def fail_audit(*args, **kwargs):
+        raise ctx.TaskDataError("audit unavailable")
+
+    monkeypatch.setattr(lifecycle, "append_audit", fail_audit)
+    with pytest.raises(SystemExit, match="审计写入失败"):
+        lifecycle.cmd_rewind(
+            argparse.Namespace(tid="t001", to=None, reason="audit failure", yes=True)
+        )
+    note = git_repo / "docs/tasks/t001_alpha/note.md"
+    fm, body = parse_front_matter(note)
+    assert fm["status"] == "backlog"
+    assert "rewind audit failed" in fm["note"]
+    assert not (git_repo / "worktrees/t001_alpha").exists()
+
+
+def test_cli_edit_symlink_note_fails_with_unified_error(git_repo):
+    """软链 note.md 的写入拒绝应经 CLI 统一出口，而不是裸 traceback（Issue #76）。"""
+    note = git_repo / "docs/tasks/t001_alpha/note.md"
+    target = git_repo / "docs/tasks/t001_alpha/real_note.md"
+    target.write_text(note.read_text(encoding="utf-8"), encoding="utf-8")
+    note.unlink()
+    note.symlink_to(target)
+
+    result = _task_cli(git_repo, "edit", "t001", "--note", "changed")
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "does not support writing to symlink" in result.stderr
+    assert "数据不一致" in result.stderr
 
 
 def test_rewind_write_failure_appends_failed_audit_marker(git_repo, monkeypatch):

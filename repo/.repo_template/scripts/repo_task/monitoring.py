@@ -203,6 +203,9 @@ def repository_fingerprint(root: Path) -> dict:
     超过 1 MB 的 untracked 常规文件不全量读入，只哈希 (size, mtime_ns,
     前 8 KB 内容)，避免 observe 被大文件拖慢；静默检测对超大文件变化
     的精度随之降级（仅内容前缀变化可感知）。
+
+    仅供观测，不是 review 证据门禁；review scope 使用
+    review_scope_fingerprint 对交付文件全量哈希。
     """
     root = root.resolve()
     head = _required_git_bytes(["rev-parse", "HEAD"], root).strip()

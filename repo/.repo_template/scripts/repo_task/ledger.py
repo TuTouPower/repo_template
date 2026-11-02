@@ -23,12 +23,21 @@ def _sanitize(event: dict) -> dict:
 
 def _read_unlocked(path=None, *, tid: str | None = None) -> list[dict]:
     path = path or ctx.LEDGER_PATH
-    if not path.is_file():
+    try:
+        stream = path.open("r", encoding="utf-8")
+    except FileNotFoundError:
         return []
+    except OSError as error:
+        # fail-closed：账本存在但不可读与「不存在」必须区分。按空账本继续会让
+        # attempt reserve 从 1 重新分配，破坏 exact identity（Issue #70）。
+        raise ctx.TaskDataError(
+            f"调度账本 {ctx._rel(path)} 存在但无法读取（{error}）；"
+            "拒绝继续以防 attempt 号复用。请确认权限/文件系统状态后重试"
+        ) from error
     events = []
     tid_needle = f'"{tid}"' if tid else None
     try:
-        with path.open("r", encoding="utf-8") as stream:
+        with stream:
             for line_no, raw_line in enumerate(stream, 1):
                 line = raw_line.strip()
                 if not line:
@@ -42,18 +51,21 @@ def _read_unlocked(path=None, *, tid: str | None = None) -> list[dict]:
                     # fail-closed：损坏行跳过会让后续事件基于缺失事件续写，导致
                     # attempt 号复用或 current identity 误判。拒绝继续，提示手动修复。
                     raise ctx.TaskDataError(
-                        f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行损坏（{e}）；"
+                        f"调度账本 {ctx._rel(path)} 第 {line_no} 行损坏（{e}）；"
                         "拒绝继续以防 attempt 号复用。请手动修复该行后重试"
                     ) from None
                 if not isinstance(value, dict):
                     raise ctx.TaskDataError(
-                        f"调度账本 {ctx._rel(ctx.LEDGER_PATH)} 第 {line_no} 行非 JSON 对象；拒绝继续"
+                        f"调度账本 {ctx._rel(path)} 第 {line_no} 行非 JSON 对象；拒绝继续"
                     )
                 if tid and value.get("tid") != tid:
                     continue
                 events.append(value)
-    except OSError:
-        return []
+    except OSError as error:
+        raise ctx.TaskDataError(
+            f"调度账本 {ctx._rel(path)} 读取中断（{error}）；"
+            "拒绝继续以防 attempt 号复用"
+        ) from error
     return events
 
 

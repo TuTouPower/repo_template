@@ -179,6 +179,16 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
     migrated: list[tuple[Path, Path, bytes]] = []
     try:
         with id_lock(REPO_ROOT):
+            for path, _target, _note in actions:
+                match = re.match(r"^p(\d{3,})_", path.name)
+                if not match:
+                    raise IdScanError(f"无法从文件名解析编号：{_rel(path)}")
+                _, current = find_entry(int(match.group(1)))
+                if current.resolve() != path.resolve():
+                    raise IdScanError(
+                        f"p{match.group(1)} 在加锁前已被迁移"
+                        f"（当前 {_rel(current)}）；请重试"
+                    )
             for index, (path, target, note) in enumerate(actions, 1):
                 try:
                     orig_bytes = path.read_bytes()
@@ -207,19 +217,36 @@ def _apply(args: argparse.Namespace, actions: list[tuple[Path, Path, str]]) -> N
                             raise IdScanError(f"git add 失败：{_rel(destination)}")
                     sys.stderr.write(f"已迁移：{_rel(destination)}\n")
                 except (IdScanError, OSError, subprocess.SubprocessError) as error:
-                    # 失败时回滚已成功的 git mv + 恢复被 set_field 改过的正文（F19/RT-010）
+                    # 失败时回滚已成功的 git mv + 恢复被 set_field 改过的正文（F19/RT-010）。
+                    # 逐条记录失败，只有全部恢复成功才报告完整回滚（Issue #78）。
+                    failures: list[tuple[Path, str]] = []
                     for src, dst, orig_bytes in reversed(migrated):
                         try:
                             if _git(["ls-files", "--error-unmatch", _rel(dst)]).returncode == 0:
-                                _git(["mv", _rel(dst), _rel(src)])
+                                moved = _git(["mv", _rel(dst), _rel(src)])
+                                if moved.returncode != 0:
+                                    raise IdScanError(moved.stderr.strip() or "git mv 回滚失败")
                             else:
                                 dst.rename(src)
-                            # 恢复原正文；已跟踪文件 git add 使 index 回到原内容
-                            src.write_bytes(orig_bytes)
+                            atomic_write_text(src, orig_bytes.decode("utf-8"))
                             if _git(["ls-files", "--error-unmatch", _rel(src)]).returncode == 0:
-                                _git(["add", _rel(src)])
-                        except Exception:
-                            pass
+                                added = _git(["add", _rel(src)])
+                                if added.returncode != 0:
+                                    raise IdScanError(added.stderr.strip() or "git add 回滚失败")
+                        except Exception as rollback_error:
+                            failures.append((src, str(rollback_error)))
+                    if failures:
+                        details = "；".join(
+                            f"{_rel(src)}: {reason}" for src, reason in failures
+                        )
+                        sys.stderr.write(
+                            f"迁移失败于第 {index} 条（{_rel(path)}）：{error}；"
+                            f"成功回滚 {len(migrated) - len(failures)}/{len(migrated)} 条，"
+                            f"未恢复：{details}\n"
+                        )
+                        raise IdScanError(
+                            "迁移失败且回滚不完整；请按上方未恢复条目人工处理"
+                        ) from error
                     sys.stderr.write(
                         f"迁移失败于第 {index} 条（{_rel(path)}）：{error}；"
                         f"已回滚 {len(migrated)} 条已迁移条目（含正文）\n"

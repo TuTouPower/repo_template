@@ -96,14 +96,32 @@ def test_testing_md_default_commands_use_contract_marker():
     ]
 
 
-def test_sync_apply_runs_contract_suite():
+def test_sync_apply_runs_contract_suite(monkeypatch):
+    monkeypatch.setattr(rs, "validation_environment", lambda _root: {})
     assert rs.CONSUMER_TEST_COMMAND == (
         "pytest", ".repo_template/tests/", "-q", "-m", "contract",
     )
     assert rs.CONSUMER_TEST_TIMEOUT == 60
-    source = rs._run_tests.__code__.co_names
-    assert "CONSUMER_TEST_COMMAND" in source
-    assert "CONSUMER_TEST_TIMEOUT" in source
+    calls = {}
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    real_run = subprocess.run
+
+    def fake_run(command, **kwargs):
+        if command and command[0] == "git":
+            return real_run(command, **kwargs)
+        calls["command"] = command
+        calls["timeout"] = kwargs.get("timeout")
+        return Result()
+
+    monkeypatch.setattr(rs.subprocess, "run", fake_run)
+    assert rs._run_tests(REPO_ROOT) is True
+    assert calls["command"] == list(rs.CONSUMER_TEST_COMMAND)
+    assert calls["timeout"] == rs.CONSUMER_TEST_TIMEOUT
 
 
 def test_all_consumer_skills_disable_model_invocation():

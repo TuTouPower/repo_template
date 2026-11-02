@@ -13,7 +13,7 @@ from pathlib import Path
 import repo_task.context as ctx
 
 from .documents import atomic_write_text, parse_front_matter, parse_front_matter_text, parse_tid_list
-from .git_ops import _get_head_short, _git, has_unmerged_commits, primary_worktree_path, require_primary_worktree, worktree_paths
+from .git_ops import _get_head_short, _git, default_branch, has_unmerged_commits, primary_worktree_path, require_primary_worktree, worktree_paths
 
 def task_schedule_references(target_tid: str, tasks: list[dict] | None = None) -> list[str]:
     """返回非归档 task 中引用 target_tid 的字段，供 drop/purge 拒绝悬空边。
@@ -190,6 +190,45 @@ def _task_branch_names(tid: str) -> list[str]:
         return []
     return [b.strip() for b in r.stdout.splitlines() if ctx.TASK_BRANCH_RE.fullmatch(b.strip())]
 
+def load_owner_task_at_ref(tid: str, ref: str) -> dict:
+    """只读 ref 中该 tid 自身的 task，避免为一条分支扫描全部 task（Issue #77）。"""
+    r = _git([
+        "ls-tree", "-r", "--name-only", ref, "--",
+        "docs/tasks", "docs/archive/tasks",
+    ])
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
+    paths = set(r.stdout.splitlines())
+    for rel_base, archived in (
+        ("docs/tasks", False),
+        ("docs/archive/tasks", True),
+    ):
+        prefix = rel_base + "/"
+        for path in sorted(paths):
+            if not path.startswith(prefix):
+                continue
+            rest = path[len(prefix):]
+            if "/" not in rest:
+                continue
+            name = rest.split("/", 1)[0]
+            if rel_base == "docs/tasks" and name == ctx.TEMPLATE_DIR.name:
+                continue
+            if not name.startswith(f"{tid}_"):
+                continue
+            directory = f"{rel_base}/{name}"
+            note_path = f"{directory}/note.md"
+            if note_path not in paths:
+                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 note.md")
+            text = git_text_at_ref(ref, note_path)
+            fm, _ = parse_front_matter_text(
+                text, source=f"{ref}:{note_path}"
+            )
+            return _task_record(
+                fm, directory=directory, source=f"{ref}:{note_path}", archived=archived
+            )
+    raise ctx.TaskDataError(f"{ref}: 缺自身 task {tid}")
+
+
 def task_effective_state(tid: str, primary_fm: dict) -> str | None:
     """main 副本为 backlog 时，探测其被 worktree/未合并分支覆盖的有效状态。
 
@@ -217,13 +256,33 @@ def task_effective_state(tid: str, primary_fm: dict) -> str | None:
         if not has_unmerged_commits(branch):
             continue
         try:
-            _, ref_fm, _ = load_task_at_ref(tid, branch)
+            ref_fm = load_owner_task_at_ref(tid, branch)
         except ctx.TaskDataError:
             return f"本地分支 {branch!r} 未合并默认分支"
         ref_status = ref_fm.get("status", "")
         if ref_status != "backlog":
             return f"未合并分支 {branch!r} 中 status={ref_status}"
     return None
+
+def _unmerged_task_branches() -> list[str]:
+    """一次 git 调用取全部未合并 task 分支；失败时回退逐分支保守判定。"""
+    branches = _local_task_branches()
+    if not branches:
+        return []
+    base = default_branch()
+    r = _git([
+        "branch", "--format=%(refname:short)", "--no-merged", base,
+        "--list", "t[0-9]*_*",
+    ])
+    if r.returncode != 0:
+        return [branch for branch in branches if has_unmerged_commits(branch)]
+    unmerged = {
+        branch.strip()
+        for branch in r.stdout.splitlines()
+        if ctx.TASK_BRANCH_RE.fullmatch(branch.strip())
+    }
+    return [branch for branch in branches if branch in unmerged]
+
 
 def _local_task_branches() -> list[str]:
     r = _git(["branch", "--format=%(refname:short)", "--list", "t[0-9]*_*"])
@@ -235,9 +294,27 @@ def _local_task_branches() -> list[str]:
         if ctx.TASK_BRANCH_RE.fullmatch(branch.strip())
     )
 
+def discover_effective_bundle() -> tuple[dict[str, dict], dict[str, dict]]:
+    """一次有效状态发现，同时返回 (tasks, sources)（Issue #77）。"""
+    tasks: dict[str, dict] = {}
+    sources: dict[str, dict] = {}
+    for tid, task, source, read_at in _discover_effective_entries():
+        tasks[tid] = task
+        sources[tid] = {
+            "tid": tid,
+            "slug": task.get("slug", ""),
+            "title": task.get("title", ""),
+            "status": task.get("status", ""),
+            "note": task.get("note", ""),
+            "source": source,
+            "read_at": read_at,
+        }
+    return tasks, sources
+
+
 def discover_effective_tasks() -> dict[str, dict]:
     """按 worktree → 未合并 task 分支 → main 发现每个 task 的有效状态。"""
-    return {tid: task for tid, task, _, _ in _discover_effective_entries()}
+    return discover_effective_bundle()[0]
 
 
 def discover_effective_sources() -> dict[str, dict]:
@@ -249,18 +326,7 @@ def discover_effective_sources() -> dict[str, dict]:
     - source="main"：read_at=None（主干文档即权威）
     只读；供 skill 依「task 状态读取优先级」在正确位置读取 task。
     """
-    out: dict[str, dict] = {}
-    for tid, task, source, read_at in _discover_effective_entries():
-        out[tid] = {
-            "tid": tid,
-            "slug": task.get("slug", ""),
-            "title": task.get("title", ""),
-            "status": task.get("status", ""),
-            "note": task.get("note", ""),
-            "source": source,
-            "read_at": read_at,
-        }
-    return out
+    return discover_effective_bundle()[1]
 
 
 def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
@@ -271,15 +337,9 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
         tid: ("main", None) for tid in effective
     }
 
-    for branch in _local_task_branches():
-        if not has_unmerged_commits(branch):
-            continue
+    for branch in _unmerged_task_branches():
         owner_tid = ctx.TASK_BRANCH_RE.fullmatch(branch).group(1)
-        tasks = scan_tasks_at_ref(branch)
-        task = next((item for item in tasks if item["tid"] == owner_tid), None)
-        if task is None:
-            raise ctx.TaskDataError(f"未合并 task 分支 {branch!r} 缺自身 task {owner_tid}")
-        branch_task = task
+        branch_task = load_owner_task_at_ref(owner_tid, branch)
         main_task = effective.get(owner_tid)
         # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active 不覆盖。
         # worktree 从 start 到 finish 一直存在，无登记 worktree 的 active 分支只来自 rewind。

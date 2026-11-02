@@ -29,7 +29,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from repo_task.locks import TASK_ID_LOCK_NAME, git_common_lock
 
@@ -235,6 +235,24 @@ def allocate(
     return path
 
 
+def _safe_file_name(name: str) -> str:
+    """files 键必须是目标目录内的相对路径；拒绝绝对路径、..、反斜杠与盘符。"""
+    if not name or "\x00" in name:
+        raise IdScanError(f"文件名非法：{name!r}")
+    path = PurePosixPath(name)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or "\\" in name
+        or ":" in name
+        or not path.parts
+    ):
+        raise IdScanError(
+            f"文件名非法（不得为绝对路径或越出目标目录）：{name!r}"
+        )
+    return path.as_posix()
+
+
 def allocate_dir(
     repo_root: Path,
     *,
@@ -250,6 +268,7 @@ def allocate_dir(
     """
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
+    safe_files = {_safe_file_name(name): content for name, content in files.items()}
     with id_lock(repo_root):
         number = scan_max_id(repo_root, prefix, dirs, kind="dir") + 1
         entry_id = f"{prefix}{number:03d}"
@@ -262,7 +281,7 @@ def allocate_dir(
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir)
             tmp_dir.mkdir(parents=True)
-            for name, content in files.items():
+            for name, content in safe_files.items():
                 dest_file = tmp_dir / name
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
                 dest_file.write_bytes(content.replace("{id}", entry_id).encode("utf-8"))

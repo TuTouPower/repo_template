@@ -76,7 +76,14 @@ def _chain_head_kind(data: dict, head_tid: str) -> str:
     return "start"
 
 
-def classify_node(tid: str, tasks: dict, schedule: dict) -> str:
+def classify_node(
+    tid: str,
+    tasks: dict,
+    schedule: dict,
+    *,
+    waiting_tids: set[str] | None = None,
+    blocked_tids: set[str] | None = None,
+) -> str:
     """节点分类：与 view_server 看板同源。"""
     task = tasks.get(tid)
     if not task:
@@ -88,9 +95,13 @@ def classify_node(tid: str, tasks: dict, schedule: dict) -> str:
         return "done" if status == "done" else "dropped"
     if tid in schedule["selected"]:
         return "runnable"
-    if tid in [row[1] for row in schedule["waiting_deps"]]:
+    if waiting_tids is None:
+        waiting_tids = {row[1] for row in schedule["waiting_deps"]}
+    if tid in waiting_tids:
         return "blocked_deps"
-    if tid in [row[0] for row in schedule["blocked_conflicts"]]:
+    if blocked_tids is None:
+        blocked_tids = {row[0] for row in schedule["blocked_conflicts"]}
+    if tid in blocked_tids:
         return "blocked_conflict"
     return "backlog"
 
@@ -99,13 +110,18 @@ def build_board_model(schedule: dict | None = None) -> dict:
     """调度图 → 看板/plan 共用模型（nodes + edges + summary）。"""
     schedule = schedule if schedule is not None else compute_schedule()
     tasks = schedule["tasks"]
+    waiting_tids = {row[1] for row in schedule["waiting_deps"]}
+    blocked_tids = {row[0] for row in schedule["blocked_conflicts"]}
     nodes = []
     for tid, task in tasks.items():
         nodes.append({
             "id": tid,
             "title": task.get("title") or tid,
             "status": task["status"],
-            "category": classify_node(tid, tasks, schedule),
+            "category": classify_node(
+                tid, tasks, schedule,
+                waiting_tids=waiting_tids, blocked_tids=blocked_tids,
+            ),
             "depends_on": [
                 item.strip()
                 for item in str(task.get("depends_on", "")).split(",")

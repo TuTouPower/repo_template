@@ -111,14 +111,9 @@ def _dir_holds_keep(rel: str, refs: list[str]) -> bool:
     return any(ref.rstrip("/").startswith(prefix) for ref in refs if ref.strip())
 
 
-def _prune(relroot: str, names: list[str], excluded: set[str]) -> list[str]:
-    out = []
-    for n in names:
-        rel = f"{relroot}/{n}" if relroot else n
-        if rel in excluded:
-            continue
-        out.append(n)
-    return out
+def _prune(names: list[str], excluded: set[str]) -> list[str]:
+    """按目录 basename 剪枝，使保护在任意深度生效（Issue #71）。"""
+    return [name for name in names if name not in excluded]
 
 
 def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[dict], list[str]]:
@@ -138,6 +133,7 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
         if base.is_symlink() and not base.resolve().is_relative_to(repo.resolve()):
             continue
         for root, dirs, files in os.walk(base, followlinks=False):
+            dirs[:] = [d for d in dirs if d != ".git"]
             relroot = os.path.relpath(root, repo).replace(os.sep, "/")
             for d in dirs:
                 full_d = Path(root) / d
@@ -162,7 +158,7 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
     for root, dirs, files in os.walk(repo):
         relroot = os.path.relpath(root, repo)
         relroot = "" if relroot == "." else relroot.replace(os.sep, "/")
-        dirs[:] = _prune(relroot, dirs, prune)
+        dirs[:] = _prune(dirs, prune)
         entries = []
         for d in dirs:
             rel = f"{relroot}/{d}" if relroot else d

@@ -20,8 +20,10 @@ REAL_VALIDATE_DIFF_ANCHOR = rrp.validate_diff_anchor
 
 
 @pytest.fixture(autouse=True)
-def stub_diff_anchor_validation(monkeypatch):
-    """普通渲染单测不依赖真实 Git；drift 测试仍用真实 git show。"""
+def stub_diff_anchor_validation(request, monkeypatch):
+    """仅显式标记 ``stub_anchor`` 的测试跳过真实 Git 校验。"""
+    if "stub_anchor" not in request.keywords:
+        return
     monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
 
 
@@ -151,6 +153,7 @@ def _make_task_dir(tmp_path, level="full", contract="AC1", context="策略"):
     return task_dir
 
 
+@pytest.mark.stub_anchor
 def test_render_full_returns_two_prompts(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -163,6 +166,7 @@ def test_render_full_returns_two_prompts(tmp_path, monkeypatch):
         assert "策略" in content
 
 
+@pytest.mark.stub_anchor
 def test_render_single_returns_one_prompt(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -180,6 +184,7 @@ def test_render_rejects_invalid_review_level(tmp_path, monkeypatch):
         render_review_prompts(task_dir)
 
 
+@pytest.mark.stub_anchor
 def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -197,6 +202,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
         render_review_prompts(task_dir)
 
 
+@pytest.mark.stub_anchor
 def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -215,6 +221,7 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
         render_review_prompts(task_dir)
 
 
+@pytest.mark.stub_anchor
 def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -228,6 +235,7 @@ def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
         render_review_prompts(task_dir)
 
 
+@pytest.mark.stub_anchor
 def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -256,6 +264,7 @@ def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
         render_review_prompts(task_dir)
 
 
+@pytest.mark.stub_anchor
 def test_render_includes_share_section(tmp_path, monkeypatch):
     prompts = tmp_path / "prompts"
     prompts.mkdir()
@@ -355,6 +364,7 @@ def test_no_drift_notice_when_only_ac_checkbox_checked(tmp_path, monkeypatch):
         assert "契约区 drift 警告" not in content
 
 
+@pytest.mark.stub_anchor
 def test_drift_check_skipped_outside_git_repo(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
@@ -383,6 +393,7 @@ def _render_real_templates(tmp_path, monkeypatch, level="full"):
     return render_review_prompts(task_dir), str(tmp_path.resolve())
 
 
+@pytest.mark.stub_anchor
 def test_real_templates_cwd_probe_and_anchored_git(tmp_path, monkeypatch):
     """首步须用不带 -C 的 rev-parse 探测会话 cwd（去空白精确比对）；后续 git 一律 -C 带引号锚定，不依赖 cd。"""
     out, root = _render_real_templates(tmp_path, monkeypatch)
@@ -400,6 +411,7 @@ def test_real_templates_cwd_probe_and_anchored_git(tmp_path, monkeypatch):
         assert "所属仓库一致" not in content
 
 
+@pytest.mark.stub_anchor
 def test_real_templates_output_line_absolute_and_rel(tmp_path, monkeypatch):
     """输出指令行：绝对落点 + 仓库内相对路径 task_dir_rel 一并展示。"""
     out, root = _render_real_templates(tmp_path, monkeypatch)
@@ -407,6 +419,7 @@ def test_real_templates_output_line_absolute_and_rel(tmp_path, monkeypatch):
     assert f"输出到 `{root}/t001_foo/review_test.md`（仓库内相对路径 `t001_foo`）" in out["test_review_prompt.md"]
 
 
+@pytest.mark.stub_anchor
 def test_real_templates_single_general_anchored(tmp_path, monkeypatch):
     out, root = _render_real_templates(tmp_path, monkeypatch, level="single")
     content = out["general_review_prompt.md"]

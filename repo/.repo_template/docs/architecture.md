@@ -48,13 +48,15 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 testing.md 是项目验证命令与显式策略唯一权威；verification_policy=project_configured 后才可 start/preflight。模板 contract 不代表业务验证。single 任务风险扩大时通过 review-upgrade 单调升 full，评审级别参与内容指纹，旧 PASS 失效。
 
-每个 task 在 finish 前必须通过：
+执行者必须在 finish 前运行并通过：
 
 1. 项目相关测试；
 2. 项目定义的黑盒验证，无黑盒时必须由项目策略明确选择并提供替代验收；
 3. 按 `review_level` 执行的独立 review。
 
-Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。门禁不含 `withdraw_rate` 与自动 prompt hint。
+`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入 handoff，reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
+
+Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
 ## 合并
 

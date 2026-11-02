@@ -145,6 +145,42 @@ def test_archive_handoff_retry_after_partial_failure_no_duplicate(repo, monkeypa
     assert "2026-08-13" in handoff and "2026-08-01" not in handoff
 
 
+def test_archive_handoff_ignores_h2_inside_fenced_code(repo):
+    """围栏内的 `## ` 行不作为节边界（Issue #79）。"""
+    (repo / "docs/handoff.md").write_text(
+        "# 项目交接记录（最新）\n\n"
+        "## 2026-08-01T09:00:00+08:00 old\n\n- note：old\n\n"
+        "## 2026-08-13T16:00:00+08:00 new\n\n"
+        "```md\n## example\n```\n\n- note：latest\n",
+        encoding="utf-8",
+    )
+    header, sections = rh._split_handoff((repo / "docs/handoff.md").read_text(encoding="utf-8"))
+    assert header[0].startswith("# 项目交接记录")
+    assert len(sections) == 2
+    assert "## example" in sections[-1]
+    rh.cmd_archive_handoff(argparse.Namespace(write=True))
+    handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    assert "## example" in handoff and "old" not in handoff
+    archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
+    assert "2026-08-01" in archive and "2026-08-13" not in archive
+
+
+def test_archive_handoff_stops_when_tail_matches_without_marker(repo):
+    """归档尾部落已同文但无本轮标记时停止，不改写 handoff（Issue #79）。"""
+    _handoff_two_sections(repo)
+    stale_text = rh._join_blocks(rh._split_handoff(
+        (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    )[1][:-1])
+    archive = repo / "docs/archive/handoff.md"
+    archive.parent.mkdir(parents=True)
+    archive.write_text("# 历史交接\n\n" + stale_text, encoding="utf-8")
+    original_handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
+    with pytest.raises(rh.HygieneError, match="缺少归档标记"):
+        rh.cmd_archive_handoff(argparse.Namespace(write=True))
+    assert (repo / "docs/handoff.md").read_text(encoding="utf-8") == original_handoff
+    assert archive.read_text(encoding="utf-8").count("## 2026-08-01") == 1
+
+
 def _make_spike(repo: Path, name: str) -> None:
     d = repo / "docs/spikes" / name
     d.mkdir(parents=True)

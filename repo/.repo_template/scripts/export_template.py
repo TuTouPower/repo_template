@@ -11,6 +11,36 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 
+_NON_DISTRIBUTABLE_DIRS = {".git", ".commandcode", "__pycache__", ".pytest_cache"}
+_NON_DISTRIBUTABLE_NAMES = {"credentials.json", ".netrc"}
+_NON_DISTRIBUTABLE_SUFFIXES = (
+    ".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".secret",
+)
+_NON_DISTRIBUTABLE_PREFIXES = ("id_rsa", "id_ed25519", "id_ecdsa")
+
+
+def is_non_distributable(name: str) -> bool:
+    """产物树内不可分发的路径：VCS/缓存、.env、密钥与凭据文件。"""
+    path = PurePosixPath(name)
+    for part in path.parts:
+        if part in _NON_DISTRIBUTABLE_DIRS:
+            return True
+        if (part == ".env" or part.startswith(".env.")) and part != ".env.example":
+            return True
+        if part in _NON_DISTRIBUTABLE_NAMES:
+            return True
+        if part.endswith(_NON_DISTRIBUTABLE_SUFFIXES):
+            return True
+        if part.startswith(_NON_DISTRIBUTABLE_PREFIXES):
+            return True
+    posix = path.as_posix()
+    return (
+        posix.startswith("docs/runtime/")
+        or posix.startswith(".claude/state/")
+        or posix == ".repo_template/sync_state.json"
+    )
+
+
 def _extract_product(stream, destination):
     """Extract the Git archive subset safely using only Python 3.9 APIs.
 
@@ -84,12 +114,8 @@ def export_template(source: Path, target: Path, ref: str = "HEAD") -> None:
     try:
         with tarfile.open(fileobj=io.BytesIO(archive)) as stream:
             for item in stream.getmembers():
-                parts = Path(item.name).parts
-                if any(part in {".git", ".commandcode", "__pycache__", ".pytest_cache"} or
-                       ((part == ".env" or part.startswith(".env.")) and part != ".env.example") for part in parts):
-                    raise ValueError(f"提交含不可分发文件：{item.name}")
-                if item.name.startswith(("docs/runtime/", ".claude/state/")) or item.name == ".repo_template/sync_state.json":
-                    raise ValueError(f"提交含本机状态：{item.name}")
+                if is_non_distributable(item.name):
+                    raise ValueError(f"提交含不可分发文件或本机状态：{item.name}")
             _extract_product(stream, staging)
         if target.exists():
             target.rmdir()  # Concurrent additions cause a safe failure.

@@ -155,9 +155,13 @@ ledger 丢失但 done 分支和 committed handoff 完整时，运行 `task.py le
 
 宿主版本发布前记录版本号并逐项实测：自然语言不自动执行入口；显式 task-run 可读取 work/integrate 正文且原样传递 identity/owner；merge 保持单独授权；同步从来源读取 core；同 tid 第二会话 claim 被拒绝。未完成该清单不宣称该宿主版本端到端受支持。
 
+## 门禁命令的执行边界
+
+`docs/blueprint/testing.md` 的 `doctor_cmd` / `test_cmd` / `blackbox_verify` 由执行者按 task-work 流程运行，并把结果写入 handoff 的 tests/blackbox；reviewer 独立复跑。`task.py preflight` / `finish` / `integrate` 只校验章节存在与格式，不代为执行命令。`repo_sync.py apply` 在模板同步时执行这些命令作为同步门禁。
+
 ## 状态行 Hook 与执行范围
 
-模板在 `.claude/settings.json` 中配置了 PostToolUse hook（调用 `track_worktree.py`），用于跟踪多 worktree 环境下各会话对应的 task 目录并输出到状态行。
+模板在 `.claude/settings.json` 中配置了 PostToolUse hook（调用 `track_worktree.py`），把多 worktree 环境下各会话对应的 task worktree 映射写入 `.scratch/statusline_workdir.jsonl`。模板只提供写入端；状态行渲染需用户在全局 `statusLine.command` 配置读取该文件的脚本，模板不含该脚本，也不宣称复制项目 hook 即启用状态行。
 - **触发与范围**：仅当命令包含 task 调度关键词（`start` / `track_worktree` / `--tid`）且仓库存在调度账本（`docs/runtime/dispatch_ledger.jsonl`）时，才会将当前 session 的 worktree 映射写入 `.scratch/statusline_workdir.jsonl`；
 - **零副作用保证**：所有常规 shell 命令（如 `git`, `pytest`, `npm`, `ls` 等）在 hook 入口毫秒级短路退出，绝不改写仓库代码或生产状态。
 

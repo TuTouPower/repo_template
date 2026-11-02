@@ -2,11 +2,14 @@
 
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "repo_state.py"
+sys.path.insert(0, str(SCRIPT.parent))
+import repo_state
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -170,3 +173,27 @@ def test_non_git_repo_errors(tmp_path):
     result = _run(tmp_path, "added-lines", "HEAD")
     assert result.returncode != 0
     assert "非 git 仓库" in result.stderr
+
+
+def test_baseline_option_like_revision_is_not_interpreted_by_git(repo):
+    assert repo_state._baseline_ok("--version") is False
+    assert repo_state._baseline_ok("--output=/tmp/pwned") is False
+
+
+def test_added_lines_warns_and_fails_on_unreadable_untracked(repo, monkeypatch, capsys):
+    """未跟踪文件读取失败必须可见且返回非零，避免清洁度门禁静默漏检（Issue #78）。"""
+    baseline = _baseline(repo)
+    (repo / "locked.py").write_text("TODO: hidden\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    real_read_text = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self.name == "locked.py":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    rc = repo_state.cmd_added_lines(Namespace(baseline=baseline, exclude=[]))
+    assert rc == 1
+    stderr = capsys.readouterr().err
+    assert "WARNING" in stderr and "locked.py" in stderr

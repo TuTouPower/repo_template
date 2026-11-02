@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from review_support import ensure_review_evidence, configure_project_verification
+from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
 
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -21,30 +21,8 @@ from repo_task.documents import parse_front_matter, write_front_matter
 def _git(repo, *args, check=True):
     return subprocess.run(
         ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=check,
+        encoding="utf-8", errors="replace", check=check, timeout=120,
     )
-
-
-def _valid_spec():
-    text = (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8")
-    replacements = {
-        "{为什么需要此变更。}": "测试背景。",
-        "{本 task 包含什么。}": "测试范围。",
-        "{明确不做什么。}": "无。",
-        "{可独立验证的行为结果。}": "可验证行为。",
-        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
-        "- {分支或场景}：{不测原因}": "- 无",
-        "- {内容}": "- 按项目默认",
-        "- {契约}：{分类标记}，{待验证方式}": "- 外部行为：已核实",
-        "- 风险：{可能失败的地方}": "- 风险：无",
-        "- 回退：{失败后如何恢复}": "- 回退：无",
-        "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
-        "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
-        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
 
 
 @pytest.fixture
@@ -90,7 +68,7 @@ def _cli(repo, *args, stdin=""):
     return subprocess.run(
         [sys.executable, str(repo / ".repo_template" / "scripts" / "task.py"), *args],
         cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        input=stdin,
+        input=stdin, timeout=120,
     )
 
 

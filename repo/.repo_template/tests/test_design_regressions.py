@@ -191,6 +191,20 @@ def test_project_gates_stop_on_failure_and_pipe_failure(env):
         run_checks(consumer)
 
 
+def test_sync_apply_runs_real_gates_and_succeeds(env, monkeypatch):
+    """真实可执行门禁通过时 apply 完成；失败路径由上一条覆盖（Issue #82）。"""
+    consumer = env["consumer"]
+    policy = consumer / "docs/blueprint/testing.md"
+    policy.write_text(policy.read_text().replace(
+        "## test_cmd\n\n无",
+        "## test_cmd\n\n```bash\npython3 -c \"import sys; sys.exit(0)\"\n```",
+    ))
+    monkeypatch.setattr(rs, "_run_tests", lambda _: True)
+    result = rs.cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
+    assert result == 0
+    assert (consumer / ".repo_template/scripts/task.py").exists()
+
+
 def test_sync_business_failure_restores_assets_state_and_preserves_backup(env, monkeypatch):
     consumer = env["consumer"]
     old_state = env["state_file"].read_bytes()
@@ -226,6 +240,24 @@ def test_transaction_recovers_across_process_boundary_and_protects_later_edits(t
     assert (root / "asset").read_text() == "original"
     assert not (root / "new_asset").exists()
     assert (second.backup / "asset").read_text() == "original"
+
+
+def test_preparing_transaction_blocks_new_begin_and_can_be_rolled_back(tmp_path):
+    """begin 中断留下 preparing 时，status 可见、begin 拒绝重入、rollback 可清理（Issue #78）。"""
+    root = tmp_path / "consumer"
+    root.mkdir()
+    (root / "asset").write_text("original", encoding="utf-8")
+    (root / "bad").symlink_to(tmp_path / "outside")
+    transaction = FileTransaction(root, ".scratch/recovery")
+    with pytest.raises(ValueError, match="软链"):
+        transaction.begin(["asset", "bad"])
+    assert transaction.read()["status"] == "preparing"
+    assert (root / "asset").read_text(encoding="utf-8") == "original"
+    with pytest.raises(ValueError, match="存在未结束文件事务"):
+        transaction.begin(["asset"])
+    transaction.rollback()
+    assert transaction.read()["status"] == "rolled_back"
+    assert (root / "asset").read_text(encoding="utf-8") == "original"
 
 
 @pytest.mark.parametrize("source_kind", ["product", "factory", "url"])

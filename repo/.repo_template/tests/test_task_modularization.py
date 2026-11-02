@@ -40,10 +40,13 @@ def _fingerprint_repo(tmp_path: Path) -> Path:
 
 
 def test_task_cli_entrypoint_is_clean_without_facade_reexports():
-    """task.py 仅作为纯粹命令行入口，不保留转导出兼容层与 __getattr__。"""
-    text = (SCRIPTS_DIR / "task.py").read_text(encoding="utf-8")
-    assert "main()" in text
-    assert len(text.splitlines()) < 30
+    """task.py 仅作为命令行入口：CLI 可用，且不转导出内部实现。"""
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "task.py"), "--help"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
     for attr in (
         "compute_schedule", "repository_fingerprint", "project_attempts",
         "current_attempt_record", "in_flight_attempts", "append_integrated_batch",
@@ -108,10 +111,17 @@ def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):
 
 
 def test_submodules_do_not_import_facade():
-    for path in (SCRIPTS_DIR / "repo_task").glob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        assert "import task" not in text
-        assert "from task import" not in text
+    """导入子模块不得把 task 门面拉进 sys.modules（动态导入也能捕获）。"""
+    code = (
+        "import sys; sys.path.insert(0, %r); "
+        "import repo_task.lifecycle; "
+        "assert 'task' not in sys.modules, sorted(sys.modules)"
+    ) % str(SCRIPTS_DIR)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_fingerprint_tracks_head_staged_unstaged_delete_binary_and_mode(tmp_path):

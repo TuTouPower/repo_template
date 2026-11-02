@@ -46,7 +46,8 @@ var state = {
 
 var view = { k: 1, x: 20, y: 20 };
 var layout = null;
-var canvasEl, dragState = null;
+var layoutSignature = null;
+var canvasEl, dragState = null, dagG = null, hoverFrame = null;
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -126,7 +127,7 @@ function catStyle(cat) {
 }
 
 // ---------------------------------------------------------------------------
-// 关系索引与高亮（boardUtils.collectRelated / highlightRoleOf 的翻译）
+// 关系索引与高亮（移植自早期 TS 原型；原型不随模板分发）
 // ---------------------------------------------------------------------------
 
 function buildIndex() {
@@ -181,7 +182,7 @@ function matchedIds() {
 }
 
 // ---------------------------------------------------------------------------
-// 分层布局（dagLayout.ts 的翻译：最长路径分层 + barycenter 层内排序）
+// 分层布局（移植自早期 TS 原型：最长路径分层 + barycenter 层内排序；权威实现为本文件）
 // ---------------------------------------------------------------------------
 
 function layoutDag(nodeIds, edges) {
@@ -304,12 +305,25 @@ function visibleNodeIds() {
 
 function computeLayout() {
   var ids = visibleNodeIds();
+  var signature = ids.join(',');
+  if (layout && signature === layoutSignature) return ids;
   var idSet = new Set(ids);
   var depEdges = model.edges.filter(function (e) {
     return e.type === 'dep' && idSet.has(e.from) && idSet.has(e.to);
   });
   layout = layoutDag(ids, depEdges);
+  layoutSignature = signature;
   return ids;
+}
+
+function scheduleHoverRender() {
+  if (hoverFrame !== null) return;
+  hoverFrame = window.requestAnimationFrame(function () {
+    hoverFrame = null;
+    renderDag();
+    renderArchive();
+    updateHoverLegend();
+  });
 }
 
 function edgePath(from, to) {
@@ -349,6 +363,7 @@ function renderDag() {
 
   var svg = svgEl('svg');
   var g = svgEl('g', { transform: 'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')' });
+  dagG = g;
   svg.appendChild(g);
 
   var dimNode = function (id) {
@@ -440,17 +455,11 @@ function renderDag() {
     });
     nodeG.addEventListener('mouseenter', function () {
       state.hoveredId = id;
-      renderDag();
-      renderArchive();
-      renderChainPanel();
-      updateHoverLegend();
+      scheduleHoverRender();
     });
     nodeG.addEventListener('mouseleave', function () {
       state.hoveredId = null;
-      renderDag();
-      renderArchive();
-      renderChainPanel();
-      updateHoverLegend();
+      scheduleHoverRender();
     });
     nodeG.appendChild(svgEl('title', null, [document.createTextNode(tip)]));
 
@@ -804,8 +813,8 @@ function renderArchive() {
     card.appendChild(el('span', { class: 'title' }, [n.title]));
     card.appendChild(el('span', { class: 'category-badge', style: badgeStyle(n.category) }, [CAT[n.category].label]));
     card.addEventListener('click', function () { openSheet(n.id); });
-    card.addEventListener('mouseenter', function () { state.hoveredId = n.id; renderDag(); renderArchive(); updateHoverLegend(); });
-    card.addEventListener('mouseleave', function () { state.hoveredId = null; renderDag(); renderArchive(); updateHoverLegend(); });
+    card.addEventListener('mouseenter', function () { state.hoveredId = n.id; scheduleHoverRender(); });
+    card.addEventListener('mouseleave', function () { state.hoveredId = null; scheduleHoverRender(); });
     grid.appendChild(card);
   });
 }
@@ -1073,7 +1082,7 @@ function bindEvents() {
   canvasEl.addEventListener('pointermove', function (e) {
     if (!dragState) return;
     view = { k: view.k, x: dragState.ox + e.clientX - dragState.sx, y: dragState.oy + e.clientY - dragState.sy };
-    renderDag();
+    if (dagG) dagG.setAttribute('transform', 'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')');
   });
   canvasEl.addEventListener('pointerup', function () { dragState = null; canvasEl.classList.remove('dragging'); });
   canvasEl.addEventListener('pointerleave', function () { dragState = null; canvasEl.classList.remove('dragging'); });

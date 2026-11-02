@@ -9,6 +9,39 @@ if str(SCRIPTS_DIR) not in sys.path:
 from repo_task.documents import parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
+TASK_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "docs" / "task_template"
+
+_SPEC_REPLACEMENTS = {
+    "{为什么需要此变更。}": "测试背景。",
+    "{本 task 包含什么。}": "测试范围。",
+    "{明确不做什么。}": "无。",
+    "{可独立验证的行为结果。}": "可验证行为。",
+    "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
+    "- {分支或场景}：{不测原因}": "- 无",
+    "- {内容}": "- 按项目默认",
+    "- 风险：{可能失败的地方}": "- 风险：无",
+    "- 回退：{失败后如何恢复}": "- 回退：无",
+    "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
+    "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
+    "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
+}
+
+
+def fill_spec_text(text: str, *, contract_item: str = "外部行为：已核实") -> str:
+    """唯一权威的 spec 模板填充；contract_item 控制未知契约行。"""
+    replacements = dict(_SPEC_REPLACEMENTS)
+    replacements["- {契约}：{分类标记}，{待验证方式}"] = f"- {contract_item}"
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def valid_spec(contract_item: str = "外部行为：已核实") -> str:
+    return fill_spec_text(
+        (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8"),
+        contract_item=contract_item,
+    )
+
 
 def ensure_review_evidence(worktree, task_dir, anchor):
     fm, _ = parse_front_matter(task_dir / 'note.md')

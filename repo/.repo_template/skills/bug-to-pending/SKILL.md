@@ -17,7 +17,7 @@ metadata:
 ## 模式
 
 - 默认：分析登记后询问是否立项，批准则调用 `task-create`，最后询问 pending commit。
-- `analysis-only`：只分析和登记，返回 `pNNN` 后结束；不立项、不 commit。供 `task-work`、`pending-record` 等内部调用。
+- `analysis-only`：只分析和登记，返回 `pNNN` 后结束；不立项、不 commit。供 `pending-record` 等内部调用。
 
 ## 流程
 

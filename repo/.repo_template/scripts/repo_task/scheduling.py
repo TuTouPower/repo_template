@@ -39,10 +39,14 @@ def _dependency_cycle(dependencies: dict[str, list[str]]) -> list[str] | None:
                 state[parent] = 2
     return None
 
-def compute_schedule() -> dict:
-    """可跑集与分组计算：cmd_view 渲染与 reconcile 行动计划共用的只读调度图。"""
+def compute_schedule(tasks: dict | None = None) -> dict:
+    """可跑集与分组计算：cmd_view 渲染与 reconcile 行动计划共用的只读调度图。
+
+    传入 tasks 时复用调用方已完成的 effective discovery，避免重复扫描（Issue #77）。
+    """
     require_primary_worktree()
-    tasks = discover_effective_tasks()
+    if tasks is None:
+        tasks = discover_effective_tasks()
 
     dependencies: dict[str, list[str]] = {}
     conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}

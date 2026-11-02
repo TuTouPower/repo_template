@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from review_support import ensure_review_evidence, configure_project_verification
+from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
 
 from repo_task import context as ctx
 from repo_task import monitoring
@@ -23,30 +23,8 @@ from repo_task.documents import parse_front_matter, write_front_matter
 def _git(repo, *args, check=True):
     return subprocess.run(
         ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=check,
+        encoding="utf-8", errors="replace", check=check, timeout=120,
     )
-
-
-def _valid_spec():
-    text = (TASK_TEMPLATE_DIR / "task.md").read_text(encoding="utf-8")
-    replacements = {
-        "{为什么需要此变更。}": "测试背景。",
-        "{本 task 包含什么。}": "测试范围。",
-        "{明确不做什么。}": "无。",
-        "{可独立验证的行为结果。}": "可验证行为。",
-        "- AC-001：{不可测原因与替代验证方式}": "- 全部 AC 可自动测试",
-        "- {分支或场景}：{不测原因}": "- 无",
-        "- {内容}": "- 按项目默认",
-        "- {契约}：{分类标记}，{待验证方式}": "- 外部行为：已核实",
-        "- 风险：{可能失败的地方}": "- 风险：无",
-        "- 回退：{失败后如何恢复}": "- 回退：无",
-        "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
-        "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
-        "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
 
 
 @pytest.fixture
@@ -101,6 +79,7 @@ def _task_cli(repo, *args):
     return subprocess.run(
         [sys.executable, str(repo / ".repo_template" / "scripts" / "task.py"), *args],
         cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=120,
     )
 
 
@@ -677,13 +656,30 @@ def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
 
 
 
-def test_cmd_integrate_uses_chain_lock(git_repo):
-    """RT-004：cmd_integrate 必须被 _chain_locked 装饰，single 与 chain 互斥主干写。"""
-    from repo_task import integration
+def test_cmd_integrate_uses_chain_lock(git_repo, monkeypatch):
+    """RT-004：调用 cmd_integrate 时确实获取 chain 锁（可观察行为）。"""
+    from argparse import Namespace
+    from repo_task import integration, locks
 
-    wrapped = getattr(integration.cmd_integrate, "__wrapped__", None)
-    assert wrapped is not None, "cmd_integrate 未被 _chain_locked 包装（single 不拿主干写锁）"
-    assert wrapped.__name__ == "cmd_integrate"
+    calls = []
+    real_file_lock = locks.file_lock
+
+    def spy_file_lock(path):
+        calls.append(path)
+        return real_file_lock(path)
+
+    monkeypatch.setattr(integration, "file_lock", spy_file_lock)
+    monkeypatch.setattr(
+        integration, "_integration_lock_path",
+        lambda: git_repo / ".git" / "integrate.lock",
+    )
+    args = Namespace(
+        tid="t999", attempt=1, execution_id="x",
+        keep_branch=False, continue_merge=False,
+    )
+    with pytest.raises(SystemExit):
+        integration.cmd_integrate(args)
+    assert calls and calls[0].name == "integrate.lock"
 
 
 def _concurrent_add(repo, slug):
@@ -754,6 +750,35 @@ def test_track_worktree_reverse_lookup_and_dedup(tmp_path):
     assert statusline.read_text(encoding="utf-8").count("\n") == 2
 
 
+def test_track_worktree_resolves_from_start_through_execution_claim(tmp_path):
+    """start → reserve → claim 后映射仍有效；终态事件才关闭窗口（Issue #74）。"""
+    import importlib.util
+    import json
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
+    tw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tw)
+
+    project = tmp_path / "proj"
+    runtime = project / "docs" / "runtime"
+    runtime.mkdir(parents=True)
+    ledger = runtime / "dispatch_ledger.jsonl"
+    ledger.write_text(
+        "\n".join([
+            json.dumps({"tid": "t001", "event": "start", "worktree": "worktrees/t001_alpha"}),
+            json.dumps({"tid": "t001", "event": "attempt_reserved", "attempt": 1, "state": "running"}),
+            json.dumps({"tid": "t001", "event": "execution_claimed", "attempt": 1, "owner_id": "o"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    expected = str((project / "worktrees/t001_alpha").resolve())
+    assert tw.resolve_worktree(str(project), "t001") == expected
+
+    with ledger.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"tid": "t001", "event": "attempt_terminal", "attempt": 1}) + "\n")
+    assert tw.resolve_worktree(str(project), "t001") == ""
+
+
 def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
     """验证大型账本下按 tid 快速预过滤读取与单次打开追加优化（Issue #57）。"""
     from repo_task import context as ctx
@@ -784,6 +809,38 @@ def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
     # 4. 再次按 tid 读，包含两条
     t001_events2 = ledger_read(tid="t001")
     assert len(t001_events2) == 2
+
+
+def test_ledger_unreadable_fails_closed_instead_of_reusing_attempt(tmp_path, monkeypatch):
+    """账本存在但不可读时必须拒绝，不能按空账本重新分配 attempt（Issue #70）。"""
+    from repo_task import context as ctx
+    from repo_task.ledger import ledger_allocate_attempt, ledger_read
+
+    ledger_path = tmp_path / "dispatch_ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps({"tid": "t001", "attempt": 1, "event": "start"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ctx, "LEDGER_PATH", ledger_path)
+    monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
+
+    real_open = Path.open
+
+    def denied(self, *args, **kwargs):
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if self == ledger_path and "r" in mode and "+" not in mode:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied)
+    with pytest.raises(ctx.TaskDataError, match="无法读取"):
+        ledger_read()
+    with pytest.raises(ctx.TaskDataError, match="无法读取"):
+        ledger_allocate_attempt(
+            "t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"}
+        )
+    with real_open(ledger_path, "r", encoding="utf-8") as stream:
+        assert stream.read().count("\n") == 1
 
 
 def test_chain_locked_uses_shared_file_lock(tmp_path, monkeypatch):

@@ -28,7 +28,7 @@ def staged_md() -> list[str]:
     否则中文等路径会被引号化而在后续 is_file 判断中被静默跳过。
     """
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACM", "--", "*.md"],
+        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )

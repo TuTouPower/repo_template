@@ -103,6 +103,28 @@ def test_parse_raises_when_unclosed(tmp_path):
         parse_front_matter(p)
 
 
+def test_parse_rejects_nonstandard_closing_fence_with_line(tmp_path):
+    for fence in ("--- ", "----"):
+        p = tmp_path / "task.md"
+        p.write_text(f"---\ntid: t001\n{fence}\nbody\n", encoding="utf-8")
+        with pytest.raises(TaskDataError, match=r"task\.md:3"):
+            parse_front_matter(p)
+
+
+def test_parse_rejects_key_without_colon(tmp_path):
+    p = tmp_path / "task.md"
+    p.write_text('---\ntid: t001\ndepends_on "t002"\n---\nbody\n', encoding="utf-8")
+    with pytest.raises(TaskDataError, match=r"task\.md:3.*缺冒号"):
+        parse_front_matter(p)
+
+
+def test_parse_rejects_duplicate_key(tmp_path):
+    p = tmp_path / "task.md"
+    p.write_text("---\ntid: t001\ntid: t002\n---\nbody\n", encoding="utf-8")
+    with pytest.raises(TaskDataError, match=r"task\.md:3.*重复键 'tid'.*第 2 行"):
+        parse_front_matter(p)
+
+
 def test_write_uses_lf_newlines(tmp_path):
     p = tmp_path / "task.md"
     write_front_matter(p, {"tid": "t001"}, "body\n")

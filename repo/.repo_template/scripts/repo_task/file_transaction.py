@@ -66,7 +66,7 @@ class FileTransaction:
 
     def begin(self, paths):
         old = self.read()
-        if old and old["status"] in {"applying", "restore_failed", "applied"}:
+        if old and old["status"] in {"preparing", "applying", "restore_failed", "applied"}:
             raise ValueError("存在未结束文件事务；先 transaction status，再 rollback 或 accept")
         if self.backup.exists():
             shutil.rmtree(self.backup)
@@ -100,9 +100,14 @@ class FileTransaction:
 
     def rollback(self, *, confirm_restore=False, automatic=False):
         data = self.read()
-        if not data or data["status"] not in {"applying", "applied", "restore_failed", "rolled_back"}:
+        if not data or data["status"] not in {"preparing", "applying", "applied", "restore_failed", "rolled_back"}:
             raise ValueError("没有可恢复文件事务")
         if data["status"] == "rolled_back":
+            return
+        if data["status"] == "preparing":
+            # preparing 阶段尚未改动目标文件，备份可能只写了一部分；直接标记回滚。
+            data["status"] = "rolled_back"
+            self.save(data)
             return
         if not automatic and not confirm_restore:
             if data["status"] != "applied" or data.get("after") != fingerprint(self.root, data["paths"]):

@@ -74,6 +74,14 @@ def test_format_rejects_blacklist(repo):
         mdf.format_paths(["docs/archive/keep.md"])
 
 
+def test_main_rejects_explicit_blacklist_path(repo, capsys):
+    """CLI 显式点名黑名单路径必须报错，不得静默 exit 0（Issue #76）。"""
+    with pytest.raises(SystemExit) as exc:
+        mdf.main(["docs/archive/keep.md"])
+    assert exc.value.code == 1
+    assert "黑名单" in capsys.readouterr().err
+
+
 def test_format_missing_binary(repo, monkeypatch):
     monkeypatch.setattr(mdf, "find_md_kx", lambda: None)
     with pytest.raises(mdf.MdFormatError, match="找不到 md_kx"):

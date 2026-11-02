@@ -115,6 +115,22 @@ def test_no_staged_md_passes_unchanged(repo, tmp_path):
     assert "|---|---|" not in _git(repo, "diff", "--cached").stdout
 
 
+def test_no_staged_md_passes_without_md_kx(repo, tmp_path):
+    (repo / "b.py").write_text("x = 3\n", encoding="utf-8")
+    _git(repo, "add", "b.py")
+    result = _run_hook(repo, tmp_path, with_fake_kx=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_renamed_md_is_formatted(repo, tmp_path):
+    _git(repo, "mv", "a.md", "renamed.md")
+    (repo / "renamed.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
+    _git(repo, "add", "renamed.md")
+    result = _run_hook(repo, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "|---|---|" in (repo / "renamed.md").read_text(encoding="utf-8")
+
+
 def test_missing_md_kx_blocks(repo, tmp_path):
     _stage_drifted_md(repo)
     result = _run_hook(repo, tmp_path, with_fake_kx=False)
@@ -174,14 +190,17 @@ def test_format_failure_rolls_back_without_misleading_dirty_state(repo, tmp_path
 
 
 def test_precommit_hook_python39_compatibility(repo, tmp_path):
-    """验证使用系统 Python 3.9（若存在）执行 pre-commit 钩子不会因类型注解求值崩溃。"""
+    """只有真实 Python 3.9 才运行；找不到或版本不符时 skip（Issue #82）。"""
     import shutil
-    system_python = shutil.which("python3.9") or "/usr/bin/python3"
-    if not Path(system_python).is_file():
-        pytest.skip("未找到测试用 python3.9 / /usr/bin/python3")
-    r = subprocess.run([system_python, "--version"], capture_output=True, text=True)
-    if r.returncode != 0:
-        pytest.skip(f"{system_python} 无法执行")
+    system_python = shutil.which("python3.9")
+    if not system_python:
+        pytest.skip("未找到真实 python3.9；跳过 3.9 兼容性验证")
+    r = subprocess.run(
+        [system_python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0 or r.stdout.strip() != "3.9":
+        pytest.skip(f"{system_python} 不是 Python 3.9（{r.stdout.strip() or r.stderr.strip()}）")
     env = dict(os.environ)
     env["PATH"] = str(_fake_md_kx(tmp_path).parent) + os.pathsep + env["PATH"]
     _stage_drifted_md(repo)

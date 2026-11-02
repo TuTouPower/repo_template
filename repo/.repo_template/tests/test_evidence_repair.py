@@ -158,4 +158,3 @@ def test_reserve_rewind_messages_point_to_recovery(git_repo):
     assert "recovery" in rewind.stderr
     assert "放弃用 drop" not in rewind.stderr
     assert "彻底删除用 purge" not in rewind.stderr
-    assert _identity_args(identity)

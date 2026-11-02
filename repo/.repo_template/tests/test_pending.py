@@ -350,6 +350,71 @@ def test_archive_partial_io_failure_rolls_back_all(tmp_path, monkeypatch):
 
 
 
+def test_archive_reports_partial_rollback_when_restore_fails(tmp_path, monkeypatch, capsys):
+    """回滚自身失败时不得报告完整回滚；未恢复条目与原因可见（Issue #78）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "one"])
+    pending_mod.main(["new", "--slug", "two"])
+
+    real_move = pending_mod.move_entry
+    calls = {"n": 0}
+
+    def flaky(path, target):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise IdScanError("模拟第二条迁移失败")
+        return real_move(path, target)
+
+    real_write = pending_mod.atomic_write_text
+
+    def fail_restore(path, content):
+        if calls["n"] >= 2 and path.name.startswith("p001_"):
+            raise OSError("模拟正文恢复失败")
+        return real_write(path, content)
+
+    monkeypatch.setattr(pending_mod, "move_entry", flaky)
+    monkeypatch.setattr(pending_mod, "atomic_write_text", fail_restore)
+    with pytest.raises(SystemExit, match="回滚不完整"):
+        pending_mod.main(
+            ["archive", "p001", "p002", "--reason", "已核实处理结果", "--write"]
+        )
+    stderr = capsys.readouterr().err
+    assert "成功回滚 0/1 条" in stderr
+    assert "p001_one.md" in stderr
+    assert "模拟正文恢复失败" in stderr
+    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+
+
+def test_archive_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch):
+    """锁外定位的条目在锁内已被迁移时拒绝落盘，而不是继续处理旧路径（Issue #78）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "one"])
+    one = repo / "docs/pending/todo/p001_one.md"
+    moved = repo / "docs/pending/parked/p001_one.md"
+    moved.parent.mkdir(parents=True, exist_ok=True)
+
+    real_find = pending_mod.find_entry
+    calls = {"n": 0}
+
+    def find_then_move(number):
+        calls["n"] += 1
+        state, path = real_find(number)
+        if calls["n"] == 2:
+            path.rename(moved)
+            return "parked", moved
+        return state, path
+
+    monkeypatch.setattr(pending_mod, "find_entry", find_then_move)
+    with pytest.raises(SystemExit, match="加锁前已被迁移"):
+        pending_mod.main(
+            ["archive", "p001", "--reason", "已核实处理结果", "--write"]
+        )
+    assert moved.exists()
+    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+
+
 def test_archive_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
     """验证 archive 与 park 显式拒绝包含换行符的 reason 或 fix-ref（Issue #52）。"""
     repo = _init_repo(tmp_path)
@@ -900,3 +965,23 @@ def test_archive_missing_explanation_is_rejected_before_migration(tmp_path, monk
     assert "--reason" in capsys.readouterr().err
     assert source.read_bytes() == original
     assert not (repo / "docs/archive/pending/p001_unexplained.md").exists()
+
+
+def test_allocate_dir_rejects_paths_escaping_target(tmp_path, monkeypatch):
+    """files 键不得为绝对路径或含 ..，且失败时不在外部留文件（Issue #80）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    target = repo / "docs/spikes"
+    target.mkdir(parents=True, exist_ok=True)
+    for bad in ("../escape.txt", "/tmp/escape.txt", "a/../../escape.txt", "a\\b.txt"):
+        with pytest.raises(IdScanError, match="文件名非法"):
+            allocate_dir(
+                repo,
+                prefix="s",
+                dirs=SPIKE_DIRS,
+                target_dir=target,
+                slug="safe",
+                files={bad: "x"},
+            )
+    assert not (repo / "docs/escape.txt").exists()
+    assert not (repo.parent / "escape.txt").exists()
