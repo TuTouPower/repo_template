@@ -5,16 +5,101 @@
 - 裁决时间：`2026-11-04T07:46:52+08:00`
 - 裁决方法：逐项回读当前 `main` 源码核实，并用 `git show 647d701:<path>` 区分本轮回归与改造前既有缺陷。本文只裁决，未改代码、未跑测试。
 - 采纳口径（用户裁定）：确认存在的问题一律修复，不区分是否本轮引入。标注「既有」的项为改造前已存在、`template_sync` 拆包时原样搬入。
+- 修订（`2026-11-04`，用户裁定）：撤销宏观方案 D2 的证据 commit，恢复「一 task 一 commit」，见 D01。M01、M02、M03、A01、A08、A24、R10 已按 D01 改写。
 
 ## 统计
 
-去重后共 53 项：
+去重后共 53 项审阅意见，另加 1 项用户裁定：
 
+- 用户裁定：1 项（D01）
 - 采纳（按审阅建议修）：26 项
 - 修改后采纳（问题成立，修法或范围与建议不同）：5 项
 - 拒绝：22 项
 
 优先级：P0 = 主路径断裂或门禁可绕过；P1 = 恢复/同步路径失败或数据不一致；P2 = 诊断缺口、边界缺陷；P3 = 文档、死代码、测试补强。
+
+## 用户裁定
+
+### D01. 撤销证据 commit，恢复一 task 一 commit（P0）
+
+#### 裁定理由
+
+- 证据 commit 只处理「task 已 done 并提交之后 review 门禁失效」这一种情况。M01 修复后，这种情况基本不会发生：
+    - finish 提交前已核验 review PASS、指纹、报告格式和处置表；
+    - M01 保证入库内容与 review 内容一致；
+    - 同步 apply 在存在 done 但未 integrate 的分支时拒绝，模板升级碰不到待合分支。
+- 和 amend 相比没有实际优势：
+    - 有后继分支时两者都不允许；
+    - 没有后继时分支只在本地，report 尚未写入，amend 不影响任何人。
+- 成本是实打实的：分支形状校验从「恰好 1 个 commit」变成沿 first-parent 逐个检查路径；M03（链连续性回归）和 M02 的一半都由它引出；recovery 多一个阶段，4 份文档、1 个测试文件专门描述它。
+- D-04 里真正有价值的是 D1（归档移到 integrate）。D1 之后 amend 只改 `docs/tasks/` 里的文件，原来 archive「唯一窄例外」不再需要。保留 D1，撤销 D2。
+
+#### 目标规则
+
+1. 执行分支恰好 1 个实现 commit：由 `finish` 提交，非 merge commit，first parent = `diff_anchor` = `handoff.base_sha`。第二个 commit 无论内容一律拒绝。
+2. `handoff.json` 新增 `review_scope` 字段，值为 finish 前置检查时算出的交付指纹（`review_scope_fingerprint(diff_anchor, task_dir)`）。`verify_integrate_ready` 要求分支 tip 重算的指纹等于该值。这一条同时做两件事：
+    - 承担 M01 的提交后复核；
+    - 机械约束 amend 不得改交付内容。改了交付内容必须 rewind 重做，不能 amend。
+3. done 后 review 门禁失效，recovery 判 `review_repair`（原 `evidence_repair` 改名）。可修复条件：
+    - 没有其它分支包含当前 tip；
+    - 该 attempt 的 report 尚未写入 done。
+
+   满足时：保留现场并报告用户；用户同意后，在原 worktree 对 tip 内容重新 review，只改 review 过程文件（`progress.md` 正文、`review_*.md`、渲染的 review prompt），`git commit --amend --no-edit` 进同一个实现 commit，worktree 干净后在主仓运行 `run-close {tid} --owner-id ... --result done`。不满足任一条件时停止并报告，不 amend。
+4. 归档仍由 integrate 的 merge commit 完成（D1 不变），不恢复 archive 写权例外。
+5. 不留兼容层：缺 `review_scope` 的 handoff 判 `contract`。消费仓同步本来就拒绝存在未集成 done 分支的现场，不会有存量 handoff 需要迁移；工厂内未集成的 done 分支须先 integrate 或 rewind。
+
+#### 改动清单
+
+代码（`repo/.repo_template/scripts/repo_task/`）：
+
+|文件|改动|
+|---|---|
+|`monitoring.py`|删除 `EVIDENCE_COMMIT_FILES`、`first_parent_segment`、`execution_commits`；新增 `implementation_commit(ref, base_sha) -> str`，校验 `base..ref` 恰 1 个 commit、单 parent、parent 等于 base。`verify_integrate_ready` 改用它，形状文案改为「执行分支必须恰好一个实现 commit」，删除证据 commit 计数。`_HANDOFF_TYPES` 加 `review_scope: str`，`build_handoff` 写入；verify 比对 tip 指纹与 `review_scope`。`REVIEW_PROCESS_FILES` 保留（指纹排除仍要用）|
+|`lifecycle.py`|finish 把前置检查的 scope 传给 `build_handoff`；提交后用 `ref="HEAD"` 重算并与 `review_scope` 比对（即 M01 第 2 步）；`:858` rewind 拒绝文案改指 recovery 的 review 修复|
+|`recovery.py`|`:98` 改用 `implementation_commit`；`evidence_repair` 改名 `review_repair`，`_evidence_repair_action` 改名 `_review_repair_action`，文案按目标规则 3；判定条件按 A01；保留 `_tip_has_successor`；report 已 done 时返回停止诊断|
+|`integration.py`|删除 `first_parent_segment` 导入；链相邻检查恢复为 `current_tip^1 == previous_tip`（M03）|
+|`control.py`|`:174` suffix 改为「先按 recovery 的 review 修复处理后重跑 run-close」|
+|`attempts.py`|`:279` 文案「追加证据 commit」改为「amend 补审进同一实现 commit」|
+
+产物文档与 skill：
+
+|位置|改动|
+|---|---|
+|`repo/AGENTS.md:34`|「review 失效时仅可追加……证据 commit」改为「每个 task 恰好一个实现 commit；review 失效的修复见 recovery」|
+|`architecture.md:7`|删除「review 失效时可在其后追加……证据 commit」|
+|`architecture.md:64`|整段改写为：一 task 一 commit；`handoff.review_scope` 绑定交付指纹；review 失效时 amend 只改过程文件，交付内容变化须 rewind；cleanup / integrate / integrate-chain / `ledger import` 校验恰 1 个 commit 且指纹一致|
+|`architecture.md:79`|「前置实现 commit 与证据 commit」改为「前置实现 commit」|
+|`architecture.md:89`|task-work 行删除「done 后 review 失效时追加证据 commit」|
+|`usage.md:90`|「证据 commit 只改过程文件，不改变指纹」改为「`handoff.json` 的 `review_scope` 记录 finish 时的指纹，最终提交必须与之一致」|
+|`recovery.md:32`|按目标规则 3 重写「review 门禁失败后的修复」|
+|`recovery.md:44`|「实现 commit 与证据 commit 的形状」改为「恰好一个实现 commit」|
+|`task-work/SKILL.md:36`、`task-run/SKILL.md:42`|「证据修复（重新 review 并追加……证据 commit）」改为「按 recovery 的 review 修复处理」|
+|`task-integrate/SKILL.md:22`|「一个实现 commit 加仅含 review 过程文件的证据 commit」改为「恰好一个实现 commit 且交付指纹与 handoff 一致」|
+
+测试：
+
+|位置|改动|
+|---|---|
+|`factory_tests/test_evidence_commit.py`|删除，新建 `factory_tests/test_review_repair.py`|
+|保留并改写为 amend 语义|stale → `review_repair` 且 cleanup 拒绝（原 `:83`）；amend 补审后 cleanup / run-close 通过（原 `:95`、`:293`）；amend 后 integrate 归档（原 `:129`）；merge commit 拒绝（原 `:245`）；amend 引入 TICK-VOID 被拦（原 `:257`）；AC 行与 task.md 不一致被拦（原 `:268`）；有后继分支时停止（原 `:347`）；reserve / rewind 文案指向 review 修复且不含「证据 commit」（原 `:378`）；ledger import 接受单 commit（原 `:357`）|
+|删除（规则已删）|允许集合派生（原 `:72`）、多个 / 空证据 commit（原 `:110`、`:122`）、链前驱带证据 commit（原 `:143`，由 M03 的精确链检查测试替代）、证据 commit 越界六例（原 `:183`–`:233`）、recovery 接受证据 commit（原 `:330`）|
+|新增|第二个 commit 无论内容都被 cleanup / integrate / `ledger import` / recovery 拒绝（参数化：只改 review 文件、改交付文件）；amend 改交付内容后 `review_scope` 不一致被拒；handoff 缺 `review_scope` 判 contract；report 已 done 时 recovery 停止|
+|`factory_tests/test_dispatch_integration.py:358`|断言文案改为新的形状文案|
+|`factory_tests/test_orchestration_docs.py:81-95`|改为：分发文本不含「证据 commit」；`amend` 只出现在 `recovery.md`「review 门禁失败后的修复」一节；保留 `handoff.json`、「后继分支」断言|
+|手写 `handoff.json` 的测试夹具|实施时 `grep -rn "handoff.json" factory_tests repo/.repo_template/tests`，补 `review_scope`，或改为调用 finish 生成|
+
+工厂笔记：
+
+|位置|改动|
+|---|---|
+|`docs_repo/decision_log.md`|新增 L53「撤销 L43 的证据 commit 部分（D2），恢复一 task 一 commit，review 失效走 amend 并以 `handoff.review_scope` 约束」，出处本文 D01、用户裁定；L43 状态改为「已落地；证据 commit 部分被 L53 取代」|
+|`docs_repo/plans/plan_macro_overhaul_2026_11.md`|D2 行首按 `docs_repo/README.md` 纪律加一行标注「已由 L53 撤销」，不改原文|
+
+#### 验证
+
+- 残留扫描为空：`grep -rn "证据 commit\|EVIDENCE_COMMIT\|execution_commits\|first_parent_segment\|evidence_repair" repo factory_tests`
+- 子集：`pytest factory_tests/test_review_repair.py factory_tests/test_finish_atomic.py factory_tests/test_archive_at_integrate.py factory_tests/test_dispatch_integration.py factory_tests/test_orchestration_docs.py -q -n auto`
+- 全量门禁（见文末）
 
 ## 修改后采纳
 
@@ -28,20 +113,21 @@
     - 不采纳「hook 改写时整体回滚工作区」：前置检查通过后 pre-commit 不会再改文件，该分支不可达，不为它写回滚逻辑。模板只分发 pre-commit，没有 commit-msg hook，附加问题所述场景在默认配置下不出现。
 - 修复：
     1. `_finish_prechecks` 新增零写入检查：对本次将提交的 `.md`（已暂存交付文件 + 当前 task 目录内 `.md`，扣黑名单）调用 `md_format.format_paths(..., check=True)`。有漂移时拒绝，提示先 `md_format.py --changed`，交付内容变了要重新 review。md_kx 缺失时，若 `core.hooksPath` 指向 `.repo_template/hooks` 则拒绝（反正提交会被 hook 阻断），否则跳过。
-    2. `cmd_finish` 提交成功后用 `review_scope_fingerprint(diff_anchor, task_rel, ref="HEAD")` 与前置指纹比对；不一致时不打印 `finish=OK`，改报 `finish=FAIL：提交内容与 review 内容不一致`，并指向 `recovery`（与现有「HEAD 已前进不回滚」策略一致）。
+    2. `cmd_finish` 提交成功后用 `review_scope_fingerprint(diff_anchor, task_rel, ref="HEAD")` 与 `handoff.review_scope`（D01 新增，即前置指纹）比对；不一致时不打印 `finish=OK`，改报 `finish=FAIL：提交内容与 review 内容不一致`，并指向 `recovery`（与现有「HEAD 已前进不回滚」策略一致）。下游 `verify_integrate_ready` 做同一比对，漏网也会在 run-close 被拦。
     3. 测试：启用 hooksPath 且交付 `.md` 未格式化时零写入拒绝；注入改写 `.md` 的 hook 时 finish 报 FAIL，不报 OK。
 
 ### M02. `review_level` 可被降级，绕过双轴 review（P0）
 
 - 来源：deepseek#2、muse B1
 - 位置：`repo_task/monitoring.py` `EVIDENCE_COMMIT_FILES` / `execution_commits` / `verify_integrate_ready`；`review.py:381`
-- 判断：成立，但根因比审阅说的宽。证据 commit 能改 `progress.md` front matter 属实；可实现 commit 同样能降级：实施 agent 在 worktree 里直接把 `review_level: full` 改成 `single` 后 finish，没有任何机械检查（只有 `review-upgrade` 命令拒绝降级，文件本身可写）。指纹虽然绑定了 `review_level`，降级后补一份同指纹的 general 报告仍能 PASS。只封证据 commit 堵不住。
-- 与建议的差异：分两层修。`review_limit` / `verify_limit` 不能对实现 commit 做单调比对，因为 `limits` 命令按设计就在 active worktree 内由用户授权提升；证据 commit 阶段 task 已 done，`limits` / `review-upgrade` 都要求 active，所以证据 commit 可以整体冻结 front matter。
+- 判断：成立，但根因比审阅说的宽。证据 commit 能改 `progress.md` front matter 属实；实现 commit 同样能降级：实施 agent 在 worktree 里直接把 `review_level: full` 改成 `single` 后 finish，没有任何机械检查（只有 `review-upgrade` 命令拒绝降级，文件本身可写）。指纹虽然绑定了 `review_level`，降级后补一份同指纹的 general 报告仍能 PASS。只封证据 commit 堵不住。
+- 与建议的差异：
+    - 证据 commit 由 D01 删除，「证据 commit 禁改 front matter」不再需要。
+    - 改为在 tip 与 `diff_anchor` 之间做单调性比对，实现 commit 和 D01 的 amend 修复都经过这一道。
+    - `review_limit` / `verify_limit` 不做比对：`limits` 命令按设计在 active worktree 内由用户授权提升，tip 值合法地可能更高；done 之后 `limits` 要求 active，amend 阶段也改不动它们。
 - 修复：
-    1. `execution_commits`：证据 commit 触及 `progress.md` 时，比对该 commit 前后的 front matter，`note` 以外字段有任何变化即拒绝（正文和 `note` 允许变）。
-    2. `verify_integrate_ready`：读取 `diff_anchor` 处的 `progress.md` `review_level`，tip 的值只能相同，或从 `single` 变为 `full`；否则判 `contract`。cleanup、integrate、`ledger import` 都经过这里，全部覆盖。
-    3. `architecture.md`、`recovery.md`、`usage.md` 的证据 commit 允许集补一句「`progress.md` 仅正文与 `note`，front matter 其它字段不得变」。
-    4. 测试：实现 commit 降级被拒；证据 commit 改 `review_level` / `review_limit` 被拒；证据 commit 只改正文仍通过；`single -> full` 升级仍通过。
+    1. `verify_integrate_ready`：读取 `diff_anchor` 处的 `progress.md` `review_level`，tip 的值只能相同，或从 `single` 变为 `full`；否则判 `contract`。cleanup、integrate、integrate-chain、`ledger import` 都经过这里，全部覆盖。
+    2. 测试：实现 commit 降级被拒；amend 降级被拒；`single -> full` 升级仍通过。
 
 ### M03. integrate-chain 连续性校验回归，可夹带未审 commit 或漏掉前驱（P0）
 
@@ -50,10 +136,12 @@
 - 判断：成立，属本轮回归。旧检查 `current_tip^1 == previous_tip` 在「一 task 一 commit」下等价于「后继的 base 就是前驱 tip」。D2 允许证据 commit 后改成 `first_parent_segment(current_tip, previous_tip)`，只要求前驱 tip 在 first-parent 链上：
     - 前驱 tip 与后继 base 之间夹的非 task commit 会被合入，且不受任何 handoff/review 覆盖。
     - 前驱 tip 不再是链尾祖先时（如后继 fork 后前驱又追加了 commit），前驱被静默排除，其实现 commit 随链尾合入，却不归档、不写 `integrated`。
-- 与建议的差异：两份审阅都只修 `integrate-chain`。单 task `integrate` 也不校验 `handoff.base_sha` 是否已在主干：对 base 为未合入前驱分支的 task 单独 integrate，会把前驱实现一起带进主干。同类缺口，一并修。
+- 与建议的差异：
+    - D01 恢复「恰好 1 个 commit」后，相邻检查直接恢复为旧的 `current_tip^1 == previous_tip`（此时它就等价于「后继 base 精确等于前驱 tip」），不另写新逻辑。
+    - 两份审阅都只修 `integrate-chain`。单 task `integrate` 也不校验 `handoff.base_sha` 是否已在主干：对 base 为未合入前驱分支的 task 单独 integrate，会把前驱实现一起带进主干。同类缺口，一并修。
 - 修复：
-    1. 相邻成员：后继 handoff 的 `base_sha`（`verify_integrate_ready` 已证明它是实现 commit 的 first parent）必须精确等于前驱 tip。
-    2. 链头与单 task integrate：`base_sha` 必须是 `base_ref`（`HEAD`；`--continue` 时为 merge 的 first parent）的祖先，否则拒绝，并提示先 integrate 前驱或用 `integrate-chain`。
+    1. 相邻成员：恢复 `current_tip^1 == previous_tip`（随 D01 删除 `first_parent_segment` 调用）。
+    2. 链头与单 task integrate：`handoff.base_sha` 必须是 `base_ref`（`HEAD`；`--continue` 时为 merge 的 first parent）的祖先，否则拒绝，并提示先 integrate 前驱或用 `integrate-chain`。这一条同时堵住漏洞 B 的「前驱被静默排除」。
     3. 测试：gemini 的漏洞 A/B 现场各一条；单 task integrate 的 base 未合入时被拒。
 
 ### M04. 软链 `AGENTS.md`：status/plan 显示支持，apply 必然拒绝（P2，既有）
@@ -79,11 +167,11 @@
 - 来源：deepseek#3、gemini#3
 - 位置：`repo_task/recovery.py:108-119, 136-150`；`control.py:174`；`recovery.md:24,32`
 - 判断：成立。`run-close --result done` 在写 terminal 之前调 `require_report_done_ready`，失败时 attempt 仍是 `running`；`recovery_state` 只在 `terminal completed` 时检查 review gate，于是返回 `committed_unreported`，提示「补 terminal/report」；照做重跑 `run-close` 又被同一门禁拦下。`_evidence_repair_action` 的收尾命令写「exact cleanup」，terminal/report 缺失时也必失败。
-- 修复：
-    1. 已提交实现 commit，且 `state == running` 或 `terminal completed` 时，都检查 review gate，失败即返回 `evidence_repair`。
-    2. `_evidence_repair_action` 收尾改为「提交证据 commit 后运行 `run-close {tid} --owner-id ... --result done`」（重入安全，补齐 terminal/report/cleanup）；`control.py:174` 的 suffix 去掉「仍卡在 committed_unreported」。
+- 修复（阶段名与修复动作按 D01）：
+    1. 已提交实现 commit、report 尚未写入 done，且 `state == running` 或 `terminal completed` 时，都检查 review gate，失败即返回 `review_repair`；report 已 done 时返回停止诊断。
+    2. `_review_repair_action` 收尾写为「amend 补审进同一实现 commit 后运行 `run-close {tid} --owner-id ... --result done`」（重入安全，补齐 terminal/report/cleanup）；`control.py:174` 的 suffix 去掉「仍卡在 committed_unreported」。
     3. `recovery.md:24,32` 同步。
-    4. 测试：run-close 门禁失败后 recovery 判 `evidence_repair`，追加证据 commit 后 `run-close` 一次完成。
+    4. 测试：run-close 门禁失败后 recovery 判 `review_repair`，amend 后 `run-close` 一次完成（并入 D01 的 `test_review_repair.py`）。
 
 ### A02. `goal <tids...>` 不校验显式队列拓扑（P2）
 
@@ -135,7 +223,7 @@
 - 来源：deepseek#15、muse M9
 - 位置：`task-run/SKILL.md:21,34`、`task-work/SKILL.md:3,12,47`、`task-create/SKILL.md:21`、`usage.md:12`
 - 判断：成立。
-- 修复：finish 提交的统一叫「实现 commit」，分支整体叫「执行分支」（实现 commit + 证据 commit）。`task-work` description 改动后重跑 `skill_registry` 生成，确认 opencode 命令无漂移（task-work 是内部流程，预期不生成命令）。
+- 修复：D01 删除证据 commit 后只剩一种 commit。finish 提交的统一叫「实现 commit」，所在分支叫「执行分支」（恰好一个实现 commit），清除所有「执行 commit」。`task-work` description 改动后重跑 `skill_registry` 生成，确认 opencode 命令无漂移（task-work 是内部流程，预期不生成命令）。
 
 ### A09. skill 与 usage 文档残留旧口径（P3）
 
@@ -242,12 +330,12 @@
     - `shared_files.py:273-275` 第二次 `_apply_agents_sectioned`：首次调用已返回 False，第二次必然也是 False，删除。
     - `workflow_migration.py:229` `_TASK_BRANCH_RE`：改用已导入模块里的 `repo_task.context.TASK_BRANCH_RE`。
 
-### A24. 证据修复测试缺「禁止 rewind / reserve」断言（P3）
+### A24. review 修复测试缺「禁止 rewind / reserve」断言（P3）
 
 - 来源：muse
 - 位置：`factory_tests/test_evidence_commit.py:83-92`
 - 判断：成立。删掉的 `test_evidence_repair.py` 之后，新测试只断言「证据 commit」和「无 amend」。
-- 修复：随 A01 改 action 文案时，补断言 action 含「禁止 rewind、reserve」，并指向 `run-close`。
+- 修复：该文件随 D01 删除。新的 `test_review_repair.py` 断言 `review_repair` 的 action 含「禁止 rewind、reserve」「amend」「run-close」，且不含「证据 commit」。
 
 ### A25. `.prettierignore` 旧标题按原行精确匹配（P3，既有）
 
@@ -299,11 +387,11 @@ finish 只写自身 worktree 与本地 index，不改主仓控制面；读 ledge
 
 ### R09. `start` 对依赖调用 `verify_integrate_ready`（muse M4）
 
-依赖要变成 done，必须经过 finish 的 review 门禁；done 之后变 stale 的情况由 A01 的 evidence_repair 处理，integrate-chain 也会逐成员复验（M03 之后更严格）。在 `start` 再做一遍完整复验，只是把同一检查提前，不堵新的缺口；`architecture.md` 的「done 即满足」是既定口径。
+依赖要变成 done，必须经过 finish 的 review 门禁；done 之后变 stale 的情况由 A01 / D01 的 review_repair 处理，integrate-chain 也会逐成员复验（M03 之后更严格）。在 `start` 再做一遍完整复验，只是把同一检查提前，不堵新的缺口；`architecture.md` 的「done 即满足」是既定口径。
 
 ### R10. 证据 commit 允许集三处文档各说各话（muse M6）
 
-`architecture.md:64`、`recovery.md:32`、`usage.md:90` 语义一致：允许集相同，`task.md` 属于「其它路径 / 交付」。三处的补充修改随 M02 一起做，不单列。
+裁决时三处语义一致（允许集相同，`task.md` 属于「其它路径 / 交付」）。D01 删除证据 commit 后，这三处整段重写，本项不再适用。
 
 ### R11. `store.py` 改按目录前缀分组（muse）
 
@@ -357,8 +445,9 @@ message 文件位于每个测试独有的 `tmp_path` 下；`sys.path` 由 `facto
 
 每步完成后跑对应子集，最后跑全量。
 
-1. P0：M01、M02、M03、A01 → 验证：新增回归测试 + `pytest factory_tests/test_finish_atomic.py factory_tests/test_evidence_commit.py factory_tests/test_archive_at_integrate.py -q`
-2. P1/P2：A07、A06、A02、A04、A05、A15、A16、A19、A21 → 验证：`pytest factory_tests/test_repo_sync.py -q` 及相关新增测试
-3. P3：其余代码项（A03、A11、A17、A18、A20、A23、A25、A26、M04、M05）→ 验证：对应测试 + 契约子集
-4. 文档：A08–A14、A22、A24，以及 M02 / M04 / M05 的文档部分；`task-work` description 改动后重跑 registry 生成 → 验证：`python3 repo/.repo_template/scripts/md_format.py --check`、registry 一致性测试
-5. 全量门禁：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"`
+1. D01 先行：删除证据 commit、恢复单 commit 校验、`handoff.review_scope`、review_repair 阶段与对应文档/测试。M01–M03、A01 都建立在它之上 → 验证：D01「验证」一节的残留扫描与子集
+2. P0 其余：M01、M02、M03、A01 → 验证：新增回归测试 + `pytest factory_tests/test_finish_atomic.py factory_tests/test_review_repair.py factory_tests/test_archive_at_integrate.py -q -n auto`
+3. P1/P2：A07、A06、A02、A04、A05、A15、A16、A19、A21 → 验证：`pytest factory_tests/test_repo_sync.py -q -n auto` 及相关新增测试
+4. P3：其余代码项（A03、A11、A17、A18、A20、A23、A25、A26、M04、M05）→ 验证：对应测试 + 契约子集
+5. 文档：A08–A14、A22、A24，以及 M04 / M05 的文档部分、D01 的 decision_log L53 与方案标注；`task-work` description 改动后重跑 registry 生成 → 验证：`python3 repo/.repo_template/scripts/md_format.py --check`、registry 一致性测试
+6. 全量门禁：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"`
