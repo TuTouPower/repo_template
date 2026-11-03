@@ -340,7 +340,7 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
     assert "base_sha" in detail and "first parent" in detail
 
 
-def test_handoff_rejects_diff_anchor_not_matching_execution_parent(git_repo):
+def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     worktree = _worktree(git_repo, "t001")
     task_path = worktree / "docs/tasks/t001_alpha/note.md"
@@ -355,7 +355,7 @@ def test_handoff_rejects_diff_anchor_not_matching_execution_parent(git_repo):
 
     assert verdict == "contract"
     assert "diff_anchor" in detail
-    assert "一个 task 必须恰有一个执行 commit" in detail
+    assert "一个实现 commit 加仅含 review 过程文件的证据 commit" in detail
 
 
 # --------------------------------------------------------------------------

@@ -34,7 +34,7 @@ from .git_ops import (
     worktree_paths,
 )
 from .ledger import _ledger_append_safely, ledger_read
-from .monitoring import verify_integrate_ready
+from .monitoring import first_parent_segment, verify_integrate_ready
 from .store import (
     _local_task_branches,
     _task_branch_names,
@@ -805,11 +805,13 @@ def _collect_chain(
     if candidates[-1][1] != tail_branch:
         raise ctx.TaskDataError("链尾不是线性 ancestry 的最后成员")
     for previous, current in zip(candidates, candidates[1:]):
-        parent = _git(["rev-parse", f"{current[2]}^1"])
-        if parent.returncode != 0 or parent.stdout.strip() != previous[2]:
+        # 后继的实现 commit 必须直接从前驱 tip（含其证据 commit）起，first-parent 链上不得有旁路。
+        try:
+            first_parent_segment(current[2], previous[2])
+        except ctx.TaskDataError:
             raise ctx.TaskDataError(
-                f"链不连续：{current[1]!r} first parent 不是 {previous[1]!r} tip"
-            )
+                f"链不连续：{current[1]!r} 的 first-parent 链不从 {previous[1]!r} tip 起"
+            ) from None
     return candidates
 
 

@@ -713,7 +713,7 @@ def _finish_prechecks(args) -> dict:
     if head != fm.get("diff_anchor"):
         sys.exit(
             f"finish=FAIL：HEAD {head[:12]} 不是 diff_anchor {str(fm.get('diff_anchor'))[:12]}；"
-            "一个 task 只允许一个执行 commit，期间不得创建中间 commit。零写入退出"
+            "finish 之前不得创建中间 commit，实现 commit 由 finish 提交。零写入退出"
         )
 
     # 4. review 门禁（复用 evaluate_review，不改实现）
@@ -854,8 +854,8 @@ def cmd_rewind(args):
     if effective not in ctx.STATUS_ORDER:
         sys.exit(
             f"{args.tid} status={effective}；rewind 只处理 {ctx.STATUS_ORDER}。"
-            "已归档不可 rewind；review 证据问题见 recovery 证据修复"
-            "（amend 补审进同一执行 commit），禁止 rewind/reserve 新 attempt。"
+            "done/dropped 不可 rewind；review 证据问题见 recovery 证据修复"
+            "（追加证据 commit），禁止 rewind/reserve 新 attempt。"
         )
     target = args.to or ctx.DEFAULT_REWIND.get(effective)
     if target is None:
