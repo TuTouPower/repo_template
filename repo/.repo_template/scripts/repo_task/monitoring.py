@@ -496,11 +496,11 @@ def verify_integrate_ready(
         try:
             with tempfile.TemporaryDirectory(prefix="repo-task-review-") as tmp:
                 target = Path(tmp)
-                for name in ("note.md", "review_code.md", "review_test.md", "review_general.md"):
+                for name in ("note.md", "task.md", "review_code.md", "review_test.md", "review_general.md"):
                     try:
                         text = git_text_at_ref(branch, f"{task['dir']}/{name}")
                     except ctx.TaskDataError:
-                        if name == "note.md":
+                        if name in ("note.md", "task.md"):
                             raise
                         continue
                     (target / name).write_text(text, encoding="utf-8")
@@ -509,7 +509,9 @@ def verify_integrate_ready(
                 return "contract", (
                     f"review gate：overall={result['overall']} "
                     f"review_scope={result['review_scope']} "
-                    f"missing_disposition={result['missing_disposition']}；"
+                    f"missing_disposition={result['missing_disposition']} "
+                    f"ac_review={result['ac_review']} "
+                    f"ac_review_detail={result['ac_review_detail']}；"
                     "最终提交须有同内容的 PASS 证据"
                 )
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:

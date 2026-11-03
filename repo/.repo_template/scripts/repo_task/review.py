@@ -376,8 +376,7 @@ def evaluate_review(
     """Return all business/evidence states; this function never writes or runs Git.
 
     spec_text 缺省读 task_dir/task.md，用于核对报告 AC 行与 task.md 的 AC 编号和打勾状态。
-    两者都拿不到（如 integrate 门禁只复制 note.md 与 review 报告的临时目录）时
-    ac_review=no_spec：不比对 AC 集合，但 TICK-VOID、缺小节与格式错误仍拦截。
+    两者都拿不到时 ac_review=no_spec：不比对 AC 集合，但 TICK-VOID、缺小节与格式错误仍拦截。
     """
     level = fm.get("review_level") or "full"
     if level not in VALID_REVIEW_LEVELS:

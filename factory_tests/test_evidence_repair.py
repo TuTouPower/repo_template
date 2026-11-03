@@ -85,6 +85,27 @@ def test_tick_void_in_committed_review_blocks_cleanup(git_repo):
     assert w.is_dir()
 
 
+def test_review_ac_rows_must_match_committed_task_md_at_cleanup(git_repo):
+    """J3：integrate 门禁须读取已提交的 task.md，报告 AC 行与其编号不一致时不放行。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    w = _worktree(git_repo, "t001")
+    note_md = w / REL / "note.md"
+    fm, _ = parse_front_matter(note_md)
+    scope = review_scope_fingerprint(fm["diff_anchor"], REL, repo_root=w)
+    spec_text = (w / REL / "task.md").read_text(encoding="utf-8")
+    assert "AC-001" in spec_text
+    foreign_spec = spec_text.replace("AC-001", "AC-999")
+    for name in ("review_code.md", "review_test.md"):
+        (w / REL / name).write_text(pass_report(scope, foreign_spec, round_no=2), encoding="utf-8")
+    _git(w, "add", "-A")
+    _git(w, "commit", "--amend", "--no-edit")
+    result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
+    assert result.returncode != 0
+    assert "overall=INCOMPLETE" in result.stderr
+    assert "AC-999" in result.stderr
+    assert w.is_dir()
+
+
 def test_second_commit_still_rejected(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     w = _worktree(git_repo, "t001")
