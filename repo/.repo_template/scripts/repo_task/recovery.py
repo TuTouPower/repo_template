@@ -73,6 +73,14 @@ def recovery_state(tid: str) -> dict:
         return state
     if fm["status"] != "done" or record is None:
         return state
+    if not (task_dir / "handoff.json").exists():
+        head = _git(["rev-parse", "HEAD"], root=worktree)
+        if head.returncode == 0 and head.stdout.strip() == fm.get("diff_anchor") and record["state"] == "running":
+            return phase(
+                "finish_interrupted",
+                "finish 在生成 handoff.json 前被中断（已 done、已归档、无 handoff、无执行 commit）：停止并报告用户；"
+                "不重复 finish、不 reserve。核对 note.md 验证摘要后，由用户决定补写 handoff.json 并提交，或还原归档目录",
+            )
     try:
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
         expected = {"tid": tid, "branch": branch, "status": "done",
@@ -85,7 +93,7 @@ def recovery_state(tid: str) -> dict:
             raise ValueError(head.stderr)
         if head.stdout.strip() == fm["diff_anchor"]:
             if record["state"] == "running":
-                return phase("finished_uncommitted", "核验归档 handoff、review 和全部 diff 后完成“收尾与执行 commit”；不 finish、不 reserve")
+                return phase("finished_uncommitted", "finish 在提交前被中断：核验归档 handoff、review 和全部 diff 后暂存并提交执行 commit（沿用原 message）；不重复 finish、不 reserve")
             raise ValueError("未提交执行 commit 却已关闭 attempt")
         parent = _git(["rev-parse", "HEAD^1"], root=worktree)
         if parent.returncode != 0 or parent.stdout.strip() != fm["diff_anchor"]:

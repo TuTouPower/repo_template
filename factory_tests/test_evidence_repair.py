@@ -13,6 +13,7 @@ from test_dispatch_integration import (
     _git, _handoff, _handoff_path, _identity_args, _prepare_done,
     _reserve, _task_cli, _worktree, git_repo,
 )
+from task_flow_support import archive_done
 from repo_task.documents import parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
@@ -92,7 +93,7 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
     w = _worktree(git_repo, "t001")
     spec = w / "docs/tasks/t001_alpha/task.md"
     spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    assert _task_cli(w, "finish", "t001").returncode == 0
+    archive_done(w, "t001")
     branch = "t001_alpha"
     base_sha = _git(w, "rev-parse", "HEAD").stdout.strip()
     archive = w / REL

@@ -8,6 +8,7 @@ from test_dispatch_integration import (
     git_repo, _git, _task_cli, _prepare_done, _cleanup, _worktree,
     _reserve, _identity_args, _handoff, _read_ledger,
 )
+from task_flow_support import archive_done
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
@@ -132,7 +133,7 @@ def test_recovery_distinguishes_start_reserve_finish_and_commit_boundaries(git_r
     base = _git(w, 'rev-parse', 'HEAD').stdout.strip()
     spec = w / 'docs/tasks/t001_alpha/task.md'
     spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
-    assert _task_cli(w, 'finish', 't001').returncode == 0
+    archive_done(w, 't001')
     archive = w / 'docs/archive/tasks/t001_alpha'
     (archive / 'handoff.json').write_text(json.dumps(_handoff('t001', 't001_alpha', identity, base)))
     state = _recovery(git_repo)
@@ -377,7 +378,7 @@ def test_recovery_rejects_wrong_handoff_identity(git_repo):
     base = _git(worktree, 'rev-parse', 'HEAD').stdout.strip()
     spec = worktree / 'docs/tasks/t001_alpha/task.md'
     spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
-    assert _task_cli(worktree, 'finish', 't001').returncode == 0
+    archive_done(worktree, 't001')
     handoff = _handoff('t001', 't001_alpha', identity, base)
     handoff['execution_id'] = 'wrong-execution-id'
     (worktree / 'docs/archive/tasks/t001_alpha/handoff.json').write_text(json.dumps(handoff))

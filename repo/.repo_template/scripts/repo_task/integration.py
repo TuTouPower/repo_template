@@ -632,7 +632,7 @@ def cmd_integrate(args):
         registered = _registered_for_branch(branch)
         if registered:
             raise ctx.TaskDataError(
-                f"分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；先 cleanup-worktree"
+                f"分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；先 run-close --result done（或 cleanup-worktree）"
             )
     except ctx.TaskDataError as error:
         sys.exit(str(error))

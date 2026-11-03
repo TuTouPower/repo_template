@@ -108,8 +108,13 @@ def main():
     limits.add_argument("--reason", required=True)
     limits.set_defaults(func=cmd_limits)
 
-    finish = sub.add_parser("finish", help="active -> done")
+    finish = sub.add_parser(
+        "finish",
+        help="active -> done：严格校验后归档、生成 handoff.json 并提交执行 commit；提交失败整体回滚",
+    )
     finish.add_argument("tid")
+    finish.add_argument("--owner-id", required=True, help="当前会话执行权，须与 ledger claim 一致")
+    finish.add_argument("--message-file", required=True, help="执行 commit message 文件（仓外或 .scratch/）")
     finish.set_defaults(func=cmd_finish)
 
     drop = sub.add_parser("drop", help="活跃状态 -> dropped")

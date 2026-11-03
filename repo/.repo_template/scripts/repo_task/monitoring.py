@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
@@ -19,7 +20,13 @@ from .attempts import (
     overlapping_attempts,
     project_attempts,
 )
-from .documents import extract_ac_ids, extract_ac_statuses, parse_front_matter_text
+from .documents import (
+    _extract_markdown_section,
+    _visible_markdown_lines,
+    extract_ac_ids,
+    extract_ac_statuses,
+    parse_front_matter_text,
+)
 from .git_ops import _git, _git_bytes, has_unmerged_commits, worktree_paths
 from .store import _task_branch_names, git_text_at_ref, load_task_at_ref
 
@@ -303,6 +310,86 @@ _HANDOFF_TYPES = {
     "pending": list,
     "findings": list,
 }
+
+
+# note.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
+HANDOFF_PLACEHOLDERS = ("待执行时填写",)
+_SUMMARY_LINES = (("tests", "测试"), ("blackbox", "黑盒"), ("review", "review"))
+_PENDING_PATH_RE = re.compile(
+    r"^docs/(?:pending/(?:todo|parked)|archive/pending)/(p[0-9]+)_[^/]+\.md$"
+)
+_FINDING_PATH_RE = re.compile(r"^docs/findings/(d[0-9]+)_[^/]+\.md$")
+
+
+def read_verification_summary(note_body: str) -> dict[str, str]:
+    """读取 note.md「收尾报告 / 验收与验证」的测试、黑盒、review 三行；空值或模板占位拒绝。"""
+    report = _extract_markdown_section(note_body, 2, "收尾报告")
+    section = _extract_markdown_section(report, 3, "验收与验证") if report is not None else None
+    if section is None:
+        raise ctx.TaskDataError("note.md 缺「收尾报告 / 验收与验证」小节，无法生成 handoff.json")
+    lines = _visible_markdown_lines(section)
+    summary = {}
+    for key, label in _SUMMARY_LINES:
+        pattern = re.compile(rf"^ {{0,3}}-[ \t]+{label}[ \t]*[:：][ \t]*(.*?)[ \t]*$")
+        values = [match.group(1) for match in map(pattern.match, lines) if match]
+        if not values:
+            raise ctx.TaskDataError(f"note.md「收尾报告 / 验收与验证」缺 `- {label}：` 行")
+        value = values[0]
+        if (
+            not value
+            or any(placeholder in value for placeholder in HANDOFF_PLACEHOLDERS)
+            or ctx.TEMPLATE_PLACEHOLDER_RE.search(value)
+        ):
+            raise ctx.TaskDataError(
+                f"note.md「收尾报告 / 验收与验证」的 `- {label}：` 为空或仍是模板占位；"
+                "写入实际验证结果后再 finish"
+            )
+        summary[key] = value
+    return summary
+
+
+def staged_ledger_entries(root: Path) -> tuple[list[str], list[str]]:
+    """暂存区相对 HEAD 新增（含归档迁入）的 pending / findings 条目编号。"""
+    result = _git(["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", "--"], root=root)
+    if result.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取暂存区相对 HEAD 的变更：{result.stderr.strip()}")
+    fields = [field for field in result.stdout.split("\0") if field]
+    pending, findings = set(), set()
+    for status, path in zip(fields[0::2], fields[1::2]):
+        if status != "A":
+            continue
+        for pattern, bucket in ((_PENDING_PATH_RE, pending), (_FINDING_PATH_RE, findings)):
+            match = pattern.match(path)
+            if match:
+                bucket.add(match.group(1))
+    return (
+        sorted(pending, key=lambda item: int(item[1:])),
+        sorted(findings, key=lambda item: int(item[1:])),
+    )
+
+
+def build_handoff(
+    *, tid: str, attempt: int, execution_id: str, branch: str, base_sha: str,
+    note_body: str, root: Path,
+) -> dict:
+    """由 execution context、ledger、暂存区与 note.md 机器生成 handoff.json；不手写。"""
+    summary = read_verification_summary(note_body)
+    pending, findings = staged_ledger_entries(root)
+    handoff = {
+        "tid": tid,
+        "attempt": attempt,
+        "execution_id": execution_id,
+        "status": "done",
+        "branch": branch,
+        "base_sha": base_sha,
+        **summary,
+        "pending": pending,
+        "findings": findings,
+    }
+    for key, expected in _HANDOFF_TYPES.items():
+        if not isinstance(handoff.get(key), expected) or (expected is str and not handoff[key]):
+            raise ctx.TaskDataError(f"生成的 handoff 字段 {key} 类型或值非法：{handoff.get(key)!r}")
+    return handoff
 
 
 def _validate_string_list(name: str, value) -> str | None:

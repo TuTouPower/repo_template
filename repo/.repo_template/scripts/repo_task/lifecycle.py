@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
 import shutil
@@ -13,7 +15,7 @@ import repo_task.context as ctx
 from .locks import control_locked
 
 from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
-from .git_ops import _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
+from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
@@ -452,7 +454,7 @@ def cmd_preflight(args):
         if record and record["state"] == "running":
             owner = record.get("owner_id")
             if not owner or owner != getattr(args, "owner_id", None):
-                problems.append("执行权未领取或 owner_id 不匹配；先在主仓 attempt claim，再携 --owner-id 验证")
+                problems.append("执行权未领取或 owner_id 不匹配；--owner-id 须与 run-begin 领取的 owner_id 一致（未 claim 的现场先按 recovery 补 claim）")
 
     print(f"# preflight {args.tid}")
     if source_ref:
@@ -507,36 +509,54 @@ def cmd_review_upgrade(args):
     print(f"{args.tid} review_level=full；旧 general review 不再满足门禁，须重审 code/test")
 
 
-def _close_task(args, status: str, note: str | None) -> None:
+def _require_acs_checked(task_md_path: Path) -> None:
+    if not task_md_path.is_file():
+        return
+    from .documents import extract_ac_statuses
+    ac_statuses = extract_ac_statuses(task_md_path.read_text(encoding="utf-8"))
+    if not ac_statuses:
+        sys.exit(f"finish=FAIL：{ctx._rel(task_md_path)} 验收标准未定义任何 AC")
+    uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
+    if uncompleted:
+        sys.exit(
+            f"finish=FAIL：{ctx._rel(task_md_path)} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
+        )
+
+
+def _check_done_ready(tid: str, task_dir: Path) -> None:
+    """done 的写前检查：AC 全勾、finalization 闭环。"""
+    _require_acs_checked(task_dir / "task.md")
+    from .finalization import check_finalization
+    try:
+        from .validation import load_policy
+        load_policy(ctx.REPO_ROOT)
+        for warning in check_finalization(ctx.REPO_ROOT, tid, task_dir):
+            print(f"WARN: {warning}")
+    except ValueError as error:
+        sys.exit(f"finish=FAIL：{error}")
+
+
+def _require_archive_target_free(fm: dict) -> Path:
+    dst = ctx.ARCHIVE_TASKS_DIR / f"{fm['tid']}_{fm['slug']}"
+    if dst.exists():
+        sys.exit(f"归档目录已存在：{ctx._rel(dst)}（数据冲突，请提示用户）")
+    return dst
+
+
+def _close_task(args, status: str, note: str | None, *, prechecked: bool = False) -> None:
     """done / dropped 收尾：先做 git 侧动作，再单次写盘，最后归档目录。
 
     单次写盘是为了避免「front matter 已写 done、目录未归档」的中间态——
     那种状态下 finish/drop/rewind 三条出口全被状态校验挡死，只能手改 front matter。
     归档移动失败时回滚 front matter，同理避免上述死锁。
+    prechecked=True 表示调用方（finish）已完成 done 的写前检查。
     """
     task, path, fm, body = load_task(args.tid)
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm)
-        task_md_path = path.parent / "task.md"
-        if task_md_path.is_file():
-            from .documents import extract_ac_statuses
-            ac_statuses = extract_ac_statuses(task_md_path.read_text(encoding="utf-8"))
-            if not ac_statuses:
-                sys.exit(f"finish=FAIL：{ctx._rel(task_md_path)} 验收标准未定义任何 AC")
-            uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
-            if uncompleted:
-                sys.exit(
-                    f"finish=FAIL：{ctx._rel(task_md_path)} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
-                )
-        from .finalization import check_finalization
-        try:
-            from .validation import load_policy
-            load_policy(ctx.REPO_ROOT)
-            for warning in check_finalization(ctx.REPO_ROOT, args.tid, path.parent):
-                print(f"WARN: {warning}")
-        except ValueError as error:
-            sys.exit(f"finish=FAIL：{error}")
+        if not prechecked:
+            _check_done_ready(args.tid, path.parent)
     elif fm["status"] in ctx.ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
@@ -552,14 +572,12 @@ def _close_task(args, status: str, note: str | None) -> None:
                 )
 
     src = ctx.REPO_ROOT / task["dir"]
-    dst = ctx.ARCHIVE_TASKS_DIR / f"{fm['tid']}_{fm['slug']}"
-    if dst.exists():
-        sys.exit(f"归档目录已存在：{ctx._rel(dst)}（数据冲突，请提示用户）")
+    dst = _require_archive_target_free(fm)
 
     in_own_worktree = in_own_task_worktree(fm)
     if in_own_worktree:
         removed, wt_msg = False, (
-            f"worktree {fm['worktree']} 待执行 commit 后从主仓 cleanup-worktree"
+            f"worktree {fm['worktree']} 待主仓 run-close 清理"
         )
     else:
         removed, wt_msg = remove_worktree(
@@ -615,8 +633,205 @@ def _close_task(args, status: str, note: str | None) -> None:
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
 
+def _unstaged_outside(task_dirs: tuple[str, ...]) -> list[str]:
+    """task 目录之外未暂存或未跟踪的非忽略路径；git 失败时 fail-closed。"""
+    result = _git(["status", "--porcelain", "-z", "--untracked-files=all"])
+    if result.returncode != 0:
+        raise ctx.TaskDataError(f"git status 失败：{result.stderr.strip()}")
+    fields, index, found = result.stdout.split("\0"), 0, set()
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if not entry:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in ("R", "C"):
+            index += 1
+        if any(path == item or path.startswith(item + "/") for item in task_dirs):
+            continue
+        if code == "??" or code[1] != " ":
+            found.add(path)
+    return sorted(found)
+
+
+def _git_index_path() -> Path:
+    result = _git(["rev-parse", "--absolute-git-dir"])
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ctx.TaskDataError("无法解析 git 目录，无法保存暂存区快照")
+    return Path(result.stdout.strip()) / "index"
+
+
+def _finish_prechecks(args) -> dict:
+    """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
+    from .attempts import current_attempt_record, resolve_identity
+    from .git_ops import primary_worktree_path
+    from .ledger import ledger_read
+    from .monitoring import build_handoff, review_scope_fingerprint
+    from .review import ReviewDataError, evaluate_review
+
+    tid = args.tid
+    message_path = Path(args.message_file).expanduser().resolve()
+    try:
+        message = message_path.read_text(encoding="utf-8")
+    except OSError as error:
+        sys.exit(f"finish=FAIL：无法读取 --message-file {args.message_file}（{error}）")
+    if not message.strip():
+        sys.exit(f"finish=FAIL：--message-file {args.message_file} 为空；写入执行 commit message")
+    task, path, fm, body = load_task(tid)
+    require_status(fm, "active")
+    require_own_task_worktree(fm)
+    task_dir = path.parent
+
+    # 1. 严格 preflight（等价 preflight --require-verified --owner-id）
+    try:
+        cmd_preflight(argparse.Namespace(
+            tid=tid, allow_backlog=False, creation=False, ref=None,
+            require_verified=True, owner_id=args.owner_id,
+        ))
+    except SystemExit as stop:
+        if stop.code not in (0, None):
+            sys.exit("finish=FAIL：严格 preflight 未通过（见上）；零写入退出")
+        raise
+
+    # 2. AC 全部打勾 + finalization 闭环 + 归档目标空闲
+    _check_done_ready(tid, task_dir)
+    _require_archive_target_free(fm)
+
+    # 3. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
+    task_dirs = (task["dir"], f"docs/archive/tasks/{fm['tid']}_{fm['slug']}")
+    loose = _unstaged_outside(task_dirs)
+    if loose:
+        shown = ", ".join(loose[:8]) + (f" 等共 {len(loose)} 项" if len(loose) > 8 else "")
+        sys.exit(
+            f"finish=FAIL：存在未暂存或未跟踪的非忽略文件：{shown}。"
+            "交付文件先 `git add` 暂存（`git add -N` 不算暂存）；临时文件删除或移入 .scratch/；"
+            "message file 放在仓外或 .scratch/。零写入退出"
+        )
+    head = _get_head()
+    if head != fm.get("diff_anchor"):
+        sys.exit(
+            f"finish=FAIL：HEAD {head[:12]} 不是 diff_anchor {str(fm.get('diff_anchor'))[:12]}；"
+            "一个 task 只允许一个执行 commit，期间不得创建中间 commit。零写入退出"
+        )
+
+    # 4. review 门禁（复用 evaluate_review，不改实现）
+    scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"])
+    try:
+        review = evaluate_review(task_dir, fm, scope or None)
+    except (ReviewDataError, ctx.TaskDataError) as error:
+        sys.exit(f"finish=FAIL：review 门禁无法评估：{error}")
+    if review["overall"] != "PASS":
+        sys.exit(
+            f"finish=FAIL：review 门禁未通过 overall={review['overall']} "
+            f"review_scope={review['review_scope']} "
+            f"missing_disposition={review['missing_disposition'] or '-'} "
+            f"next_action={review['next_action']}；零写入退出"
+        )
+
+    # 5. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
+    try:
+        attempt, execution_id = resolve_identity(tid)
+        ledger = primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"
+        record = current_attempt_record(tid, ledger_read(ledger, tid=tid))
+    except ctx.TaskDataError as error:
+        sys.exit(f"finish=FAIL：{error}；零写入退出")
+    if record["state"] != "running" or record.get("owner_id") != args.owner_id:
+        sys.exit(
+            f"finish=FAIL：attempt={attempt} state={record['state']!r} "
+            f"owner_id={record.get('owner_id')!r}，与 --owner-id 不符；零写入退出"
+        )
+
+    # 6. 机器生成 handoff.json 内容（note.md 验证摘要为空或仍是占位时拒绝）
+    try:
+        handoff = build_handoff(
+            tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],
+            base_sha=head, note_body=body, root=ctx.REPO_ROOT,
+        )
+    except ctx.TaskDataError as error:
+        sys.exit(f"finish=FAIL：{error}；零写入退出")
+    return {
+        "args": args, "message_path": message_path, "note_path": path, "task_dir": task_dir,
+        "src_rel": task["dir"], "dst_rel": task_dirs[1], "handoff": handoff,
+        "diff_anchor": head,
+    }
+
+
+def _rollback_finish(plan: dict, note_text: str, index_bytes: bytes) -> list[str]:
+    """撤销 finish 自身的写入：handoff.json、归档移动、front matter、暂存。返回失败项。"""
+    import shutil
+    from .documents import atomic_write_text
+
+    problems = []
+    src, dst = ctx.REPO_ROOT / plan["src_rel"], ctx.REPO_ROOT / plan["dst_rel"]
+    try:
+        # 前置检查保证归档目标原先不存在；仅当目录确实已被移走时才撤销
+        if dst.exists() and not src.exists():
+            (dst / "handoff.json").unlink(missing_ok=True)
+            shutil.move(str(dst), str(src))
+        elif dst.exists():
+            raise OSError(f"{plan['src_rel']} 与 {plan['dst_rel']} 同时存在")
+    except (OSError, shutil.Error) as error:
+        problems.append(f"归档目录还原失败（{error}）")
+    try:
+        atomic_write_text(plan["note_path"], note_text)
+    except (OSError, ctx.TaskDataError) as error:
+        problems.append(f"note.md front matter 还原失败（{error}）")
+    try:
+        index_path = _git_index_path()
+        temporary = index_path.with_name("index.finish_rollback")
+        temporary.write_bytes(index_bytes)
+        os.replace(temporary, index_path)
+    except (OSError, ctx.TaskDataError) as error:
+        problems.append(f"暂存区还原失败（{error}）")
+    return problems
+
+
 def cmd_finish(args):
-    _close_task(args, "done", None)
+    """active -> done 原子收尾：前置检查零写入，写入后提交；提交失败整体回滚。"""
+    plan = _finish_prechecks(args)
+    message_path, tid = plan["message_path"], args.tid
+    note_text = plan["note_path"].read_text(encoding="utf-8")
+    index_bytes = _git_index_path().read_bytes()
+
+    def fail(reason: str) -> None:
+        problems = _rollback_finish(plan, note_text, index_bytes)
+        if problems:
+            sys.exit(
+                f"finish=FAIL：{reason}\n回滚未完成：{'；'.join(problems)}。"
+                f"现场不一致，运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，"
+                "勿重复 finish"
+            )
+        sys.exit(f"finish=FAIL：{reason}\nfinish 自身写入已全部回滚（front matter、归档移动、handoff.json、暂存）")
+
+    try:
+        _close_task(args, "done", None, prechecked=True)
+    except SystemExit as stop:
+        fail(f"归档写入失败：{stop.code}")
+    try:
+        from .documents import atomic_write_text
+        atomic_write_text(
+            ctx.REPO_ROOT / plan["dst_rel"] / "handoff.json",
+            json.dumps(plan["handoff"], ensure_ascii=False, indent=2) + "\n",
+        )
+        for command in (
+            ["add", "-A", "--", plan["dst_rel"]],
+            ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", plan["src_rel"]],
+        ):
+            staged = _git(command)
+            if staged.returncode != 0:
+                raise ctx.TaskDataError(f"git {' '.join(command[:2])} 失败：{staged.stderr.strip()}")
+        committed = _git(["commit", "-F", str(message_path)], timeout=600)
+    except (OSError, ctx.TaskDataError) as error:
+        fail(str(error))
+    if committed.returncode != 0:
+        if _get_head() != plan["diff_anchor"]:
+            sys.exit(
+                "finish=FAIL：git commit 返回非零但 HEAD 已前进；不回滚。"
+                f"核对 `git log` 后运行 `python3 .repo_template/scripts/task.py recovery {tid}`"
+            )
+        detail = (committed.stderr.strip() or committed.stdout.strip())[-1500:]
+        fail(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
+    print(f"finish=OK {tid} commit={_get_head()}")
 
 @control_locked
 def cmd_drop(args):

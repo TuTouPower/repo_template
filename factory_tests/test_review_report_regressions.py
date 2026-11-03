@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from test_dispatch_integration import git_repo, _git, _task_cli, _reserve, _identity_args, _worktree
+from task_flow_support import finish_cli, prepare_finish
 from test_repo_sync import env
 from repo_task.finalization import check_finalization, validate_spike
 from repo_task.locks import CONTROL_LOCK_NAME, file_lock, git_common_lock
@@ -30,11 +31,13 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
     "<!-- s999 -->\n`d001 = date()`",
 ])
 def test_finish_ignores_non_references_and_fenced_examples(git_repo, snippet):
-    assert _task_cli(git_repo, "start", "t001").returncode == 0
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
     worktree = _worktree(git_repo, "t001")
     spec = worktree / "docs/tasks/t001_alpha/task.md"
-    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001") + "\n" + snippet + "\n", encoding="utf-8")
-    result = _task_cli(worktree, "finish", "t001")
+    spec.write_text(spec.read_text() + "\n" + snippet + "\n", encoding="utf-8")
+    message = prepare_finish(worktree, "t001", "alpha")
+    result = finish_cli(worktree, "t001", "owner-a", message)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -69,19 +72,22 @@ def test_missing_real_finding_and_spike_references_still_block(tmp_path):
 
 
 def test_finish_does_not_require_unrelated_historical_task_directories(git_repo):
-    assert _task_cli(git_repo, "start", "t001").returncode == 0
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
     worktree = _worktree(git_repo, "t001")
-    (worktree / "docs/specs").mkdir()
-    (worktree / "docs/specs/feature.md").write_text("# Current feature\n", encoding="utf-8")
-    (worktree / "docs/specs/old.md").write_text("# Historical feature\n", encoding="utf-8")
-    (worktree / "docs/specs_index.md").write_text(
-        "|slug|task 清单|最后更新时间|\n|---|---|---|\n"
-        "|old|t999|2026-10-24T00:00:00+08:00|\n"
-        "|feature|t001,t998|2026-10-24T00:00:00+08:00|\n"
-        "|missing_historical_spec|t997|2026-10-24T00:00:00+08:00|\n", encoding="utf-8")
-    spec = worktree / "docs/tasks/t001_alpha/task.md"
-    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    result = _task_cli(worktree, "finish", "t001")
+
+    def write_specs(root):
+        (root / "docs/specs").mkdir()
+        (root / "docs/specs/feature.md").write_text("# Current feature\n", encoding="utf-8")
+        (root / "docs/specs/old.md").write_text("# Historical feature\n", encoding="utf-8")
+        (root / "docs/specs_index.md").write_text(
+            "|slug|task 清单|最后更新时间|\n|---|---|---|\n"
+            "|old|t999|2026-10-24T00:00:00+08:00|\n"
+            "|feature|t001,t998|2026-10-24T00:00:00+08:00|\n"
+            "|missing_historical_spec|t997|2026-10-24T00:00:00+08:00|\n", encoding="utf-8")
+
+    message = prepare_finish(worktree, "t001", "alpha", mutate=write_specs)
+    result = finish_cli(worktree, "t001", "owner-a", message)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "WARN: 历史" in result.stdout
 

@@ -15,6 +15,7 @@ from test_dispatch_integration import (
     _cleanup, _worktree,
 )
 from test_repo_sync import env
+from task_flow_support import finish_cli, prepare_finish
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.file_transaction import FileTransaction
 from repo_task.monitoring import review_scope_fingerprint
@@ -407,19 +408,25 @@ def test_registry_has_complete_roles_and_real_composition_edges():
 
 
 def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
-    assert _task_cli(git_repo, "start", "t001").returncode == 0
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
     w = _worktree(git_repo, "t001")
-    spec = w / "docs/tasks/t001_alpha/task.md"
-    spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     task = w / "docs/tasks/t001_alpha/note.md"
     task.write_text("\n".join(line for line in task.read_text().splitlines()
                               if not line.startswith("- specs_index: not_applicable:")) + "\n")
-    result = _task_cli(w, "finish", "t001")
+    message = prepare_finish(w, "t001", "alpha")
+    result = finish_cli(w, "t001", "owner-a", message)
     assert result.returncode != 0 and "specs_index" in result.stderr
-    (w / "docs/specs").mkdir()
-    (w / "docs/specs/feature.md").write_text("# feature\n")
-    (w / "docs/specs_index.md").write_text("|slug|task 清单|最后更新时间|\n|---|---|---|\n|feature|t001|2026-10-24T00:00:00+08:00|\n")
-    result = _task_cli(w, "finish", "t001")
+    assert not (w / "docs/archive/tasks/t001_alpha").exists()
+
+    def add_spec(root):
+        (root / "docs/specs").mkdir()
+        (root / "docs/specs/feature.md").write_text("# feature\n")
+        (root / "docs/specs_index.md").write_text(
+            "|slug|task 清单|最后更新时间|\n|---|---|---|\n|feature|t001|2026-10-24T00:00:00+08:00|\n")
+
+    message = prepare_finish(w, "t001", "alpha", mutate=add_spec)
+    result = finish_cli(w, "t001", "owner-a", message)
     assert result.returncode == 0, result.stderr
 
 

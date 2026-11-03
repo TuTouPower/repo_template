@@ -14,6 +14,7 @@ TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec
+from task_flow_support import archive_done, finish_cli, prepare_finish
 
 from repo_task import context as ctx
 from repo_task import integration, lifecycle, store
@@ -191,8 +192,7 @@ def _finish_commit_cleanup(repo, tid, slug):
     identity = _reserve(repo, tid)
     worktree = _worktree_path(repo, tid)
     _check_ac(worktree, tid, slug)
-    finished = _task_cli(worktree, "finish", tid)
-    assert finished.returncode == 0, finished.stderr
+    archive_done(worktree, tid)
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, tid, slug, identity, base_sha)
     _git(worktree, "add", "-A")
@@ -335,16 +335,19 @@ def test_list_rebuild_requires_primary_worktree(git_repo):
     assert "主工作区" in result.stderr
 
 
-def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
-    _start(git_repo)
+def test_finish_archives_task_commits_and_clears_worktree_metadata(git_repo):
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
+    worktree = _worktree_path(git_repo)
+    message = prepare_finish(worktree, "t001", "alpha")
 
-    primary = _task_cli(git_repo, "finish", "t001")
+    primary = _task_cli(
+        git_repo, "finish", "t001", "--owner-id", "owner-a", "--message-file", str(message)
+    )
     assert primary.returncode != 0
     assert "status=backlog" in primary.stderr
 
-    worktree = _worktree_path(git_repo)
-    _check_ac(worktree, "t001", "alpha")
-    finished = _task_cli(worktree, "finish", "t001")
+    finished = finish_cli(worktree, "t001", "owner-a", message)
     assert finished.returncode == 0, finished.stderr
 
     fm, _ = parse_front_matter(
@@ -354,18 +357,27 @@ def test_finish_archives_task_and_clears_worktree_metadata(git_repo):
     assert fm["branch"] == "t001_alpha"
     assert fm["worktree"] == ""
     assert "worktree 未移除" not in fm["note"]
-    changed = _git(worktree, "diff", "--name-only").stdout.split()
+    assert _git(worktree, "status", "--porcelain").stdout == ""
+    changed = _git(worktree, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert "docs/archive/tasks/t001_alpha/handoff.json" in changed
     assert "docs/tasks_index.json" not in changed
     assert "docs/archive/tasks_index.json" not in changed
 
 
 def test_finish_rejects_uncompleted_ac(git_repo):
-    """finish 拦截未打勾的 AC。"""
-    _start(git_repo)
+    """finish 拦截未打勾的 AC，且零写入。"""
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
     worktree = _worktree_path(git_repo)
-    finished = _task_cli(worktree, "finish", "t001")
+    message = prepare_finish(worktree, "t001", "alpha", tick_ac=False)
+    before = _git(worktree, "status", "--porcelain").stdout
+
+    finished = finish_cli(worktree, "t001", "owner-a", message)
+
     assert finished.returncode != 0
     assert "存在未完成 AC（未打勾）：AC-001" in finished.stderr
+    assert _git(worktree, "status", "--porcelain").stdout == before
+    assert not (worktree / "docs/archive/tasks/t001_alpha").exists()
 
 
 def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
@@ -391,7 +403,7 @@ def test_cleanup_worktree_requires_clean_commit_and_is_idempotent(git_repo):
     # 已 finish 且提交（分支 ref=done），但 worktree 新增脏改动：拒绝
     worktree = _worktree_path(git_repo)
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
@@ -429,7 +441,7 @@ def test_cleanup_worktree_rejects_wrong_registered_branch(git_repo):
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
@@ -645,7 +657,7 @@ def test_integrate_rejects_registered_worktree(git_repo):
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
@@ -814,7 +826,7 @@ def test_chain_integrate_rejects_mid_chain_registered_worktree(git_repo):
     # t002 finish + handoff + commit + terminal，但不 cleanup-worktree
     worktree = _worktree_path(git_repo, "t002")
     _check_ac(worktree, "t002", "beta")
-    assert _task_cli(worktree, "finish", "t002").returncode == 0
+    archive_done(worktree, "t002")
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t002", "beta", identity, base_sha)
     _git(worktree, "add", "-A")
@@ -1149,7 +1161,7 @@ def test_cleanup_worktree_rejects_prefix_collision_branch(git_repo):
     identity = _reserve(git_repo, "t001")
     worktree = _worktree_path(git_repo)
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     _write_handoff(worktree, "t001", "alpha", identity, base_sha)
     _git(worktree, "add", "-A")
@@ -2015,7 +2027,7 @@ def test_chain_start_can_still_use_completed_branch_as_topology_base(git_repo):
     assert first.returncode == 0, first.stderr
     worktree = git_repo.parent / "repo_t001"
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "feat(t001): done")
     _git(git_repo, "worktree", "remove", str(worktree))
@@ -2034,7 +2046,7 @@ def test_chain_start_base_names_uncommitted_finish_as_cause(git_repo):
     assert first.returncode == 0, first.stderr
     worktree = git_repo.parent / "repo_t001"
     _check_ac(worktree, "t001", "alpha")
-    assert _task_cli(worktree, "finish", "t001").returncode == 0
+    archive_done(worktree, "t001")
 
     second = _task_cli(git_repo, "start", "t002", "--base", "t001_alpha")
     assert second.returncode != 0
