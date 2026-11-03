@@ -47,7 +47,7 @@
 | 执行分支历史例外 | done 后 review 失效须 amend 原执行 commit；archive「唯一窄例外」 | 无 amend、无 archive 写权例外 |
 | 分发到消费仓的测试 | 692 用例 | 仅契约用例（当前 174） |
 | 消费仓默认 hook 进程 | 每次 Bash 调用 1 个 python3 | 0（状态栏改为显式启用） |
-| `usage.md` 日常部分 | 22.8KB 单文件 | 按读者拆分，日常文档 ≤ 10KB |
+| `usage.md` 日常部分 | 22.8KB 单文件 | 按读者拆分为 usage / recovery / sync；日常文档不保留恢复与同步规程（原定 ≤ 10KB 按字符估算，UTF-8 中文每字 3 字节，不可达；WP3 实测降至 17.1KB） |
 | 已知文档漂移 | 9 处（见 A 组；A6 不处理） | 其余 8 处清零 |
 | 宿主认证 | 未执行 | Claude Code 当前版本完成认证并记录版本 |
 | AC 复核 | reviewer 判定只在报告正文 | 每条 AC 带 `TICK-VALID` / `TICK-VOID`，由脚本门禁 |
