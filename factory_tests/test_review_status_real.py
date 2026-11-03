@@ -10,6 +10,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import check_review_status as crs
+from review_support import ac_review_section
+
+SPEC = "# task\n\n## 契约区\n\n### 验收标准\n\n- [x] AC-001：甲\n"
 
 
 def _git(repo, *args):
@@ -27,7 +30,7 @@ def test_main_real_fingerprint_pass_then_stale(tmp_path, monkeypatch, capsys):
     _git(repo, "config", "user.name", "t")
     task_dir = repo / "docs/tasks/t001_alpha"
     task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text("# task\n", encoding="utf-8")
+    (task_dir / "task.md").write_text(SPEC, encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
     anchor = _git(repo, "rev-parse", "HEAD").stdout.strip()
@@ -40,7 +43,7 @@ def test_main_real_fingerprint_pass_then_stale(tmp_path, monkeypatch, capsys):
     scope = crs.current_scope_fingerprint(task_dir, anchor)
     assert scope
     (task_dir / "review_general.md").write_text(
-        f"verdict: PASS\n\nreviewed_scope: {scope}\n", encoding="utf-8"
+        f"verdict: PASS\n\nreviewed_scope: {scope}\n\n{ac_review_section(SPEC)}", encoding="utf-8"
     )
     monkeypatch.setattr(
         sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
@@ -49,8 +52,9 @@ def test_main_real_fingerprint_pass_then_stale(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "overall=PASS" in out
     assert "review_scope=ok" in out
+    assert "ac_review=ok" in out
 
-    (task_dir / "task.md").write_text("# task changed\n", encoding="utf-8")
+    (task_dir / "task.md").write_text(SPEC + "\n# changed\n", encoding="utf-8")
     crs.main()
     out = capsys.readouterr().out
     assert "overall=INCOMPLETE" in out

@@ -6,7 +6,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from repo_task.documents import parse_front_matter
+from repo_task.documents import extract_ac_statuses, parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
 TASK_TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "docs" / "task_template"
@@ -43,8 +43,24 @@ def valid_spec(contract_item: str = "外部行为：已核实") -> str:
     )
 
 
+def ac_review_section(spec_text, tick='TICK-VALID', mode='re_verified'):
+    """按 task.md 的 AC 编号生成「AC 复验方式」小节（每条 AC 一行，格式同 share_prompt.txt）。"""
+    rows = ''.join(
+        f'- {ac_id}：{tick}，{mode}。测试夹具。\n' for ac_id, _ in extract_ac_statuses(spec_text)
+    )
+    return f'### AC 复验方式\n\n{rows}\n'
+
+
+def pass_report(scope, spec_text, round_no=1, tick='TICK-VALID'):
+    """含 AC 复验小节的 PASS review 报告正文，供 review 门禁测试夹具使用。"""
+    return (f'## Round {round_no}\nreviewed_scope: {scope}\n\n'
+            f'{ac_review_section(spec_text, tick=tick)}verdict: PASS\n')
+
+
 def ensure_review_evidence(worktree, task_dir, anchor):
     fm, _ = parse_front_matter(task_dir / 'note.md')
+    spec = task_dir / 'task.md'
+    spec_text = spec.read_text(encoding='utf-8') if spec.is_file() else ''
     names = ('general',) if fm.get('review_level') == 'single' else ('code', 'test')
     scope = review_scope_fingerprint(anchor, task_dir.relative_to(worktree).as_posix(), repo_root=worktree)
     assert scope, 'fixture must have a verifiable content scope'
@@ -52,7 +68,7 @@ def ensure_review_evidence(worktree, task_dir, anchor):
         report = task_dir / f'review_{name}.md'
         # A caller can deliberately provide stale/failed evidence; never overwrite it.
         if not report.exists():
-            report.write_text(f'## Round 1\nreviewed_scope: {scope}\nverdict: PASS\n', encoding='utf-8')
+            report.write_text(pass_report(scope, spec_text), encoding='utf-8')
 
 
 def configure_project_verification(repo):

@@ -13,6 +13,7 @@ from test_dispatch_integration import (
     _git, _handoff, _handoff_path, _identity_args, _prepare_done,
     _reserve, _task_cli, _worktree, git_repo,
 )
+from review_support import pass_report
 from repo_task.documents import parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
@@ -37,17 +38,16 @@ def _make_stale(repo):
     return identity, branch, w
 
 
-def _amend_review_only(worktree):
+def _amend_review_only(worktree, tick="TICK-VALID"):
     """Refresh review evidence for the current tip without touching deliverables."""
     note_md = worktree / REL / "note.md"
     fm, _ = parse_front_matter(note_md)
     anchor = fm["diff_anchor"]
     scope = review_scope_fingerprint(anchor, REL, repo_root=worktree)
     assert scope
+    spec_text = (worktree / REL / "task.md").read_text(encoding="utf-8")
     for name in ("review_code.md", "review_test.md"):
-        (worktree / REL / name).write_text(
-            f"## Round 2\nreviewed_scope: {scope}\nverdict: PASS\n", encoding="utf-8"
-        )
+        (worktree / REL / name).write_text(pass_report(scope, spec_text, round_no=2, tick=tick), encoding="utf-8")
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "--amend", "--no-edit")
     return scope
@@ -71,6 +71,17 @@ def test_review_only_amend_restores_cleanup(git_repo):
     result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
     assert result.returncode == 0, result.stderr
     assert not w.exists() or not (w / ".git").exists()
+
+
+def test_tick_void_in_committed_review_blocks_cleanup(git_repo):
+    """J3：已提交的 PASS 报告若含 TICK-VOID，integrate 门禁同样判不过（verdict 写 PASS 也不放行）。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    w = _worktree(git_repo, "t001")
+    _amend_review_only(w, tick="TICK-VOID")
+    result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
+    assert result.returncode != 0
+    assert "overall=FAIL" in result.stderr
+    assert w.is_dir()
 
 
 def test_second_commit_still_rejected(git_repo):
@@ -99,10 +110,9 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
     # Write review evidence first, then change a deliverable so the
     # committed tip is stale (mirrors review-at-09:33, commit-at-09:35).
     scope = review_scope_fingerprint(base_sha, REL, repo_root=w)
+    spec_text = (archive / "task.md").read_text(encoding="utf-8")
     for name in ("review_code.md", "review_test.md"):
-        (archive / name).write_text(
-            f"## Round 1\nreviewed_scope: {scope}\nverdict: PASS\n", encoding="utf-8"
-        )
+        (archive / name).write_text(pass_report(scope, spec_text), encoding="utf-8")
     (w / "README.md").write_text("change after review\n")
     (archive / "handoff.json").write_text(
         json.dumps(_handoff("t001", branch, identity, base_sha), ensure_ascii=False),
