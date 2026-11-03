@@ -18,7 +18,49 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import repo_sync as rs
+from template_sync import context as ctx
+from template_sync.agents_merge import _apply_agents_sectioned
+from template_sync.apply import _assert_distributable_tree, cmd_apply
+from template_sync.assets import retired_template_warnings, sync_dir, sync_file, sync_skill
+from template_sync.common import _detect_json_indent, _git as sync_git
+from template_sync.conventions_migration import conventions_migration_status, migrate_conventions
+from template_sync.gates import _run_tests
+from template_sync.hooks import _RETIRED_MERGE_GUARD_COMMAND, cmd_install_hooks
+from template_sync.shared_files import (
+    _PRETTIERIGNORE_OLD_HEADER,
+    _sanitize_mcp_servers,
+    merge_gitignore,
+    merge_mcp,
+    merge_prettierignore,
+)
+from template_sync.skills_links import (
+    cmd_link_skills,
+    opencode_commands_status,
+    repair_symlinks,
+    skill_status,
+    symlink_status,
+    sync_opencode_commands,
+)
+from template_sync.source import assert_not_self, resolve_src, source_identity
+from template_sync.state import (
+    active_prompts,
+    cmd_init,
+    cmd_prompt,
+    prompt_substrings,
+    read_state,
+    write_state,
+)
+from template_sync.status_plan import cmd_plan, cmd_status
+from template_sync.workflow_migration import (
+    _GUIDE_CLOSE,
+    _guide_blocks_by_heading,
+    _implementation_guidance,
+    _migrate_task_text,
+    _replace_guide_blocks,
+    force_migrate_workflow_tasks,
+    workflow_migration_status,
+)
+from export_template import export_template
 from review_support import configure_project_verification
 
 
@@ -77,21 +119,21 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "user_prompts": [],
     }, indent=2))
 
-    monkeypatch.setattr(rs, "CONVENTIONS_PATH", consumer / "docs/blueprint/conventions.md")
-    monkeypatch.setattr(rs, "SOURCE_OVERRIDE", None)
-    monkeypatch.setattr(rs, "CHECKOUT_OVERRIDE", None)
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
-    monkeypatch.setattr(rs, "STATE_PATH", state_file)
-    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
-    monkeypatch.setattr(rs, "SKILLS_SRC", consumer / ".repo_template/skills")
-    monkeypatch.setattr(rs, "SKILLS_AGENTS", consumer / ".agents/skills")
-    monkeypatch.setattr(rs, "SKILLS_CLAUDE", consumer / ".claude/skills")
-    monkeypatch.setattr(rs, "COMMANDS_OPENCODE", consumer / ".opencode/commands")
+    monkeypatch.setattr(ctx, "CONVENTIONS_PATH", consumer / "docs/blueprint/conventions.md")
+    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", None)
+    monkeypatch.setattr(ctx, "CHECKOUT_OVERRIDE", None)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "STATE_PATH", state_file)
+    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
+    monkeypatch.setattr(ctx, "SKILLS_SRC", consumer / ".repo_template/skills")
+    monkeypatch.setattr(ctx, "SKILLS_AGENTS", consumer / ".agents/skills")
+    monkeypatch.setattr(ctx, "SKILLS_CLAUDE", consumer / ".claude/skills")
+    monkeypatch.setattr(ctx, "COMMANDS_OPENCODE", consumer / ".opencode/commands")
     return {"src": src, "consumer": consumer, "head": head, "state_file": state_file}
 
 
 def _add_prompt(text: str, tags: str = "") -> None:
-    rs.cmd_prompt(Namespace(action="add", text=text, tags=tags, id=None))
+    cmd_prompt(Namespace(action="add", text=text, tags=tags, id=None))
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +147,7 @@ def test_sync_state_atomic_update_preserves_unknown_keys(env):
     data["nested_unknown"] = ["a", "b"]
     state_file.write_text(json.dumps(data))
 
-    rs.write_state({**rs.read_state(), "last_synced_at": "2026-01-01T00:00:00+08:00"})
+    write_state({**read_state(), "last_synced_at": "2026-01-01T00:00:00+08:00"})
     reloaded = json.loads(state_file.read_text())
     assert reloaded["future_field"] == {"x": 1}
     assert reloaded["nested_unknown"] == ["a", "b"]
@@ -119,30 +161,30 @@ def test_sync_state_atomic_update_preserves_unknown_keys(env):
 
 def test_prompt_add_supersede_revoke(env):
     _add_prompt(".env 不要 ignore", ".gitignore,.env")
-    assert len(rs.read_state()["user_prompts"]) == 1
+    assert len(read_state()["user_prompts"]) == 1
     # 同 tag 新条 supersede 旧条
     _add_prompt("新版 .env 指令", ".env")
-    state = rs.read_state()
+    state = read_state()
     assert len(state["user_prompts"]) == 2
     assert state["user_prompts"][0]["revoked"] is True
     assert state["user_prompts"][1]["revoked"] is False
     # 不同 tag 不 supersede
     _add_prompt("MCP 保留", "mcp")
-    state = rs.read_state()
+    state = read_state()
     assert state["user_prompts"][1]["revoked"] is False
     assert len(state["user_prompts"]) == 3
     # revoke
-    rs.cmd_prompt(Namespace(action="revoke", text=None, tags=None, id=2))
-    assert rs.read_state()["user_prompts"][2]["revoked"] is True
-    assert len(rs.active_prompts(rs.read_state())) == 1
+    cmd_prompt(Namespace(action="revoke", text=None, tags=None, id=2))
+    assert read_state()["user_prompts"][2]["revoked"] is True
+    assert len(active_prompts(read_state())) == 1
 
 
 def test_prompt_substrings_only_active(env):
     _add_prompt(".env 不要 ignore", ".gitignore,.env")
     _add_prompt("MCP 保留", "mcp")
-    assert set(rs.prompt_substrings(rs.read_state())) == {".gitignore", ".env", "mcp"}
-    rs.cmd_prompt(Namespace(action="revoke", text=None, tags=None, id=1))
-    assert set(rs.prompt_substrings(rs.read_state())) == {".gitignore", ".env"}
+    assert set(prompt_substrings(read_state())) == {".gitignore", ".env", "mcp"}
+    cmd_prompt(Namespace(action="revoke", text=None, tags=None, id=1))
+    assert set(prompt_substrings(read_state())) == {".gitignore", ".env"}
 
 
 def test_corrupt_sync_state_raises_sync_error_with_recovery_guidance(env):
@@ -152,13 +194,13 @@ def test_corrupt_sync_state_raises_sync_error_with_recovery_guidance(env):
 
     # 1. 截断/非法 JSON
     state_file.write_text("{corrupt: json truncated...", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="损坏"):
-        rs.read_state()
+    with pytest.raises(ctx.SyncError, match="损坏"):
+        read_state()
 
     # 2. 非 JSON 对象（如 JSON 数组）
     state_file.write_text("[1, 2, 3]\n", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="格式错误.*预期为 JSON 对象"):
-        rs.read_state()
+    with pytest.raises(ctx.SyncError, match="格式错误.*预期为 JSON 对象"):
+        read_state()
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +217,7 @@ def test_hard_sync_override_and_delete(env):
     extra.write_text("x = 1\n")
 
     changed: set[Path] = set()
-    rs.sync_dir(src / ".repo_template", consumer / ".repo_template", changed)
+    sync_dir(src / ".repo_template", consumer / ".repo_template", changed)
 
     assert task.read_text() == "print('task')\n"
     assert (consumer / ".repo_template/tests/test_x.py").exists()
@@ -190,14 +232,14 @@ def test_sync_file_delete_when_src_missing(env):
     dst.parent.mkdir(parents=True)
     dst.write_text("old\n")
     changed: set[Path] = set()
-    rs.sync_file(src / ".repo_template/docs/spike_report_template.md", dst, changed)
+    sync_file(src / ".repo_template/docs/spike_report_template.md", dst, changed)
     assert dst.read_text() == "# report\n"
     # src 缺失 → 删 dst
     orphan = consumer / ".claude/hooks/merge_guard.py"
     orphan.parent.mkdir(parents=True)
     orphan.write_text("x\n")
     changed = set()
-    rs.sync_file(src / ".claude/hooks/nonexistent_guard.py", orphan, changed)
+    sync_file(src / ".claude/hooks/nonexistent_guard.py", orphan, changed)
     assert not orphan.exists()
     assert orphan in changed
 
@@ -220,8 +262,8 @@ def test_sync_dir_rejects_symlink_destination(env, tmp_path):
     dst_link.symlink_to(sentinel)
 
     changed = set()
-    with pytest.raises(rs.SyncError, match="目录软链.*拒绝"):
-        rs.sync_dir(src_dir, dst_link, changed)
+    with pytest.raises(ctx.SyncError, match="目录软链.*拒绝"):
+        sync_dir(src_dir, dst_link, changed)
 
     # 哨兵目录内容完好
     assert (sentinel / "outside.txt").read_text() == "precious\n"
@@ -242,7 +284,7 @@ def test_skill_override_preserves_sync_state(env):
     protected.write_text('{"keep": true}\n')
 
     changed: set[Path] = set()
-    rs.sync_skill(src / ".repo_template/skills/task-run", dst, changed)
+    sync_skill(src / ".repo_template/skills/task-run", dst, changed)
     assert (dst / "SKILL.md").read_text().startswith("---\nname: task-run")
     assert protected.read_text() == '{"keep": true}\n'
     assert protected not in changed
@@ -254,7 +296,7 @@ def test_repair_symlinks(env):
     dst.mkdir(parents=True)
     (dst / "SKILL.md").write_text("run\n")
     changed: set[Path] = set()
-    reports = rs.repair_symlinks(changed)
+    reports = repair_symlinks(changed)
     link = consumer / ".claude/skills/task-run"
     assert link.is_symlink()
     assert link.resolve() == dst.resolve()
@@ -263,14 +305,14 @@ def test_repair_symlinks(env):
     assert agents_link.resolve() == dst.resolve()
     assert not reports
     changed = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     assert not changed
     foreign_src = consumer / ".repo_template/skills/foreign-skill"
     foreign_src.mkdir(parents=True)
     foreign = consumer / ".claude/skills/foreign-skill"
     foreign.write_text("not a symlink\n")
     changed = set()
-    reports = rs.repair_symlinks(changed)
+    reports = repair_symlinks(changed)
     assert any("foreign-skill" in r for r in reports)
     assert foreign.exists()
     assert foreign not in changed
@@ -287,7 +329,7 @@ def test_repair_symlinks_converts_stale_real_dir(env):
     (stale / "SKILL.md").write_text("stale old\n")
 
     changed: set[Path] = set()
-    reports = rs.repair_symlinks(changed)
+    reports = repair_symlinks(changed)
 
     assert stale.is_symlink()
     assert stale.resolve() == dst.resolve()
@@ -303,7 +345,7 @@ def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
 
     # 模拟有效 skill 初始软链
     changed = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     assert (consumer / ".claude/skills/active-skill").is_symlink()
     assert (consumer / ".agents/skills/active-skill").is_symlink()
 
@@ -324,13 +366,13 @@ def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
     custom_dir.mkdir()
 
     # 校验 symlink_status 报告
-    status = rs.symlink_status()
+    status = symlink_status()
     assert {"name": "active-skill", "state": "ok"} in status
     assert {"name": "old-skill", "state": "cleanup"} in status
 
     # 执行 repair_symlinks
     changed = set()
-    reports = rs.repair_symlinks(changed)
+    reports = repair_symlinks(changed)
 
     # 旧模板软链应被清理
     assert not old_claude.is_symlink()
@@ -357,7 +399,7 @@ def test_skill_status_reports_stale_real_dir(env):
     stale.mkdir(parents=True)
     (stale / "SKILL.md").write_text("stale\n")
 
-    items = rs.skill_status(src)
+    items = skill_status(src)
     assert {"name": "task-run", "action": "stale"} in items
 
 
@@ -371,7 +413,7 @@ def test_sync_opencode_commands(env):
     (nodesc / "SKILL.md").write_text("---\nname: nodesc\ndescription: none\n---\nrun\n")
 
     changed: set[Path] = set()
-    reports = rs.sync_opencode_commands(changed)
+    reports = sync_opencode_commands(changed)
     assert not reports
     cmd = consumer / ".opencode/commands/task-run.md"
     assert cmd.is_file()
@@ -384,7 +426,7 @@ def test_sync_opencode_commands(env):
 
     # 幂等
     changed = set()
-    assert rs.sync_opencode_commands(changed) == []
+    assert sync_opencode_commands(changed) == []
     assert not changed
 
     # 带标记残留删、手写保留、手写同名跳过并报告
@@ -394,7 +436,7 @@ def test_sync_opencode_commands(env):
     (consumer / ".opencode/commands/mine.md").write_text("---\ndescription: mine\n---\ncustom\n")
     (consumer / ".opencode/commands/task-run.md").write_text("---\ndescription: mine-takeover\n---\ncustom\n")
     changed = set()
-    reports = rs.sync_opencode_commands(changed)
+    reports = sync_opencode_commands(changed)
     assert not (consumer / ".opencode/commands/old-x.md").exists()
     assert (consumer / ".opencode/commands/mine.md").read_text().endswith("custom\n")
     assert (consumer / ".opencode/commands/task-run.md").read_text().endswith("custom\n")
@@ -409,14 +451,14 @@ def test_opencode_commands_status_detects_description_drift(env, capsys):
     (skill_dir / "SKILL.md").write_text("---\nname: task-sample\ndescription: Original description\n---\nbody\n")
 
     # 1. 首次状态应为 create
-    items = rs.opencode_commands_status()
+    items = opencode_commands_status()
     sample_item = next(it for it in items if it["name"] == "task-sample")
     assert sample_item["state"] == "create"
 
     # 2. 生成命令薄层后状态应为 same
     changed = set()
-    rs.sync_opencode_commands(changed)
-    items = rs.opencode_commands_status()
+    sync_opencode_commands(changed)
+    items = opencode_commands_status()
     sample_item = next(it for it in items if it["name"] == "task-sample")
     assert sample_item["state"] == "same"
 
@@ -424,21 +466,21 @@ def test_opencode_commands_status_detects_description_drift(env, capsys):
     (skill_dir / "SKILL.md").write_text("---\nname: task-sample\ndescription: Updated new description\n---\nbody\n")
 
     # 4. opencode_commands_status 必须检出 update 漂移
-    items = rs.opencode_commands_status()
+    items = opencode_commands_status()
     sample_item = next(it for it in items if it["name"] == "task-sample")
     assert sample_item["state"] == "update"
     assert "漂移" in sample_item["desc"]
 
     # 5. cmd_status 能打印提示
-    rs.cmd_status(Namespace())
+    cmd_status(Namespace())
     out = capsys.readouterr().out
     assert "opencode 命令薄层" in out
     assert "update" in out and "/task-sample" in out
 
     # 6. sync 之后恢复一致
     changed = set()
-    rs.sync_opencode_commands(changed)
-    items = rs.opencode_commands_status()
+    sync_opencode_commands(changed)
+    items = opencode_commands_status()
     sample_item = next(it for it in items if it["name"] == "task-sample")
     assert sample_item["state"] == "same"
 
@@ -471,7 +513,7 @@ def test_gitignore_merge_with_prompt_block(env):
     _add_prompt(".env 不要 ignore", ".gitignore,.env")
 
     changed: set[Path] = set()
-    info = rs.merge_gitignore(src, rs.prompt_substrings(rs.read_state()), changed)
+    info = merge_gitignore(src, prompt_substrings(read_state()), changed)
     text = gi.read_text()
     assert "node_modules/" in text              # 消费独有保留
     assert ".env" not in text.splitlines()      # prompt 禁止 ignore 行被删
@@ -486,15 +528,15 @@ def test_prettierignore_merge_creates_and_dedupes(env):
     pi = consumer / ".prettierignore"
 
     changed: set[Path] = set()
-    info = rs.merge_prettierignore(changed)
+    info = merge_prettierignore(changed)
     text = pi.read_text()
-    for rule in rs.PRETTIERIGNORE_TEMPLATE_RULES:
+    for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
         assert rule in text.splitlines()
     assert pi in changed
 
     # 二次合并：去重，无改动
     changed = set()
-    info = rs.merge_prettierignore(changed)
+    info = merge_prettierignore(changed)
     assert info["added"] == []
     assert changed == set()
     assert text == pi.read_text()
@@ -506,18 +548,18 @@ def test_prettierignore_preserves_consumer_rules(env):
     pi.write_text("pnpm-lock.yaml\n*.md\n")
 
     changed: set[Path] = set()
-    rs.merge_prettierignore(changed)
+    merge_prettierignore(changed)
     lines = pi.read_text().splitlines()
     assert "pnpm-lock.yaml" in lines             # 消费独有保留
     assert "*.md" in lines
-    for rule in rs.PRETTIERIGNORE_TEMPLATE_RULES:
+    for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
         assert rule in lines
     assert pi in changed
 
 
 def test_prettierignore_covers_generated_artifacts(env):
     # Issue #3 回访：同步状态、派生索引、任务产物缺一即红门禁
-    rules = set(rs.PRETTIERIGNORE_TEMPLATE_RULES)
+    rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
     assert ".repo_template/sync_state.json" in rules
     assert "docs/tasks_index.json" in rules
     assert "docs/archive/tasks_index.json" in rules
@@ -530,23 +572,23 @@ def test_prettierignore_omits_undistributed_test_paths(env):
         ".repo_template/tests/package.json",
         ".repo_template/tests/test_chain_plan_cases.js",
     )
-    rules = set(rs.PRETTIERIGNORE_TEMPLATE_RULES)
+    rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
     assert ".repo_template/scripts/package.json" in rules
     for rule in undistributed:
         assert rule not in rules
     pi = env["consumer"] / ".prettierignore"
-    rs.merge_prettierignore(set())
+    merge_prettierignore(set())
     lines = pi.read_text().splitlines()
     for rule in undistributed:
         assert rule not in lines
 
 
 def test_detect_json_indent(env):
-    assert rs._detect_json_indent('{\n  "a": 1\n}\n') == 2
-    assert rs._detect_json_indent('{\n    "a": 1\n}\n') == 4
-    assert rs._detect_json_indent('{\n\t"a": 1\n}\n') == "\t"
-    assert rs._detect_json_indent('{"a": 1}') == 2
-    assert rs._detect_json_indent('') == 2
+    assert _detect_json_indent('{\n  "a": 1\n}\n') == 2
+    assert _detect_json_indent('{\n    "a": 1\n}\n') == 4
+    assert _detect_json_indent('{\n\t"a": 1\n}\n') == "\t"
+    assert _detect_json_indent('{"a": 1}') == 2
+    assert _detect_json_indent('') == 2
 
 
 def test_mcp_merge_preserves_consumer_indent(env):
@@ -556,7 +598,7 @@ def test_mcp_merge_preserves_consumer_indent(env):
     dmcp.write_text('{\n    "mcpServers": {\n        "consumer-server": {"command": "y"}\n    }\n}\n')
 
     changed: set[Path] = set()
-    rs.merge_mcp(src, changed)
+    merge_mcp(src, changed)
     raw = dmcp.read_text()
     assert json.loads(raw)["mcpServers"]["tpl-server"] == {"command": "x"}
     assert '\n    "mcpServers"' in raw  # 消费仓 4 空格体例保留，未被重排成 2 空格
@@ -571,13 +613,13 @@ def test_settings_rewrite_preserves_consumer_indent(env):
         'hooks': {'PreToolUse': [{
             'matcher': 'Bash',
             'hooks': [
-                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': _RETIRED_MERGE_GUARD_COMMAND},
                 {'type': 'command', 'command': 'echo keep'},
             ],
         }]},
     }, ensure_ascii=False, indent=4) + "\n")
     changed: set[Path] = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     raw = settings.read_text()
     assert json.loads(raw)["hooks"]["PreToolUse"][0]["hooks"] == [
         {"type": "command", "command": "echo keep"},
@@ -588,11 +630,11 @@ def test_settings_rewrite_preserves_consumer_indent(env):
 
 def test_retired_template_warnings(env):
     consumer = env["consumer"]
-    assert rs.retired_template_warnings() == []
+    assert retired_template_warnings() == []
     stale = consumer / ".github/workflows/repo-template-ci.yml"
     stale.parent.mkdir(parents=True)
     stale.write_text("name: repo-template\n")
-    warnings = rs.retired_template_warnings()
+    warnings = retired_template_warnings()
     assert len(warnings) == 1
     assert ".github/workflows/repo-template-ci.yml" in warnings[0]
 
@@ -604,14 +646,14 @@ def test_mcp_merge_keywise(env):
     dmcp.write_text(json.dumps({"mcpServers": {"consumer-server": {"command": "y"}}}))
 
     changed: set[Path] = set()
-    rs.merge_mcp(src, changed)
+    merge_mcp(src, changed)
     ddata = json.loads(dmcp.read_text())
     assert "tpl-server" in ddata["mcpServers"]
     assert "consumer-server" in ddata["mcpServers"]
     # 已有键不覆盖（禁冲密钥）
     (src / ".mcp.json").write_text(json.dumps({"mcpServers": {"tpl-server": {"command": "OVERWRITE"}}}))
     changed = set()
-    rs.merge_mcp(src, changed)
+    merge_mcp(src, changed)
     assert json.loads(dmcp.read_text())["mcpServers"]["tpl-server"] == {"command": "x"}
 
 
@@ -628,7 +670,7 @@ def test_mcp_create_and_merge_sanitizes_environment_variables(env):
     assert not dmcp.exists()
 
     changed: set[Path] = set()
-    reports = rs.merge_mcp(src, changed)
+    reports = merge_mcp(src, changed)
 
     assert dmcp in changed
     assert any("需审阅" in r or "占位" in r for r in reports)
@@ -665,7 +707,7 @@ def test_sectioned_agents_force_merge_intro_boundaries(env):
     (src / "AGENTS.md").write_text(source)
     (consumer / "AGENTS.md").write_text(target)
     changed: set[Path] = set()
-    assert rs._apply_agents_sectioned(src, changed) is True
+    assert _apply_agents_sectioned(src, changed) is True
     result = (consumer / "AGENTS.md").read_text()
     assert "消费仓项目介绍和自定义规则。" in result
     assert "消费仓目录规则" in result and "模板目录规则" not in result
@@ -678,7 +720,7 @@ def test_sectioned_agents_requires_headings(env):
     (src / "AGENTS.md").write_text("legacy")
     (consumer / "AGENTS.md").write_text("legacy")
     # 旧版模板源继续交回旧的整文件裁定逻辑。
-    assert rs._apply_agents_sectioned(src, set()) is False
+    assert _apply_agents_sectioned(src, set()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +732,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text("CONSUMER OLD\n")
 
-    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=True, decisions={"AGENTS.md": "update"}))
+    cmd_apply(Namespace(allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=True, decisions={"AGENTS.md": "update"}))
     out = capsys.readouterr().out
 
     # 硬同步
@@ -704,7 +746,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     # 裁定单元 update
     assert (consumer / "AGENTS.md").read_text() == "SRC AGENTS\n"
     # state 推进
-    state = rs.read_state()
+    state = read_state()
     assert state["last_synced_commit"] == head
     assert state["last_synced_at"]
     # 改动清单输出（点名 add 依据）
@@ -717,7 +759,7 @@ def test_apply_skips_unresolved_shared_unit(env):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text("CONSUMER OLD\n")
 
-    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
+    cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
     # 无决策 → AGENTS.md 不动（ask_user 语义）
     assert (consumer / "AGENTS.md").read_text() == "CONSUMER OLD\n"
 
@@ -726,8 +768,8 @@ def test_apply_src_dirty_does_not_advance_commit(env):
     src, consumer = env["src"], env["consumer"]
     (src / ".repo_template/scripts/dirty_extra.py").write_text("x\n")  # SRC 未提交改动
     _add_prompt("跳过测试", "")
-    rs.cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
-    state = rs.read_state()
+    cmd_apply(Namespace(allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
+    state = read_state()
     assert state["last_synced_commit"] is None
     assert state["last_synced_at"]
 
@@ -738,8 +780,8 @@ def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monk
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text("CONSUMER OLD\n")
 
-    monkeypatch.setattr(rs, "_run_tests", lambda c: False)
-    rc = rs.cmd_apply(
+    monkeypatch.setattr("template_sync.apply._run_tests", lambda c: False)
+    rc = cmd_apply(
         Namespace(allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=False, decisions={"AGENTS.md": "update"})
     )
     captured = capsys.readouterr()
@@ -753,7 +795,7 @@ def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monk
     assert "本次写入清单" in captured.out
     assert ".repo_template/scripts/task.py" in captured.out
     assert "已完整回滚" in captured.err
-    assert rs.read_state()["last_synced_commit"] is None
+    assert read_state()["last_synced_commit"] is None
 
 
 def test_sync_file_rejects_directory_target(env):
@@ -763,8 +805,8 @@ def test_sync_file_rejects_directory_target(env):
     target.mkdir(parents=True)
     (target / "user_note.txt").write_text("keep\n", encoding="utf-8")
 
-    with pytest.raises(rs.SyncError, match="是目录"):
-        rs.sync_file(src / ".md_kx.toml", target, set())
+    with pytest.raises(ctx.SyncError, match="是目录"):
+        sync_file(src / ".md_kx.toml", target, set())
     assert (target / "user_note.txt").is_file()
     assert not (target / ".md_kx.toml").exists()
 
@@ -776,8 +818,8 @@ def test_sync_dir_rejects_file_target(env):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("i am a file\n", encoding="utf-8")
 
-    with pytest.raises(rs.SyncError, match="类型不符"):
-        rs.sync_dir(src / ".repo_template/docs", target, set())
+    with pytest.raises(ctx.SyncError, match="类型不符"):
+        sync_dir(src / ".repo_template/docs", target, set())
     assert target.read_text() == "i am a file\n"
 
 
@@ -789,20 +831,20 @@ def test_assert_not_self(env, monkeypatch):
     src = env["src"]
     # 无关路径 → 不拒绝
     other = env["consumer"].parent / "unrelated"
-    rs.assert_not_self(other)
+    assert_not_self(other)
     # CONSUMER 指向 src 自身 → 拒绝
-    monkeypatch.setattr(rs, "CONSUMER", src)
-    with pytest.raises(rs.SyncError):
-        rs.assert_not_self(src)
+    monkeypatch.setattr(ctx, "CONSUMER", src)
+    with pytest.raises(ctx.SyncError):
+        assert_not_self(src)
 
 
 def test_init_writes_template_source(env, monkeypatch):
     consumer, state_file = env["consumer"], env["state_file"]
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
-    monkeypatch.setattr(rs, "STATE_PATH", state_file)
-    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
-    rs.cmd_init(Namespace(source=str(env["src"])))
-    state = rs.read_state()
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "STATE_PATH", state_file)
+    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
+    cmd_init(Namespace(source=str(env["src"])))
+    state = read_state()
     assert state["template_source"]["kind"] == "path"
     assert state["template_source"]["value"] == str(env["src"])
 
@@ -818,10 +860,10 @@ def test_init_migrates_legacy_state_and_prompts(env, monkeypatch):
         "last_synced_at": "2026-01-01T00:00:00+08:00",
         "user_prompts": [{"text": "保留我", "tags": ["x"], "revoked": False}],
     }))
-    monkeypatch.setattr(rs, "STATE_PATH", state_file)
-    monkeypatch.setattr(rs, "LEGACY_STATE_PATH", legacy)
-    rs.cmd_init(Namespace(source=str(env["src"])))
-    state = rs.read_state()
+    monkeypatch.setattr(ctx, "STATE_PATH", state_file)
+    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", legacy)
+    cmd_init(Namespace(source=str(env["src"])))
+    state = read_state()
     # prompt 与审计字段随迁移保留；template_source 以本次 --source 为准
     assert state["user_prompts"][0]["text"] == "保留我"
     assert state["last_synced_commit"] == "deadbeef"
@@ -830,20 +872,20 @@ def test_init_migrates_legacy_state_and_prompts(env, monkeypatch):
 
 
 def test_resolve_src_rejects_invalid(env):
-    state = rs.read_state()
+    state = read_state()
     state["template_source"]["value"] = "/nonexistent/not_a_template"
-    with pytest.raises(rs.SyncError):
-        rs.resolve_src(state)
+    with pytest.raises(ctx.SyncError):
+        resolve_src(state)
 
 
 def test_source_identity_rejects_option_like_string():
     """验证 source 参数为 option-like 格式时被明确拒绝（Issue #40）。"""
-    with pytest.raises(rs.SyncError, match="option 格式参数"):
-        rs.source_identity("--upload-pack")
-    with pytest.raises(rs.SyncError, match="option 格式参数"):
-        rs.source_identity("-o")
-    with pytest.raises(rs.SyncError, match="不能为空"):
-        rs.source_identity("")
+    with pytest.raises(ctx.SyncError, match="option 格式参数"):
+        source_identity("--upload-pack")
+    with pytest.raises(ctx.SyncError, match="option 格式参数"):
+        source_identity("-o")
+    with pytest.raises(ctx.SyncError, match="不能为空"):
+        source_identity("")
 
 
 def test_init_rejects_non_template_local_directory(env, tmp_path):
@@ -851,12 +893,12 @@ def test_init_rejects_non_template_local_directory(env, tmp_path):
     not_a_template = tmp_path / "empty_dir"
     not_a_template.mkdir()
 
-    orig_state = rs.read_state()
-    with pytest.raises(rs.SyncError, match="不是有效模板源"):
-        rs.source_identity(str(not_a_template))
+    orig_state = read_state()
+    with pytest.raises(ctx.SyncError, match="不是有效模板源"):
+        source_identity(str(not_a_template))
 
     # 验证原有 state 中的 template_source 保持不变
-    assert rs.read_state()["template_source"] == orig_state["template_source"]
+    assert read_state()["template_source"] == orig_state["template_source"]
 
 
 def test_mcp_merge_tolerates_non_dict_structure(env, capsys):
@@ -868,7 +910,7 @@ def test_mcp_merge_tolerates_non_dict_structure(env, capsys):
     # 1. 消费端为数组
     dmcp.write_text("[]\n", encoding="utf-8")
     changed = set()
-    rs.merge_mcp(src, changed)
+    merge_mcp(src, changed)
     err = capsys.readouterr().err
     assert "非 JSON 对象" in err
     assert dmcp not in changed
@@ -876,7 +918,7 @@ def test_mcp_merge_tolerates_non_dict_structure(env, capsys):
     # 2. 消费端 mcpServers 为数组
     dmcp.write_text(json.dumps({"mcpServers": [1, 2, 3]}), encoding="utf-8")
     changed = set()
-    rs.merge_mcp(src, changed)
+    merge_mcp(src, changed)
     err = capsys.readouterr().err
     assert "mcpServers 非对象" in err
 
@@ -902,16 +944,16 @@ def test_install_hooks_sets_and_idempotent(tmp_path, monkeypatch, capsys):
     consumer.mkdir()
     _git(consumer, "init", "-b", "main")
     _ensure_hook(consumer)
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
 
-    assert rs.cmd_install_hooks(Namespace()) == 0
+    assert cmd_install_hooks(Namespace()) == 0
     out = capsys.readouterr().out
     assert "已设为" in out
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
         == ".repo_template/hooks"
 
     # 幂等：已指向目标 → no-op
-    assert rs.cmd_install_hooks(Namespace()) == 0
+    assert cmd_install_hooks(Namespace()) == 0
     assert "无需改动" in capsys.readouterr().out
 
 
@@ -921,9 +963,9 @@ def test_install_hooks_refuses_foreign_path(tmp_path, monkeypatch, capsys):
     _git(consumer, "init", "-b", "main")
     _git(consumer, "config", "core.hooksPath", ".git/hooks")
     _ensure_hook(consumer)
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
 
-    assert rs.cmd_install_hooks(Namespace()) == 1
+    assert cmd_install_hooks(Namespace()) == 1
     err = capsys.readouterr().err
     assert "--force" in err
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
@@ -936,9 +978,9 @@ def test_install_hooks_force_overwrites(tmp_path, monkeypatch, capsys):
     _git(consumer, "init", "-b", "main")
     _git(consumer, "config", "core.hooksPath", ".git/hooks")
     _ensure_hook(consumer)
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
 
-    assert rs.cmd_install_hooks(Namespace(force=True)) == 0
+    assert cmd_install_hooks(Namespace(force=True)) == 0
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \
         == ".repo_template/hooks"
 
@@ -950,9 +992,9 @@ def test_install_hooks_nested_product_uses_toplevel_relative(tmp_path, monkeypat
     product.mkdir(parents=True)
     _git(factory, "init", "-b", "main")
     _ensure_hook(product)
-    monkeypatch.setattr(rs, "CONSUMER", product)
+    monkeypatch.setattr(ctx, "CONSUMER", product)
 
-    assert rs.cmd_install_hooks(Namespace()) == 0
+    assert cmd_install_hooks(Namespace()) == 0
     assert _git(factory, "config", "--get", "core.hooksPath").stdout.strip() \
         == "repo/.repo_template/hooks"
     assert "repo/.repo_template/hooks" in capsys.readouterr().out
@@ -962,16 +1004,172 @@ def test_install_hooks_rejects_missing_or_nonexec(tmp_path, monkeypatch, capsys)
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     _git(consumer, "init", "-b", "main")
-    monkeypatch.setattr(rs, "CONSUMER", consumer)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
 
-    assert rs.cmd_install_hooks(Namespace()) == 1
+    assert cmd_install_hooks(Namespace()) == 1
     assert "缺 hook 脚本" in capsys.readouterr().err
 
     _ensure_hook(consumer, executable=False)
-    assert rs.cmd_install_hooks(Namespace()) == 1
+    assert cmd_install_hooks(Namespace()) == 1
     assert "不可执行" in capsys.readouterr().err
     assert _git(consumer, "config", "--get", "core.hooksPath", check=False).stdout.strip() \
         == ""
+
+
+# ---------------------------------------------------------------------------
+# install-hooks --statusline：显式启用状态行 PostToolUse hook（G2）
+# 模板不再默认带该 hook；只写 .claude/settings.json，不碰 core.hooksPath。
+# ---------------------------------------------------------------------------
+
+STATUSLINE_COMMAND = (
+    'python3 "$CLAUDE_PROJECT_DIR/.repo_template/scripts/track_worktree.py" '
+    "--write --agent claude-code"
+)
+STATUSLINE_GROUP = {
+    "matcher": "Bash",
+    "hooks": [{"type": "command", "command": STATUSLINE_COMMAND, "timeout": 5}],
+}
+
+
+@pytest.fixture
+def statusline_consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
+    return consumer
+
+
+def _hooks_path(consumer: Path) -> str:
+    return _git(consumer, "config", "--get", "core.hooksPath", check=False).stdout.strip()
+
+
+def test_install_hooks_statusline_creates_settings(statusline_consumer, capsys):
+    consumer = statusline_consumer
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    settings = consumer / ".claude/settings.json"
+    text = settings.read_text(encoding="utf-8")
+    assert json.loads(text) == {"hooks": {"PostToolUse": [STATUSLINE_GROUP]}}
+    assert text == json.dumps(json.loads(text), ensure_ascii=False, indent=2) + "\n"
+    assert "已写入" in capsys.readouterr().out
+    # 不需要 pre-commit 脚本，也不设置 core.hooksPath
+    assert _hooks_path(consumer) == ""
+
+
+@pytest.mark.parametrize("existing", [
+    {"permissions": {"allow": ["Bash(git status)"]}},
+    {"permissions": {"allow": ["Bash(git status)"]}, "hooks": {}},
+    {"permissions": {"allow": ["Bash(git status)"]}, "hooks": {"PostToolUse": []}},
+])
+def test_install_hooks_statusline_fills_missing_hook_sections(statusline_consumer, existing):
+    settings = statusline_consumer / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["permissions"] == existing["permissions"]
+    assert data["hooks"]["PostToolUse"] == [STATUSLINE_GROUP]
+
+
+def test_install_hooks_statusline_merges_keeping_indent_and_hooks_path(statusline_consumer, capsys):
+    consumer = statusline_consumer
+    _git(consumer, "config", "core.hooksPath", ".git/hooks")
+    existing = {
+        "permissions": {"allow": ["Bash(git status)"]},
+        "hooks": {
+            "PreToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "echo pre"}]}],
+            "PostToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "echo post"}]}],
+        },
+    }
+    settings = consumer / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps(existing, indent=4), encoding="utf-8")
+
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+
+    text = settings.read_text(encoding="utf-8")
+    data = json.loads(text)
+    assert data["permissions"] == existing["permissions"]
+    assert data["hooks"]["PreToolUse"] == existing["hooks"]["PreToolUse"]
+    assert data["hooks"]["PostToolUse"] == [existing["hooks"]["PostToolUse"][0], STATUSLINE_GROUP]
+    assert text == json.dumps(data, ensure_ascii=False, indent=4) + "\n"
+    assert _hooks_path(consumer) == ".git/hooks"
+
+
+def test_install_hooks_statusline_is_idempotent(statusline_consumer, capsys):
+    settings = statusline_consumer / ".claude/settings.json"
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    first = settings.read_bytes()
+    capsys.readouterr()
+
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    assert settings.read_bytes() == first
+    assert "无需改动" in capsys.readouterr().out
+    assert first.decode("utf-8").count(STATUSLINE_COMMAND.replace('"', '\\"')) == 1
+
+
+def test_install_hooks_statusline_leaves_existing_equivalent_hook_untouched(statusline_consumer):
+    """旧模板自带的同一 hook（含任意缩进）已存在时不改文件、不重复。"""
+    settings = statusline_consumer / ".claude/settings.json"
+    settings.parent.mkdir()
+    raw = json.dumps({"hooks": {"PostToolUse": [STATUSLINE_GROUP]}}, indent="\t")
+    settings.write_text(raw, encoding="utf-8")
+
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    assert settings.read_text(encoding="utf-8") == raw
+
+
+@pytest.mark.parametrize("raw", [
+    "{not json",
+    "",
+    "[]",
+    '{"hooks": []}',
+    '{"hooks": {"PostToolUse": {}}}',
+])
+def test_install_hooks_statusline_rejects_unusable_settings(statusline_consumer, capsys, raw):
+    settings = statusline_consumer / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(raw, encoding="utf-8")
+
+    assert cmd_install_hooks(Namespace(statusline=True)) == 1
+    assert ".claude/settings.json" in capsys.readouterr().err
+    assert settings.read_text(encoding="utf-8") == raw
+    assert not settings.with_name("settings.json.tmp").exists()
+    assert _hooks_path(statusline_consumer) == ""
+
+
+def test_install_hooks_statusline_rejects_symlinked_settings(statusline_consumer, tmp_path, capsys):
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    settings = statusline_consumer / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.symlink_to(outside)
+
+    assert cmd_install_hooks(Namespace(statusline=True)) == 1
+    assert "软链" in capsys.readouterr().err
+    assert settings.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "{}\n"
+
+
+def test_install_hooks_statusline_rejects_force(statusline_consumer, capsys):
+    assert cmd_install_hooks(Namespace(statusline=True, force=True)) == 1
+    assert "--force" in capsys.readouterr().err
+    assert not (statusline_consumer / ".claude/settings.json").exists()
+
+
+def test_install_hooks_statusline_cli_entry(tmp_path):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "repo_sync.py"), "--consumer", str(consumer),
+         "install-hooks", "--statusline"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads((consumer / ".claude/settings.json").read_text(encoding="utf-8"))
+    assert data == {"hooks": {"PostToolUse": [STATUSLINE_GROUP]}}
+    assert _hooks_path(consumer) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +1182,7 @@ def test_repair_symlinks_removes_retired_managed_merge_guard(env):
     guard.parent.mkdir(parents=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
     changed: set[Path] = set()
-    reports = rs.repair_symlinks(changed)
+    reports = repair_symlinks(changed)
     assert not guard.exists() and not guard.is_symlink()
     assert guard in changed
     assert any('已退役并移除' in line for line in reports)
@@ -996,7 +1194,7 @@ def test_repair_symlinks_preserves_manual_merge_guard_file(env):
     guard.parent.mkdir(parents=True)
     guard.write_text('manual\n')
     changed: set[Path] = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     assert guard.read_text() == 'manual\n'
     assert guard not in changed
 
@@ -1009,7 +1207,7 @@ def test_repair_symlinks_preserves_manual_guard_setting(env):
         'hooks': {'PreToolUse': [{
             'matcher': 'Bash',
             'hooks': [
-                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': _RETIRED_MERGE_GUARD_COMMAND},
                 {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
             ],
         }]},
@@ -1018,10 +1216,10 @@ def test_repair_symlinks_preserves_manual_guard_setting(env):
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.write_text('manual\n')
     changed: set[Path] = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     data = json.loads(settings.read_text())
     commands = [entry['command'] for entry in data['hooks']['PreToolUse'][0]['hooks']]
-    assert commands == [rs._RETIRED_MERGE_GUARD_COMMAND, 'python3 scripts/custom_merge_guard.py']
+    assert commands == [_RETIRED_MERGE_GUARD_COMMAND, 'python3 scripts/custom_merge_guard.py']
     assert guard.read_text() == 'manual\n'
     assert settings not in changed and guard not in changed
 
@@ -1034,13 +1232,13 @@ def test_repair_symlinks_removes_exact_retired_setting_when_link_is_missing(env)
         'hooks': {'PreToolUse': [{
             'matcher': 'Bash',
             'hooks': [
-                {'type': 'command', 'command': rs._RETIRED_MERGE_GUARD_COMMAND},
+                {'type': 'command', 'command': _RETIRED_MERGE_GUARD_COMMAND},
                 {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
             ],
         }]},
     }))
     changed: set[Path] = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     data = json.loads(settings.read_text())
     assert data['hooks']['PreToolUse'][0]['hooks'] == [
         {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
@@ -1069,7 +1267,7 @@ def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
     changed: set[Path] = set()
-    rs.repair_symlinks(changed)
+    repair_symlinks(changed)
     data = json.loads(settings.read_text())
     assert data['hooks']['PreToolUse'][0]['hooks'] == [
         {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
@@ -1088,8 +1286,8 @@ def test_repair_symlinks_refuses_malformed_settings_before_unlink(env):
     guard = consumer / '.claude/hooks/merge_guard.py'
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
-    with pytest.raises(rs.SyncError, match='不能安全移除'):
-        rs.repair_symlinks(set())
+    with pytest.raises(ctx.SyncError, match='不能安全移除'):
+        repair_symlinks(set())
     assert guard.is_symlink()
 
 
@@ -1125,11 +1323,11 @@ def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
 def test_legacy_full_spec_schema_migrates_as_heading_groups(env):
     current_spec, _ = _install_current_workflow_templates(env['consumer'])
     legacy = (Path(__file__).parent / 'fixtures/spec_pre_workflow_simplification.md').read_text()
-    migrated = rs._replace_guide_blocks(legacy, current_spec)
-    current_blocks = rs._guide_blocks_by_heading(current_spec)
-    migrated_blocks = rs._guide_blocks_by_heading(migrated)
+    migrated = _replace_guide_blocks(legacy, current_spec)
+    current_blocks = _guide_blocks_by_heading(current_spec)
+    migrated_blocks = _guide_blocks_by_heading(migrated)
     assert migrated_blocks == current_blocks
-    assert rs._replace_guide_blocks(migrated, current_spec) == migrated
+    assert _replace_guide_blocks(migrated, current_spec) == migrated
     assert '已判定不写测试的分支与原因' not in migrated
     assert 'mock 边界、fixture 来源、断言目标' not in migrated
 
@@ -1139,16 +1337,16 @@ def test_missing_guide_block_is_restored_and_reported(env):
     current_spec, current_task = _install_current_workflow_templates(consumer)
     _install_current_workflow_templates(env['src'])
     missing = current_spec.replace(
-        rs._guide_blocks_by_heading(current_spec)['验收标准'][0] + '\n\n', '', 1
+        _guide_blocks_by_heading(current_spec)['验收标准'][0] + '\n\n', '', 1
     )
     task_dir = consumer / 'docs/tasks/t001_missing'
     task_dir.mkdir(parents=True)
     (task_dir / 'task.md').write_text(missing)
     (task_dir / 'note.md').write_text(current_task)
-    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert 'docs/tasks/t001_missing/task.md' in migrations
     assert worktrees == [] and errors == []
-    rs.force_migrate_workflow_tasks(set())
+    force_migrate_workflow_tasks(set())
     assert (task_dir / 'task.md').read_text() == current_spec
 
 
@@ -1156,24 +1354,24 @@ def test_migration_status_reports_malformed_spec_without_raising(env):
     consumer = env['consumer']
     current_spec, current_task = _install_current_workflow_templates(consumer)
     _install_current_workflow_templates(env['src'])
-    malformed = current_spec.replace(rs._GUIDE_CLOSE, '', 1)
+    malformed = current_spec.replace(_GUIDE_CLOSE, '', 1)
     task_dir = consumer / 'docs/tasks/t001_malformed'
     task_dir.mkdir(parents=True)
     (task_dir / 'task.md').write_text(malformed)
     (task_dir / 'note.md').write_text(current_task)
-    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == []
     assert len(errors) == 1 and 't001_malformed/task.md' in errors[0]
-    assert rs.cmd_status(Namespace()) == 0
-    assert rs.cmd_plan(Namespace()) == 0
-    with pytest.raises(rs.SyncError, match='无法安全迁移'):
-        rs.force_migrate_workflow_tasks(set())
+    assert cmd_status(Namespace()) == 0
+    assert cmd_plan(Namespace()) == 0
+    with pytest.raises(ctx.SyncError, match='无法安全迁移'):
+        force_migrate_workflow_tasks(set())
 
 
 def test_workflow_migrations_are_idempotent_for_current_schema(env):
     current_spec, current_task = _install_current_workflow_templates(env['consumer'])
-    assert rs._replace_guide_blocks(current_spec, current_spec) == current_spec
-    assert rs._migrate_task_text(current_task, current_task) == current_task
+    assert _replace_guide_blocks(current_spec, current_spec) == current_spec
+    assert _migrate_task_text(current_task, current_task) == current_task
 
 
 def test_force_migrate_workflow_updates_old_task_documents(env):
@@ -1209,7 +1407,7 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
         task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
 
     # 迁移状态应检出活跃和归档下的旧文件
-    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert 'docs/tasks/t001_old/spec.md' in migrations
     assert 'docs/tasks/t001_old/task.md' in migrations
     assert 'docs/archive/tasks/t002_archived_old/spec.md' in migrations
@@ -1217,7 +1415,7 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert worktrees == [] and errors == []
 
     changed: set[Path] = set()
-    reports = rs.force_migrate_workflow_tasks(changed)
+    reports = force_migrate_workflow_tasks(changed)
 
     # 验证活跃任务已完成布局转换
     assert not (task_dir / 'spec.md').exists()
@@ -1227,14 +1425,14 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     migrated_spec = (task_dir / 'task.md').read_text(encoding="utf-8")
     migrated_task = (task_dir / 'note.md').read_text(encoding="utf-8")
     assert '旧版规范文字' not in migrated_spec
-    for blocks in rs._guide_blocks_by_heading(current_spec).values():
+    for blocks in _guide_blocks_by_heading(current_spec).values():
         for block in blocks:
             assert block in migrated_spec
     assert 'status: "active"' in migrated_task
     assert 'schedule_status' not in migrated_task
     assert 'review_limit: "5"' in migrated_task
     assert 'verify_limit: "5"' in migrated_task
-    for line in rs._implementation_guidance(current_task):
+    for line in _implementation_guidance(current_task):
         assert line in migrated_task
     assert '旧版固定说明' not in migrated_task
     assert task_dir / 'spec.md' in changed
@@ -1252,10 +1450,10 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert archive_dir / 'note.md' in changed
 
     # 幂等性：迁移后再查 status 为空，再次执行不写盘
-    assert rs._replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
-    assert rs._migrate_task_text(migrated_task, current_task) == migrated_task
-    assert rs.force_migrate_workflow_tasks(set()) == []
-    migrations, worktrees, errors = rs.workflow_migration_status(env['src'])
+    assert _replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
+    assert _migrate_task_text(migrated_task, current_task) == migrated_task
+    assert force_migrate_workflow_tasks(set()) == []
+    migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == [] and errors == []
 
     # 迁移后：store.py 扫描正常解析活跃与归档任务
@@ -1272,7 +1470,7 @@ def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
         '无\n\n## Review 处置',
         'status: blocked\nreview_limit: 正文不是字段\nverify_limit: 正文不是字段\n\n## Review 处置',
     )
-    migrated = rs._migrate_task_text(old_task, current_task)
+    migrated = _migrate_task_text(old_task, current_task)
     assert 'status: blocked' in migrated
     assert 'review_limit: 正文不是字段' in migrated
     assert 'verify_limit: 正文不是字段' in migrated
@@ -1296,15 +1494,15 @@ def test_force_migrate_workflow_rejects_registered_task_worktree(env):
     worktree = consumer.parent / 'consumer_t001'
     _git(consumer, 'worktree', 'add', '-b', 't001_old', str(worktree))
 
-    with pytest.raises(rs.SyncError, match='必须先完成或 rewind'):
-        rs.force_migrate_workflow_tasks(set())
+    with pytest.raises(ctx.SyncError, match='必须先完成或 rewind'):
+        force_migrate_workflow_tasks(set())
 
 
 def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env, monkeypatch):
     consumer = env['consumer']
     conv_file = consumer / "docs/blueprint/conventions.md"
     conv_file.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(rs, "CONVENTIONS_PATH", conv_file)
+    monkeypatch.setattr(ctx, "CONVENTIONS_PATH", conv_file)
 
     original_text = (
         "# 约定\n\n"
@@ -1316,10 +1514,10 @@ def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env,
     )
     conv_file.write_text(original_text, encoding="utf-8")
 
-    assert rs.conventions_migration_status() == [rs._rel(conv_file)]
+    assert conventions_migration_status() == [ctx._rel(conv_file)]
 
     changed = set()
-    reports = rs.migrate_conventions(changed)
+    reports = migrate_conventions(changed)
     assert len(reports) == 1
     assert conv_file in changed
 
@@ -1331,28 +1529,28 @@ def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env,
     assert "from task import" not in migrated_text
 
     # 幂等：再次执行无迁移
-    assert rs.conventions_migration_status() == []
-    assert rs.migrate_conventions(set()) == []
+    assert conventions_migration_status() == []
+    assert migrate_conventions(set()) == []
 
 
 def test_workflow_migration_blocks_when_git_worktree_fails(env, monkeypatch):
     """验证无法查询 git worktree 时拒绝放行 schema 迁移并 fail-closed 报错（Issue #22）。"""
     _install_current_workflow_templates(env["consumer"])
-    real_git = rs._git
+    real_git = sync_git
     def fake_git(repo, *args, **kwargs):
         if "worktree" in args:
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="simulated lock error")
         return real_git(repo, *args, **kwargs)
 
-    monkeypatch.setattr(rs, "_git", fake_git)
+    monkeypatch.setattr("template_sync.workflow_migration._git", fake_git)
 
     # 1. workflow_migration_status 报告阻塞错误
-    _, _, errors = rs.workflow_migration_status(env["src"])
+    _, _, errors = workflow_migration_status(env["src"])
     assert any("无法查询 git worktree" in err for err in errors)
 
     # 2. force_migrate_workflow_tasks 抛出 SyncError 阻断写盘
-    with pytest.raises(rs.SyncError, match="无法查询 git worktree"):
-        rs.force_migrate_workflow_tasks(set())
+    with pytest.raises(ctx.SyncError, match="无法查询 git worktree"):
+        force_migrate_workflow_tasks(set())
 
 
 def test_run_tests_timeout_handling(env, monkeypatch, capsys):
@@ -1361,7 +1559,7 @@ def test_run_tests_timeout_handling(env, monkeypatch, capsys):
         raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=120)
 
     monkeypatch.setattr(subprocess, "run", mock_run)
-    ret = rs._run_tests(env["consumer"])
+    ret = _run_tests(env["consumer"])
     assert ret is False
     err = capsys.readouterr().err
     assert "契约测试超时" in err
@@ -1381,8 +1579,8 @@ def test_sync_file_rejects_symlink_and_broken_symlink_target(env, tmp_path):
 
     link = consumer / "asset.txt"
     link.symlink_to(outside)
-    with pytest.raises(rs.SyncError, match="软链"):
-        rs.sync_file(source, link, set())
+    with pytest.raises(ctx.SyncError, match="软链"):
+        sync_file(source, link, set())
     assert outside.read_text(encoding="utf-8") == "outside-safe\n"
 
     broken_target = tmp_path / "missing-dir" / "created.txt"
@@ -1390,8 +1588,8 @@ def test_sync_file_rejects_symlink_and_broken_symlink_target(env, tmp_path):
     broken.symlink_to(broken_target)
     broken_source = env["src"] / "broken.txt"
     broken_source.write_text("template\n", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="软链"):
-        rs.sync_file(broken_source, broken, set())
+    with pytest.raises(ctx.SyncError, match="软链"):
+        sync_file(broken_source, broken, set())
     assert not broken_target.exists()
 
 
@@ -1413,15 +1611,15 @@ def test_link_skills_backs_up_and_rolls_back_real_directory(env, monkeypatch):
     real.mkdir(parents=True)
     (real / "sentinel.txt").write_text("keep\n", encoding="utf-8")
 
-    real_symlink = rs.os.symlink
+    real_symlink = os.symlink
 
     def fail_symlink(*args, **kwargs):
         raise OSError("simulated symlink failure")
 
-    monkeypatch.setattr(rs.os, "symlink", fail_symlink)
-    with pytest.raises(rs.SyncError, match="link-skills 失败"):
-        rs.cmd_link_skills(Namespace())
-    monkeypatch.setattr(rs.os, "symlink", real_symlink)
+    monkeypatch.setattr(os, "symlink", fail_symlink)
+    with pytest.raises(ctx.SyncError, match="link-skills 失败"):
+        cmd_link_skills(Namespace())
+    monkeypatch.setattr(os, "symlink", real_symlink)
 
     assert real.is_dir() and not real.is_symlink()
     assert (real / "sentinel.txt").read_text(encoding="utf-8") == "keep\n"
@@ -1434,21 +1632,21 @@ def test_registry_missing_skill_fails_closed_in_status_and_apply(env):
     (consumer / ".repo_template/skills/registry.json").write_text(
         json.dumps({"skills": {"task-run": {"role": "public"}}}), encoding="utf-8"
     )
-    with pytest.raises(rs.SyncError, match="未登记 skill"):
-        rs.opencode_commands_status()
-    with pytest.raises(rs.SyncError, match="未登记 skill"):
-        rs.sync_opencode_commands(set())
+    with pytest.raises(ctx.SyncError, match="未登记 skill"):
+        opencode_commands_status()
+    with pytest.raises(ctx.SyncError, match="未登记 skill"):
+        sync_opencode_commands(set())
 
 
 def test_init_merges_legacy_state_before_removing_it(env):
-    legacy = rs.LEGACY_STATE_PATH
+    legacy = ctx.LEGACY_STATE_PATH
     legacy.parent.mkdir(parents=True, exist_ok=True)
     legacy.write_text(json.dumps({
         "last_synced_commit": "legacy-sha",
         "last_synced_at": "2020-01-01T00:00:00+08:00",
         "user_prompts": [{"at": "2020-01-01", "text": "legacy prompt", "tags": []}],
     }), encoding="utf-8")
-    rs.cmd_init(Namespace(source=str(env["src"])))
+    cmd_init(Namespace(source=str(env["src"])))
     state = json.loads(env["state_file"].read_text())
     assert state["last_synced_commit"] == "legacy-sha"
     assert state["last_synced_at"] == "2020-01-01T00:00:00+08:00"
@@ -1476,8 +1674,8 @@ def test_url_status_plan_use_cache_without_pull(env, monkeypatch):
             raise AssertionError("refresh=False 不应 pull")
         return Result()
 
-    monkeypatch.setattr(rs, "_git", fake_git)
-    assert rs.resolve_src(state, refresh=False) == cache.resolve()
+    monkeypatch.setattr("template_sync.source._git", fake_git)
+    assert resolve_src(state, refresh=False) == cache.resolve()
     assert not any("pull" in args for args in calls)
 
 
@@ -1485,8 +1683,8 @@ def test_manifest_missing_commit_and_policy_non_object_raise_sync_error(env):
     env["state_file"].unlink()
     manifest = env["consumer"] / ".repo_template/sync_manifest.json"
     manifest.write_text("{}", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="resolved_commit"):
-        rs.read_state()
+    with pytest.raises(ctx.SyncError, match="resolved_commit"):
+        read_state()
 
     env["state_file"].write_text(json.dumps({
         "template_source": {"kind": "path", "value": str(env["src"])},
@@ -1495,21 +1693,21 @@ def test_manifest_missing_commit_and_policy_non_object_raise_sync_error(env):
     }), encoding="utf-8")
     policy = env["consumer"] / ".repo_template/sync_policy.json"
     policy.write_text("[]", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="JSON 对象"):
-        rs.read_state()
+    with pytest.raises(ctx.SyncError, match="JSON 对象"):
+        read_state()
 
 
 def test_git_timeout_is_reported_as_sync_error(env):
     def timeout(*args, **kwargs):
-        raise rs.subprocess.TimeoutExpired(cmd="git", timeout=30)
+        raise subprocess.TimeoutExpired(cmd="git", timeout=30)
 
-    old = rs.subprocess.run
-    rs.subprocess.run = timeout
+    old = subprocess.run
+    subprocess.run = timeout
     try:
-        with pytest.raises(rs.SyncError, match="超时"):
-            rs._git(env["consumer"], "status")
+        with pytest.raises(ctx.SyncError, match="超时"):
+            sync_git(env["consumer"], "status")
     finally:
-        rs.subprocess.run = old
+        subprocess.run = old
 
 
 def test_mcp_sanitizes_args_url_and_headers(env):
@@ -1522,7 +1720,7 @@ def test_mcp_sanitizes_args_url_and_headers(env):
             "env": {"API_TOKEN": "SECRET-F"},
         }
     }
-    clean = rs._sanitize_mcp_servers(servers)
+    clean = _sanitize_mcp_servers(servers)
     text = json.dumps(clean)
     for secret in ("SECRET-A", "SECRET-B", "SECRET-C", "SECRET-D", "SECRET-E", "SECRET-F"):
         assert secret not in text
@@ -1533,20 +1731,20 @@ def test_mcp_sanitizes_args_url_and_headers(env):
 
 def test_dirty_tree_rejects_secret_files(env):
     (env["src"] / ".repo_template/dummy.pem").write_text("secret\n", encoding="utf-8")
-    with pytest.raises(rs.SyncError, match="不可分发"):
-        rs._assert_distributable_tree(env["src"])
+    with pytest.raises(ctx.SyncError, match="不可分发"):
+        _assert_distributable_tree(env["src"])
     _git(env["src"], "add", "-A")
     _git(env["src"], "commit", "-m", "add secret")
     with pytest.raises(ValueError, match="不可分发"):
-        rs.export_template(env["src"], env["consumer"] / ".scratch/export-target")
+        export_template(env["src"], env["consumer"] / ".scratch/export-target")
 
 
 def test_prettierignore_header_marks_conditional_entries(env):
     """旧的单行豁免头升级为说明条件性条目的两行头（Issue #83）。"""
     ignore = env["consumer"] / ".prettierignore"
-    ignore.write_text(rs._PRETTIERIGNORE_OLD_HEADER + "\n", encoding="utf-8")
-    rs.merge_prettierignore(set())
+    ignore.write_text(_PRETTIERIGNORE_OLD_HEADER + "\n", encoding="utf-8")
+    merge_prettierignore(set())
     text = ignore.read_text(encoding="utf-8")
-    assert rs._PRETTIERIGNORE_OLD_HEADER not in text
+    assert _PRETTIERIGNORE_OLD_HEADER not in text
     assert "按需生成" in text
     assert ".repo_template/sync_manifest.json" in text

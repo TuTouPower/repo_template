@@ -19,7 +19,10 @@ from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.file_transaction import FileTransaction
 from repo_task.monitoring import review_scope_fingerprint
 from repo_task.validation import ValidationError, run_checks
-import repo_sync as rs
+from template_sync import context as ctx
+from template_sync.apply import cmd_apply
+from template_sync.source import resolve_src
+from template_sync.state import active_prompts, cmd_init, cmd_prompt, read_state
 from export_template import export_template
 from skill_registry import render_registry
 
@@ -199,8 +202,8 @@ def test_sync_apply_runs_real_gates_and_succeeds(env, monkeypatch):
         "## test_cmd\n\n无",
         "## test_cmd\n\n```bash\npython3 -c \"import sys; sys.exit(0)\"\n```",
     ))
-    monkeypatch.setattr(rs, "_run_tests", lambda _: True)
-    result = rs.cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
+    monkeypatch.setattr("template_sync.apply._run_tests", lambda _: True)
+    result = cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
     assert result == 0
     assert (consumer / ".repo_template/scripts/task.py").exists()
 
@@ -212,8 +215,8 @@ def test_sync_business_failure_restores_assets_state_and_preserves_backup(env, m
     agents.write_text("private project rules\n")
     policy = consumer / "docs/blueprint/testing.md"
     policy.write_text(policy.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\nexit 7\n```"))
-    monkeypatch.setattr(rs, "_run_tests", lambda _: True)
-    result = rs.cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
+    monkeypatch.setattr("template_sync.apply._run_tests", lambda _: True)
+    result = cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
     assert result == 1
     assert agents.read_text() == "private project rules\n"
     assert env["state_file"].read_bytes() == old_state
@@ -291,57 +294,57 @@ def test_source_runner_supports_all_layouts_without_preparatory_asset_writes(env
 
 def test_dirty_source_requires_explicit_development_mode(env):
     (env["src"] / ".repo_template/scripts/task.py").write_text("changed\n")
-    with pytest.raises(rs.SyncError, match="dirty"):
-        rs.cmd_apply(Namespace(skip_tests=True, decisions={}))
+    with pytest.raises(ctx.SyncError, match="dirty"):
+        cmd_apply(Namespace(skip_tests=True, decisions={}))
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()
 
 
 def test_sync_rejects_source_drift_before_asset_transaction(env):
-    with pytest.raises(rs.SyncError, match="来源版本已变化"):
-        rs.cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit="0" * 40))
+    with pytest.raises(ctx.SyncError, match="来源版本已变化"):
+        cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit="0" * 40))
     assert not (env["consumer"] / ".scratch/repo_sync_rollback").exists()
 
 
 def test_url_cache_never_silently_reuses_a_different_source(env):
     state = {"template_source": {"kind": "url", "value": env["src"].as_uri()}}
-    rs.resolve_src(state)
+    resolve_src(state)
     other = env["src"].parent / "other_source"
     shutil.copytree(env["src"], other)
     state["template_source"]["value"] = other.as_uri()
-    with pytest.raises(rs.SyncError, match="origin 与 template_source 不符"):
-        rs.resolve_src(state)
+    with pytest.raises(ctx.SyncError, match="origin 与 template_source 不符"):
+        resolve_src(state)
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()
 
 
 def test_fixed_checkout_keeps_canonical_url_identity_and_supports_offline_apply(env, monkeypatch):
     identity = env["src"].as_uri()
     state = {"template_source": {"kind": "url", "value": identity}}
-    checkout = rs.resolve_src(state)
-    monkeypatch.setattr(rs, "SOURCE_OVERRIDE", identity)
-    monkeypatch.setattr(rs, "CHECKOUT_OVERRIDE", checkout)
-    assert rs.cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit=env["head"])) == 0
+    checkout = resolve_src(state)
+    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", identity)
+    monkeypatch.setattr(ctx, "CHECKOUT_OVERRIDE", checkout)
+    assert cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit=env["head"])) == 0
     stored = json.loads(env["state_file"].read_text())
     assert stored["template_source"] == {"kind": "url", "value": identity}
     assert stored["resolved_checkout"] == str(checkout)
 
 
 def test_shared_sync_policy_and_version_survive_local_state_loss(env):
-    rs.cmd_prompt(Namespace(action="add", text="保留业务规则", tags="business", scope="shared"))
-    assert rs.cmd_apply(Namespace(skip_tests=True, decisions={})) == 0
-    assert any(prompt["text"] == "保留业务规则" for prompt in rs.active_prompts(rs.read_state()))
+    cmd_prompt(Namespace(action="add", text="保留业务规则", tags="business", scope="shared"))
+    assert cmd_apply(Namespace(skip_tests=True, decisions={})) == 0
+    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state()))
     env["state_file"].unlink()
-    assert rs.read_state()["last_synced_commit"] == env["head"]
-    rs.cmd_init(Namespace(source=str(env["src"])))
-    assert rs.read_state()["last_synced_commit"] == env["head"]
-    assert any(prompt["text"] == "保留业务规则" for prompt in rs.active_prompts(rs.read_state()))
+    assert read_state()["last_synced_commit"] == env["head"]
+    cmd_init(Namespace(source=str(env["src"])))
+    assert read_state()["last_synced_commit"] == env["head"]
+    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state()))
 
 
 def test_sync_state_write_failure_restores_entire_upgrade(env, monkeypatch):
     previous = env["state_file"].read_bytes()
     def fail_write(_):
         raise OSError("simulated state write failure")
-    monkeypatch.setattr(rs, "write_state", fail_write)
-    assert rs.cmd_apply(Namespace(skip_tests=True, decisions={})) == 1
+    monkeypatch.setattr("template_sync.apply.write_state", fail_write)
+    assert cmd_apply(Namespace(skip_tests=True, decisions={})) == 1
     assert env["state_file"].read_bytes() == previous
     assert not (env["consumer"] / ".repo_template/sync_manifest.json").exists()
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()
