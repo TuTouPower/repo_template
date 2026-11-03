@@ -44,7 +44,7 @@ def repo(tmp_path: Path) -> Path:
     (repo / ".gitignore").write_text("ignored/\n", encoding="utf-8")
     (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
     (repo / "docs").mkdir()
-    (repo / "docs" / "note.md").write_text("doc base\n", encoding="utf-8")
+    (repo / "docs" / "progress.md").write_text("doc base\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -88,14 +88,14 @@ def test_deliverable_baseline_unavailable_degrades_to_existence(repo):
 def test_changed_files_covers_tracked_untracked_deleted_and_exclude(repo):
     baseline = _baseline(repo)
     (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
-    _git(repo, "rm", "-qf", "docs/note.md")
+    _git(repo, "rm", "-qf", "docs/progress.md")
     (repo / "new.txt").write_text("fresh\n", encoding="utf-8")
     (repo / "docs").mkdir(exist_ok=True)
     (repo / "docs" / "new_doc.md").write_text("doc\n", encoding="utf-8")
 
     result = _run(repo, "changed-files", baseline)
     paths = set(result.stdout.splitlines())
-    assert paths == {"tracked.txt", "docs/note.md", "new.txt", "docs/new_doc.md"}
+    assert paths == {"tracked.txt", "docs/progress.md", "new.txt", "docs/new_doc.md"}
 
     result = _run(repo, "changed-files", baseline, "--exclude", "docs/*")
     paths = set(result.stdout.splitlines())

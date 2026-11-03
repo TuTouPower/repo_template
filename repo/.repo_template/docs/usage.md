@@ -133,7 +133,7 @@ task 状态恢复、迁移备份、`ledger import` 与 `goal --reset` 见 `recov
 
 ## 门禁命令的执行边界
 
-`docs/blueprint/testing.md` 的 `doctor_cmd` / `test_cmd` / `blackbox_verify` 由执行者按 task-work 流程运行，并把结果写入 `note.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`）的 tests/blackbox；reviewer 独立复跑。`task.py preflight` / `finish` / `integrate` 只校验章节存在与格式，不代为执行命令。`repo_sync.py apply` 在模板同步时执行这些命令作为同步门禁。
+`docs/blueprint/testing.md` 的 `doctor_cmd` / `test_cmd` / `blackbox_verify` 由执行者按 task-work 流程运行，并把结果写入 `progress.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`）的 tests/blackbox；reviewer 独立复跑。`task.py preflight` / `finish` / `integrate` 只校验章节存在与格式，不代为执行命令。`repo_sync.py apply` 在模板同步时执行这些命令作为同步门禁。
 
 ## 状态行 Hook 与执行范围
 
@@ -150,6 +150,6 @@ pending 归档必须提供非空 `--reason`，说明处理结果、验证依据�
 python3 .repo_template/scripts/pending.py archive p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
 
-finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 note.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
+finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 progress.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
 Python 3.9 是模板脚本最低版本，CI 覆盖 3.9 与 3.14。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。

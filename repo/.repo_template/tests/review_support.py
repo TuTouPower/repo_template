@@ -58,7 +58,7 @@ def pass_report(scope, spec_text, round_no=1, tick='TICK-VALID'):
 
 
 def ensure_review_evidence(worktree, task_dir, anchor):
-    fm, _ = parse_front_matter(task_dir / 'note.md')
+    fm, _ = parse_front_matter(task_dir / 'progress.md')
     spec = task_dir / 'task.md'
     spec_text = spec.read_text(encoding='utf-8') if spec.is_file() else ''
     names = ('general',) if fm.get('review_level') == 'single' else ('code', 'test')
@@ -80,5 +80,5 @@ def configure_project_verification(repo):
                     '## doctor_cmd\n\n无\n\n## test_cmd\n\n无\n\n## blackbox_verify\n\n无\n', encoding='utf-8')
     index = repo / 'docs/specs_index.md'
     index.write_text('# 当前生效 spec 清单\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n', encoding='utf-8')
-    for task in (repo / 'docs/tasks').glob('t*/note.md'):
+    for task in (repo / 'docs/tasks').glob('t*/progress.md'):
         task.write_text(task.read_text(encoding='utf-8') + '\n- specs_index: not_applicable: 隔离工作流测试不修改长期需求规格。\n', encoding='utf-8')

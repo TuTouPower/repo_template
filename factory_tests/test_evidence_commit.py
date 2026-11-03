@@ -41,7 +41,7 @@ def _make_stale(repo):
 
 
 def _write_pass_reports(worktree, *, tick="TICK-VALID", round_no=2, task_rel=REL):
-    fm, _ = parse_front_matter(worktree / task_rel / "note.md")
+    fm, _ = parse_front_matter(worktree / task_rel / "progress.md")
     scope = review_scope_fingerprint(fm["diff_anchor"], task_rel, repo_root=worktree)
     assert scope
     spec_text = (worktree / task_rel / "task.md").read_text(encoding="utf-8")
@@ -71,7 +71,7 @@ def _verify(identity):
 
 def test_evidence_files_derive_from_review_process_files_without_handoff():
     assert set(EVIDENCE_COMMIT_FILES) == set(REVIEW_PROCESS_FILES) - {"handoff.json"}
-    assert {"note.md", "review_code.md", "review_test.md", "review_general.md"} <= set(EVIDENCE_COMMIT_FILES)
+    assert {"progress.md", "review_code.md", "review_test.md", "review_general.md"} <= set(EVIDENCE_COMMIT_FILES)
     assert "task.md" not in EVIDENCE_COMMIT_FILES
 
 
@@ -269,7 +269,7 @@ def test_review_ac_rows_must_match_committed_task_md_at_cleanup(git_repo):
     """J3：integrate 门禁须读取已提交的 task.md，报告 AC 行与其编号不一致时不放行。"""
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     w = _worktree(git_repo, "t001")
-    fm, _ = parse_front_matter(w / REL / "note.md")
+    fm, _ = parse_front_matter(w / REL / "progress.md")
     scope = review_scope_fingerprint(fm["diff_anchor"], REL, repo_root=w)
     spec_text = (w / REL / "task.md").read_text(encoding="utf-8")
     assert "AC-001" in spec_text

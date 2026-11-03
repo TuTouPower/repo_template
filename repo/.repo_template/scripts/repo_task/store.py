@@ -109,7 +109,7 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
     """扫描指定 commit/ref 中的 task，不签出、不写工作区。
 
     与 scan_tasks() 一致：只枚举 docs/tasks 与 docs/archive/tasks 下一级目录，
-    每个目录必须存在根 note.md；嵌套 note.md 忽略，缺根 note.md 报数据损坏。
+    每个目录必须存在根 progress.md；嵌套 progress.md 忽略，缺根 progress.md 报数据损坏。
     """
     r = _git([
         "ls-tree", "-r", "--name-only", ref, "--",
@@ -325,7 +325,7 @@ def discover_effective_sources() -> dict[str, dict]:
     """每个有效 task 的状态 + 读取来源与位置。
 
     返回 tid -> {tid, slug, title, status, note, source, read_at}：
-    - source="worktree"：read_at=worktree 绝对路径（在其中读 note.md / 跑 show）
+    - source="worktree"：read_at=worktree 绝对路径（在其中读 progress.md / 跑 show）
     - source="branch"：read_at=未合并分支 short name（用 show/list/preflight --ref）
     - source="main"：read_at=None（主干文档即权威）
     只读；供 skill 依「task 状态读取优先级」在正确位置读取 task。
@@ -365,7 +365,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
         if not match:
             continue
         owner_tid = match.group(1)
-        # 单个 worktree 的 note.md 损坏（agent 写一半崩溃）不得让整个
+        # 单个 worktree 的 progress.md 损坏（agent 写一半崩溃）不得让整个
         # ps/reconcile/view 失败：标记为脏状态并继续观察其余 task。
         try:
             tasks = scan_tasks_in_worktree(path)
@@ -395,7 +395,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
     return [(tid, task, *sources[tid]) for tid, task in effective.items()]
 
 def load_task(tid: str) -> tuple[dict, Path, dict, str]:
-    """返回 (索引记录, note.md 路径, front matter, 正文)。"""
+    """返回 (索引记录, progress.md 路径, front matter, 正文)。"""
     task = find_task(tid)
     if not task:
         sys.exit(

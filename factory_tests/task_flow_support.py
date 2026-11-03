@@ -79,11 +79,11 @@ def prepare_finish(
         spec.write_text(spec.read_text(encoding="utf-8").replace("- [ ] AC-001", "- [x] AC-001"),
                         encoding="utf-8")
     if summary:
-        fill_summary(task_dir / "note.md")
+        fill_summary(task_dir / "progress.md")
     if evidence:
         for name in ("review_code.md", "review_test.md", "review_general.md"):
             (task_dir / name).unlink(missing_ok=True)  # 内容变化后旧证据必然 stale，重新生成
-        fm, _ = parse_front_matter(task_dir / "note.md")
+        fm, _ = parse_front_matter(task_dir / "progress.md")
         ensure_review_evidence(worktree, task_dir, fm["diff_anchor"])
     message_file = worktree.parent / f"{worktree.name}_commit_message.txt"
     message_file.write_text(message, encoding="utf-8")

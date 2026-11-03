@@ -61,8 +61,8 @@ SPEC_REQUIRED_HEADINGS = (
 SPEC_GUIDE_OPEN = "<!-- 规范（门禁必留，不得删除） -->"
 SPEC_GUIDE_CLOSE = "<!-- /规范 -->"
 # task 状态与过程文件名及其必需标题：全仓单一来源，脚本不得硬编码文件名。
-PROGRESS_FILE = "note.md"
-PROGRESS_TITLE = "Task 过程总账"
+PROGRESS_FILE = "progress.md"
+PROGRESS_TITLE = "Task 进展"
 PROGRESS_REQUIRED_HEADINGS = (
     (1, PROGRESS_TITLE),
     (2, "实施笔记"),

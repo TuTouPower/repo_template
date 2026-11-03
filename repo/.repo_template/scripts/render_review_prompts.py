@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""render_review_prompts.py - 从 note.md front matter 渲染 full/single reviewer 完整 prompt。
+"""render_review_prompts.py - 从 progress.md front matter 渲染 full/single reviewer 完整 prompt。
 
 提示词正文存于 .repo_template/docs/review_prompts/ 下四个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt / general_prompt.txt）。
 review_level=full 使用 code + test；review_level=single 使用 general。
@@ -9,7 +9,7 @@ reviewer 不再自行去读 task：契约区与上下文区正文直接注入 pr
 
 用法：
   python3 .repo_template/scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
-  python3 .repo_template/scripts/render_review_prompts.py --note docs/tasks/t001_my_slug/note.md
+  python3 .repo_template/scripts/render_review_prompts.py --progress docs/tasks/t001_my_slug/progress.md
   python3 .repo_template/scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
 
 必填 front matter：tid, slug, diff_anchor
@@ -289,7 +289,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--task", "--note", dest="task", help=f"{PROGRESS_FILE} 路径")
+    parser.add_argument("--task", "--progress", dest="task", help=f"{PROGRESS_FILE} 路径")
     parser.add_argument("--task-dir", help=f"task 目录（内含 {PROGRESS_FILE}）")
     parser.add_argument("--out-dir", help="输出目录；不填则 stdout")
     args = parser.parse_args()

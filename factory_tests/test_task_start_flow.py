@@ -32,7 +32,7 @@ def _valid_spec(unknown_contract_item="外部行为：已核实"):
 
 
 def _valid_task_body():
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "note.md")
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "progress.md")
     return body
 
 
@@ -59,7 +59,7 @@ def git_repo(tmp_path, monkeypatch):
         task_dir = tasks / f"{tid}_{slug}"
         shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
         write_front_matter(
-            task_dir / "note.md",
+            task_dir / "progress.md",
             {
                 "tid": tid,
                 "slug": slug,
@@ -222,13 +222,13 @@ def test_add_copies_validated_template(git_repo):
     assert result.returncode == 0, result.stdout + result.stderr
     task_dir = git_repo / "docs/tasks/t004_delta"
     assert task_dir.is_dir()
-    _, body = parse_front_matter(task_dir / "note.md")
+    _, body = parse_front_matter(task_dir / "progress.md")
     assert "## 实施笔记\n\n" in body
     assert "\n无\n\n## Review 处置" in body
 
 
 def test_add_rejects_invalid_template_before_copy(git_repo):
-    template_task = git_repo / ".repo_template/docs/task_template/note.md"
+    template_task = git_repo / ".repo_template/docs/task_template/progress.md"
     template_task.write_text(
         template_task.read_text(encoding="utf-8").replace(
             "\n无\n\n## Review 处置",
@@ -266,11 +266,11 @@ def test_start_keeps_main_unchanged_and_activates_only_worktree(git_repo):
     assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == initial_head
     assert _git(worktree, "status", "--porcelain").stdout.split() == [
         "M",
-        "docs/tasks/t001_alpha/note.md",
+        "docs/tasks/t001_alpha/progress.md",
     ]
 
-    main_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
-    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/note.md")
+    main_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
+    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/progress.md")
     assert main_fm["status"] == "backlog"
     assert main_fm["branch"] == ""
     assert worktree_fm["status"] == "active"
@@ -299,7 +299,7 @@ def test_start_ignores_dirty_primary_worktree(git_repo):
     assert worktree.is_dir()
     assert not (worktree / "unrelated.txt").exists()
     assert (git_repo / "unrelated.txt").read_text(encoding="utf-8") == "dirty"
-    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/note.md")
+    worktree_fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/progress.md")
     assert worktree_fm["status"] == "active"
 
 
@@ -490,7 +490,7 @@ def test_rewind_discards_uncommitted_activation_and_removes_empty_branch(git_rep
 
     assert not worktree.exists()
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == ""
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert fm["status"] == "backlog"
     assert fm["worktree"] == ""
     assert "rewound: effective=active -> backlog" in fm["note"]
@@ -508,7 +508,7 @@ def test_start_always_forks_from_current_main_head(git_repo):
 
     for tid, slug in (("t001", "alpha"), ("t002", "beta")):
         worktree = _worktree_path(git_repo, tid)
-        fm, _ = parse_front_matter(worktree / f"docs/tasks/{tid}_{slug}/note.md")
+        fm, _ = parse_front_matter(worktree / f"docs/tasks/{tid}_{slug}/progress.md")
         assert fm["status"] == "active"
         assert fm["diff_anchor"] == main_head
         assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == main_head
@@ -546,8 +546,8 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
     invalid = _task_cli(git_repo, "list", "--ref", branch, "--rebuild")
 
     assert "status" in main_show.stdout and "backlog" in main_show.stdout
-    assert "note_md" in main_show.stdout and "task_md" in main_show.stdout
-    assert "task.md" in main_show.stdout and "note.md" in main_show.stdout
+    assert "progress_md" in main_show.stdout and "task_md" in main_show.stdout
+    assert "task.md" in main_show.stdout and "progress.md" in main_show.stdout
     assert ref_show.returncode == 0 and "done" in ref_show.stdout
     assert "source_ref" in ref_show.stdout
     assert "task.md" in ref_show.stdout
@@ -765,7 +765,7 @@ def test_chain_start_from_previous_completed_branch(git_repo):
 
     second = _worktree_path(git_repo, "t002")
     assert second.is_dir()
-    fm, _ = parse_front_matter(second / "docs/tasks/t002_beta/note.md")
+    fm, _ = parse_front_matter(second / "docs/tasks/t002_beta/progress.md")
     assert fm["status"] == "active"
     # t002 分支从 t001 分支创建，包含其 commit
     assert _git(
@@ -944,7 +944,7 @@ def test_start_rejects_missing_scaffold_before_mutation(git_repo):
 
 
 def test_backlog_preflight_rejects_empty_implementation_notes(git_repo):
-    task_md = git_repo / "docs/tasks/t001_alpha/note.md"
+    task_md = git_repo / "docs/tasks/t001_alpha/progress.md"
     text = task_md.read_text(encoding="utf-8").replace(
         "\n无\n\n## Review 处置",
         "\n## Review 处置",
@@ -1045,7 +1045,7 @@ def test_rewind_keeps_branch_with_own_commits_and_guides(git_repo, capsys):
     # 分支保留（own_commits=True，不删除）
     assert _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip() == "t001_alpha"
     assert not worktree.exists()
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert fm["status"] == "backlog"
     assert fm["branch"] == ""
 
@@ -1169,8 +1169,8 @@ def test_drop_from_main_rejects_stale_backlog_with_active_worktree(git_repo):
     assert result.returncode != 0
     assert "滞后" in result.stderr
     # main 副本未被归档
-    assert (git_repo / "docs/tasks/t001_alpha/note.md").exists()
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    assert (git_repo / "docs/tasks/t001_alpha/progress.md").exists()
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert fm["status"] == "backlog"
 
 
@@ -1191,7 +1191,7 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
 
     assert result.returncode == 0, result.stderr
     fm, _ = parse_front_matter(
-        git_repo / "docs/archive/tasks/t001_alpha/note.md"
+        git_repo / "docs/archive/tasks/t001_alpha/progress.md"
     )
     assert fm["status"] == "dropped"
     active = json.loads((git_repo / "docs/tasks_index.json").read_text(encoding="utf-8"))
@@ -1213,7 +1213,7 @@ def test_drop_keeps_archived_state_when_index_rebuild_fails(git_repo, monkeypatc
     message = str(excinfo.value)
     assert "派生索引重建失败" in message
     assert "归档状态已生效" in message
-    archived = git_repo / "docs/archive/tasks/t001_alpha/note.md"
+    archived = git_repo / "docs/archive/tasks/t001_alpha/progress.md"
     assert archived.is_file()
     fm, _ = parse_front_matter(archived)
     assert fm["status"] == "dropped"
@@ -1237,7 +1237,7 @@ def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypa
     assert "permission denied" in message
     assert "回滚" in message
     fm, _ = parse_front_matter(
-        git_repo / "docs/tasks/t001_alpha/note.md"
+        git_repo / "docs/tasks/t001_alpha/progress.md"
     )
     assert fm["status"] == "backlog"
     assert not (git_repo / "docs/archive/tasks/t001_alpha").exists()
@@ -1381,28 +1381,28 @@ def test_edit_allows_fresh_backlog(git_repo):
     result = _task_cli(git_repo, "edit", "t001", "--review-level", "single")
 
     assert result.returncode == 0, result.stderr
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert fm["review_level"] == "single"
 
 
 def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
-    """scan_tasks_at_ref 忽略 task 目录内嵌套的 note.md，不误判为独立 task。"""
+    """scan_tasks_at_ref 忽略 task 目录内嵌套的 progress.md，不误判为独立 task。"""
     _start(git_repo)
     _finish_commit_cleanup(git_repo, "t001", "alpha")
-    # 在 t002 目录放一个嵌套 note.md（模拟附件），提交到 t002 分支
+    # 在 t002 目录放一个嵌套 progress.md（模拟附件），提交到 t002 分支
     _start(git_repo, "t002")
     worktree = _worktree_path(git_repo, "t002")
     nested = worktree / "docs/tasks/t002_beta/attachments"
     nested.mkdir(parents=True)
     write_front_matter(
-        nested / "note.md",
+        nested / "progress.md",
         {"tid": "t999", "slug": "fake", "status": "backlog"},
         "nested attachment\n",
     )
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "add nested attachment")
 
-    # --ref 读 t002 分支：嵌套 note.md 不应被当成独立 task（否则 t999 目录名校验报错）
+    # --ref 读 t002 分支：嵌套 progress.md 不应被当成独立 task（否则 t999 目录名校验报错）
     tasks = store.scan_tasks_at_ref("t002_beta")
     tids = [t["tid"] for t in tasks]
     assert "t999" not in tids
@@ -1410,10 +1410,10 @@ def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
 
 
 def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
-    """scan_tasks_at_ref 对缺根 note.md 的目录报数据损坏而非静默忽略。"""
+    """scan_tasks_at_ref 对缺根 progress.md 的目录报数据损坏而非静默忽略。"""
     _start(git_repo)
     _finish_commit_cleanup(git_repo, "t001", "alpha")
-    # 在 t002 分支建一个无 note.md 的目录
+    # 在 t002 分支建一个无 progress.md 的目录
     _start(git_repo, "t002")
     worktree = _worktree_path(git_repo, "t002")
     broken = worktree / "docs/tasks/t005_broken"
@@ -1422,7 +1422,7 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", "add broken dir")
 
-    with pytest.raises(ctx.TaskDataError, match="缺 note.md"):
+    with pytest.raises(ctx.TaskDataError, match="缺 progress.md"):
         store.scan_tasks_at_ref("t002_beta")
 
 
@@ -1434,12 +1434,12 @@ def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_r
     active_t001.mkdir(parents=True, exist_ok=True)
     archive_t001.mkdir(parents=True, exist_ok=True)
     write_front_matter(
-        active_t001 / "note.md",
+        active_t001 / "progress.md",
         {"tid": "t001", "slug": "dup", "status": "backlog"},
         "active t001\n",
     )
     write_front_matter(
-        archive_t001 / "note.md",
+        archive_t001 / "progress.md",
         {"tid": "t001", "slug": "dup", "status": "done"},
         "archive t001\n",
     )
@@ -1496,7 +1496,7 @@ def test_rewind_audit_failure_persists_trace_and_reports_real_state(git_repo, mo
         lifecycle.cmd_rewind(
             argparse.Namespace(tid="t001", to=None, reason="audit failure", yes=True)
         )
-    note = git_repo / "docs/tasks/t001_alpha/note.md"
+    note = git_repo / "docs/tasks/t001_alpha/progress.md"
     fm, body = parse_front_matter(note)
     assert fm["status"] == "backlog"
     assert "rewind audit failed" in fm["note"]
@@ -1504,9 +1504,9 @@ def test_rewind_audit_failure_persists_trace_and_reports_real_state(git_repo, mo
 
 
 def test_cli_edit_symlink_note_fails_with_unified_error(git_repo):
-    """软链 note.md 的写入拒绝应经 CLI 统一出口，而不是裸 traceback（Issue #76）。"""
-    note = git_repo / "docs/tasks/t001_alpha/note.md"
-    target = git_repo / "docs/tasks/t001_alpha/real_note.md"
+    """软链 progress.md 的写入拒绝应经 CLI 统一出口，而不是裸 traceback（Issue #76）。"""
+    note = git_repo / "docs/tasks/t001_alpha/progress.md"
+    target = git_repo / "docs/tasks/t001_alpha/real_progress.md"
     target.write_text(note.read_text(encoding="utf-8"), encoding="utf-8")
     note.unlink()
     note.symlink_to(target)
@@ -1550,7 +1550,7 @@ def test_add_initializes_empty_schedule_edges_without_status(git_repo):
     result = _task_cli(git_repo, "add", "--title", "delta", "--slug", "delta")
 
     assert result.returncode == 0, result.stderr
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t004_delta/note.md")
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t004_delta/progress.md")
     assert fm["depends_on"] == ""
     assert fm["conflicts_with"] == ""
     assert "schedule_status" not in fm
@@ -1576,9 +1576,9 @@ def test_edit_updates_dependencies_and_one_sided_conflict_hint(git_repo):
 
     assert dependency.returncode == 0, dependency.stderr
     assert conflict.returncode == 0, conflict.stderr
-    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
-    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
-    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/note.md")
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/progress.md")
     assert second["depends_on"] == "t001,t003"
     assert "schedule_status" not in second
     assert first["conflicts_with"] == "t003"
@@ -1586,8 +1586,8 @@ def test_edit_updates_dependencies_and_one_sided_conflict_hint(git_repo):
 
     removed = _task_cli(git_repo, "edit", "t001", "--conflicts-remove", "t003")
     assert removed.returncode == 0, removed.stderr
-    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
-    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/note.md")
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/progress.md")
     assert first["conflicts_with"] == ""
     assert third.get("conflicts_with", "") == ""
 
@@ -1597,8 +1597,8 @@ def test_conflicts_remove_clears_peer_only_declaration(git_repo):
     assert declared.returncode == 0, declared.stderr
     removed = _task_cli(git_repo, 'edit', 't001', '--conflicts-remove', 't003')
     assert removed.returncode == 0, removed.stderr
-    first, _ = parse_front_matter(git_repo / 'docs/tasks/t001_alpha/note.md')
-    third, _ = parse_front_matter(git_repo / 'docs/tasks/t003_gamma/note.md')
+    first, _ = parse_front_matter(git_repo / 'docs/tasks/t001_alpha/progress.md')
+    third, _ = parse_front_matter(git_repo / 'docs/tasks/t003_gamma/progress.md')
     assert first['conflicts_with'] == ''
     assert third['conflicts_with'] == ''
     view = _task_cli(git_repo, 'view')
@@ -1619,7 +1619,7 @@ def test_edit_allows_conflict_hint_to_active_task_without_peer_write(git_repo):
     _start(git_repo, "t001")
     result = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
     assert result.returncode == 0, result.stderr
-    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
     assert second["conflicts_with"] == "t001"
 
 
@@ -1634,16 +1634,16 @@ def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
     # t001 已归档 done；t002 单边声明冲突应成功（不写 t001 反向边）
     declared = _task_cli(git_repo, "edit", "t002", "--conflicts-with", "t001")
     assert declared.returncode == 0, declared.stderr
-    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
+    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
     assert t002_fm["conflicts_with"] == "t001"
     t001_fm, _ = parse_front_matter(
-        git_repo / "docs/archive/tasks/t001_alpha/note.md"
+        git_repo / "docs/archive/tasks/t001_alpha/progress.md"
     )
     assert t001_fm.get("conflicts_with", "") == ""
 
     removed = _task_cli(git_repo, "edit", "t002", "--conflicts-remove", "t001")
     assert removed.returncode == 0, removed.stderr
-    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
+    t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
     assert t002_fm["conflicts_with"] == ""
 
 
@@ -1657,7 +1657,7 @@ def test_drop_rejects_referenced_task(git_repo):
 
     assert dropped.returncode != 0
     assert "t002.depends_on" in dropped.stderr
-    assert (git_repo / "docs/tasks/t001_alpha/note.md").exists()
+    assert (git_repo / "docs/tasks/t001_alpha/progress.md").exists()
 
 
 def test_view_dag_conflicts_and_groups(git_repo):
@@ -1747,11 +1747,11 @@ def test_view_reads_done_from_main_archive(git_repo):
 
 def test_view_rejects_dependency_cycle(git_repo):
     """view 对依赖环报错（edit 已在写入前拦截新环，此处构造历史脏数据）。"""
-    first_path = git_repo / "docs/tasks/t001_alpha/note.md"
+    first_path = git_repo / "docs/tasks/t001_alpha/progress.md"
     first, first_body = parse_front_matter(first_path)
     first["depends_on"] = "t002"
     write_front_matter(first_path, first, first_body)
-    second_path = git_repo / "docs/tasks/t002_beta/note.md"
+    second_path = git_repo / "docs/tasks/t002_beta/progress.md"
     second, second_body = parse_front_matter(second_path)
     second["depends_on"] = "t001"
     write_front_matter(second_path, second, second_body)
@@ -1771,10 +1771,10 @@ def test_edit_rejects_dependency_cycle_before_write(git_repo):
 
     assert second.returncode != 0
     assert "依赖环" in second.stderr
-    # note.md 未被污染，index 保持上一次重建结果
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
+    # progress.md 未被污染，index 保持上一次重建结果
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
     assert fm.get("depends_on", "") == ""
-    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert first_fm["depends_on"] == "t002"
 
 
@@ -1791,7 +1791,7 @@ def test_edit_rejects_multi_node_cycle(git_repo):
 
     assert blocked.returncode != 0
     assert "依赖环" in blocked.stderr
-    fm, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/note.md")
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/progress.md")
     assert fm.get("depends_on", "") == ""
 
 
@@ -1800,7 +1800,7 @@ def test_edit_cycle_resolved_by_dependency_removal(git_repo):
     first = _task_cli(git_repo, "edit", "t001", "--depends-on", "t002")
     assert first.returncode == 0, first.stderr
     # 手动注入 t002 -> t001 环，模拟绕过 edit 的历史脏数据
-    second_path = git_repo / "docs/tasks/t002_beta/note.md"
+    second_path = git_repo / "docs/tasks/t002_beta/progress.md"
     second, second_body = parse_front_matter(second_path)
     second["depends_on"] = "t001"
     write_front_matter(second_path, second, second_body)
@@ -1810,7 +1810,7 @@ def test_edit_cycle_resolved_by_dependency_removal(git_repo):
     removed = _task_cli(git_repo, "edit", "t001", "--depends-remove", "t002")
 
     assert removed.returncode == 0, removed.stderr
-    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
+    first_fm, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
     assert first_fm["depends_on"] == ""
 
 
@@ -1818,12 +1818,12 @@ def test_edit_cycle_resolved_by_dependency_removal(git_repo):
 
 def test_view_reads_historical_conflict_as_undirected(git_repo):
     """单向冲突声明（历史脏数据）按无向处理：双方互相阻塞，都进冲突组。"""
-    first_path = git_repo / "docs/tasks/t001_alpha/note.md"
+    first_path = git_repo / "docs/tasks/t001_alpha/progress.md"
     first, first_body = parse_front_matter(first_path)
     first["conflicts_with"] = "t002"
     write_front_matter(first_path, first, first_body)
 
-    second_path = git_repo / "docs/tasks/t002_beta/note.md"
+    second_path = git_repo / "docs/tasks/t002_beta/progress.md"
     second, second_body = parse_front_matter(second_path)
     second["conflicts_with"] = ""
     write_front_matter(second_path, second, second_body)
@@ -1841,7 +1841,7 @@ def test_view_reads_historical_conflict_as_undirected(git_repo):
 
 def test_view_rejects_dangling_and_dropped_references(git_repo):
     """view 图校验：依赖/冲突引用不存在或 dropped task 均报错。"""
-    first_path = git_repo / "docs/tasks/t001_alpha/note.md"
+    first_path = git_repo / "docs/tasks/t001_alpha/progress.md"
     first, first_body = parse_front_matter(first_path)
     first["depends_on"] = "t999"
     write_front_matter(first_path, first, first_body)
@@ -1884,10 +1884,10 @@ def test_drop_ignores_archived_task_historical_edges(git_repo):
     """归档 done task 的历史调度边不应锁死活跃 task 的 drop。"""
     archived = git_repo / "docs/archive/tasks/t099_archived"
     archived.mkdir(parents=True)
-    template_task = git_repo / ".repo_template/docs/task_template/note.md"
+    template_task = git_repo / ".repo_template/docs/task_template/progress.md"
     _, body = parse_front_matter(template_task)
     write_front_matter(
-        archived / "note.md",
+        archived / "progress.md",
         {
             "tid": "t099",
             "slug": "archived",
@@ -1912,7 +1912,7 @@ def test_drop_ignores_archived_task_historical_edges(git_repo):
 
 def test_edit_title_not_blocked_by_stale_dependency_edges(git_repo):
     """--title 等无关编辑不应被历史脏数据 depends_on/conflicts_with 卡住。"""
-    first_path = git_repo / "docs/tasks/t001_alpha/note.md"
+    first_path = git_repo / "docs/tasks/t001_alpha/progress.md"
     first, first_body = parse_front_matter(first_path)
     first["depends_on"] = "t999"
     first["conflicts_with"] = "t999"
@@ -1940,9 +1940,9 @@ def test_edit_supports_append_remove_and_clear_for_schedule_edges(git_repo):
         result = _task_cli(git_repo, "edit", *command)
         assert result.returncode == 0, result.stderr
 
-    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/note.md")
-    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/note.md")
-    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/note.md")
+    first, _ = parse_front_matter(git_repo / "docs/tasks/t001_alpha/progress.md")
+    second, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
+    third, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/progress.md")
     assert first["depends_on"] == ""
     assert first["conflicts_with"] == ""
     assert second.get("conflicts_with", "") == ""
@@ -1965,7 +1965,7 @@ def test_start_only_writes_topology_event_and_does_not_create_attempt(git_repo):
     result = _task_cli(git_repo, "start", "t001")
     assert result.returncode == 0, result.stderr
     worktree = git_repo.parent / "repo_t001"
-    fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/note.md")
+    fm, _ = parse_front_matter(worktree / "docs/tasks/t001_alpha/progress.md")
     assert fm["status"] == "active"
     assert fm["diff_anchor"] == initial
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == initial

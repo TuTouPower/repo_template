@@ -16,8 +16,8 @@
   general_verdict=PASS|FAIL|MISSING    # single 才有
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
-  max_review_round=N      # 来自 note.md review_limit；旧 task 默认 5
-  max_verify_round=N      # 来自 note.md verify_limit
+  max_review_round=N      # 来自 progress.md review_limit；旧 task 默认 5
+  max_verify_round=N      # 来自 progress.md verify_limit
   next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_ac_review|complete_disposition
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
   ac_review=ok|void|incomplete|no_spec        # 每份报告最后一轮「AC 复验方式」小节的门禁状态

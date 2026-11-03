@@ -43,11 +43,11 @@ def git_repo(tmp_path):
     )
     shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
     shutil.copytree(TASK_TEMPLATE_DIR, template)
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "note.md")
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "progress.md")
     for tid, slug in (("t001", "alpha"), ("t002", "beta")):
         task_dir = tasks / f"{tid}_{slug}"
         shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(task_dir / "note.md", {
+        write_front_matter(task_dir / "progress.md", {
             "tid": tid, "slug": slug, "title": slug, "status": "backlog",
             "branch": "", "worktree": "", "review_level": "full",
             "diff_anchor": "", "note": "",

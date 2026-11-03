@@ -33,7 +33,7 @@ from .scheduling import compute_schedule
 from .store import discover_effective_bundle, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
-_DOC_NAMES = {"task": "task.md", "note": ctx.PROGRESS_FILE, "spec": "task.md"}
+_DOC_NAMES = {"task": "task.md", "progress": ctx.PROGRESS_FILE, "spec": "task.md"}
 _SESSION_TOKEN = secrets.token_hex(16)
 
 
@@ -108,7 +108,7 @@ def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str)
         raise ctx.TaskDataError(f"未知任务 {tid!r}")
     filename = _DOC_NAMES.get(doc)
     if filename is None:
-        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/note）")
+        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/progress）")
     directory = tasks[tid].get("dir", "")
     root = base.resolve()
     path = (root / directory / filename).resolve()
@@ -136,7 +136,7 @@ def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str) -> bytes:
             raise ctx.TaskDataError(f"未知任务 {tid!r}")
         filename = _DOC_NAMES.get(doc)
         if filename is None:
-            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/note）")
+            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/progress）")
         rel = f"{tasks[tid].get('dir', '')}/{filename}"
         return git_text_at_ref(entry["read_at"], rel).encode("utf-8")
     base = (

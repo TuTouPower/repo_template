@@ -743,7 +743,7 @@ def _finish_prechecks(args) -> dict:
             f"owner_id={record.get('owner_id')!r}，与 --owner-id 不符；零写入退出"
         )
 
-    # 6. 机器生成 handoff.json 内容（note.md 验证摘要为空或仍是占位时拒绝）
+    # 6. 机器生成 handoff.json 内容（progress.md 验证摘要为空或仍是占位时拒绝）
     try:
         handoff = build_handoff(
             tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],
@@ -929,7 +929,7 @@ def cmd_rewind(args):
             f"effective={effective} -> {target}（main 记录为 {recorded}）"
         )
     append_note(fm, f"rewound: {transition}; {args.reason}")
-    # 审计前移：audit 失败则状态未写（note.md 仍 active），rewind 可重试。
+    # 审计前移：audit 失败则状态未写（progress.md 仍 active），rewind 可重试。
     # 若先写 front matter 再审计，失败后「状态已迁 + 审计缺失 + 不可重试」（F15）。
     try:
         append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
@@ -1066,13 +1066,13 @@ def cmd_show(args):
         fields = dict(fm)
         fields["source_ref"] = f"{ref_name}@{ref_sha[:12]}"
         fields["dir"] = task["dir"]
-        fields["note_md"] = f"{ref_name}:{task['dir']}/{ctx.PROGRESS_FILE}"
+        fields["progress_md"] = f"{ref_name}:{task['dir']}/{ctx.PROGRESS_FILE}"
         fields["task_md"] = f"{ref_name}:{task['dir']}/task.md"
     else:
         task, path, fm, body = load_task(args.tid)
         fields = dict(fm)
         fields["dir"] = task["dir"]
-        fields["note_md"] = ctx._rel(path)
+        fields["progress_md"] = ctx._rel(path)
         task_md = path.parent / "task.md"
         fields["task_md"] = (
             ctx._rel(task_md) if task_md.is_file() else f"{ctx._rel(task_md)}（缺失）"

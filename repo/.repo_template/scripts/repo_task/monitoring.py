@@ -355,7 +355,7 @@ _HANDOFF_TYPES = {
 }
 
 
-# note.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
+# progress.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
 HANDOFF_PLACEHOLDERS = ("待执行时填写",)
 _SUMMARY_LINES = (("tests", "测试"), ("blackbox", "黑盒"), ("review", "review"))
 _PENDING_PATH_RE = re.compile(
@@ -365,7 +365,7 @@ _FINDING_PATH_RE = re.compile(r"^docs/findings/(d[0-9]+)_[^/]+\.md$")
 
 
 def read_verification_summary(note_body: str) -> dict[str, str]:
-    """读取 note.md「收尾报告 / 验收与验证」的测试、黑盒、review 三行；空值或模板占位拒绝。"""
+    """读取 progress.md「收尾报告 / 验收与验证」的测试、黑盒、review 三行；空值或模板占位拒绝。"""
     report = _extract_markdown_section(note_body, 2, "收尾报告")
     section = _extract_markdown_section(report, 3, "验收与验证") if report is not None else None
     if section is None:
@@ -415,7 +415,7 @@ def build_handoff(
     *, tid: str, attempt: int, execution_id: str, branch: str, base_sha: str,
     note_body: str, root: Path,
 ) -> dict:
-    """由 execution context、ledger、暂存区与 note.md 机器生成 handoff.json；不手写。"""
+    """由 execution context、ledger、暂存区与 progress.md 机器生成 handoff.json；不手写。"""
     summary = read_verification_summary(note_body)
     pending, findings = staged_ledger_entries(root)
     handoff = {
