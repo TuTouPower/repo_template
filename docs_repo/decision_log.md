@@ -4,7 +4,9 @@
 
 状态：`已落地` = 已进 AGENTS/skill/prompt/脚本；`开放` = 已裁决未实施；`已否决` = 明确不做；`已落地；被 Ln 取代` = 原方案曾落地，现行以 successor 为准。
 
-本表状态以 `2026-09-07T00:00:00+08:00` 文档审阅核对为准。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md` 和 `task.py --help` 为准。
+核对记录：L1–L36 于 `2026-09-07T00:00:00+08:00` 文档审阅核对；L37 起为之后新增，未纳入该次核对。`2026-11-03T22:30:00+08:00` 仅修订 L6、L7、L10、L13、L15 的落点/状态，其余行未重新核对。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md` 和 `task.py --help` 为准。
+
+文件名映射：commit `35d298b` 改名后，旧 `spec.md` = 现 `task.md`（需求规格，含契约区/验收标准）；旧 `task.md`（过程总账、实施笔记、处置表）= 现 `note.md`。裁决列与议题列保留改名前的历史称呼，落点列写现行路径。
 
 出处列沿用复盘旧称：`feedback` = `workflow_reflection_1.md`；`retro_t041_t061` = `workflow_reflection_4.md`；`retro_t001_t007` = `workflow_reflection_3.md`；`incident_t071` = `workflow_reflection_2.md`；`analysis` = `workflow_reflection_5.md`。
 
@@ -19,16 +21,16 @@
 | L3 | reviewer 缺决策上下文致撤回率高 | analysis §1b、feedback 再评估节 | spec 契约区与上下文区正文直接注入 prompt，reviewer 不再自行读 spec | `render_review_prompts.py`、`share_prompt.txt` | 已落地 |
 | L4 | branch ≠ worktree，未提交改动丢失 | incident_t071、retro_t041_t061 §1、analysis §11 | 默认每 task 独立 worktree（`../{repo}_{tid}`，`{repo}` = 消费仓目录名）+ `.env` 软链；禁止长期未提交。~~`--no-worktree`~~ 未实现 | `task.py start` / `preflight`、AGENTS「开发原则」 | 已落地 |
 | L5 | 审阅对所有 task 无差别 | feedback §3/C、retro_t041_t061 §2、retro_t001_t007 痛点 3 | `review_level: full\|single` 进 front matter，判不准取 `full`。~~`none`~~ 未实现 | `task.py add --review-level`、`task-work`「独立 review」 | 已落地 |
-| L6 | `plan.md` 退化为 spec 副本、实际弃用 | feedback §1+A、retro_t041_t061 §4、analysis §1b | **删除 plan.md**。根因是 plan 写在信息最少的时刻、用在信息最多的时刻；实施步骤改由执行期记入 `task.md` 实施笔记 | 模板删 plan.md；spec 二分承接上下文 | 已落地 |
-| L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retro_t001_t007 痛点 1、feedback §1 | AC 只写行为；技术选择进 `docs/blueprint/decisions.md`；spec 漂移类 finding 标 `spec_drift`，处置为改 spec，不计 FAIL | `spec.md` 模板、`share_prompt.txt` | 已落地 |
+| L6 | `plan.md` 退化为 spec 副本、实际弃用 | feedback §1+A、retro_t041_t061 §4、analysis §1b | **删除 plan.md**。根因是 plan 写在信息最少的时刻、用在信息最多的时刻；实施步骤改由执行期记入 `task.md` 实施笔记 | `repo/.repo_template/docs/task_template/` 无 plan.md；`task.md` 契约区/上下文区二分承接上下文；实施步骤记 `note.md`「实施笔记」 | 已落地 |
+| L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retro_t001_t007 痛点 1、feedback §1 | AC 只写行为；技术选择进 `docs/blueprint/decisions.md`；spec 漂移类 finding 标 `spec_drift`，处置为改 spec，不计 FAIL | `repo/.repo_template/docs/task_template/task.md` 验收标准规范块、`repo/AGENTS.md`「开发原则」、`share_prompt.txt`「blocking 硬阈值」（spec 过时 → 改 spec，不计 FAIL；`spec_drift` 标签现行文件中已不存在） | 已落地 |
 | L8 | `max_review_round` 语义混乱（出场次数 vs 闭环次数） | retro_t041_t061 §3、retro_t001_t007 痛点 5、analysis §1 | round = **回归轮次**：上轮 FAIL 修完重审才计数；新 finding 当轮处置不强制 N+1 | `check_review_status.py`、`architecture.md`「Review 与验证」 | 已落地 |
 | L9 | 横向缺口只标遗留、不开 task | retro_t001_t007 根因节、feedback、analysis §13 | 遗留 finding 须映射 tid；reviewer 引用已有 follow-up 不重复报 | `task-from-pending` skill、`share_prompt.txt`「系统性缺口去重」 | 已落地 |
-| L10 | AC 三处维护（spec / task.md / 处置表） | retro_t001_t007 痛点 7 | AC 唯一源 = spec 契约区；task.md 收尾引用不复制 | `task.md` 模板 | 已落地 |
+| L10 | AC 三处维护（spec / task.md / 处置表） | retro_t001_t007 痛点 7 | AC 唯一源 = spec 契约区；task.md 收尾引用不复制 | `repo/.repo_template/docs/task_template/task.md` 契约区（AC 唯一源）、`note.md`「收尾报告」（引用 `task.md` 不复制） | 已落地 |
 | L11 | TDD 顺序违规：改测试适配实现 | analysis §3 | 旧绿测只许保留或整体删除并说明；禁止就地改预期；reviewer 必须复核改测方向 | AGENTS「开发原则」、`task-work`「项目测试」、`test_prompt.txt` | 已落地 |
 | L12 | blocked 无基础设施失败出口 | analysis §4 | 原方案加 `task.py block --reason infra` 与正式 `blocked` 状态。L36 删除正式 blocked 与 `block`/`resume`；阻塞时 task 保持 active，attempt `terminal=stopped` + `report=blocked`；禁止 agent 自定容错上限后绕过 | `architecture.md`「Attempt」、`task-run` | 已落地；被 L36 取代 |
-| L13 | spec 脑补未核实的外部契约 | analysis §5 | spec 上下文区加「未知契约清单」，逐条标 `UNVERIFIED`；reviewer 只提示核实不 blocking | `spec.md` 模板、`share_prompt.txt` | 已落地 |
+| L13 | spec 脑补未核实的外部契约 | analysis §5 | spec 上下文区加「未知契约清单」，逐条标 `UNVERIFIED`；reviewer 只提示核实不 blocking | `repo/.repo_template/docs/task_template/task.md`「未知契约清单」、`share_prompt.txt`「blocking 硬阈值」 | 已落地 |
 | L14 | 「一 task 一 commit」与实战脱节 | feedback B、retro_t041_t061 §7 | **保留「一 task 一 commit」**：六份 review 主张放开多 commit，但与黑盒/审阅质量门禁矛盾（回头改要么 amend 破坏历史，要么新 commit 污染历史）。task 太大就回 `task-create` 拆，不在执行期切分 commit。commit 须可独立验证、有工程意义 | `AGENTS.md`「开发原则」+ `task-work`「完成」 | 已落地 |
-| L15 | 大模型进 plan mode 不执行既定 plan | 11111#2（已并入本表） | 用户触发 `task-run` 即视为队列已批准；禁止 plan mode、禁止开跑前二次征求同意 | `task-run`「授权与队列」 | 已落地 |
+| L15 | 大模型进 plan mode 不执行既定 plan | 11111#2（已并入本表） | 用户触发 `task-run` 即视为队列已批准；禁止 plan mode、禁止开跑前二次征求同意 | `task-run`「授权与队列」 | 已落地；无参数调用部分已修订：显式 tid 与 `/goal` 冻结队列仍不二次确认，无参数调用 `task-run` 须先列出 `task.py plan --serial --json` 清单并取得用户确认 |
 | L16 | finding 无分类，噪音率靠人工事后统计 | retro_t001_t007 数据概览、review/glm §2.1 | finding 必填 `category`（bug/spec_drift/duplicate/nitpick/coverage_gap）；撤回率由脚本算。字段未进 `task.md` 处置表与 `share_prompt.txt`；现行噪音控制见 L2/L17 | `share_prompt.txt`「blocking 硬阈值」 | 开放 |
 | L17 | 行数与圈复杂度阈值制造 nitpick | 本轮审阅（review/opus + 模板实读） | 两类命中默认不进 finding 表，只在结论段提示；仅当已产出可观测缺陷才按缺陷出 finding | `code_prompt.txt`「降级规则」 | 已落地 |
 | L18 | `review.md` 模板与 prompt 两处定义报告格式 | 本轮审阅 | 格式唯一定义在 prompt；`review.md` 已删除（强于指针） | `.repo_template/docs/review_prompts/` | 已落地 |

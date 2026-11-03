@@ -8,7 +8,6 @@ node_modules/
 .env.*
 !.env.example
 .commandcode/
-docs_repo/demos/app/node_modules/
 repo/.scratch/
 repo/docs/runtime/
 repo/.claude/state/
