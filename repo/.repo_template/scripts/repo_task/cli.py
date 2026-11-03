@@ -110,7 +110,7 @@ def main():
 
     finish = sub.add_parser(
         "finish",
-        help="active -> done：严格校验后归档、生成 handoff.json 并提交执行 commit；提交失败整体回滚",
+        help="active -> done：严格校验后原位写 done、生成 handoff.json 并提交实现 commit（归档由 integrate 完成）；提交失败整体回滚",
     )
     finish.add_argument("tid")
     finish.add_argument("--owner-id", required=True, help="当前会话执行权，须与 ledger claim 一致")

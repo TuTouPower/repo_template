@@ -68,13 +68,12 @@ SCOPE_FINGERPRINT_EXCLUDES = (
 )
 
 
-def _review_logical_path(path: str, task_name: str) -> str | None:
-    # finish moves the current task, not its reviewed meaning. Canonicalize both
-    # locations before applying the archive exclusion; keep its spec/attachments.
-    for prefix in (f"docs/tasks/{task_name}/", f"docs/archive/tasks/{task_name}/"):
-        if path.startswith(prefix):
-            suffix = path[len(prefix):]
-            return None if suffix in REVIEW_PROCESS_FILES else f"docs/tasks/{task_name}/{suffix}"
+def _review_scope_path(path: str, task_name: str) -> str | None:
+    # 当前 task 目录在执行分支内始终位于 docs/tasks/（归档发生在 integrate 的 merge
+    # commit，之后不再对该 task 计算指纹）：过程文件排除，spec/附件保留。
+    prefix = f"docs/tasks/{task_name}/"
+    if path.startswith(prefix):
+        return None if path[len(prefix):] in REVIEW_PROCESS_FILES else path
     excluded = [item.removeprefix(":(exclude)") for item in SCOPE_FINGERPRINT_EXCLUDES]
     if any(path == item or path.startswith(item + "/") for item in excluded):
         return None
@@ -89,10 +88,8 @@ def _review_tree(root: Path, ref: str, task_name: str) -> dict[str, tuple[str, s
             continue
         metadata, raw_path = entry.split(b"\t", 1)
         mode, _, oid = metadata.decode("ascii").split()
-        path = _review_logical_path(os.fsdecode(raw_path), task_name)
+        path = _review_scope_path(os.fsdecode(raw_path), task_name)
         if path is not None:
-            if path in tree:
-                raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
             tree[path] = (mode, oid)
     return tree
 
@@ -106,7 +103,7 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
     tree = {}
     for raw in set(data.split(b"\0")) - {b""}:
         physical = os.fsdecode(raw)
-        path = _review_logical_path(physical, task_name)
+        path = _review_scope_path(physical, task_name)
         if path is None:
             continue
         source = root / physical
@@ -114,8 +111,6 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
             mode = source.lstat().st_mode
         except FileNotFoundError:
             continue  # tracked deletion
-        if path in tree:
-            raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
         if stat.S_ISLNK(mode):
             content, git_mode = os.fsencode(os.readlink(source)), "120000"
             blob = f"blob {len(content)}\0".encode() + content
@@ -148,7 +143,7 @@ def review_scope_fingerprint(
     diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None,
     ref: str | None = None,
 ) -> str:
-    """Hash the delivered content delta, independent of staging/commit/archive.
+    """Hash the delivered content delta, independent of staging/commit.
 
     ref=None reads the complete worktree (including untracked outputs); ref reads
     only immutable committed blobs. A deleted file, mode or symlink change is part
@@ -161,24 +156,20 @@ def review_scope_fingerprint(
         before = _review_tree(root, diff_anchor, task_name)
         after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
         digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
-        task_paths = [f"docs/tasks/{task_name}/note.md", f"docs/archive/tasks/{task_name}/note.md"]
+        task_path = f"docs/tasks/{task_name}/note.md"
         review_level = "full"
-        for task_path in task_paths:
-            if ref:
-                result = _git(["show", f"{ref}:{task_path}"], root=root)
-                if result.returncode:
-                    continue
+        text = None
+        if ref:
+            result = _git(["show", f"{ref}:{task_path}"], root=root)
+            if result.returncode == 0:
                 text = result.stdout
-            else:
-                path = root / task_path
-                if not path.exists():
-                    continue
-                text = path.read_text(encoding="utf-8")
+        elif (root / task_path).exists():
+            text = (root / task_path).read_text(encoding="utf-8")
+        if text is not None:
             fm, _ = parse_front_matter_text(text, source=task_path)
             review_level = fm.get("review_level", "full")
             if review_level not in ctx.REVIEW_LEVELS:
                 raise ctx.TaskDataError(f"review_level 非法：{review_level!r}")
-            break
         _hash_part(digest, b"review_level", review_level.encode())
         for path in sorted(before.keys() | after.keys()):
             if before.get(path) == after.get(path):

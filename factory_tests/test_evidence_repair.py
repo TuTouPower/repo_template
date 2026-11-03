@@ -14,11 +14,11 @@ from test_dispatch_integration import (
     _reserve, _task_cli, _worktree, git_repo,
 )
 from review_support import pass_report
-from task_flow_support import archive_done
+from task_flow_support import mark_done
 from repo_task.documents import parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
-REL = "docs/archive/tasks/t001_alpha"
+REL = "docs/tasks/t001_alpha"
 
 
 def _recovery(repo, tid="t001"):
@@ -125,7 +125,7 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
     w = _worktree(git_repo, "t001")
     spec = w / "docs/tasks/t001_alpha/task.md"
     spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    archive_done(w, "t001")
+    mark_done(w, "t001")
     branch = "t001_alpha"
     base_sha = _git(w, "rev-parse", "HEAD").stdout.strip()
     archive = w / REL

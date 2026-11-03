@@ -7,7 +7,7 @@ import re
 import pytest
 
 from test_dispatch_integration import git_repo, _git, _task_cli, _worktree, _read_ledger
-from task_flow_support import archive_done, fill_summary, finish_cli, prepare_finish
+from task_flow_support import mark_done, fill_summary, finish_cli, prepare_finish
 from repo_task import monitoring
 from repo_task import context as ctx
 
@@ -51,8 +51,12 @@ def _archive(worktree):
     return worktree / "docs/archive/tasks/t001_alpha"
 
 
+def _task_dir(worktree):
+    return worktree / "docs/tasks/t001_alpha"
+
+
 def _committed_handoff(worktree):
-    return json.loads(_git(worktree, "show", "HEAD:docs/archive/tasks/t001_alpha/handoff.json").stdout)
+    return json.loads(_git(worktree, "show", "HEAD:docs/tasks/t001_alpha/handoff.json").stdout)
 
 
 # --------------------------------------------------------------------------
@@ -88,7 +92,7 @@ def test_finish_without_any_option_no_longer_archives(git_repo):
 # --------------------------------------------------------------------------
 
 
-def test_finish_commits_once_with_machine_generated_handoff(git_repo):
+def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
     identity, worktree, _ = _ready(git_repo)
     anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
 
@@ -118,7 +122,7 @@ def test_finish_commits_once_with_machine_generated_handoff(git_repo):
         "feat(t001): 完成 alpha\n\n正文第二段。"
     )
     assert _git(worktree, "status", "--porcelain").stdout == ""
-    assert not (worktree / "docs/tasks/t001_alpha").exists()
+    assert _task_dir(worktree).is_dir() and not _archive(worktree).exists()
     handoff = _committed_handoff(worktree)
     assert handoff == {
         "tid": "t001",
@@ -280,7 +284,7 @@ def test_finish_ignores_ignored_files_and_task_directory_files(git_repo):
 
     assert result.returncode == 0, result.stdout + result.stderr
     committed = _git(worktree, "show", "--name-only", "--format=", "HEAD").stdout.split()
-    assert "docs/archive/tasks/t001_alpha/extra_notes.txt" in committed
+    assert "docs/tasks/t001_alpha/extra_notes.txt" in committed
     assert "cache.pyc" not in committed
 
 
@@ -432,10 +436,10 @@ def test_finish_commit_msg_hook_rejection_also_rolls_back(git_repo):
 
 def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
     _, worktree, message = _ready(git_repo)
-    # hook 失败的同时占位原 task 目录，使归档目录无法还原
+    # hook 失败的同时把 note.md 换成目录，使 front matter 无法还原
     _install_hook(
         git_repo,
-        'mkdir -p docs/tasks/t001_alpha && echo blocker > docs/tasks/t001_alpha/blocker.txt\n'
+        'rm docs/tasks/t001_alpha/note.md && mkdir docs/tasks/t001_alpha/note.md\n'
         'echo "hook-says-no" >&2\nexit 1',
     )
 
@@ -443,7 +447,7 @@ def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
 
     assert result.returncode != 0
     assert "回滚未完成" in result.stderr
-    assert "归档目录还原失败" in result.stderr
+    assert "note.md front matter 还原失败" in result.stderr
     assert "task.py recovery t001" in result.stderr
 
 
@@ -454,7 +458,7 @@ def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
 
 def test_recovery_detects_finish_interrupted_before_handoff(git_repo):
     _, worktree, _ = _ready(git_repo)
-    archive_done(worktree, "t001")
+    mark_done(worktree, "t001")
 
     result = _task_cli(git_repo, "recovery", "t001")
 
@@ -466,14 +470,14 @@ def test_recovery_detects_finish_interrupted_before_handoff(git_repo):
 
 def test_recovery_detects_finish_interrupted_before_commit(git_repo):
     identity, worktree, _ = _ready(git_repo)
-    archive_done(worktree, "t001")
+    mark_done(worktree, "t001")
     handoff = {
         "tid": "t001", "attempt": identity["attempt"], "execution_id": identity["execution_id"],
         "status": "done", "branch": "t001_alpha",
         "base_sha": _git(worktree, "rev-parse", "HEAD").stdout.strip(),
         "tests": "t", "blackbox": "b", "review": "r", "pending": [], "findings": [],
     }
-    (_archive(worktree) / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
+    (_task_dir(worktree) / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
 
     state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
 

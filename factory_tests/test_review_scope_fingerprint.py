@@ -101,9 +101,8 @@ def test_prompt_output_filenames_covered_by_review_process_files():
     assert covered <= set(REVIEW_PROCESS_FILES)
 
 
-def test_scope_is_stable_across_staging_archive_and_commit(git_repo):
+def test_scope_is_stable_across_staging_and_commit(git_repo):
     """The same delivered bytes have one scope, independent of Git lifecycle phase."""
-    import shutil
     repo, anchor = git_repo
     (repo / 'new.py').write_text('result = 1\n')
     (repo / TASK_REL / 'task.md').write_text('## 契约区\nverified AC1\n')
@@ -112,30 +111,22 @@ def test_scope_is_stable_across_staging_archive_and_commit(git_repo):
     assert _fingerprint(repo, anchor) == reviewed
     _git(repo, 'add', '-A')
     assert _fingerprint(repo, anchor) == reviewed
-    archive = 'docs/archive/tasks/t001_foo'
-    (repo / archive).parent.mkdir(parents=True)
-    shutil.move(str(repo / TASK_REL), str(repo / archive))
-    assert review_scope_fingerprint(anchor, archive, repo_root=repo) == reviewed
-    _git(repo, 'add', '-A')
     _git(repo, 'commit', '-m', 'complete task')
-    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') == reviewed
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == reviewed
 
 
-def test_committed_scope_tracks_archived_spec_and_not_primary_dirt(git_repo):
-    import shutil
+def test_committed_scope_tracks_task_spec_and_not_primary_dirt(git_repo):
     repo, anchor = git_repo
-    archive = 'docs/archive/tasks/t001_foo'
-    (repo / archive).parent.mkdir(parents=True)
-    shutil.move(str(repo / TASK_REL), str(repo / archive))
+    (repo / TASK_REL / 'handoff.json').write_text('{}\n')
     _git(repo, 'add', '-A')
-    _git(repo, 'commit', '-m', 'archive')
-    before = review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD')
+    _git(repo, 'commit', '-m', 'finish in place')
+    before = review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD')
     (repo / 'README.md').write_text('unrelated primary worktree dirt\n')
-    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') == before
-    (repo / archive / 'task.md').write_text('changed AC\n')
-    _git(repo, 'add', archive)
-    _git(repo, 'commit', '-m', 'change archived spec')
-    assert review_scope_fingerprint(anchor, archive, repo_root=repo, ref='HEAD') != before
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == before
+    (repo / TASK_REL / 'task.md').write_text('changed AC\n')
+    _git(repo, 'add', TASK_REL)
+    _git(repo, 'commit', '-m', 'change task spec')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') != before
 
 
 def test_scope_tracks_mode_and_symlink_target(git_repo):

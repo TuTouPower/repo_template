@@ -14,7 +14,7 @@ TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
-from task_flow_support import archive_done
+from task_flow_support import mark_done
 
 from repo_task import context as ctx
 from repo_task import monitoring
@@ -146,14 +146,14 @@ def _prepare_done(
         task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     if mutate:
         mutate(worktree)
-    archive_done(worktree, tid)
+    mark_done(worktree, tid)
     branch = f"{tid}_{slug}"
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    archive = worktree / "docs" / "archive" / "tasks" / branch
-    ensure_review_evidence(worktree, archive, base_sha)
+    task_dir = worktree / "docs" / "tasks" / branch
+    ensure_review_evidence(worktree, task_dir, base_sha)
     payload = _handoff(tid, branch, identity, base_sha)
     payload.update(handoff_overrides or {})
-    (archive / "handoff.json").write_text(
+    (task_dir / "handoff.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
     _git(worktree, "add", "-A")
@@ -180,7 +180,7 @@ def _cleanup(repo, tid, identity):
 
 
 def _handoff_path(repo, tid, slug):
-    return _worktree(repo, tid) / "docs" / "archive" / "tasks" / f"{tid}_{slug}" / "handoff.json"
+    return _worktree(repo, tid) / "docs" / "tasks" / f"{tid}_{slug}" / "handoff.json"
 
 
 def _rewrite_handoff(repo, tid, slug, content):
@@ -296,7 +296,7 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
 def test_verify_contract_on_uncompleted_ac(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     worktree = _worktree(git_repo, "t001")
-    spec_path = worktree / "docs" / "archive" / "tasks" / "t001_alpha" / "task.md"
+    spec_path = worktree / "docs" / "tasks" / "t001_alpha" / "task.md"
     content = spec_path.read_text(encoding="utf-8")
     spec_path.write_text(content.replace("- [x] AC-001", "- [ ] AC-001"), encoding="utf-8")
     _git(worktree, "add", str(spec_path))
@@ -343,7 +343,7 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
 def test_handoff_rejects_diff_anchor_not_matching_execution_parent(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     worktree = _worktree(git_repo, "t001")
-    task_path = worktree / "docs/archive/tasks/t001_alpha/note.md"
+    task_path = worktree / "docs/tasks/t001_alpha/note.md"
     fm, body = parse_front_matter(task_path)
     fm["diff_anchor"] = "0" * 40
     write_front_matter(task_path, fm, body)

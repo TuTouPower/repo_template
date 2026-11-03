@@ -14,7 +14,7 @@ TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
-from task_flow_support import archive_done
+from task_flow_support import mark_done
 
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -102,11 +102,11 @@ def _prepare_done(repo, tid, slug):
     if task_file.is_file():
         content = task_file.read_text(encoding="utf-8")
         task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    archive_done(worktree, tid)
+    mark_done(worktree, tid)
     branch = f"{tid}_{slug}"
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    archive = worktree / "docs" / "archive" / "tasks" / branch
-    ensure_review_evidence(worktree, archive, base_sha)
+    task_dir = worktree / "docs" / "tasks" / branch
+    ensure_review_evidence(worktree, task_dir, base_sha)
     payload = {
         "tid": tid,
         "attempt": identity["attempt"],
@@ -120,7 +120,7 @@ def _prepare_done(repo, tid, slug):
         "pending": [],
         "findings": [],
     }
-    (archive / "handoff.json").write_text(
+    (task_dir / "handoff.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
     _git(worktree, "add", "-A")
