@@ -136,7 +136,7 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
 def test_reserve_rewind_messages_point_to_recovery(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     # Stale-state reserve already points to recovery (no rewind suggestion).
-    stale_reserve = _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline")
+    stale_reserve = _task_cli(git_repo, "attempt", "reserve", "t001")
     assert stale_reserve.returncode != 0
     # Integrate to main so effective status is archived done, then check
     # the archived reserve/rewind messages.
@@ -147,7 +147,7 @@ def test_reserve_rewind_messages_point_to_recovery(git_repo):
     assert _task_cli(
         git_repo, "integrate", "t001", *_identity_args(identity), "--continue"
     ).returncode == 0
-    reserve = _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline")
+    reserve = _task_cli(git_repo, "attempt", "reserve", "t001")
     assert reserve.returncode != 0
     assert "recovery" in reserve.stderr
     assert "amend" in reserve.stderr

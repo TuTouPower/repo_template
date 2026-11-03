@@ -18,6 +18,7 @@ from .attempts import (
     append_integrated_batch,
     current_attempt_record,
     require_exact_terminal,
+    resolve_identity,
 )
 from .documents import parse_front_matter, validate_task_documents, write_front_matter
 from .git_ops import (
@@ -345,9 +346,10 @@ def cmd_cleanup_worktree(args):
     if not ctx.TID_RE.fullmatch(args.tid):
         sys.exit(f"tid 非法：{args.tid!r}")
     try:
-        _require_execution_gate(args.tid, args.attempt, args.execution_id)
+        attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
+        _require_execution_gate(args.tid, attempt, execution_id)
         branch, _ = _resolve_integrate_branch(args.tid)
-        _verify_exact_handoff(args.tid, args.attempt, args.execution_id)
+        _verify_exact_handoff(args.tid, attempt, execution_id)
     except ctx.TaskDataError as error:
         sys.exit(str(error))
     rel = ctx.worktree_rel_path(args.tid)
@@ -611,14 +613,15 @@ def _commit_native_merge(expected_head: str, subject_prefix: str) -> str:
 def cmd_integrate(args):
     require_primary_worktree()
     try:
+        attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
         record, _ = _require_execution_gate(
-            args.tid, args.attempt, args.execution_id, allow_integrated=True
+            args.tid, attempt, execution_id, allow_integrated=True
         )
         if record["state"] == "integrated" and not _task_branch_names(args.tid):
             print(f"{args.tid} 已 integrated，分支已清理（幂等）")
             return
         branch, sha = _resolve_integrate_branch(args.tid)
-        _verify_exact_handoff(args.tid, args.attempt, args.execution_id)
+        _verify_exact_handoff(args.tid, attempt, execution_id)
         registered = _registered_for_branch(branch)
         if registered:
             raise ctx.TaskDataError(
@@ -634,7 +637,7 @@ def cmd_integrate(args):
         try:
             merge_sha = _commit_native_merge(sha, subject)
             if record["state"] != "integrated":
-                append_integrated(args.tid, args.attempt, args.execution_id, merge_sha)
+                append_integrated(args.tid, attempt, execution_id, merge_sha)
             if not args.keep_branch:
                 _delete_branches([branch])
         except ctx.TaskDataError as error:
@@ -662,7 +665,7 @@ def cmd_integrate(args):
             )
         try:
             _sync_indexes_after_existing_merge()
-            append_integrated(args.tid, args.attempt, args.execution_id, merge_sha)
+            append_integrated(args.tid, attempt, execution_id, merge_sha)
             if not args.keep_branch:
                 _delete_branches([branch])
         except ctx.TaskDataError as error:

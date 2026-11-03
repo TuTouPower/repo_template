@@ -94,8 +94,8 @@ def _worktree(repo, tid):
     return repo.parent / f"{repo.name}_{tid}"
 
 
-def _reserve(repo, tid, executor="inline", model=None):
-    args = ["attempt", "reserve", tid, "--executor", executor]
+def _reserve(repo, tid, model=None):
+    args = ["attempt", "reserve", tid]
     if model:
         args += ["--model", model]
     result = _task_cli(repo, *args)

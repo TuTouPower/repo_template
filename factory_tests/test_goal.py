@@ -82,7 +82,7 @@ def _worktree(repo, tid):
 
 
 def _reserve(repo, tid):
-    result = _cli(repo, "attempt", "reserve", tid, "--executor", "inline")
+    result = _cli(repo, "attempt", "reserve", tid)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 

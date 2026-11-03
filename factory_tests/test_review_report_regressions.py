@@ -202,7 +202,7 @@ def test_ledger_rollback_cannot_overwrite_a_newer_execution_receipt(git_repo):
     receipt = _worktree(git_repo, "t001") / "docs/runtime/execution_context.json"
     newer_receipt = receipt.read_bytes()
     ledger.write_bytes(old_ledger)
-    result = _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline")
+    result = _task_cli(git_repo, "attempt", "reserve", "t001")
     assert result.returncode != 0 and "identity 不一致" in result.stderr
     assert ledger.read_bytes() == old_ledger
     assert receipt.read_bytes() == newer_receipt

@@ -111,8 +111,8 @@ def _worktree_path(repo, tid="t001"):
     return repo.parent / f"{repo.name}_{tid}"
 
 
-def _reserve(repo, tid, executor="inline", model=None):
-    args = ["attempt", "reserve", tid, "--executor", executor]
+def _reserve(repo, tid, model=None):
+    args = ["attempt", "reserve", tid]
     if model:
         args += ["--model", model]
     result = _task_cli(repo, *args)
@@ -1998,14 +1998,14 @@ def test_attempt_reserve_requires_start(git_repo):
     改写为门禁语义：reserve 在 start 前被拒，start 后成功。
     """
     reserved = _task_cli(
-        git_repo, "attempt", "reserve", "t001", "--executor", "inline", "--model", "opus"
+        git_repo, "attempt", "reserve", "t001", "--model", "opus"
     )
     assert reserved.returncode != 0
     assert "reserve 须在 start 之后" in reserved.stderr
     started = _task_cli(git_repo, "start", "t001")
     assert started.returncode == 0, started.stderr
     reserved = _task_cli(
-        git_repo, "attempt", "reserve", "t001", "--executor", "inline", "--model", "opus"
+        git_repo, "attempt", "reserve", "t001", "--model", "opus"
     )
     assert reserved.returncode == 0, reserved.stderr
 

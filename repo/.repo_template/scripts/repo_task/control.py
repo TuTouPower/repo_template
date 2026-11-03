@@ -8,6 +8,7 @@ import repo_task.context as ctx
 from .attempts import (
     report_attempt,
     reserve_attempt,
+    resolve_identity,
     terminal_attempt,
 )
 from .documents import tid_sort_key
@@ -143,14 +144,15 @@ def _print_json(event: dict) -> None:
 @control_locked
 def cmd_attempt_reserve(args):
     require_primary_worktree()
-    _print_json(reserve_attempt(args.tid, args.executor, args.model))
+    _print_json(reserve_attempt(args.tid, args.model))
 
 
 @control_locked
 def cmd_attempt_claim(args):
     require_primary_worktree()
     from .attempts import claim_execution
-    _print_json(claim_execution(args.tid, args.attempt, args.execution_id, args.owner_id,
+    attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
+    _print_json(claim_execution(args.tid, attempt, execution_id, args.owner_id,
                                replace_owner=args.replace_owner,
                                confirm_stopped=args.confirm_stopped))
 
@@ -158,25 +160,31 @@ def cmd_attempt_claim(args):
 @control_locked
 def cmd_attempt_terminal(args):
     require_primary_worktree()
-    _print_json(terminal_attempt(
-        args.tid, args.attempt, args.execution_id, args.status
-    ))
+    attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
+    _print_json(terminal_attempt(args.tid, attempt, execution_id, args.status))
+
+
+def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None:
+    """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
+    suffix = "；先补审证据并 amend 进同一执行 commit（见 recovery），仍卡在 committed_unreported"
+    try:
+        verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
+    except ctx.TaskDataError as error:
+        sys.exit(f"report=done 拒绝：{error}{suffix}")
+    if verdict != "ready":
+        sys.exit(f"report=done 拒绝：{detail}{suffix}")
 
 
 @control_locked
 def cmd_attempt_report(args):
     require_primary_worktree()
+    attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
     if args.status == "done":
-        try:
-            verdict, detail = verify_integrate_ready(args.tid, args.attempt, args.execution_id)
-        except ctx.TaskDataError as error:
-            sys.exit(f"report=done 拒绝：{error}；先补审证据并 amend 进同一执行 commit（见 recovery），仍卡在 committed_unreported")
-        if verdict != "ready":
-            sys.exit(f"report=done 拒绝：{detail}；先补审证据并 amend 进同一执行 commit（见 recovery），仍卡在 committed_unreported")
+        require_report_done_ready(args.tid, attempt, execution_id)
     _print_json(report_attempt(
         args.tid,
-        args.attempt,
-        args.execution_id,
+        attempt,
+        execution_id,
         args.status,
         sha=args.sha,
         fail_class=args.fail_class,

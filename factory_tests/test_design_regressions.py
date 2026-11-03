@@ -160,7 +160,7 @@ def test_active_missing_ledger_is_not_mistaken_for_start_without_reservation(git
     state = _task_cli(git_repo, "recovery", "t001")
     assert state.returncode == 0, state.stderr
     assert json.loads(state.stdout)["phase"] == "runtime_missing"
-    assert _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline").returncode != 0
+    assert _task_cli(git_repo, "attempt", "reserve", "t001").returncode != 0
 
 
 def test_goal_reports_execution_complete_separately_from_delivery(git_repo):

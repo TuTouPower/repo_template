@@ -36,8 +36,8 @@ from .lifecycle import (
 
 
 def _add_identity(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--attempt", type=int, required=True)
-    parser.add_argument("--execution-id", required=True)
+    parser.add_argument("--attempt", type=int, help="省略时自动解析；仅 recovery 指定 exact identity 时提供")
+    parser.add_argument("--execution-id", help="与 --attempt 同时提供或同时省略")
 
 
 def main():
@@ -182,7 +182,6 @@ def main():
 
     reserve = attempt_sub.add_parser("reserve", help="原子分配 attempt/execution_id")
     reserve.add_argument("tid")
-    reserve.add_argument("--executor", required=True, choices=ctx.ATTEMPT_EXECUTORS)
     reserve.add_argument("--model")
     reserve.set_defaults(func=cmd_attempt_reserve)
 
