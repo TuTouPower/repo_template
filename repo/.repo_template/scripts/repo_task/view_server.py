@@ -33,7 +33,7 @@ from .scheduling import compute_schedule
 from .store import discover_effective_bundle, git_text_at_ref
 
 _STATIC_DIR = Path(__file__).resolve().parent / "view_static"
-_DOC_NAMES = {"task": "task.md", "note": "note.md", "spec": "task.md"}
+_DOC_NAMES = {"task": "task.md", "note": ctx.PROGRESS_FILE, "spec": "task.md"}
 _SESSION_TOKEN = secrets.token_hex(16)
 
 

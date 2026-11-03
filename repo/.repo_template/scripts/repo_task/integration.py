@@ -258,10 +258,10 @@ def cmd_start(args):
     try:
         rel = create_worktree(ref_fm["tid"], branch, base_sha)
         created_worktree = True
-        task_path = worktree / task["dir"] / "note.md"
+        task_path = worktree / task["dir"] / ctx.PROGRESS_FILE
         fm, body = parse_front_matter(task_path)
         if fm.get("status") != "backlog":
-            raise ctx.TaskDataError(f"{task['dir']}/note.md status={fm.get('status')!r}，需要 backlog")
+            raise ctx.TaskDataError(f"{task['dir']}/{ctx.PROGRESS_FILE} status={fm.get('status')!r}，需要 backlog")
         fm["status"] = "active"
         fm["branch"] = branch
         fm["worktree"] = worktree_rel

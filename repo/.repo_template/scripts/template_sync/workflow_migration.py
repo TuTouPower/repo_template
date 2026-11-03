@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from repo_task.context import PROGRESS_FILE
 from repo_task.git_ops import default_branch
 
 from . import context as ctx
@@ -180,7 +181,7 @@ def _migrate_task_text(text: str, task_template: str) -> str:
         migrated_text,
     )
     migrated_text = migrated_text.replace(
-        "无长期 spec 变更时在 task.md 写", "无长期 spec 变更时在 note.md 写"
+        "无长期 spec 变更时在 task.md 写", f"无长期 spec 变更时在 {PROGRESS_FILE} 写"
     )
     return migrated_text
 
@@ -211,7 +212,7 @@ _STATUS_LINE_RE = re.compile(r"(?m)^status:[ \t]*[\"']?([A-Za-z]+)[\"']?[ \t]*$"
 def _branch_task_status(branch: str) -> str:
     """分支 tip 中该 task 的状态；活跃与归档目录都查，读不到返回空串。"""
     for directory in ("docs/tasks", "docs/archive/tasks"):
-        for name in ("note.md", "task.md"):
+        for name in (PROGRESS_FILE, "task.md"):
             shown = _git(ctx.CONSUMER, "show", f"refs/heads/{branch}:{directory}/{branch}/{name}")
             if shown.returncode != 0:
                 continue
@@ -281,7 +282,7 @@ def _inspect_workflow_task_dir(
     """
     spec_path = task_dir / "spec.md"
     task_path = task_dir / "task.md"
-    note_path = task_dir / "note.md"
+    note_path = task_dir / PROGRESS_FILE
 
     candidates: list[str] = []
     errors: list[str] = []
@@ -379,7 +380,7 @@ def workflow_migration_status(
     src: Path,
 ) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
     task_template_path = src / ".repo_template/docs/task_template/task.md"
-    note_template_path = src / ".repo_template/docs/task_template/note.md"
+    note_template_path = src / ".repo_template/docs/task_template" / PROGRESS_FILE
     try:
         worktrees = _registered_task_worktrees()
         base, unintegrated = _unintegrated_done_branches()
@@ -410,7 +411,7 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
     if unintegrated:
         raise ctx.SyncError(_unintegrated_done_message(base, unintegrated))
     task_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/task.md"
-    note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/note.md"
+    note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template" / PROGRESS_FILE
     if not task_template_path.is_file() or not note_template_path.is_file():
         return []
     task_template = task_template_path.read_text(encoding="utf-8")
@@ -440,7 +441,7 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
     reports: list[str] = []
     for plan in all_plans:
         sorted_writes = sorted(
-            plan["write"], key=lambda item: 0 if item[0].name == "note.md" else 1
+            plan["write"], key=lambda item: 0 if item[0].name == PROGRESS_FILE else 1
         )
         for path, content in sorted_writes:
             path.write_text(content, encoding="utf-8")

@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from repo_task.context import TaskDataError
+from repo_task.context import PROGRESS_FILE, TaskDataError
 from repo_task.documents import (
     atomic_write_text,
     parse_front_matter as _parse_front_matter,
@@ -192,7 +192,7 @@ def render_review_prompts(
     task_path: Path | None = None,
 ) -> dict[str, str]:
     task_dir, rel_task_dir = resolve_repo_path(task_dir, label="task directory")
-    task_path = task_path or task_dir / "note.md"
+    task_path = task_path or task_dir / PROGRESS_FILE
     task_path, _ = resolve_repo_path(task_path, label="task file", require_file=True)
 
     template_paths = {
@@ -289,8 +289,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--task", "--note", dest="task", help="note.md 路径")
-    parser.add_argument("--task-dir", help="task 目录（内含 note.md）")
+    parser.add_argument("--task", "--note", dest="task", help=f"{PROGRESS_FILE} 路径")
+    parser.add_argument("--task-dir", help=f"task 目录（内含 {PROGRESS_FILE}）")
     parser.add_argument("--out-dir", help="输出目录；不填则 stdout")
     args = parser.parse_args()
 

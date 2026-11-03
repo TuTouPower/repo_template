@@ -31,9 +31,9 @@ def cmd_add(args):
     if not ctx.TEMPLATE_DIR.is_dir():
         sys.exit(f"缺模板目录 {ctx._rel(ctx.TEMPLATE_DIR)}")
     template_task = ctx.TEMPLATE_DIR / "task.md"
-    template_note = ctx.TEMPLATE_DIR / "note.md"
+    template_note = ctx.TEMPLATE_DIR / ctx.PROGRESS_FILE
     if not template_task.is_file() or not template_note.is_file():
-        sys.exit(f"模板目录 {ctx._rel(ctx.TEMPLATE_DIR)} 缺 task.md 或 note.md")
+        sys.exit(f"模板目录 {ctx._rel(ctx.TEMPLATE_DIR)} 缺 task.md 或 {ctx.PROGRESS_FILE}")
     _, template_note_body = parse_front_matter(template_note)
     template_problems, _ = validate_task_documents(
         template_task.read_text(encoding="utf-8"),
@@ -55,7 +55,7 @@ def cmd_add(args):
         if task_dir.exists():
             sys.exit(f"{ctx._rel(task_dir)} 已存在；请提示用户处理")
         shutil.copytree(ctx.TEMPLATE_DIR, task_dir)
-        note_md = task_dir / "note.md"
+        note_md = task_dir / ctx.PROGRESS_FILE
         fm, body = parse_front_matter(note_md)
         fm.update({
             "tid": tid,
@@ -78,7 +78,7 @@ def cmd_add(args):
             shutil.rmtree(task_dir, ignore_errors=True)
             sys.exit(f"add 失败（{error}）；已回滚新建目录 {ctx._rel(task_dir)}")
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
-    print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 task.md / note.md）")
+    print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 task.md / {ctx.PROGRESS_FILE}）")
 
 @control_locked
 def cmd_edit(args):
@@ -769,7 +769,7 @@ def _rollback_finish(plan: dict, note_text: str, index_bytes: bytes) -> list[str
     try:
         atomic_write_text(plan["note_path"], note_text)
     except (OSError, ctx.TaskDataError) as error:
-        problems.append(f"note.md front matter 还原失败（{error}）")
+        problems.append(f"{ctx.PROGRESS_FILE} front matter 还原失败（{error}）")
     try:
         index_path = _git_index_path()
         temporary = index_path.with_name("index.finish_rollback")
@@ -843,7 +843,7 @@ def cmd_rewind(args):
 
     # 新 start 不回写 main；从主仓 rewind 时读取登记 worktree 中的 active 状态。
     if fm["status"] == "backlog" and str(worktree) in worktree_paths():
-        worktree_note = worktree / task["dir"] / "note.md"
+        worktree_note = worktree / task["dir"] / ctx.PROGRESS_FILE
         if worktree_note.is_file():
             worktree_fm, _ = parse_front_matter(worktree_note)
             if worktree_fm.get("status") == "active":
@@ -938,18 +938,18 @@ def cmd_rewind(args):
         if recorded == target:
             state_hint = f"main 记录已是 {recorded}，重试会以「已是 {target}」退出"
         else:
-            state_hint = f"note.md 仍为 {effective}"
+            state_hint = f"{ctx.PROGRESS_FILE} 仍为 {effective}"
         try:
             write_front_matter(path, fm, body)
         except (OSError, ctx.TaskDataError) as write_error:
             sys.exit(
                 f"rewind 审计写入失败（{error}）；{state_hint}；"
-                f"结果写回 note.md 也失败（{write_error}）。"
+                f"结果写回 {ctx.PROGRESS_FILE} 也失败（{write_error}）。"
                 "worktree/分支可能已清理，请人工核查后补记审计与状态"
             )
         sys.exit(
             f"rewind 审计写入失败（{error}）；{state_hint}；"
-            "已把 rewind 结果与审计失败写入 note.md 供追溯，"
+            f"已把 rewind 结果与审计失败写入 {ctx.PROGRESS_FILE} 供追溯，"
             "本次不会自动补审计，请人工补记"
         )
     try:
@@ -1066,7 +1066,7 @@ def cmd_show(args):
         fields = dict(fm)
         fields["source_ref"] = f"{ref_name}@{ref_sha[:12]}"
         fields["dir"] = task["dir"]
-        fields["note_md"] = f"{ref_name}:{task['dir']}/note.md"
+        fields["note_md"] = f"{ref_name}:{task['dir']}/{ctx.PROGRESS_FILE}"
         fields["task_md"] = f"{ref_name}:{task['dir']}/task.md"
     else:
         task, path, fm, body = load_task(args.tid)

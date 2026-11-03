@@ -74,9 +74,9 @@ def _scan_tasks_in_directories(tasks_dir: Path, archive_dir: Path) -> list[dict]
         for directory in sorted(base.iterdir()):
             if not directory.is_dir() or (not archived and directory.name == ctx.TEMPLATE_DIR.name):
                 continue
-            note_md = directory / "note.md"
+            note_md = directory / ctx.PROGRESS_FILE
             if not note_md.is_file():
-                raise ctx.TaskDataError(f"{note_md.parent}: 缺 note.md")
+                raise ctx.TaskDataError(f"{note_md.parent}: 缺 {ctx.PROGRESS_FILE}")
             fm, _ = parse_front_matter_text(
                 note_md.read_text(encoding="utf-8"), source=str(note_md)
             )
@@ -137,11 +137,11 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
         if not archived and name == ctx.TEMPLATE_DIR.name:
             continue
         directory = f"{rel_base}/{name}"
-        path = f"{directory}/note.md"
+        path = f"{directory}/{ctx.PROGRESS_FILE}"
         try:
             text = git_text_at_ref(ref, path)
         except ctx.TaskDataError:
-            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 note.md") from None
+            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}") from None
         fm, _ = parse_front_matter_text(text, source=f"{ref}:{path}")
         tasks.append(_task_record(
             fm,
@@ -159,12 +159,12 @@ def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
         (
             ctx.ACTIVE_PATH,
             [t for t in tasks if t not in archived],
-            "docs/tasks/{tid}_{slug}/note.md front matter",
+            f"docs/tasks/{{tid}}_{{slug}}/{ctx.PROGRESS_FILE} front matter",
         ),
         (
             ctx.ARCHIVE_PATH,
             archived,
-            "docs/archive/tasks/{tid}_{slug}/note.md front matter",
+            f"docs/archive/tasks/{{tid}}_{{slug}}/{ctx.PROGRESS_FILE} front matter",
         ),
     )
     for path, rows, authority in groups:
@@ -220,9 +220,9 @@ def load_owner_task_at_ref(tid: str, ref: str) -> dict:
             if not name.startswith(f"{tid}_"):
                 continue
             directory = f"{rel_base}/{name}"
-            note_path = f"{directory}/note.md"
+            note_path = f"{directory}/{ctx.PROGRESS_FILE}"
             if note_path not in paths:
-                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 note.md")
+                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
             text = git_text_at_ref(ref, note_path)
             fm, _ = parse_front_matter_text(
                 text, source=f"{ref}:{note_path}"
@@ -246,7 +246,7 @@ def task_effective_state(tid: str, primary_fm: dict) -> str | None:
     registered = worktree_paths().get(str(wt_path))
     if registered:
         task_dir = ctx.REPO_ROOT / "docs" / "tasks" / f"{tid}_{primary_fm.get('slug', '')}"
-        wt_note = wt_path / task_dir.relative_to(ctx.REPO_ROOT) / "note.md"
+        wt_note = wt_path / task_dir.relative_to(ctx.REPO_ROOT) / ctx.PROGRESS_FILE
         if wt_note.is_file():
             wt_fm, _ = parse_front_matter(wt_note)
             wt_status = wt_fm.get("status", "")
@@ -374,9 +374,9 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
             effective[owner_tid] = {
                 "tid": owner_tid,
                 "slug": "",
-                "title": "(worktree note.md 损坏)",
+                "title": f"(worktree {ctx.PROGRESS_FILE} 损坏)",
                 "status": "active",
-                "note": f"登记 worktree {path} 的 note.md 无法解析",
+                "note": f"登记 worktree {path} 的 {ctx.PROGRESS_FILE} 无法解析",
             }
             sources[owner_tid] = ("worktree", str(path))
             continue
@@ -402,7 +402,7 @@ def load_task(tid: str) -> tuple[dict, Path, dict, str]:
             f"{tid} 不存在于当前工作区（{ctx._rel(ctx.REPO_ROOT) or ctx.REPO_ROOT.name}）。"
             "进行中 task 的文档随其 worktree，请在对应 worktree 内执行"
         )
-    path = ctx.REPO_ROOT / task["dir"] / "note.md"
+    path = ctx.REPO_ROOT / task["dir"] / ctx.PROGRESS_FILE
     fm, body = parse_front_matter(path)
     return task, path, fm, body
 
@@ -411,7 +411,7 @@ def load_task_at_ref(tid: str, ref: str) -> tuple[dict, dict, str]:
     task = find_task(tid, scan_tasks_at_ref(ref))
     if not task:
         raise ctx.TaskDataError(f"{tid} 不存在于 ref {ref!r}")
-    path = f"{task['dir']}/note.md"
+    path = f"{task['dir']}/{ctx.PROGRESS_FILE}"
     fm, body = parse_front_matter_text(
         git_text_at_ref(ref, path),
         source=f"{ref}:{path}",

@@ -37,7 +37,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from repo_task.context import TaskDataError
+from repo_task.context import PROGRESS_FILE, TaskDataError
 from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -82,8 +82,8 @@ def resolve_task_dir(value: str) -> Path:
         raise ReviewDataError(f"task directory must stay inside repository: {value}") from e
     if not candidate.is_dir():
         raise ReviewDataError(f"task directory does not exist: {value}")
-    if not (candidate / "note.md").is_file():
-        raise ReviewDataError(f"missing note.md in: {value}")
+    if not (candidate / PROGRESS_FILE).is_file():
+        raise ReviewDataError(f"missing {PROGRESS_FILE} in: {value}")
     return candidate
 
 
@@ -100,7 +100,7 @@ def main():
         if args.max_review_round is not None and args.max_review_round < 1:
             raise ReviewDataError("max-review-round must be at least 1")
         task_dir = resolve_task_dir(args.task_dir)
-        fm = parse_front_matter(task_dir / "note.md")
+        fm = parse_front_matter(task_dir / PROGRESS_FILE)
         if fm.get("review_level", "full") not in VALID_REVIEW_LEVELS:
             raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
         limits = review_limits(fm)
