@@ -2,15 +2,32 @@ name: Template factory
 
 on:
   push:
-    paths: ["repo/**", ".github/workflows/template_factory.yml"]
+    paths: ["repo/**", "factory_tests/**", "pytest.ini", ".github/workflows/template_factory.yml"]
   pull_request:
-    paths: ["repo/**", ".github/workflows/template_factory.yml"]
+    paths: ["repo/**", "factory_tests/**", "pytest.ini", ".github/workflows/template_factory.yml"]
 
 permissions:
   contents: read
 
 jobs:
-  full_suite:
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest uv
+      - run: uv tool install --python 3.14 md-kx
+      - run: echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - run: md_kx --version
+      - run: python repo/.repo_template/scripts/skill_registry.py
+      - run: pytest repo/.repo_template/tests -q -m contract
+
+  factory_full:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -27,5 +44,4 @@ jobs:
       - run: uv tool install --python 3.14 md-kx
       - run: echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - run: node --version && md_kx --version
-      - run: python repo/.repo_template/scripts/skill_registry.py
-      - run: pytest repo/.repo_template/tests -q
+      - run: pytest repo/.repo_template/tests factory_tests -q
