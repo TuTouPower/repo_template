@@ -10,10 +10,14 @@ goal 模式的提示词必须是可机器判定的终态，而不是过程指令
   不看 transcript。输出逐 tid 状态行与一个总结 marker：
 
   - ``GOAL_QUEUE_COMPLETE``（exit 0）：全部 closed/integrated
-  - ``GOAL_QUEUE_STOPPED``（exit 3）：任一 blocked/failed，合法停止；输出
-    ``stopped_at=<tid> state=<state> skipped=<tid,...|->`` 列出停止成员与因它被跳过的
-    同链后续成员（链 = 队列内 depends_on / conflicts_with 无向连通分量，见 plan.group_queue）
+  - ``GOAL_QUEUE_STOPPED``（exit 3）：存在 blocked/failed/dropped 成员，且没有可继续的成员，
+    合法停止
   - ``GOAL_QUEUE_INCOMPLETE``（exit 2）：其余，goal 应继续
+
+阻塞只停所在链（链 = 队列内 depends_on / conflicts_with 无向连通分量，见 plan.group_queue）：
+存在停止成员时输出 ``stopped_at=<tid> state=<state> skipped=<tid,...|->``，列出停止成员与
+因它被跳过的同链后续成员。可继续成员 = 未闭环、非停止且未被跳过的成员（其它链中待执行
+或执行中的成员）；仍有可继续成员时判 INCOMPLETE，保留 stopped_at 行供 agent 得知阻塞点。
 
 合并授权不在判定范围：merge 是 goal 结束后的人工步骤。
 """
@@ -44,12 +48,12 @@ GOAL_LINE_TEMPLATE = (
     "（快照 docs/runtime/goal_queue.json，禁止变更队列成员）。"
     "队列执行授权已给出：禁止逐 task 征求确认、禁止进入 plan mode；"
     "停止条件仅限 task-run skill「停止条件」列举项；attempt report=blocked 只停所在链："
-    "按 skill 跳过该链后续成员并继续其它链，其余可执行成员全部处理完后按 skill 汇报后停。"
+    "按 skill 跳过该链后续成员并继续其它链。"
     "队列处理完后按 skill 一次性列出待合分支并询问合并授权。"
-    "终态判定：全部可执行成员处理完后，在主仓根目录运行 "
-    "python3 .repo_template/scripts/task.py goal-check——"
+    "终态判定：在主仓根目录运行 python3 .repo_template/scripts/task.py goal-check——"
     "输出 GOAL_QUEUE_COMPLETE 或 GOAL_QUEUE_STOPPED 即本 goal 结束；"
-    "GOAL_QUEUE_INCOMPLETE 表示继续。"
+    "GOAL_QUEUE_INCOMPLETE 表示继续（含已有阻塞点但其它链仍可继续执行的情况，"
+    "stopped_at 行标出阻塞点与被跳过成员）。"
 )
 
 
@@ -369,13 +373,20 @@ def cmd_goal_check(args) -> None:
     stopped = [(tid, state) for tid, state, _ in rows if state in STOP_STATES]
     if stopped:
         states_by_tid = {tid: state for tid, state, _ in rows}
-        for tid, state, skipped in _stops_with_skipped(
+        stops = _stops_with_skipped(
             queue, _queue_edges(queue, main_tasks), states_by_tid
-        ):
+        )
+        for tid, state, skipped in stops:
             print(f"stopped_at={tid} state={state} skipped={','.join(skipped) or '-'}")
-        detail = " ".join(f"{tid}={state}" for tid, state in stopped)
-        print(f"GOAL_QUEUE_STOPPED: {detail}")
-        sys.exit(3)
+        skipped_all = {tid for _, _, skipped in stops for tid in skipped}
+        can_continue = [
+            tid for tid, state in states_by_tid.items()
+            if state not in CLOSED_STATES | STOP_STATES and tid not in skipped_all
+        ]
+        if not can_continue:
+            detail = " ".join(f"{tid}={state}" for tid, state in stopped)
+            print(f"GOAL_QUEUE_STOPPED: {detail}")
+            sys.exit(3)
     if all(state in CLOSED_STATES for state in states):
         awaiting = [tid for tid, state, _ in rows if state == "closed"]
         print(f"execution_complete=true integrated={len(rows) - len(awaiting)}/{len(rows)}")

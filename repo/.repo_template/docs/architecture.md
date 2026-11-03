@@ -17,7 +17,7 @@ main ─┬─ t001 ── t003 ── t004   链 1：三者经依赖或冲突�
 - 实际 base 包含每个依赖的实现 SHA；
 - 分支和 worktree 没有被其它会话占用。
 
-成员阻塞（`report=blocked`）只停所在链：同链排在它之后的成员全部跳过，其它链继续执行。队列结束时报告已完成成员、阻塞点和被跳过成员；`goal-check` 在存在阻塞成员时为 STOPPED 并列出被跳过成员。合并阶段一次性列出全部待合分支：单成员链 `integrate {tid}`，多成员链 `integrate-chain {tail_tid}`，仍须用户单独授权。
+成员阻塞（`report=blocked`）只停所在链：同链排在它之后的成员全部跳过，其它链继续执行。队列结束时报告已完成成员、阻塞点和被跳过成员；`goal-check` 存在阻塞成员时输出 `stopped_at=` 行列出阻塞点与被跳过成员；其它链仍有可继续成员时为 INCOMPLETE，无可继续成员时才为 STOPPED。合并阶段一次性列出全部待合分支：单成员链 `integrate {tid}`，多成员链 `integrate-chain {tail_tid}`，仍须用户单独授权。
 
 多会话并发由用户手动启动多条独立队列。主仓写入不另建调度服务；Git 冲突由 Git 暴露并交用户或 Agent 处理。
 

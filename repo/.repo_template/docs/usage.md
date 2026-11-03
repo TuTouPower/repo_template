@@ -97,7 +97,7 @@ Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-o
 
 `/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。单个 task 的 `/task-run` 主路径只传 `tid` 与 `owner_id`：主仓 `run-begin` → worktree 内 `preflight` / `render_review_prompts.py` / `check_review_status.py` / `finish` → 主仓 `run-close --result done`；merge 经授权后 `integrate {tid}` 与 `integrate {tid} --continue`。阻塞或失败用 `run-close --result blocked|failed`；`recovery` 与原语子命令只在恢复时使用。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
 
-goal 快照是主仓级单份文件；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列按成员间关系分链：存在 `depends_on` 或 `conflicts_with` 的成员串成一条链，其后成员以链内前一成员分支为 `--base`，无关成员各自从默认分支起步，具体 base 以 `plan --serial --json [tid ...]` 的 `members[].base` 为准；成员阻塞只停所在链，其它链继续。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；存在阻塞成员时为 STOPPED，并输出 `stopped_at=` 行列出阻塞成员与同链被跳过成员；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
+goal 快照是主仓级单份文件；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列按成员间关系分链：存在 `depends_on` 或 `conflicts_with` 的成员串成一条链，其后成员以链内前一成员分支为 `--base`，无关成员各自从默认分支起步，具体 base 以 `plan --serial --json [tid ...]` 的 `members[].base` 为准；成员阻塞只停所在链，其它链继续。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；存在阻塞成员时输出 `stopped_at=` 行列出阻塞成员与同链被跳过成员，其它链仍有可继续成员则为 INCOMPLETE，无可继续成员才为 STOPPED；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
 
 图合并中断后的 `graph-transaction` 恢复见 `recovery.md`。
 

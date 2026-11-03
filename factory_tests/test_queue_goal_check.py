@@ -41,18 +41,51 @@ def _done(repo, tid, slug, **kwargs):
         {"t001": {"conflicts_with": "t002"}},  # 前者单向声明
     ],
 )
-def test_goal_check_blocked_member_is_stopped_and_lists_same_chain_skips(git_repo, relation):
+def test_goal_check_blocked_chain_skips_members_and_other_chain_keeps_goal_going(git_repo, relation):
     for tid, values in relation.items():
         _relate(git_repo, tid, **values)
     _freeze(git_repo, "t001", "t002", "t003")
     _block(git_repo, "t001")
 
+    # 无关链的 t003 仍可继续：INCOMPLETE，但保留阻塞点与被跳过成员
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "stopped_at=t001 state=blocked skipped=t002" in result.stdout
+    assert "t003" not in result.stdout.split("skipped=")[1].splitlines()[0]
+    assert "GOAL_QUEUE_INCOMPLETE: 0/3 closed" in result.stdout
+    assert "GOAL_QUEUE_STOPPED" not in result.stdout
+
+    # 其它链全部闭环后无可继续成员：STOPPED
+    _done(git_repo, "t003", "gamma")
     result = _task_cli(git_repo, "goal-check")
     assert result.returncode == 3
     assert "stopped_at=t001 state=blocked skipped=t002" in result.stdout
     assert "GOAL_QUEUE_STOPPED: t001=blocked" in result.stdout
-    # 无关链的 t003 不被跳过
-    assert "t003" not in result.stdout.split("skipped=")[1].splitlines()[0]
+
+
+def test_goal_check_other_chain_running_keeps_goal_incomplete(git_repo):
+    _relate(git_repo, "t002", depends_on="t001")
+    _freeze(git_repo, "t001", "t002", "t003")
+    _block(git_repo, "t001")
+    started = _task_cli(git_repo, "run-begin", "t003", "--owner-id", OWNER)
+    assert started.returncode == 0, started.stderr
+
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "t003 running" in result.stdout
+    assert "stopped_at=t001 state=blocked skipped=t002" in result.stdout
+
+
+def test_goal_check_stopped_when_only_skipped_members_remain(git_repo):
+    _relate(git_repo, "t002", depends_on="t001")
+    _freeze(git_repo, "t001", "t002")
+    _block(git_repo, "t001")
+
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 3
+    assert "t002 pending" in result.stdout
+    assert "stopped_at=t001 state=blocked skipped=t002" in result.stdout
+    assert "GOAL_QUEUE_STOPPED: t001=blocked" in result.stdout
 
 
 def test_goal_check_stopped_even_when_other_chains_are_fully_executed(git_repo):
@@ -84,11 +117,18 @@ def test_goal_check_skips_only_members_after_the_block_in_a_chain(git_repo):
 
 def test_goal_check_blocked_last_member_has_no_skipped(git_repo):
     _freeze(git_repo, "t001", "t002", "t003")
+    _done(git_repo, "t001", "alpha")
     _block(git_repo, "t002")
+    # t003 无关且未执行：可继续
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "stopped_at=t002 state=blocked skipped=-" in result.stdout
 
+    _done(git_repo, "t003", "gamma")
     result = _task_cli(git_repo, "goal-check")
     assert result.returncode == 3
     assert "stopped_at=t002 state=blocked skipped=-" in result.stdout
+    assert "GOAL_QUEUE_STOPPED: t002=blocked" in result.stdout
 
 
 def test_goal_check_without_block_stays_incomplete_with_pending_chains(git_repo):

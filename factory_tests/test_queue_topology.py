@@ -139,3 +139,4 @@ def test_task_run_skill_and_architecture_describe_chain_grouping():
     architecture = (product / "docs" / "architecture.md").read_text(encoding="utf-8")
     assert "串成线性分支" not in architecture
     assert "无关成员各自从默认分支起步" in architecture
+    assert "无可继续成员时才为 STOPPED" in architecture
