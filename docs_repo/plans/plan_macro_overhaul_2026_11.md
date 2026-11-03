@@ -237,7 +237,7 @@ C3 中 `handoff.json` 的字段来源：
 
 | 编号 | 改造 | 说明 | 裁决 |
 | --- | --- | --- | --- |
-| H1 | `repo_sync.py` 拆包 | 仿照 `repo_task/` 拆为 `repo_sync/`：`cli`、`source`（固定 checkout / URL 缓存）、`assets`（硬同步与镜像）、`agents_merge`、`shared_files`（gitignore / prettierignore / MCP）、`transaction`、`gates`、`hooks`、`workflow_migration`。入口 `repo_sync.py` 只做路径注入与转发，路径不变，来源运行器与既有 skill 调用不受影响。纯重构，行为不变 | 无需 |
+| H1 | `repo_sync.py` 拆包 | 仿照 `repo_task/` 拆为 `template_sync/`（不用 `repo_sync/`，避免与入口 `repo_sync.py` 同名冲突）：`cli`、`source`（固定 checkout / URL 缓存）、`assets`（硬同步与镜像）、`agents_merge`、`shared_files`（gitignore / prettierignore / MCP）、`transaction`、`gates`、`hooks`、`workflow_migration`。入口 `repo_sync.py` 只做路径注入与转发，路径不变，来源运行器与既有 skill 调用不受影响。纯重构，行为不变 | 无需 |
 | H2 | 机制审计 | 对下表每个机制统计 1 个月内消费仓的实际使用（ledger 事件、`tasks_audit.log`、git 历史）。零使用且无事故证据的机制列为删除候选，交用户裁决。沿用 `decision_log.md` 的准入规则：至少两份实证才新增机制 | 审计结果需裁决 |
 | H3 | 测试并行化 | 现状：全量 692 个用例串行约 9.5 分钟；16 处测试直接改写进程级 `os` / `shutil` / `subprocess` 属性，两处 `conftest.py` 因此拒绝 pytest-xdist；工厂集成测试多数新建真实 git 仓库与 worktree。改造：把进程级改写收敛为作用域受控的替换（只影响当前测试）；去掉 xdist 禁令并以 `-n auto` 运行；可选为 git 测试仓库建一次模板、每个测试复制一份。CI 与工厂命令同步改为并行。在 D4 合入后执行，避免与第 2–4 波的测试改动冲突 | D-14 |
 
@@ -397,7 +397,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | 1 | `wp3_docs_product` | F1–F4、A2 | `repo/.repo_template/docs/` 下的 `usage.md`、`architecture.md` 与新建的 `recovery.md`、`sync.md`；各 `SKILL.md` 的「组合契约」段；`repo/AGENTS.md`；脚本中指向被迁移 `usage.md` 章节的提示字符串 |
 | 1 | 主会话 | B1 | 工厂 `.scratch/`（不入 git） |
 | 2 | `wp4_orchestration` | C1–C5、A3、J1 | `repo_task/` 的 `cli`、`attempts`、`lifecycle`、`integration`、`recovery`、`monitoring`、`control`；`task-run`、`task-work`、`task-integrate` 三个 skill；`usage.md` / `recovery.md` 的对应段；新增测试 |
-| 2 | `wp5_sync_refactor` | H1、G2 | `repo_sync.py` → `repo_sync/` 包；同步相关测试；`repo/.claude/settings.json`；`usage.md` 状态行 hook 段（与 WP4 同文件不同章节） |
+| 2 | `wp5_sync_refactor` | H1、G2 | `repo_sync.py` → `template_sync/` 包；同步相关测试；`repo/.claude/settings.json`；`usage.md` 状态行 hook 段（与 WP4 同文件不同章节） |
 | 2 | `wp10_ac_review_gate` | J2–J4 | `review_prompts/` 四个文件；`check_review_status.py`；`repo_task/review.py`；task 模板 `task.md`；`tests/review_support.py` 与 review 相关测试 |
 | 3 | `wp6_archive_at_integrate` | D1–D3 | `lifecycle`、`integration`、`monitoring`、`recovery`；`repo/AGENTS.md` 的 archive 行、`docs/tasks/` 行与 commit 条；`architecture.md`「合并」；三个 task skill 与 `recovery.md` 中的 amend 规程；同步器工作流迁移的前置检查 |
 | 3 | `wp7_queue_topology` | E1、E2 | `task-run` 的「授权与队列」「执行」「停止」段；`plan.py`；`goal.py`；`architecture.md`「执行拓扑」（与 WP6 同文件不同章节） |

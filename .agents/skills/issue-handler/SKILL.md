@@ -20,7 +20,7 @@ description: 模板仓（工厂仓）处理 GitHub 上报的模板问题。优�
 
 ## 硬边界
 
-- **只改工厂仓真相源**：`repo/` 产物树内的模板文件（含 `repo/.repo_template/`、`repo/AGENTS.md`、`repo/README.md`、`repo/.claude/settings.json`、`repo/docs/blueprint/` 等分发文件）。工厂根的 `factory_tests/` 是工厂测试，随修复按需增改。消费仓是副本，通过 `repo-template-sync` 拉取修复；绝不直接改消费仓里的模板产物。
+- **只改工厂仓真相源**：`repo/` 产物树内的模板文件（含 `repo/.repo_template/`、`repo/AGENTS.md`、`repo/README.md`、`repo/.claude/skills/`、`repo/docs/blueprint/` 等分发文件）。工厂根的 `factory_tests/` 是工厂测试，随修复按需增改。消费仓是副本，通过 `repo-template-sync` 拉取修复；绝不直接改消费仓里的模板产物。
 - **报告后必须等用户批准再改代码**。模板仓改动影响所有消费仓，方案可能有多种取舍；分析+计划先呈用户，批准前不动上述真相源。
 - **复现与定位可读实现**：本 skill 是模板仓 agent，可读 `repo/.repo_template/scripts/*.py`、`hooks/pre-commit`、`skills/*` 等实现源码——这是它与需求方 skill 的区别。
 - **复现不改生产树**：在工厂仓 `repo/` 复现用只读命令或 `.scratch/` 隔离；进消费仓复现同样只读 + `.scratch/` 隔离，不碰消费仓生产文件。
