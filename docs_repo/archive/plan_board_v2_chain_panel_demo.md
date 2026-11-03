@@ -1,6 +1,8 @@
 # Task 看板 v2 — 链式规划面板 执行计划
 
-> **阅读说明（2026-09-08T01:42:21+08:00）**：本文为看板 v2 的历史执行计划，随 0ec0e59（2026-08-06）收录；分支和交付工具名保留当时上下文，不作为现在的运行步骤。当前 mock Demo 的启动与验证见 [应用 README](app/README.md)。是否完成原计划全部交互验收仍需按 README 在浏览器复验，不能由源码存在或构建通过代替。
+> **阅读说明（2026-09-08T01:42:21+08:00）**：本文为看板 v2 的历史执行计划，随 0ec0e59（2026-08-06）收录；分支和交付工具名保留当时上下文，不作为现在的运行步骤。原计划全部交互验收是否完成未复验，不能由源码存在或构建通过代替。
+>
+> **更新（2026-11-03T22:30:00+08:00）**：mock demo（`docs_repo/demos/app/` 的 React/Vite 应用与附件 zip）已删除，原 `app/README.md` 随之移除。现行实现为 `repo/.repo_template/scripts/repo_task/view_static/`（链式规划见 `chain_plan.js`）。demo 源码可从 commit `48bcfde` 及更早历史恢复（如 `git show 48bcfde:docs_repo/demos/app/README.md`）。本文原位于 `docs_repo/demos/plan.md`，现迁入 `docs_repo/archive/`。
 
 ## 需求确认(与用户对齐)
 
