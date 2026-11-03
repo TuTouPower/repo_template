@@ -1,6 +1,6 @@
 # repo_template 宏观改造方案
 
-> **状态：已裁决，待实施。** 决策状态：2026-11-03 用户批准第 9 节全部推荐项，并采纳 E2 与 `note.md` → `progress.md` 改名（D-12）；D-11 撤销（原报告已删除）。实现状态：未实施；执行编排见第 11 节。
+> **状态：已裁决，待实施。** 决策状态：2026-11-03 用户批准第 9 节全部推荐项，并采纳 E2、`note.md` → `progress.md` 改名（D-12）与 AC 打勾复核闭环（D-13）；D-11 撤销（原报告已删除）。实现状态：未实施；执行编排见第 11 节。
 >
 > 编写时间：2026-11-03T21:57:11+08:00。证据基线：工厂 `main` @ `9514f00`。
 >
@@ -50,6 +50,7 @@
 | `usage.md` 日常部分 | 22.8KB 单文件 | 按读者拆分，日常文档 ≤ 10KB |
 | 已知文档漂移 | 9 处（见 A 组；A6 不处理） | 其余 8 处清零 |
 | 宿主认证 | 未执行 | Claude Code 当前版本完成认证并记录版本 |
+| AC 复核 | reviewer 判定只在报告正文 | 每条 AC 带 `TICK-VALID` / `TICK-VOID`，由脚本门禁 |
 
 ### 非目标
 
@@ -73,6 +74,7 @@
 | P9 | 无宿主层认证，工厂不使用产物流程 | I1–I3 |
 | P10 | 文档漂移 | A1–A9 |
 | P11 | 工厂仓卫生 | B1–B3 |
+| P12 | review FAIL 后 AC 打勾不撤回；reviewer 的 AC 判定不进机器门禁 | J1–J4 |
 
 ## 5. 改造项
 
@@ -219,7 +221,7 @@ C3 中 `handoff.json` 的字段来源：
 
 | 编号 | 改造 | 说明 | 裁决 |
 | --- | --- | --- | --- |
-| G1 | 工厂测试移出产物 | 把 9 个契约模块以外的测试模块、fixtures、`test_chain_plan_cases.js` 与 `tests/package.json` 移到工厂根 `factory_tests/`。`review_support.py` 被契约模块引用，留在产物内；工厂测试经 `factory_tests/conftest.py` 把 `repo/.repo_template/tests` 与 `scripts` 加入 `sys.path`。`factory_tests/pytest.ini` 复制 marker 定义与 xdist 守卫。工厂命令改为 `pytest repo/.repo_template/tests factory_tests -q`，CI 路径过滤增加 `factory_tests/**`。`contract` marker 与 `-m contract` 保留，因为消费仓 `testing.md` 归消费仓所有、不随同步更新，去掉 marker 会让既有命令收集 0 条并以退出码 5 失败。消费仓下次同步时，`sync_dir` 的镜像删除会自动移除这些文件。`PRETTIERIGNORE_TEMPLATE_RULES` 删除两条测试路径 | D-06 |
+| G1 | 工厂测试移出产物 | 把 9 个契约模块以外的测试模块、fixtures、`test_chain_plan_cases.js` 与 `tests/package.json` 移到工厂根 `factory_tests/`。`review_support.py` 被契约模块引用，留在产物内；工厂测试经 `factory_tests/conftest.py` 把 `repo/.repo_template/tests` 与 `scripts` 加入 `sys.path`。工厂根新增仅工厂使用的 `pytest.ini`，登记 marker 与 `testpaths`，`factory_tests/conftest.py` 保留 xdist 守卫。工厂命令改为 `pytest repo/.repo_template/tests factory_tests -q`，CI 路径过滤增加 `factory_tests/**`。`contract` marker 与 `-m contract` 保留，因为消费仓 `testing.md` 归消费仓所有、不随同步更新，去掉 marker 会让既有命令收集 0 条并以退出码 5 失败。消费仓下次同步时，`sync_dir` 的镜像删除会自动移除这些文件。`PRETTIERIGNORE_TEMPLATE_RULES` 删除两条测试路径 | D-06 |
 | G2 | 状态栏 hook 改为显式启用 | `repo/.claude/settings.json` 不再默认带 PostToolUse。`repo_sync.py install-hooks --statusline` 写入消费仓 settings（沿用原缩进），`usage.md` 说明需配合全局 `statusLine.command`。已有消费仓的 settings 归消费仓所有，不自动删除。这是对 L36「保留状态栏 hook」的默认启用方式修订，不删除能力 | D-07 |
 
 验收：
@@ -259,6 +261,35 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | I2 | dogfood 消费仓 | 在 `~/kar/code/repo_template_dogfood/` 维护一个由 HEAD 导出的消费仓。每次模板发布前，经宿主完整跑一个真实小 task（create → run → merge）。工厂 `AGENTS.md` 增加发布前检查项 | D-10 |
 | I3 | CI 拆分 | 拆为 `contract` 作业（3.9 / 3.14，秒级）与 `factory_full` 作业。本机全量串行约 10.5 分钟，失败时契约作业先给出信号 | 无需 |
 
+### J. AC 打勾复核闭环（D-13）
+
+现状：
+
+- 创建期禁止预先打勾（`documents.py`，仅 `preflight --creation`）；执行 Agent 验证通过后打勾，打勾在派 review 之前；finish 与 integrate 要求 AC 全部打勾。
+- 三份 review prompt 要求逐条复核已打勾 AC，打勾不实出 blocking finding。`share_prompt.txt`「AC 复验披露」要求每条 AC 标注 `re_verified` / `trust_prior`。
+
+缺口：
+
+- review FAIL 后错误的勾不会撤回，修复后「已打勾」不再表示「在最终交付内容上验证过」；
+- reviewer 对每条 AC 的判定不进机器门禁，PASS 是否覆盖全部 AC 无从校验。
+
+| 编号 | 改造 | 说明 |
+| --- | --- | --- |
+| J1 | FAIL 后全部撤回打勾 | review 判 FAIL 且随后要修改交付内容时，执行 Agent 先把 `task.md` 全部 AC 撤回为 `- [ ]`，修复后重跑测试与黑盒，逐条重新打勾，再派下一轮 review。仅补报告或处置表、不改交付内容的 INCOMPLETE 不撤回。reviewer 保持只读，不改 `task.md` |
+| J2 | AC 判定标签 | 「AC 复验方式」小节每行格式为 `- AC-NNN：TICK-VALID，re_verified。证据` 或 `- AC-NNN：TICK-VOID，trust_prior。原因`。`TICK-VALID` 表示勾选成立；`TICK-VOID` 表示勾选作废。未打勾的 AC 一律记 `TICK-VOID`。`Round N`（N≥2）小节须重新列出全部 AC 行。`full` 级的 code 与 test 报告都须包含该小节 |
+| J3 | 机器门禁 | `check_review_status` 读取每份报告最后一轮的 AC 小节。PASS 有效的条件：AC 行集合与 `task.md` 的 AC 编号集合一致，`task.md` 中全部已打勾，且全部为 `TICK-VALID`。任一行为 `TICK-VOID` 时判 FAIL；缺行、多行或格式错误时判 INCOMPLETE，`next_action` 为补全 AC 复验方式 |
+| J4 | 模板规范块 | `task.md` 验收标准规范块补充 J1 规则。存量 task 的规范块由同步器现有的规范块强制迁移更新 |
+
+影响面：
+
+- `review_prompts/` 四个文件、`check_review_status.py`、`repo_task/review.py`、task 模板、`tests/review_support.py` 与 review 相关测试；
+- `task-work`「独立 review」段（由 WP4 改写）。
+
+验收：
+
+- 新增测试覆盖：全部 `TICK-VALID` 时 PASS；含 `TICK-VOID` 时 FAIL；缺 AC 行、多出未知 AC、`task.md` 未打勾时不得 PASS；多轮报告只取最后一轮；
+- 既有 PASS 场景的测试输入补齐 AC 行后保持 PASS（这是补输入，不是改预期）。
+
 ## 6. 评估后不建议改动
 
 | 候选 | 不改理由 |
@@ -275,7 +306,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | --- | --- | --- | --- |
 | 0 | A1–A9（A6 不处理），B1、B2；B3 随 G1 | 无 | A 组 grep 判据；工厂全量测试 |
 | 1 | C1–C5，改写 `task-run` / `task-work` / `task-integrate` 与 `usage.md` 对应段 | D-01–D-03 | C 组验收；导出契约 |
-| 2 | H1（纯重构，放在任何同步迁移代码改动之前）、F1–F4、G1、G2、I3 | D-06、D-07 | F/G 组验收；旧版消费仓同步到新版的迁移测试 |
+| 2 | H1（纯重构，放在任何同步迁移代码改动之前）、F1–F4、G1、G2、I3、J1–J4 | D-06、D-07、D-13 | F/G/J 组验收；旧版消费仓同步到新版的迁移测试 |
 | 3 | D1–D3、E1–E2，以及同步器的工作流迁移逻辑；合入后单独执行 D4 改名 | 阶段 1–2；D-04、D-05、D-12 | D/E 组验收；含存量 done task 与旧文件名的消费仓迁移测试 |
 | 4 | I1、I2、H2 审计 | 阶段 1–3 发布 | 认证记录入 `decision_log.md`；审计结果交裁决 |
 
@@ -297,7 +328,8 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | --- | --- |
 | ledger | 事件类型不变（C2 只组合调用），无需转换 |
 | 已归档 `handoff.json` | 字段是新 schema 的超集，原样保留；archive 只增不改 |
-| 存量 task 文档 | 字段无变化；`docs/tasks/` 与 `docs/archive/tasks/` 下的 `note.md` 一次性改名为 `progress.md`（D4） |
+| 存量 task 文档 | 字段无变化；`docs/tasks/` 与 `docs/archive/tasks/` 下的 `note.md` 一次性改名为 `progress.md`（D4）；`task.md` 验收标准规范块按新模板强制更新（J4） |
+| 已归档 review 报告 | 不补 `TICK-*` 行，也不重新校验；前置条件已要求全部 done task 先集成 |
 | `.repo_template/tests/` | 镜像同步自动移除工厂测试 |
 | `.claude/settings.json` | 不自动修改；需要状态栏的消费仓执行 `install-hooks --statusline` |
 | 消费仓 `testing.md` | 不变，`-m contract` 继续有效 |
@@ -332,6 +364,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | D-10 | 建立 `~/kar/code/repo_template_dogfood/`（I2） | 采纳 | 采纳 |
 | D-11 | `123.md` 原报告位置（A6） | 由用户提供 | 撤销：原报告已删除，A6 不处理 |
 | D-12 | `note.md` 改名 `progress.md`（D4），随阶段 3 迁移一次完成 | 采纳 | 采纳 |
+| D-13 | AC 打勾复核闭环：FAIL 后全部撤回打勾，reviewer 用 `TICK-VALID` / `TICK-VOID` 逐条判定，脚本门禁（J 组） | 采纳 | 采纳 |
 
 ## 10. 裁决后落点
 
@@ -357,10 +390,11 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | --- | --- | --- | --- |
 | 1 | `wp1_docs_factory` | A4、A5、A7、A9、B2 | `docs_repo/decision_log.md`、`docs_repo/README.md`、`docs_repo/demos/`、`docs_repo/archive/`（新增 demo 计划归档）、根 `.gitignore` |
 | 1 | `wp2_test_split` | G1、I3、A1、A8、B3 | `repo/.repo_template/tests/`、`factory_tests/`、`.github/workflows/template_factory.yml`、根 `README.md`、根 `AGENTS.md`、`.agents/skills/issue-handler/SKILL.md`、`repo/docs/blueprint/testing.md`、`repo_sync.py` 中 `PRETTIERIGNORE_TEMPLATE_RULES` 的两条测试路径 |
-| 1 | `wp3_docs_product` | F1–F4 | `repo/.repo_template/docs/` 下的 `usage.md`、`architecture.md` 与新建的 `recovery.md`、`sync.md`；各 `SKILL.md` 的「组合契约」段；`repo/AGENTS.md` |
+| 1 | `wp3_docs_product` | F1–F4、A2 | `repo/.repo_template/docs/` 下的 `usage.md`、`architecture.md` 与新建的 `recovery.md`、`sync.md`；各 `SKILL.md` 的「组合契约」段；`repo/AGENTS.md`；脚本中指向被迁移 `usage.md` 章节的提示字符串 |
 | 1 | 主会话 | B1 | 工厂 `.scratch/`（不入 git） |
-| 2 | `wp4_orchestration` | C1–C5、A2、A3 | `repo_task/` 的 `cli`、`attempts`、`lifecycle`、`integration`、`recovery`、`monitoring`、`control`；`task-run`、`task-work`、`task-integrate` 三个 skill；`usage.md` / `recovery.md` 的对应段；新增测试 |
+| 2 | `wp4_orchestration` | C1–C5、A3、J1 | `repo_task/` 的 `cli`、`attempts`、`lifecycle`、`integration`、`recovery`、`monitoring`、`control`；`task-run`、`task-work`、`task-integrate` 三个 skill；`usage.md` / `recovery.md` 的对应段；新增测试 |
 | 2 | `wp5_sync_refactor` | H1、G2 | `repo_sync.py` → `repo_sync/` 包；同步相关测试；`repo/.claude/settings.json`；`usage.md` 状态行 hook 段（与 WP4 同文件不同章节） |
+| 2 | `wp10_ac_review_gate` | J2–J4 | `review_prompts/` 四个文件；`check_review_status.py`；`repo_task/review.py`；task 模板 `task.md`；`tests/review_support.py` 与 review 相关测试 |
 | 3 | `wp6_archive_at_integrate` | D1–D3 | `lifecycle`、`integration`、`monitoring`、`recovery`；`repo/AGENTS.md` 的 archive 行、`docs/tasks/` 行与 commit 条；`architecture.md`「合并」；三个 task skill 与 `recovery.md` 中的 amend 规程；同步器工作流迁移的前置检查 |
 | 3 | `wp7_queue_topology` | E1、E2 | `task-run` 的「授权与队列」「执行」「停止」段；`plan.py`；`goal.py`；`architecture.md`「执行拓扑」（与 WP6 同文件不同章节） |
 | 4 | `wp8_rename_progress` | D4 | 全仓 `note.md` 引用、task 模板、同步器迁移、相关测试 |
