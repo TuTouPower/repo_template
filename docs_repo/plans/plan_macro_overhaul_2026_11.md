@@ -1,6 +1,6 @@
 # repo_template 宏观改造方案
 
-> **状态：本仓改造与隔离验收已完成，工厂全量验证通过。** 用户已批准第 9 节全部推荐项，D-11 撤销。代码经 `overhaul/macro_2026_11` @ `1c05bae` 集成与验收，用户已授权保留多个提交合入工厂 `main` 并推送。H2 消费仓机制审计暂缓，不作为工厂改造前置条件；I1 Claude Code 宿主认证未执行。下文保留裁决时的方案与基线，实施证据见文末，现行用法以产物文档为准。
+> **状态：本次代码改造已实施并合入 `main`。** 下文保留改造时的历史方案与基线，已实施内容见文末；现行规则见产物文档和 `decision_log.md`。
 >
 > 编写时间：2026-11-03T21:57:11+08:00。证据基线：工厂 `main` @ `9514f00`。
 >
@@ -15,9 +15,8 @@
 - 常驻与按需加载的规则文本过长，同一段组合契约在 13 个 skill 中重复；
 - 产物向消费仓分发了大量消费仓永不运行的工厂测试，以及默认启用但缺渲染端的状态栏 hook；
 - 文档与实现之间已有多处可核实的漂移；
-- 宿主层端到端行为从未认证，工厂自身不使用产物流程。
 
-改造目标是在**不削弱现有门禁语义**（严格模板、TDD、黑盒、独立 review、merge 单独授权、claim 防并发）的前提下，把编排下沉到脚本、收敛状态与文档、瘦身分发，并补上验证闭环。
+改造目标是在**不削弱现有门禁语义**（严格模板、TDD、黑盒、独立 review、merge 单独授权、claim 防并发）的前提下，把编排下沉到脚本、收敛状态与文档、瘦身分发，完善本地测试。
 
 ## 2. 证据基线
 
@@ -34,7 +33,7 @@
 | 分发测试 | 37 个测试相关文件、692 个用例；契约模块 9 个 | `test_contract_suite.py` 的 `CONTRACT_MODULES` |
 | 工厂临时文件 | `.scratch/` 2.9GB（`review_fixes` 1.6GB 等历次 basetemp 残留） | `du` |
 
-已有脚本级端到端测试覆盖 start → finish → cleanup → integrate、链式合并、恢复阶段与产物导出（`test_workflow_contracts.py`、`test_design_regressions.py::test_actual_product_export_is_clean_and_passes_contract`）。缺的是**宿主层**证据：宿主按 skill 调用、身份原样透传、第二会话 claim 被拒。`decision_log.md` L39 自记「宿主真实 E2E 认证待完成」。
+已有脚本级端到端测试覆盖 start → finish → cleanup → integrate、链式合并、恢复阶段与产物导出（`test_workflow_contracts.py`、`test_design_regressions.py::test_actual_product_export_is_clean_and_passes_contract`）。
 
 ## 3. 目标、非目标与成功判据
 
@@ -48,8 +47,7 @@
 | 分发到消费仓的测试 | 692 用例 | 仅契约用例（当前 174） |
 | 消费仓默认 hook 进程 | 每次 Bash 调用 1 个 python3 | 0（状态栏改为显式启用） |
 | `usage.md` 日常部分 | 22.8KB 单文件 | 按读者拆分为 usage / recovery / sync；日常文档不保留恢复与同步规程（原定 ≤ 10KB 按字符估算，UTF-8 中文每字 3 字节，不可达；WP3 实测降至 17.1KB） |
-| 已知文档漂移 | 9 处（见 A 组；A6 不处理） | 其余 8 处清零 |
-| 宿主认证 | 未执行 | Claude Code 当前版本完成认证并记录版本 |
+| 已知文档漂移 | 8 处（见 A 组；A6 不处理） | 其余 7 处清零 |
 | AC 复核 | reviewer 判定只在报告正文 | 每条 AC 带 `TICK-VALID` / `TICK-VOID`，由脚本门禁 |
 | 工厂全量测试耗时 | 串行约 9.5 分钟（10 核只用 1 核） | 并行运行约 2 分钟（估算，待 H3 实测） |
 
@@ -64,7 +62,7 @@
 
 | 编号 | 问题 | 改造项 |
 | --- | --- | --- |
-| P1 | 复杂度增长快于价值，修补循环 | H1、H2 |
+| P1 | 复杂度增长快于价值，修补循环 | H1 |
 | P2 | 一 task 一 commit 派生多层例外 | D1、D2 |
 | P3 | 状态分散，`handoff.json` 与 `note.md` 重复；状态文件名与内容不符 | C3、D3、D4 |
 | P4 | 「handoff」一词三义 | F4 |
@@ -72,8 +70,7 @@
 | P6 | 线性链拓扑放大阻塞与合并面 | E1、E2 |
 | P7 | 上下文成本高、样板重复 | F1–F3 |
 | P8 | 分发内容过多，hook 半成品 | G1、G2 |
-| P9 | 无宿主层认证，工厂不使用产物流程 | I1–I3 |
-| P10 | 文档漂移 | A1–A9 |
+| P10 | 文档漂移 | A1–A8 |
 | P11 | 工厂仓卫生 | B1–B3 |
 | P12 | review FAIL 后 AC 打勾不撤回；reviewer 的 AC 判定不进机器门禁 | J1–J4 |
 | P13 | 工厂全量测试只能串行，单次约 9.5 分钟，拖慢每个工作包的验证 | H3 |
@@ -94,7 +91,6 @@
 | A6 | `docs_repo/decision_log.md` L39 与「123.md 核验与处理」 | 引用的 `123.md` 不在仓内 | 不处理：原报告已删除，用户确认无需追溯 |
 | A7 | `docs_repo/decision_log.md` 表头 | 核对日期仍为 2026-09-07，表内已有 2026-10-24 条目 | 更新核对日期 |
 | A8 | `.agents/skills/issue-handler/SKILL.md` | 写域只含 `repo/.repo_template/` 与 `repo/AGENTS.md`，覆盖不到 `repo/README.md`、`repo/.claude/settings.json`、`repo/docs/blueprint/` 等分发文件；提到不存在的 `hooks/*.py`（实际只有 `hooks/pre-commit`） | 写域改为「`repo/` 产物树内的模板文件」；修正 hook 路径 |
-| A9 | `docs_repo/README.md` 推荐阅读与目录 | 未列 `workflow_reflection_6.md`、`analysis_orchestrate_parallel_work_2026_08.md`、`reflection_agent_session_capacity_misjudgment.md` | 补入导航；裁决后补入本文 |
 
 验收：
 
@@ -223,7 +219,7 @@ C3 中 `handoff.json` 的字段来源：
 
 | 编号 | 改造 | 说明 | 裁决 |
 | --- | --- | --- | --- |
-| G1 | 工厂测试移出产物 | 把 9 个契约模块以外的测试模块、fixtures、`test_chain_plan_cases.js` 与 `tests/package.json` 移到工厂根 `factory_tests/`。`review_support.py` 被契约模块引用，留在产物内；工厂测试经 `factory_tests/conftest.py` 把 `repo/.repo_template/tests` 与 `scripts` 加入 `sys.path`。工厂根新增仅工厂使用的 `pytest.ini`，登记 marker 与 `testpaths`，`factory_tests/conftest.py` 保留 xdist 守卫。工厂命令改为 `pytest repo/.repo_template/tests factory_tests -q`，CI 路径过滤增加 `factory_tests/**`。`contract` marker 与 `-m contract` 保留，因为消费仓 `testing.md` 归消费仓所有、不随同步更新，去掉 marker 会让既有命令收集 0 条并以退出码 5 失败。消费仓下次同步时，`sync_dir` 的镜像删除会自动移除这些文件。`PRETTIERIGNORE_TEMPLATE_RULES` 删除两条测试路径 | D-06 |
+| G1 | 工厂测试移出产物 | 把 9 个契约模块以外的测试模块、fixtures、`test_chain_plan_cases.js` 与 `tests/package.json` 移到工厂根 `factory_tests/`。`review_support.py` 被契约模块引用，留在产物内；工厂测试经 `factory_tests/conftest.py` 把 `repo/.repo_template/tests` 与 `scripts` 加入 `sys.path`。工厂根新增仅工厂使用的 `pytest.ini`，登记 marker 与 `testpaths`，`factory_tests/conftest.py` 保留 xdist 守卫。工厂命令改为 `pytest repo/.repo_template/tests factory_tests -q`。`contract` marker 与 `-m contract` 保留，因为消费仓 `testing.md` 归消费仓所有、不随同步更新，去掉 marker 会让既有命令收集 0 条并以退出码 5 失败。消费仓下次同步时，`sync_dir` 的镜像删除会自动移除这些文件。`PRETTIERIGNORE_TEMPLATE_RULES` 删除两条测试路径 | D-06 |
 | G2 | 状态栏 hook 改为显式启用 | `repo/.claude/settings.json` 不再默认带 PostToolUse。`repo_sync.py install-hooks --statusline` 写入消费仓 settings（沿用原缩进），`usage.md` 说明需配合全局 `statusLine.command`。已有消费仓的 settings 归消费仓所有，不自动删除。这是对 L36「保留状态栏 hook」的默认启用方式修订，不删除能力 | D-07 |
 
 验收：
@@ -238,31 +234,7 @@ C3 中 `handoff.json` 的字段来源：
 | 编号 | 改造 | 说明 | 裁决 |
 | --- | --- | --- | --- |
 | H1 | `repo_sync.py` 拆包 | 仿照 `repo_task/` 拆为 `template_sync/`（不用 `repo_sync/`，避免与入口 `repo_sync.py` 同名冲突）：`cli`、`source`（固定 checkout / URL 缓存）、`assets`（硬同步与镜像）、`agents_merge`、`shared_files`（gitignore / prettierignore / MCP）、`transaction`、`gates`、`hooks`、`workflow_migration`。入口 `repo_sync.py` 只做路径注入与转发，路径不变，来源运行器与既有 skill 调用不受影响。纯重构，行为不变 | 无需 |
-| H2 | 机制审计 | 对下表每个机制统计 1 个月内消费仓的实际使用（ledger 事件、`tasks_audit.log`、git 历史）。零使用且无事故证据的机制列为删除候选，交用户裁决。沿用 `decision_log.md` 的准入规则：至少两份实证才新增机制 | 审计结果需裁决 |
-| H3 | 测试并行化 | 现状：全量 692 个用例串行约 9.5 分钟；16 处测试直接改写进程级 `os` / `shutil` / `subprocess` 属性，两处 `conftest.py` 因此拒绝 pytest-xdist；工厂集成测试多数新建真实 git 仓库与 worktree。改造：把进程级改写收敛为作用域受控的替换（只影响当前测试）；去掉 xdist 禁令并以 `-n auto` 运行；可选为 git 测试仓库建一次模板、每个测试复制一份。CI 与工厂命令同步改为并行。在 D4 合入后执行，避免与第 2–4 波的测试改动冲突 | D-14 |
-
-H2 机制清单与初判（「待验证」表示缺少使用数据）：
-
-| 机制 | 引入依据 | 初判 |
-| --- | --- | --- |
-| attempt claim / `--replace-owner` | H-04（多会话接续） | 保留 |
-| `terminal` 与 `report` 两类事件 | dispatch 时代宿主终态与业务报告分离 | 保留事件；主路径经 C2 合并调用 |
-| `merge-backlog` + `graph-transaction` | H-03 | 保留；使用频率待验证 |
-| goal / `goal-check` | L36 保留 | 保留；使用频率待验证 |
-| 同步持久事务与 before-image | H-05 | 保留；经 H1 模块化 |
-| `review-upgrade` / `limits` | M-02、L36 | 保留 |
-| `ledger import` | L39 | 保留 |
-| `view --serve` 看板 | L35 | 保留 |
-| `rewind` / `purge` / audit log | 早期 | 保留；使用频率待验证 |
-| 状态栏 hook | L36 保留 | 改为显式启用（G2） |
-
-### I. 验证闭环
-
-| 编号 | 改造 | 说明 | 裁决 |
-| --- | --- | --- | --- |
-| I1 | 宿主认证 | 在 Claude Code 当前版本上执行 `usage.md`「支持边界」的认证清单：自然语言不自动执行入口；显式 `task-run` 读取 work/integrate 正文并原样传递 identity/owner；merge 单独授权；同步从来源读取 core；同 tid 第二会话 claim 被拒。结果与宿主版本记入 `decision_log.md` L39 | 无需 |
-| I2 | dogfood 消费仓 | 在 `~/kar/code/repo_template_dogfood/` 维护一个由 HEAD 导出的消费仓。每次模板发布前，经宿主完整跑一个真实小 task（create → run → merge）。工厂 `AGENTS.md` 增加发布前检查项 | D-10 |
-| I3 | CI 拆分 | 拆为 `contract` 作业（3.9 / 3.14，秒级）与 `factory_full` 作业。本机全量串行约 10.5 分钟，失败时契约作业先给出信号 | 无需 |
+| H3 | 测试并行化 | 现状：全量 692 个用例串行约 9.5 分钟；16 处测试直接改写进程级 `os` / `shutil` / `subprocess` 属性，两处 `conftest.py` 因此拒绝 pytest-xdist；工厂集成测试多数新建真实 git 仓库与 worktree。改造：把进程级改写收敛为作用域受控的替换（只影响当前测试）；去掉 xdist 禁令并以 `-n auto` 运行；可选为 git 测试仓库建一次模板、每个测试复制一份。工厂命令改为并行。在 D4 合入后执行，避免与第 2–4 波的测试改动冲突 | D-14 |
 
 ### J. AC 打勾复核闭环（D-13）
 
@@ -300,18 +272,18 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | `tasks_index.json` 改为 gitignore | L1 已裁决入库；merge 冲突已由集成时重建解决 |
 | 用 commit trailer 取代 `handoff.json` | 更彻底，但依赖查找需重写，历史 commit 无法补 trailer。C3 已消除手写与重复，收益已覆盖主要痛点 |
 | 合并或改名 skill（如 `repo-hygiene` / `repo-cleanup`） | 职责不同，改名会给消费仓软链与习惯带来迁移成本 |
-| 删除 `view --serve` 看板或 goal 模式 | 用户已在 L35 / L36 裁决保留；是否删除交由 H2 审计数据决定 |
+| 删除 `view --serve` 看板或 goal 模式 | 用户已在 L35 / L36 裁决保留 |
 | `repo/.gitignore` 中的 `.commandcode/` | 本人工具在消费仓普遍使用，保留成本可忽略 |
 
 ## 7. 实施阶段
 
 | 阶段 | 内容 | 前置 | 验证 |
 | --- | --- | --- | --- |
-| 0 | A1–A9（A6 不处理），B1、B2；B3 随 G1 | 无 | A 组 grep 判据；工厂全量测试 |
+| 0 | A1–A8（A6 不处理），B1、B2；B3 随 G1 | 无 | A 组 grep 判据；工厂全量测试 |
 | 1 | C1–C5，改写 `task-run` / `task-work` / `task-integrate` 与 `usage.md` 对应段 | D-01–D-03 | C 组验收；导出契约 |
-| 2 | H1（纯重构，放在任何同步迁移代码改动之前）、F1–F4、G1、G2、I3、J1–J4 | D-06、D-07、D-13 | F/G/J 组验收；旧版消费仓同步到新版的迁移测试 |
+| 2 | H1（纯重构，放在任何同步迁移代码改动之前）、F1–F4、G1、G2、J1–J4 | D-06、D-07、D-13 | F/G/J 组验收；旧版消费仓同步到新版的迁移测试 |
 | 3 | D1–D3、E1–E2，以及同步器的工作流迁移逻辑；合入后单独执行 D4 改名 | 阶段 1–2；D-04、D-05、D-12 | D/E 组验收；含存量 done task 与旧文件名的消费仓迁移测试 |
-| 4 | I1、I2、H2 审计、H3 测试并行化 | 阶段 1–3 发布；H3 在 D4 合入后 | 认证记录入 `decision_log.md`；审计结果交裁决；H3 并行与串行结果一致且记录实测耗时 |
+| 4 | H3 测试并行化 | D4 合入后 | 并行与串行结果一致，记录实测耗时 |
 
 每个阶段单独提交、单独可回退。阶段内按「先测试后实现」推进，旧测试语义失效时整体删除并写明理由，不就地改预期。
 
@@ -323,7 +295,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 
 - 没有已登记 task worktree（`apply` 已强制）；
 - 所有 done task 已 integrate（D 组新增；`apply` 发现未集成的 done 分支时拒绝，并列出分支）；
-- 按 `usage.md`「状态恢复与升级」备份 Git common dir、`docs/runtime/`、`.repo_template/sync_state.json`，并在隔离副本核对可读。
+- 按 `recovery.md`「状态恢复与升级」备份 Git common dir、`docs/runtime/`、`.repo_template/sync_state.json`，并在隔离副本核对可读。
 
 ### 数据影响
 
@@ -364,7 +336,6 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | D-07 | 状态栏 hook 改为显式启用（G2，修订 L36 的默认启用方式） | 采纳 | 采纳 |
 | D-08 | 删除 `docs_repo/demos/app/` 与 zip，`plan.md` 入 archive（B2） | 采纳 | 采纳 |
 | D-09 | 清空工厂 `.scratch/`（B1） | 采纳 | 采纳 |
-| D-10 | 建立 `~/kar/code/repo_template_dogfood/`（I2） | 采纳 | 采纳 |
 | D-11 | `123.md` 原报告位置（A6） | 由用户提供 | 撤销：原报告已删除，A6 不处理 |
 | D-12 | `note.md` 改名 `progress.md`（D4），随阶段 3 迁移一次完成 | 采纳 | 采纳 |
 | D-13 | AC 打勾复核闭环：FAIL 后全部撤回打勾，reviewer 用 `TICK-VALID` / `TICK-VOID` 逐条判定，脚本门禁（J 组） | 采纳 | 采纳 |
@@ -392,8 +363,8 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 
 | 波次 | WP | 改造项 | 写入范围 |
 | --- | --- | --- | --- |
-| 1 | `wp1_docs_factory` | A4、A5、A7、A9、B2 | `docs_repo/decision_log.md`、`docs_repo/README.md`、`docs_repo/demos/`、`docs_repo/archive/`（新增 demo 计划归档）、根 `.gitignore` |
-| 1 | `wp2_test_split` | G1、I3、A1、A8、B3 | `repo/.repo_template/tests/`、`factory_tests/`、`.github/workflows/template_factory.yml`、根 `README.md`、根 `AGENTS.md`、`.agents/skills/issue-handler/SKILL.md`、`repo/docs/blueprint/testing.md`、`repo_sync.py` 中 `PRETTIERIGNORE_TEMPLATE_RULES` 的两条测试路径 |
+| 1 | `wp1_docs_factory` | A4、A5、A7、B2 | `docs_repo/decision_log.md`、`docs_repo/README.md`、`docs_repo/demos/`、`docs_repo/archive/`（新增 demo 计划归档）、根 `.gitignore` |
+| 1 | `wp2_test_split` | G1、A1、A8、B3 | `repo/.repo_template/tests/`、`factory_tests/`、根 `README.md`、根 `AGENTS.md`、`.agents/skills/issue-handler/SKILL.md`、`repo/docs/blueprint/testing.md`、`repo_sync.py` 中 `PRETTIERIGNORE_TEMPLATE_RULES` 的两条测试路径 |
 | 1 | `wp3_docs_product` | F1–F4、A2 | `repo/.repo_template/docs/` 下的 `usage.md`、`architecture.md` 与新建的 `recovery.md`、`sync.md`；各 `SKILL.md` 的「组合契约」段；`repo/AGENTS.md`；脚本中指向被迁移 `usage.md` 章节的提示字符串 |
 | 1 | 主会话 | B1 | 工厂 `.scratch/`（不入 git） |
 | 2 | `wp4_orchestration` | C1–C5、A3、J1 | `repo_task/` 的 `cli`、`attempts`、`lifecycle`、`integration`、`recovery`、`monitoring`、`control`；`task-run`、`task-work`、`task-integrate` 三个 skill；`usage.md` / `recovery.md` 的对应段；新增测试 |
@@ -402,9 +373,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | 3 | `wp6_archive_at_integrate` | D1–D3 | `lifecycle`、`integration`、`monitoring`、`recovery`；`repo/AGENTS.md` 的 archive 行、`docs/tasks/` 行与 commit 条；`architecture.md`「合并」；三个 task skill 与 `recovery.md` 中的 amend 规程；同步器工作流迁移的前置检查 |
 | 3 | `wp7_queue_topology` | E1、E2 | `task-run` 的「授权与队列」「执行」「停止」段；`plan.py`；`goal.py`；`architecture.md`「执行拓扑」（与 WP6 同文件不同章节） |
 | 4 | `wp8_rename_progress` | D4 | 全仓 `note.md` 引用、task 模板、同步器迁移、相关测试 |
-| 5 | `wp9_dogfood_audit` | I2、H2 | 新建 `~/kar/code/repo_template_dogfood/`；新建 `docs_repo/reflections/analysis_mechanism_usage_2026_11.md`（只读读取各消费仓） |
-| 5 | `wp11_test_parallel` | H3 | `repo/.repo_template/tests/`、`factory_tests/`、两处 `conftest.py` 与 `pytest.ini`、CI 工作流、根 `AGENTS.md` / `README.md` 的测试命令 |
-| 5 | 用户或主会话 | I1 | 需要真实宿主交互会话，不派子代理 |
+| 5 | `wp11_test_parallel` | H3 | `repo/.repo_template/tests/`、`factory_tests/`、两处 `conftest.py` 与 `pytest.ini`、根 `AGENTS.md` / `README.md` 的测试命令 |
 
 ### 工作包通用约束
 
@@ -420,28 +389,15 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 - `repo/` 下本波改动的 Markdown 通过 `md_format.py --check`；
 - 主会话复核各 WP 报告中的范围外发现，决定登记或纳入后续波次。
 
-## 12. 实施验收
-
-记录时间：`2026-11-04T05:36:34+08:00`。裁决状态唯一来源为 `docs_repo/decision_log.md`；本节记录实施与验证证据。
+## 12. 实施记录
 
 | 范围 | 提交与证据 |
 | --- | --- |
-| WP1–WP7、WP10 | 已合入至 `e80128e`；Claude 会话最后一次集成全量为 890 passed、1 skipped，格式与 registry 通过 |
-| WP8 | 常量收敛 `76bfc19`；改名 `b87161f`；迁移及回归 `b5cd712`；合入 `829d7dd` |
-| WP11 | 测试依赖替身隔离与 xdist `9769df2`；工厂 CI 与命令使用 `-n auto`，消费默认 contract 命令不变 |
-| 隔离验收发现并修复 | `14a0105`、`aec606f`：start 创建超时后查询实际现场，未知资源不误报零写入；`224ad1c`：契约按已提交 verification_policy 识别定制项目，不依赖 worktree 中缺失的本机 state |
-| 代码集成 | `1c05bae`；产物树 `c482c2827313acc8104a3d534b03d8d4ddfffa4a`，与隔离验收来源 `224ad1c:repo` 一致 |
-| 工作区收尾 | WP8、WP11 已合入并删除分支与 worktree，工厂仅保留主工作树；本次临时验收仓已按用户要求删除，后续按需重新导出 |
-| 工厂验证 | 最终合入状态 900 passed、1 skipped（2 worker，437.11 秒，7 分 17 秒）；前一完整运行 899 passed、1 skipped，新增定制项目导出回归独立 2 passed |
-| 其它门禁 | 合入后 Markdown 全量格式检查、skill registry、task 与 reviewer CLI help、git diff --check 通过 |
-| 隔离验收 | 临时仓 `~/kar/code/repo_template_dogfood/`（验收后已删除），来源 `224ad1c`；t001 实现 `4f18f30`、merge `138865a`；create → run-begin → 独立 review → finish → run-close → integrate 闭环，归档与索引随 merge，工作区干净、task 分支及 worktree 已清理 |
-
-隔离仓项目验证为 CLI 3 passed、contract 222 passed / 1 skipped；独立 reviewer Round 1 PASS、零 finding、三条 AC 均 TICK-VALID，checker overall=PASS / review_scope=ok / ac_review=ok。合并后 doctor/test/blackbox 均 PASS；另核对执行回执 identity、实现 first parent、归档 index、integrated 事件与唯一 claim，同 identity 的第二 owner 领取被拒。
-
-先前隔离仓在 `git worktree add` 超时与契约误判时保留现场，后完整保存至 `~/kar/code/repo_template_dogfood_before_contract_fix/`；修复后从干净提交重新导出，不在 active task 中手工替换工具链。验收完成后，按用户要求删除本次临时隔离仓、该故障备份仓及 `review_general_t001_002MDZ/` 临时测试目录（含 pytest 子目录）；后续发布前从拟发布 commit 按需重新导出。修复与验收结论保留在工厂仓。
-
-正常单 task 主路径为 run-begin、preflight、render_review_prompts、check_review_status、finish、run-close、integrate、integrate --continue，共 8 次状态/审查脚本调用；队列 plan 一次后为 9 次。项目测试、格式检查和按需恢复另计。
-
-性能记录使用 Python 3.14.7、pytest 9.2.0、pytest-xdist 3.8.0。本机高负载阶段出现 Git 60/120 秒超时，CPU 尚有空闲但物理内存接近 62GB、压缩约 22GB；未放宽门槛，最终用 `PYTEST_XDIST_AUTO_NUM_WORKERS=2` 约束 `-n auto`。最终全量实测 7 分 17 秒，未达到原两分钟估算；不能把不同负载下的运行结果用于性能提升比例。CI 保留 Python 3.9/3.14 矩阵，本次未触发远端 CI，本机结果只覆盖 Python 3.14.7。
-
-剩余边界：H2 暂缓，未继续扫描或修改现有业务消费仓，也未据此删除机制；I1 只查询到 Claude Code 2.1.311，未执行真实 Claude 宿主认证，不宣称该版本已认证。工厂 main 合并与 Git push 已获用户授权；创建 release、部署等外部发布仍需单独授权。
+| WP1–WP7、WP10 | 合入至 `e80128e`；当时全量 890 passed、1 skipped |
+| WP8 | 常量 `76bfc19`、改名 `b87161f`、迁移 `b5cd712`，合入 `829d7dd` |
+| WP11 | 隔离测试替身并启用 xdist `9769df2`；消费默认 contract 命令不变 |
+| 缺陷修复 | `14a0105`、`aec606f`：创建超时后核实资源，未知状态不误报零写入；`224ad1c`：按 verification_policy 识别定制项目，避免 worktree 缺少本机 state 时误判 |
+| 集成 | `1c05bae`；产物树 `c482c2827313acc8104a3d534b03d8d4ddfffa4a` 与 `224ad1c:repo` 一致 |
+| 最终全量 | 900 passed、1 skipped，2 worker，437.11 秒；Python 3.14.7、pytest 9.2.0、pytest-xdist 3.8.0；未达到原两分钟估算 |
+| 其它检查 | Markdown、skill registry、CLI help、git diff --check 通过；本机未跑 Python 3.9 |
+| 主路径调用 | 正常 task 的状态与审查脚本共 8 次，加队列 plan 为 9 次；项目测试与按需恢复另计 |

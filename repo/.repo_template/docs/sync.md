@@ -1,6 +1,6 @@
 # 模板同步与升级
 
-`repo-template-sync` 的同步规程：AGENTS.md 分区协议、workflow schema 迁移、同步版本基线、正式同步与 apply 事务、降级、同步验证锁、`.prettierignore` 追加。日常用法见 `usage.md`，多会话接管与状态恢复见 `recovery.md`。
+`repo-template-sync` 的配置与恢复步骤。日常任务用法见 `usage.md`，执行恢复见 `recovery.md`。
 
 ## AGENTS.md 同步分区协议
 

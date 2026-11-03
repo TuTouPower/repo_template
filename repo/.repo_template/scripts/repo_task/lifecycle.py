@@ -716,7 +716,7 @@ def _finish_prechecks(args) -> dict:
             "finish 之前不得创建中间 commit，实现 commit 由 finish 提交。零写入退出"
         )
 
-    # 4. review 门禁（复用 evaluate_review，不改实现）
+    # 4. review 门禁
     scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"])
     try:
         review = evaluate_review(task_dir, fm, scope or None)

@@ -11,7 +11,7 @@
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
 |`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并与 task 目录的归档移动放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit|
 |`docs/archive/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
-|`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|exact identity 为 `(tid, attempt, execution_id)`；主路径只经 `task.py run-begin`（start → reserve → claim）与 `run-close`（terminal → report → cleanup）写入，恢复时才用低层原语 `attempt reserve/claim/terminal/report`、`cleanup-worktree`（`--attempt/--execution-id` 可省略，由脚本从 ledger 当前 attempt 或 worktree 的 `execution_context.json` 解析，显式提供须一致）；`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑|
+|`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
 |`.repo_template/docs/review_prompts/`|review prompt 模板|改审查标准时更新|
 |`.repo_template/docs/spike_report_template.md`|spike 报告模板|只改模板本身|
@@ -19,7 +19,7 @@
 |`.claude/skills/` / `.agents/skills/`|指向 `.repo_template/skills/` 的软链|只维护软链|
 |`.opencode/commands/`|各 skill 的 opencode `/` 触发器（由 SKILL.md description 生成，调 `skill` 工具执行）|只读（改 SKILL.md 后重跑 `link-skills`）；手写命令保留|
 |`.repo_template/scripts/`|模板自带 task 工具链：`task.py` 是 CLI 入口，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等|仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目|
-|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：链式拓扑以 `--base` 指向上一已完成 task 分支；active task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个实现 commit（done 后 review 失效时可追加只含 review 过程文件的证据 commit）：`finish --owner-id --message-file` 在 worktree 内校验、原位写 done、机器生成 exact identity 的执行回执 `handoff.json`（不手写）并提交，失败整体回滚；`run-close` 在主仓写 terminal/report 并清理 worktree，随后合并，task 目录由 `integrate` 在 merge commit 中归档；本地 `.env` 软链回主仓|
+|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`start` 在主仓默认分支执行，保留主仓未提交改动；实施、测试、review、finish/drop 只在自身 worktree 执行。`finish` 机器生成 `handoff.json`（不手写）并提交实现 commit；`run-close` 在主仓收尾与清理，`integrate` 负责归档；本地 `.env` 软链回主仓|
 
 ## 命令执行约定
 
@@ -111,25 +111,18 @@ python3 .repo_template/scripts/spikes.py --help      # 技术 spike
 python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseline 取数（清洁度/deliverable 核对）
 ```
 
-## 状态恢复与升级
-
-task 状态恢复、迁移备份、`ledger import` 与 `goal --reset` 见 `recovery.md`；AGENTS.md 同步分区、同步版本基线、正式同步、apply 事务、降级与 `.prettierignore` 追加见 `sync.md`。
-
 ## 支持边界
 
 |维度|契约|
 |---|---|
-|系统|macOS、Linux 的 POSIX/Bash 路径；WSL/Git Bash 须自行验证软链与 shell，原生 Windows 全流程未认证|
+|系统|macOS、Linux 的 POSIX/Bash 路径；WSL/Git Bash 须自行验证软链与 shell，原生 Windows 全流程未验证|
 |基础工具|Python 3.9+、Git 2.38+、pytest、Bash；Markdown 使用 md_kx（发行名 md-kx）|
-|工厂测试|Node 22；工厂 CI 全量 pytest，消费默认 contract 不运行全部 Git 集成场景|
+|工厂测试|Node 22；工厂全量 pytest，消费默认 contract 不运行全部 Git 集成场景|
 |Claude|依赖用户 `/` 入口、文件读取与工具权限；使用 disable-model-invocation 和内部 user-invocable=false|
-|Kimi Code|使用显式入口与文件读取；原生 Skill 禁用字段兼容性须按安装版本实测，未宣称认证最低版本|
+|Kimi Code|使用显式入口与文件读取；原生 Skill 禁用字段兼容性须按安装版本实测|
 |OpenCode|使用 metadata.opencode/autoinvoke=false，公开命令由 link-skills 生成；不依赖 v2 兼容别名|
-|宿主认证|静态结构测试不等于宿主 E2E；版本变更后按下述清单认证，未实测版本标记未认证|
 |可选能力|后台子代理不支持时顺序执行；goal 仅宿主支持时使用；hooks 需显式 install-hooks|
 |网络|本地固定来源可离线同步；URL clone/fetch 与 GitHub issue 需要网络及用户现有凭据|
-
-宿主版本发布前记录版本号并逐项实测：自然语言不自动执行入口；显式 task-run 可读取 work/integrate 正文且原样传递 identity/owner；merge 保持单独授权；同步从来源读取 core；同 tid 第二会话 claim 被拒绝。未完成该清单不宣称该宿主版本端到端受支持。
 
 ## 门禁命令的执行边界
 
@@ -137,10 +130,9 @@ task 状态恢复、迁移备份、`ledger import` 与 `goal --reset` 见 `recov
 
 ## 状态行 Hook 与执行范围
 
-模板默认不启用状态行 hook，也不再分发 `.claude/settings.json`。需要时在消费仓执行 `python3 .repo_template/scripts/repo_sync.py install-hooks --statusline`，把 PostToolUse hook（调用 `track_worktree.py`）写入 `.claude/settings.json`：文件不存在则创建，已存在则合并并沿用原缩进，重复执行不重复写入，JSON 无法解析时拒绝；该命令不改 `core.hooksPath`。hook 把多 worktree 环境下各会话对应的 task worktree 映射写入 `.scratch/statusline_workdir.jsonl`。模板只提供写入端；状态行渲染需用户在全局 `statusLine.command` 配置读取该文件的脚本，模板不含该脚本，也不宣称写入 hook 即启用状态行。已有消费仓的 `.claude/settings.json` 归消费仓所有，同步不会自动增删其中的 hook。
+默认不启用。需要时执行 `python3 .repo_template/scripts/repo_sync.py install-hooks --statusline`，将 PostToolUse hook 合并到 `.claude/settings.json`，保留已有配置；JSON 格式错误时拒绝，不改 `core.hooksPath`。已有消费仓的 hook 由消费仓维护，模板同步不增删。
 
-- **触发与范围**：仅当命令包含 task 调度关键词（`start` / `track_worktree` / `--tid`）且仓库存在调度账本（`docs/runtime/dispatch_ledger.jsonl`）时，才会将当前 session 的 worktree 映射写入 `.scratch/statusline_workdir.jsonl`；
-- **零副作用保证**：所有常规 shell 命令（如 `git`, `pytest`, `npm`, `ls` 等）在 hook 入口毫秒级短路退出，绝不改写仓库代码或生产状态。
+hook 在调度账本存在、命令包含 `start` / `track_worktree` / `--tid` 时，把会话对应的 worktree 写入 `.scratch/statusline_workdir.jsonl`。显示状态行还需在全局 `statusLine.command` 配置读取该文件的渲染脚本。
 
 ## 附属生命周期闭环
 
@@ -152,4 +144,4 @@ python3 .repo_template/scripts/pending.py archive p001 --reason "按用户要求
 
 finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 progress.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
-Python 3.9 是模板脚本最低版本，CI 覆盖 3.9 与 3.14。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
+Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。

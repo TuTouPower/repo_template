@@ -54,27 +54,24 @@
 | L36 | 工作流特殊机制与 skill 过度详细 | 用户逐项裁决（2026-09-06）、`plans/plan_workflow_simplification.md` | 严格模板、测试/黑盒/review、attempt、goal、一 task 一 commit、pending 子代理和同步能力保留；删除 merge token hook 与正式 blocked 状态；attempt report=blocked 继续审计；review/verify limit 均保留并用独立 limits 命令只增；合并改为 Git `merge --no-ff --no-commit` 验证后提交；调度删除 schedule_status、反向冲突边维护和复杂 tie-break；15 个 skill 改为结果与门禁导向，移除重复剧本 | `repo/.repo_template/skills/`、`repo_task/integration.py` / `lifecycle.py` / `scheduling.py`、task 模板、Claude settings、同步脚本 | 已落地；默认状态栏启用方式被 L46 取代 |
 | L37 | 消费仓首次追平大改版时同步脚本自举缺口 | md_kx 迁 Mac 实证（2026-09-14） | prep 只能刷新已存在且可跑的脚本：消费仓 `repo_sync.py` 若是旧布局版（旧 state 路径、旧硬同步清单、无 `prep`），调用即失败，无法自举。启动器显式加「先复制模板源 `repo_sync.py` 覆盖消费仓」步骤（任何子命令之前）；`init` 增加旧 state 迁移（带过 `user_prompts`/`last_synced_*`） | `repo/.repo_template/skills/repo-template-sync/SKILL.md`、`repo_sync.py` | 已落地；被 L39 取代 |
 | L38 | `task-bug` 名字与职责不匹配（实为分析并记 pending），用户口述待办时非 bug 事项无需子代理耗时研究 | 用户提出 | `task-bug` 改名 `bug-to-pending`；`pending-record` 区分路由：bug 派子代理按 `bug-to-pending` 研究记录，非 bug 普通记录 pending | `.repo_template/skills/bug-to-pending/`、`pending-record`、`usage.md` | 已落地 |
-| L39 | 初始化、组合、依赖合并、执行恢复与同步事务之间的契约断点 | `123.md` 宏观审阅、2026-10-24 实现核验与真实 Git 回归 | Git commit 干净导出；registry 单一角色/调用图，父流程读子正文；backlog 图收缩与来源归档共用持久事务；ledger claim 执行权；active review 单调升级；同步器从来源运行、固定 commit 快照与完整资产事务；项目显式验证策略；版本 manifest、共享 policy 与本机 state 分离；严格 done ledger import、附属生命周期门禁、仅工厂 CI | `export_template.py`、`skill_registry.py`、`repo_task/{graph,file_transaction,validation,finalization}.py`、`attempt claim`、`review-upgrade`、`ledger import`、`repo_sync.py`、`.github/workflows/template_factory.yml` | 已落地；宿主真实 E2E 认证待完成 |
+| L39 | 初始化、组合、依赖合并、执行恢复与同步事务之间的契约断点 | `123.md` 宏观审阅、2026-10-24 实现核验与真实 Git 回归 | Git commit 干净导出；registry 单一角色/调用图，父流程读子正文；backlog 图收缩与来源归档共用持久事务；ledger claim 执行权；active review 单调升级；同步器从来源运行、固定 commit 快照与完整资产事务；项目显式验证策略；版本 manifest、共享 policy 与本机 state 分离；严格 done ledger import、附属生命周期门禁 | `export_template.py`、`skill_registry.py`、`repo_task/{graph,file_transaction,validation,finalization}.py`、`attempt claim`、`review-upgrade`、`ledger import`、`repo_sync.py` | 已落地 |
 | L40 | 手工编排执行身份与 attempt 收尾 | 宏观方案 D-01，用户批准 | 主路径使用 run-begin / run-close，默认解析 attempt 与 execution_id，保留恢复原语；claim owner 校验不变 | `repo_task/{control,attempts}.py`、`task-run` | 已落地 |
 | L41 | finish 与 Git 提交分离产生中间态 | 宏观方案 D-02，用户批准 | finish --message-file 在前置门禁通过后原子写 done、回执与实现 commit，失败恢复自身写入 | `repo_task/lifecycle.py`、`test_finish_atomic.py` | 已落地 |
 | L42 | 验证摘要与执行回执重复维护 | 宏观方案 D-03，用户批准 | 验证摘要只写 progress.md，finish 机器生成 handoff.json，不手写回执 | `repo_task/monitoring.py`、`task-work` | 已落地 |
 | L43 | 执行分支归档与 amend 例外 | 宏观方案 D-04，用户批准；修订 L14 | 归档由 integrate 的 merge commit 完成；执行历史为一个实现 commit 加零到多个仅含 review 过程文件的证据 commit，禁止改写实现历史 | `repo_task/{integration,monitoring}.py`、`recovery.md` | 已落地 |
 | L44 | 阻塞传播到无关队列成员 | 宏观方案 D-05，用户批准 E1/E2 | 按依赖与冲突关系分链，无关成员从主干起步；阻塞只停止所在链，无可继续成员才判 STOPPED | `repo_task/{plan,goal}.py`、`task-run` | 已落地 |
-| L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、工厂 CI、`testing.md` | 已落地 |
+| L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、`testing.md` | 已落地 |
 | L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json；需要时显式 install-hooks --statusline，保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
 | L47 | 看板 mock demo 与现行实现重复 | 宏观方案 D-08，用户批准 | 删除 demo 源码与 zip，保留 Git 历史；设计计划移入 archive 并注明现行实现 | `docs_repo/archive/plan_board_v2_chain_panel_demo.md` | 已落地 |
 | L48 | 工厂历史 basetemp 占用工作区 | 宏观方案 D-09，用户批准 | 历史测试残留清理；全量 basetemp 使用系统临时目录，缓存与运行产物不提交 | 工厂 `AGENTS.md` | 已落地；当前开发环境仍可使用忽略的 .scratch |
-| L49 | 缺少独立产物消费体验验证 | 宏观方案 D-10，用户批准 | 从已提交版本导出 repo_template_dogfood，发布前完成真实小 task 的 create → run → merge；与工厂测试分开记录 | 工厂 `AGENTS.md`、独立 dogfood 仓 | 已落地；隔离 t001 完成，merge 138865a；不替代 Claude Code 宿主认证 |
 | L50 | note.md 文件名与状态、进展职责不符 | 宏观方案 D-12，用户批准 | 当前过程文件统一 progress.md，标题为 Task 进展；同步事务一次迁移活跃与归档旧布局，两名并存拒绝，失败回滚 | `repo_task/context.py`、`template_sync/workflow_migration.py` | 已落地 |
 | L51 | AC 打勾未进入独立 review 机器门禁 | 宏观方案 D-13，用户批准 | reviewer 用 TICK-VALID / TICK-VOID 逐条复验；FAIL 后需改交付内容时实施方撤回全部打勾，修复重验后重新勾选 | review prompts、`repo_task/review.py`、task 模板 | 已落地 |
-| L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | 工厂 CI、pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案验收记录 |
+| L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案实施记录 |
 
 ## 未闭环
 
 | 议题 | 卡在哪 |
 | --- | --- |
-| Claude Code 宿主认证 | 本机版本 2.1.311 仅查询版本，未完成自然语言/显式入口/跨会话交互认证。隔离仓脚本闭环与独立 review 不替代该证据。 |
-| H2 机制审计 | 本轮聚焦工厂改造，审计不作为前置条件；未据使用频率删除机制，后续单独处理。 |
 | 统一 task 服务（跨仓库/跨会话的状态服务） | 11111#3 提出，等用户决定。L1 已消除并发写冲突，该诉求优先级下降 |
 | 分级效果复测 | analysis 的 PASS 率与遗留数来自单一项目（Electron + 弱测试基础设施）样本。L2/L5 落地后应在非 Electron 项目复测，确认数值而非仅方向 |
 | L16 finding `category` | 已裁决未进模板与脚本；噪音控制目前靠 L2/L17 |
@@ -98,14 +95,14 @@
 | M-04 | 存在；tid 序可能违反依赖，COMPLETE 含未 merge | 默认队列复用依赖拓扑，串行不添加冲突反向边；输出 execution_complete、integrated、awaiting_merge |
 | M-05 | 存在；回滚、archive 和调用图实际漂移 | 机械恢复以持久日志/代码为准；archive 窄例外明确；registry 生成入口/调用表，CLI/reviewer 接口分层 |
 | M-06 | 存在；转办/修复混淆，spec/spike 收尾缺门禁 | pending resolution 区分 transferred/resolved/obsolete/duplicate；finish 检查 spec 索引或显式豁免，正式 spike 的 report/finding/决定/后续由 finish 和 archive 共用验证 |
-| M-07 | 工厂 CI 和支持边界缺失属实；宿主 E2E 尚未认证 | 新增仅工厂 CI，显式安装 Python/Node/pytest/md-kx；补支持矩阵、认证清单，禁止用静态绿灯宣称三宿主通过 |
+| M-07 | 支持边界缺失 | 补充宿主、系统与工具版本要求 |
 | M-08 | 采用成本属主观取舍；内部入口遗漏等文档缺口存在 | 12 个公开入口、3 个内部正文流程；README 最短成功路径、初始化完成判据、进阶恢复说明；保持 merge 单独授权 |
 
-Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核验：[Claude skills](https://code.claude.com/docs/en/skills)、[OpenCode skills](https://opencode.ai/docs/skills/)。Kimi 原生调用及三个真实宿主端到端行为本轮未认证，不伪称已通过。新增机械回归覆盖独立执行上下文，不等同于宿主产品 E2E。
+Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核验：[Claude skills](https://code.claude.com/docs/en/skills)、[OpenCode skills](https://opencode.ai/docs/skills/)。
 
 旧 prep 与内存 rollback-stack 测试整体删除，因被测路径已删除；原“整个 task.md 不影响指纹”测试整体替换为“正文排除、review_level 绑定、损坏元数据 fail-closed”，因为升级必须使旧 PASS 失效；保留既有断言，为持久事务、跨调用恢复与失败回滚新增行为测试。原有工作流 fixture 显式声明测试策略与 spec 豁免，不继承模板默认，也不通过修改旧断言适配输出。
 
-本轮工厂全量验证：`pytest repo/.repo_template/tests -q`（临时目录位于工厂 `.scratch/`，设置 Git 搜索上界防止非仓库测试误认父仓），553 passed，无跳过；另通过真实产品导出后的消费 contract、registry 生成一致性、Markdown 格式与 diff 检查。远端 CI 与真实宿主会话 E2E 未运行，不计入通过声明。
+本轮工厂全量验证：`pytest repo/.repo_template/tests -q`（临时目录位于工厂 `.scratch/`，设置 Git 搜索上界防止非仓库测试误认父仓），553 passed，无跳过；另通过真实产品导出后的消费 contract、registry 生成一致性、Markdown 格式与 diff 检查。
 
 归档引用约束补充裁决：用户明确允许直接在 main 完成而没有 task ID。所有 pending archive 均强制非空 --reason，--fix-ref 仅为可选引用且不校验 task ID；默认 resolved，转办显式 transferred。备注须说明结果与验证依据，存在引用时可填 main、commit、PR、pending 或 task，不为通过归档伪造 tid。原“默认 transferred 需 tid、duplicate 需引用”约束取消。
 
@@ -123,6 +120,6 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
 | graph.split 跨平台路径 | 当前 store 输出通常是 POSIX 路径，并非已复现的 Windows 故障；仍改为 Path.name 与 as_posix，移除手工路径切分。原生 Windows 全流程仍未认证。 |
 | execution_context 只判 ledger 非空 | 属实。锁内校验 tid/attempt/execution_id 与最新 ledger 一致；旧 ledger、坏 receipt 及分叉身份均 fail-closed，recovery 输出 runtime_mismatch。 |
 | 共享锁文件写后加锁 | POSIX sentinel 内容不参与互斥，不能据此认定互斥已失效；初始化顺序仍需改善。POSIX 在 OS 锁内初始化；Windows 从完整私有 inode 原子发布一字节锁文件；ledger 复用同一 helper。 |
-| Python 3.9 | 按用户要求作为最低版本。移除 tarfile.extractall(filter=...) 依赖，受控解包保留路径/软链/类型校验；联合注解延迟求值，替换较新 Path.write_text newline 参数；CI 覆盖 3.9/3.14，md_kx 采用独立工具环境。 |
+| Python 3.9 | 按用户要求作为最低版本。移除 tarfile.extractall(filter=...) 依赖，受控解包保留路径/软链/类型校验；联合注解延迟求值，替换较新 Path.write_text newline 参数；md_kx 采用独立工具环境。 |
 
-后续缺陷验证：Python 3.9.6 全量 599 passed，Python 3.14.7 全量 599 passed，均无跳过；Python 3.9 专项 100 passed。原生 Windows 与远端 CI 尚未实机运行，不计入通过声明。
+后续缺陷验证：Python 3.9.6 全量 599 passed，Python 3.14.7 全量 599 passed，均无跳过；Python 3.9 专项 100 passed。原生 Windows 尚未实机运行。

@@ -1,6 +1,6 @@
 # 多会话接管与状态恢复
 
-多会话 claim/接管、`task.py recovery`、原语子命令、`finish` 回滚语义、review 门禁失败后的修复、状态恢复与升级、图合并中断恢复的规程。日常用法见 `usage.md`，同步、升级与降级见 `sync.md`。
+执行中断后先运行 `task.py recovery {tid}` 判断现场。日常用法见 `usage.md`，模板同步见 `sync.md`。
 
 ## 多会话与接管
 

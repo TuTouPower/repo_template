@@ -43,10 +43,10 @@ metadata:
 4. 逐项检查 finalization：累积或更新 `docs/specs/<slug>.md`，同步 `docs/specs_index.md`（在表即生效）；废弃 spec 删除索引行并归档；不适用时在 progress.md 明确理由（`- specs_index: not_applicable: 具体原因`）。更新因实现而过时的 blueprint、guides、README 或接口文档。派审前用 `git ls-files --others --exclude-standard` 找出本 task 新文件，剔除无关、临时和 `.scratch/` 内容后，对明确路径执行 `git add -N -- <path...>`，使新文件进入 reviewer 可见的 diff；然后完成最终 review。
 5. 收尾前检查新增调试输出、临时文件和未解释 TODO，运行项目定义的 lint/format/typecheck，并执行 `git diff --check`。检查方式按技术栈选择，不使用通用固定 grep。
 6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
-7. 更新 progress.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」写好 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要：`finish` 据此机器生成 `handoff.json`，三行为空或仍是「待执行时填写」占位会被拒绝。验证摘要只写这一处，不再另写 handoff。
+7. 更新 progress.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」填写 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要，不得为空或「待执行时填写」；`finish` 据此生成 `handoff.json`。
 8. 暂存全部交付文件：`git add` 实现、测试、文档、pending/finding、specs 等本 task 改动（`git add -N` 不算暂存）；task 目录由 `finish` 自行处理。无关或临时文件删除或移入 `.scratch/`。把执行 commit message 写入仓外或 `.scratch/` 的文件。
-9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}`。脚本依次校验严格 preflight、AC 全部打勾、review 门禁、除 task 目录外无未暂存或未跟踪文件，全部通过后才原位写 done、生成 `handoff.json`，并用该 message 提交实现 commit（task 目录留在 `docs/tasks/`，归档由合并完成）。任一前置检查失败则零写入退出，按报错修复后重跑；提交失败（含 pre-commit hook 拒绝）时脚本回滚 finish 自身写入，修复原因后重跑。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。回滚失败或进程被中断时停止，按 `task.py recovery {tid}` 处理。
+9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}` 完成校验、原位写 done、生成回执并提交实现 commit；归档由 `integrate` 完成。前置检查失败不写入，提交失败则回滚 finish 自身写入，修复后重跑；中断或回滚失败按 `recovery.md`「finish 回滚语义」处理。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。
 
 ## 完成
 
-交给 task-run：tid、分支与实现 commit SHA（finish 输出；追加证据 commit 后以分支 tip 为准），并附测试、黑盒、review、pending/finding 和 worktree 摘要。`finish` 之后发现 review 失效：不改交付文件、不另提交其它改动，按 recovery 证据修复重新 review 并只追加证据 commit。停止时改为报告门禁、所需输入和恢复入口。
+交给 task-run：tid、分支与最终 commit SHA，附测试、黑盒、review、pending/finding 和 worktree 摘要。已提交后的 review 修复按 `recovery.md` 处理；停止时报告门禁、所需输入和恢复入口。

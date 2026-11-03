@@ -277,16 +277,6 @@ ______________________________________________________________________
 | 去重 | 弱；审阅分级等主题 ≥3 处全文重述 |
 | 冲突处理 | 弱；main vs worktree、plan 归属未收敛 |
 | 对模板可迁移性 | 中；业务细节与流程原则混写 |
-| 可读路径 | 弱；无推荐阅读顺序 |
-
-**推荐阅读顺序（后人）**
-
-1. `workflow_session_analysis_2026-07.md`（运行态 P0）
-1. `workflow_retrospective.md`（merge / 分级）
-1. `workflow_feedback.md` 后半「按读者切」（文档模型）
-1. `workflow_record.md`（隔离事故）
-1. `workflow_retrospective_0.md`（历史噪音分类，可选）
-1. `archive/workflow_skill_split_proposal.md`（已落地背景，可选）
 
 ______________________________________________________________________
 

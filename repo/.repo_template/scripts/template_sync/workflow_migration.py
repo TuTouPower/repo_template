@@ -20,7 +20,6 @@ from .common import _git
 
 _GUIDE_OPEN = "<!-- 规范（门禁必留，不得删除） -->"
 _GUIDE_CLOSE = "<!-- /规范 -->"
-# D4 之前的过程文件名与标题；仅供识别旧布局，新工具链只认 PROGRESS_FILE / PROGRESS_TITLE。
 _LEGACY_NOTE_FILE = "note.md"
 _LEGACY_NOTE_TITLE = "Task 过程总账"
 _OLD_NOTE_PREFIXES = (
