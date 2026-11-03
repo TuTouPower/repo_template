@@ -1,14 +1,31 @@
 # 多会话接管与状态恢复
 
-多会话 claim/接管、`task.py recovery`、review 门禁失败后的修复、状态恢复与升级、图合并中断恢复的规程。日常用法见 `usage.md`，同步、升级与降级见 `sync.md`。
+多会话 claim/接管、`task.py recovery`、原语子命令、`finish` 回滚语义、review 门禁失败后的修复、状态恢复与升级、图合并中断恢复的规程。日常用法见 `usage.md`，同步、升级与降级见 `sync.md`。
 
 ## 多会话与接管
 
-多会话仅支持同一机器、同一主 clone 的独立 task。每个执行会话生成独立 owner_id（例如 `python3 -c 'import uuid; print(uuid.uuid4().hex)'`），reserve 后必须 `attempt claim`；恢复不得复用另一个会话的 owner_id。claim 在 ledger 锁内比较并写入；无自动超时。接管须确认原会话已停止，展示 identity/worktree/owner，再用 `--replace-owner <旧owner> --confirm-stopped`。禁止在原会话存活时接管；preflight 携 owner_id，冲突即停止。
+多会话仅支持同一机器、同一主 clone 的独立 task。每个执行会话生成独立 owner_id（例如 `python3 -c 'import uuid; print(uuid.uuid4().hex)'`），`run-begin` 在 reserve 后自动 claim；恢复不得复用另一个会话的 owner_id。claim 在 ledger 锁内比较并写入；无自动超时。接管须确认原会话已停止，展示 identity/worktree/owner，再用 `--replace-owner <旧owner> --confirm-stopped`。禁止在原会话存活时接管；preflight 携 owner_id，冲突即停止。
 
-## recovery 与轮次上限
+## recovery 与原语子命令
 
-`task.py recovery {tid}` 只读输出 phase、原 identity、worktree/task_dir 和下一步；不会自动 reserve、commit 或清理。`review_limit` / `verify_limit` 在 task front matter 持久保存，旧 task 默认 5；只有用户批准后由 `limits --review/--verify ... --reason ...` 增加，新 attempt 不清零历史轮次。
+`task.py recovery {tid}` 只读输出 phase、原 identity、worktree/task_dir 和下一步；不会自动 reserve、commit 或清理。主路径 `run-begin` / `run-close` / `finish` 遇到已有现场或中途失败时不做隐式恢复，只报告失败步骤并指向 recovery。
+
+`attempt reserve/claim/terminal/report`、`cleanup-worktree` 是恢复用低层接口，只在 recovery 判定后使用：
+
+- `--attempt/--execution-id` 可省略，主仓从 ledger 当前 attempt 解析；两者须同时提供或同时省略，显式提供只用于 recovery 指定 exact identity，且必须与解析结果一致。
+- `run-begin` 中途失败：`started_without_attempt` 只 `attempt reserve`；`executing` 且 owner_id 为空表示尚未 claim，按原 identity `attempt claim`，两者都不重复 start。
+- `blocked` 之后恢复：phase 为 `retry_ready`，`attempt reserve` 新 identity 后再 `attempt claim` 继续，不用 `run-begin`。
+- `run-close` 中途失败：已写事件不回滚，重跑同一 `run-close` 即可（重入安全，不重复写 terminal/report）。
+
+## finish 回滚语义
+
+`finish` 先做全部前置检查，任一项失败零写入退出。写入阶段依次为 done 与归档移动、生成 `handoff.json`、暂存、`git commit -F`。提交失败（含 pre-commit / commit-msg hook 拒绝）时脚本回滚 finish 自身的写入：front matter、归档移动、`handoff.json` 与暂存区恢复到 finish 前，调用方已暂存的交付文件保持暂存，修复原因后可直接重跑 `finish`。回滚失败时脚本如实报错并提示运行 `task.py recovery`，此时现场不一致，不重复 finish。
+
+进程被杀等中断不在脚本回滚范围，由 recovery 阶段检测兜底：`finish_interrupted`（已 done 归档、无 `handoff.json`、无执行 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无执行 commit）核验后暂存并提交执行 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。
+
+## 轮次上限
+
+`review_limit` / `verify_limit` 在 task front matter 持久保存，旧 task 默认 5；只有用户批准后由 `limits --review/--verify ... --reason ...` 增加，新 attempt 不清零历史轮次。
 
 ## review 门禁失败后的修复
 

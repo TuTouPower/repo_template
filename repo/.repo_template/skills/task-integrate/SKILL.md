@@ -26,7 +26,7 @@ metadata:
 
 ## Git 原生事务
 
-单 task 调用 `integrate {tid} --attempt {attempt} --execution-id {execution_id}`，identity 使用本次已 cleanup 的原值；链式只调用一次 `integrate-chain {tail_tid}`。工具执行：
+单 task 调用 `integrate {tid}`，identity 由脚本从 ledger 当前 attempt 解析，不再显式传递；链式只调用一次 `integrate-chain {tail_tid}`。工具执行：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>

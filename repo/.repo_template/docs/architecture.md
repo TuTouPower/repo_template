@@ -23,8 +23,10 @@ main ── t001 ── t002 ── t003
 执行实例身份为 `(tid, attempt, execution_id)`。task 状态描述业务生命周期，attempt 描述某次执行：
 
 ```text
-start → reserve → claim(owner_id) → task-work → terminal → report → cleanup
+run-begin(start → reserve → claim) → task-work(finish) → run-close(terminal → report → cleanup)
 ```
+
+主路径只传 `tid` 与 `owner_id`：`run-begin` 在控制面锁内完成前三步并输出 identity，`run-close` 按 done/blocked/failed 写 terminal 与 report（done 另 exact cleanup），已写事件不重复写。attempt、execution_id 由脚本从 ledger（主仓）或 `execution_context.json`（worktree）解析，显式提供须与解析结果一致。`attempt reserve/claim/terminal/report` 与 `cleanup-worktree` 是 recovery 用的低层原语；ledger 事件类型不因编排收敛而改变。
 
 执行权由 ledger 的 execution_claimed 事件表达，在 ledger 锁内比较并交换；owner_id 属于会话，identity 属于 attempt，两者不可混用。没有自动过期；跨会话接管须确认原会话停止并提供旧 owner。start、图维护、集成和模板同步共用 Git common dir 控制面锁，避免互相读写半途状态。
 
@@ -80,8 +82,8 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 |阶段|写域|职责|
 |---|---|---|
-|task-work|当前 task worktree|实现、测试、黑盒、review、文档、执行回执、finish、一个执行 commit|
-|task-run|主仓控制面|start、attempt lifecycle、exact cleanup、队列推进|
+|task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、归档、机器生成执行回执并提交一个执行 commit（失败整体回滚）|
+|task-run|主仓控制面|`run-begin`、`run-close`（attempt lifecycle、exact cleanup）、队列推进|
 |task-integrate|主仓 main|经授权准备 Git merge、合并后验证、commit、integrated 和分支清理|
 
 ## 模板分发与升级
