@@ -28,12 +28,29 @@ reviewed_scope: {review_scope_fingerprint}
 
 `note.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以相对 `{diff_anchor}` 的完整交付内容、`git -C '{repo_root}' diff {diff_anchor}`、`git status --short` 与代码/测试本身为准；若状态中仍有 reviewer 看不到的未跟踪交付文件，结论必须为 INCOMPLETE。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。
 
-### AC 复验披露（结论段必写）
+### AC 复验披露（结论段必写，进机器门禁）
 
-结论段必须含「AC 复验方式」小节：逐条 AC 标注复验类别——
+结论段（`## 结论`）必须含 `### AC 复验方式` 小节，**每条 AC 一行**，格式精确如下（冒号、逗号全角半角均可；`<证据>` / `<原因>` 换成一句话）：
 
-- `re_verified`：reviewer 独立复验（重跑命令、查证代码/测试断言本身），附一句证据。
-- `trust_prior`：无法独立复验（部署态、人工 UI、外部服务），只能依赖实施侧已产出的证据，注明依赖的是什么证据。
+- `- AC-NNN：TICK-VALID，re_verified。<证据>`
+- `- AC-NNN：TICK-VOID，trust_prior。<原因>`
+
+每行由三段组成：
+
+- 判定标签：
+    - `TICK-VALID`：该 AC 的打勾成立，实现与测试/验证在相对 `{diff_anchor}` 的完整交付内容上真实支撑该 AC。
+    - `TICK-VOID`：打勾作废——实现缺失或仅有空壳、测试假绿（恒真断言、mock 掉被测逻辑）、证据不足以支持打勾。`task.md` 中未打勾（`- [ ]`）的 AC 一律记 `TICK-VOID`。
+- 复验类别（与判定标签任意组合均合法）：
+    - `re_verified`：reviewer 独立复验（重跑命令、查证代码/测试断言本身），附一句证据。
+    - `trust_prior`：无法独立复验（部署态、人工 UI、外部服务），只能依赖实施侧已产出的证据，注明依赖的是什么证据。
+
+覆盖规则（机器按此判定，不满足则 overall=INCOMPLETE，须补全后重新交付报告）：
+
+- 覆盖 `task.md` 契约区的**全部** AC 编号：不漏、不多列、不重复；`[deploy]` 前缀的 AC 也要列。
+- 行必须是 `-` 或 `*` 起头的普通列表行，不得写进代码块、引用块或表格（这些位置的行机器不读）。
+- 出现任一 `TICK-VOID` 时 verdict 必为 FAIL；机器门禁对 `TICK-VOID` 一律判 FAIL，即使 verdict 写了 PASS。
+- full 级的 code 与 test 两份报告各自都须含本小节，各自覆盖全部 AC；`TICK-VALID` / `TICK-VOID` 按本轴视角判定（code 看实现层，test 看测试与验证层）。
+- `## Round N`（N≥2）小节内**重新列出全部 AC 行**；机器只读每份报告最后一轮，前轮的 AC 行不沿用。
 
 小节末尾给覆盖率行：`coverage = re_verified / 总 AC 数`。`trust_prior` 占比 >30% 时加一行：「建议合并前人工抽查 trust_prior 项」。诚实披露哪些 AC 没有被 reviewer 真正复验，不允许默认全标 `re_verified`。
 
@@ -76,7 +93,7 @@ reviewed_scope: {review_scope_fingerprint}
 
 ### 重审追加
 
-Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DDThh:mm:ss+08:00)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史。`finding_id` 跨轮全局续编。默认轮次上限见 `task-work` `review_limit`。
+Round N（N≥2）在对应报告文件末尾追加 `## Round N (YYYY-MM-DDThh:mm:ss+08:00)` 小节，只写本轮新发现和前轮 finding 复核结论，不覆盖历史；本小节内须含完整的 `### AC 复验方式`（重新列出全部 AC 行，见「AC 复验披露」）。`finding_id` 跨轮全局续编。默认轮次上限见 `task-work` `review_limit`。
 
 ### 撤回配合
 
@@ -94,8 +111,8 @@ reviewer 只建议 follow-up 标题、slug 和阻断性。
 `critical` / `important` 为 blocking finding；`minor` 非阻断，但仍须由 implementer 写入 `note.md` 处置表。
 
 - **职责边界**：你只写 finding 与本报告 `verdict`。`已修` / `遗留` / `撤回` 由 implementer 在 `note.md` 处置表填写；task 阻塞由实施者记录在实施笔记和 attempt report，不是 reviewer verdict。
-- **PASS**：以 `git -C '{repo_root}' diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor）。
-- **FAIL**：仍存在未解决的 critical / important。
+- **PASS**：以 `git -C '{repo_root}' diff` 与代码/测试为准，当前无未解决的 critical / important（可有 minor），且「AC 复验方式」全部为 `TICK-VALID`。
+- **FAIL**：仍存在未解决的 critical / important，或「AC 复验方式」含任一 `TICK-VOID`。
 - **Round N（N≥2）**：追加新 `## Round N` 小节并给**本轮** verdict（脚本取最后一条 `verdict`）。前轮 blocker 须用 diff/代码核实是否已消除或已按撤回流程作废，**不**采信处置表自称「已修」。前轮 blocker 仍在或本轮有新 blocker → FAIL；否则 PASS。
 - **禁止**在同一 round 内因 implementer 临时修复而覆盖或追加「复核翻 PASS」；修完代码后须走完整下一轮审阅（见 `.agents/skills/task-work/SKILL.md`“三道硬门禁”与“实施”）。
 

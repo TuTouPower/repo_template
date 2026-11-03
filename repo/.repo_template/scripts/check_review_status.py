@@ -18,8 +18,17 @@
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
   max_review_round=N      # 来自 note.md review_limit；旧 task 默认 5
   max_verify_round=N      # 来自 note.md verify_limit
-  next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_disposition
+  next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_ac_review|complete_disposition
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
+  ac_review=ok|void|incomplete|no_spec        # 每份报告最后一轮「AC 复验方式」小节的门禁状态
+  ac_review_detail=...                        # void / incomplete 的具体原因（逐份报告）
+
+AC 复验门禁：每份应有报告最后一轮须逐条列出 task.md 全部 AC（格式见 share_prompt.txt）。
+  - 全部 TICK-VALID、行集合与 task.md 的 AC 编号一致、task.md 全部已打勾 → 不影响 verdict
+  - 任一行 TICK-VOID → overall=FAIL（即使 verdict 写 PASS）
+  - 缺小节 / 缺行 / 多出未知 AC / 重复 / 格式无法解析 / task.md 有未打勾 AC 标了 TICK-VALID
+    → PASS 降为 INCOMPLETE，next_action=complete_ac_review（由 reviewer 补全 AC 复验方式）
+  - no_spec：目录里没有 task.md，无法比对 AC 集合，只拦 TICK-VOID、缺小节与格式错误
 """
 
 from __future__ import annotations
