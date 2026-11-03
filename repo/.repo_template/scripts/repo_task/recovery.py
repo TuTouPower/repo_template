@@ -45,7 +45,7 @@ def recovery_state(tid: str) -> dict:
             state["action"] = f"停止：无登记 worktree，{detail}"
             return state
         if task["status"] == "backlog":
-            return phase("pending", "start → reserve；若同名分支残留则先处理所有权")
+            return phase("pending", "run-begin（start → reserve → claim）；若同名分支残留则先处理所有权")
         return state
     if registered_branch != branch:
         state["action"] = "停止：登记 worktree 分支与 task ownership 不符"
@@ -65,7 +65,9 @@ def recovery_state(tid: str) -> dict:
         except ctx.TaskDataError as error:
             return phase("runtime_mismatch", str(error))
         if record["state"] == "running":
-            return phase("executing", "核对 owner_id；先原子 claim。跨会话接管必须确认原会话已停止，不得直接复用 identity 并行实施")
+            if not record.get("owner_id"):
+                return phase("executing", "尚未 claim：按原 identity 用 attempt claim 领取执行权（run-begin 中途失败时的现场），不重复 start/reserve")
+            return phase("executing", "核对 owner_id；同一 owner 直接续行。跨会话接管必须确认原会话已停止并 attempt claim --replace-owner ... --confirm-stopped，不得直接复用 identity 并行实施")
         if (record.get("report") or {}).get("status") in {"blocked", "failed"}:
             return phase("retry_ready", "task 保持 active；直接 reserve 新 identity 后继续")
         return state

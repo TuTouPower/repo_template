@@ -1,18 +1,24 @@
 """CLI control plane for attempts, ledger inspection, and monitoring."""
 
+import argparse
+import contextlib
 import json
 import sys
 
 import repo_task.context as ctx
 
 from .attempts import (
+    attempt_for_identity,
+    attempts_for_tid,
+    claim_execution,
     report_attempt,
     reserve_attempt,
     resolve_identity,
     terminal_attempt,
 )
 from .documents import tid_sort_key
-from .git_ops import require_primary_worktree
+from .git_ops import _git, require_primary_worktree, worktree_paths
+from .integration import _cleanup_worktree, _resolve_integrate_branch, cmd_start
 from .ledger import ledger_append, ledger_read
 from .locks import control_locked
 from .monitoring import compute_ps_rows, verify_integrate_ready
@@ -150,7 +156,6 @@ def cmd_attempt_reserve(args):
 @control_locked
 def cmd_attempt_claim(args):
     require_primary_worktree()
-    from .attempts import claim_execution
     attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
     _print_json(claim_execution(args.tid, attempt, execution_id, args.owner_id,
                                replace_owner=args.replace_owner,
@@ -190,6 +195,147 @@ def cmd_attempt_report(args):
         fail_class=args.fail_class,
         reason=args.reason,
     ))
+
+
+def _recovery_hint(tid: str) -> str:
+    return f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定现场"
+
+
+def _require_fresh_run(tid: str) -> None:
+    """run-begin 只接受从未执行过的 backlog task；既有现场一律交给 recovery。"""
+    hint = _recovery_hint(tid)
+    task = discover_effective_tasks().get(tid)
+    if task is None:
+        sys.exit(f"run-begin 拒绝：{tid} 不存在")
+    if task["status"] != "backlog":
+        sys.exit(f"run-begin 拒绝：{tid} 有效状态为 {task['status']}（仅 backlog 可新启动）；{hint}，不做隐式恢复")
+    if attempts_for_tid(tid, ledger_read(tid=tid)):
+        sys.exit(f"run-begin 拒绝：{tid} 已有 attempt 记录；{hint}，不做隐式恢复")
+    rel = ctx.worktree_rel_path(tid)
+    path = (ctx.REPO_ROOT / rel).resolve()
+    if path.exists() or str(path) in worktree_paths():
+        sys.exit(f"run-begin 拒绝：worktree {rel} 已存在；{hint}，不做隐式恢复")
+    branch = f"{tid}_{task['slug']}"
+    if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
+        sys.exit(f"run-begin 拒绝：分支 {branch!r} 已存在；{hint}，不做隐式恢复")
+
+
+@control_locked
+def cmd_run_begin(args):
+    """start → reserve → claim 在同一控制面锁内完成；失败时现场原样保留给 recovery。"""
+    require_primary_worktree()
+    tid, owner_id = args.tid, (args.owner_id or "").strip()
+    if not ctx.TID_RE.fullmatch(tid):
+        sys.exit(f"tid 非法：{tid!r}")
+    if not owner_id:
+        sys.exit("owner_id 必须是非空会话标识")
+    _require_fresh_run(tid)
+    step = "start"
+    try:
+        # start 的进度文本走 stderr，保持 stdout 仅输出 JSON identity
+        with contextlib.redirect_stdout(sys.stderr):
+            cmd_start(argparse.Namespace(tid=tid, base=args.base))
+        step = "reserve"
+        reserved = reserve_attempt(tid)
+        step = "claim"
+        claim_execution(tid, reserved["attempt"], reserved["execution_id"], owner_id)
+    except (SystemExit, ctx.TaskDataError, OSError) as error:
+        detail = error.code if isinstance(error, SystemExit) else error
+        sys.exit(
+            f"run-begin 失败于步骤 {step}：{detail}\n"
+            f"run-begin 不回滚已完成的步骤；{_recovery_hint(tid)}，勿重复 run-begin"
+        )
+    _print_json({
+        "tid": tid,
+        "attempt": reserved["attempt"],
+        "execution_id": reserved["execution_id"],
+        "branch": f"{tid}_{discover_effective_tasks()[tid]['slug']}",
+        "worktree": str((ctx.REPO_ROOT / ctx.worktree_rel_path(tid)).resolve()),
+        "owner_id": owner_id,
+    })
+
+
+# --result → (terminal status, report status)
+_RUN_CLOSE_PLAN = {
+    "done": ("completed", "done"),
+    "blocked": ("stopped", "blocked"),
+    "failed": ("failed", "failed"),
+}
+
+
+@control_locked
+def cmd_run_close(args):
+    """按结果写 terminal + report（done 另 exact cleanup）；已写事件不重复写。"""
+    require_primary_worktree()
+    tid, owner_id = args.tid, (args.owner_id or "").strip()
+    if not ctx.TID_RE.fullmatch(tid):
+        sys.exit(f"tid 非法：{tid!r}")
+    terminal_status, report_status = _RUN_CLOSE_PLAN[args.result]
+    try:
+        attempt, execution_id = resolve_identity(tid)
+        record = attempt_for_identity(tid, attempt, execution_id, ledger_read(tid=tid))
+    except ctx.TaskDataError as error:
+        sys.exit(f"run-close 拒绝：{error}")
+    if not owner_id or record["owner_id"] != owner_id:
+        sys.exit(
+            f"run-close 拒绝：owner_id 与 ledger claim 不一致（claim={record['owner_id']!r}）；"
+            f"{_recovery_hint(tid)}。跨会话接管走 recovery 的 claim 规程"
+        )
+    summary = {"tid": tid, "attempt": attempt, "execution_id": execution_id, "result": args.result}
+    if record["state"] == "integrated":
+        if args.result != "done":
+            sys.exit(f"run-close 拒绝：{tid} attempt={attempt} 已 integrated，不能按 {args.result} 关闭")
+        _print_json({**summary, "written": [], "note": "已 integrated（幂等）"})
+        return
+    terminal, report = record.get("terminal"), record.get("report")
+    if terminal and record["terminal_status"] != terminal_status:
+        sys.exit(
+            f"run-close 拒绝：{tid} attempt={attempt} 已写 terminal={record['terminal_status']}，"
+            f"与 --result {args.result} 冲突；{_recovery_hint(tid)}"
+        )
+    if report and report.get("status") != report_status:
+        sys.exit(
+            f"run-close 拒绝：{tid} attempt={attempt} 已写 report={report.get('status')}，"
+            f"与 --result {args.result} 冲突；{_recovery_hint(tid)}"
+        )
+    if not terminal and record["state"] != "running":
+        sys.exit(f"run-close 拒绝：{tid} attempt={attempt} state={record['state']!r}，无法关闭")
+    sha = None
+    if args.result == "done":
+        # 先验证再写：任何 ledger 写入前确认分支 tip 已是带 exact handoff 的执行 commit
+        try:
+            _, sha = _resolve_integrate_branch(tid)
+        except ctx.TaskDataError as error:
+            sys.exit(f"report=done 拒绝：{error}；先在 worktree 执行 finish")
+        require_report_done_ready(tid, attempt, execution_id)
+    written = []
+    step = "terminal"
+    try:
+        if not terminal:
+            terminal_attempt(tid, attempt, execution_id, terminal_status)
+            written.append("terminal")
+        step = "report"
+        if not report:
+            report_attempt(
+                tid, attempt, execution_id, report_status,
+                sha=sha,
+                fail_class=args.fail_class if args.result == "failed" else None,
+                reason=args.reason,
+            )
+            written.append("report")
+        step = "cleanup"
+        if args.result == "done":
+            print(_cleanup_worktree(tid, attempt, execution_id), file=sys.stderr)
+            written.append("cleanup")
+    except (SystemExit, ctx.TaskDataError, OSError) as error:
+        detail = error.code if isinstance(error, SystemExit) else error
+        sys.exit(
+            f"run-close 失败于步骤 {step}（本次已写：{', '.join(written) or '无'}）：{detail}\n"
+            f"已写事件不回滚；排除原因后重跑同一 run-close（重入安全），或{_recovery_hint(tid)}"
+        )
+    if sha:
+        summary["sha"] = sha
+    _print_json({**summary, "written": written})
 
 
 def cmd_ledger_tail(args):
