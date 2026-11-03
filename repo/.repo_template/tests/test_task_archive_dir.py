@@ -111,6 +111,38 @@ def test_scan_rejects_status_location_mismatch(fake_repo):
         scan_tasks()
 
 
+def test_scan_accepts_done_in_active_dir(fake_repo):
+    # D1：finish 后 done 停在活跃目录，归档由 integrate 的 merge commit 完成
+    _make_task(ctx.TASKS_DIR, "t007", "zeta", "done")
+    rows = scan_tasks()
+    assert [(row["tid"], row["status"], row["dir"]) for row in rows] == [
+        ("t007", "done", "docs/tasks/t007_zeta")
+    ]
+
+
+def test_scan_rejects_dropped_in_active_dir(fake_repo):
+    # dropped 恒由脚本移入归档目录，活跃目录中的 dropped 是数据损坏
+    _make_task(ctx.TASKS_DIR, "t008", "eta", "dropped")
+    with pytest.raises(TaskDataError, match="与所在目录不符"):
+        scan_tasks()
+
+
+def test_scan_rejects_backlog_in_archive_dir(fake_repo):
+    _make_task(ctx.ARCHIVE_TASKS_DIR, "t009", "theta", "backlog")
+    with pytest.raises(TaskDataError, match="与所在目录不符"):
+        scan_tasks()
+
+
+def test_rebuild_index_groups_by_directory_not_status(fake_repo):
+    _make_task(ctx.TASKS_DIR, "t001", "alpha", "done")
+    _make_task(ctx.ARCHIVE_TASKS_DIR, "t002", "beta", "done")
+    rebuild_index()
+    active = json.loads(ctx.ACTIVE_PATH.read_text(encoding="utf-8"))
+    archive = json.loads(ctx.ARCHIVE_PATH.read_text(encoding="utf-8"))
+    assert [t["tid"] for t in active["tasks"]] == ["t001"]
+    assert [t["tid"] for t in archive["tasks"]] == ["t002"]
+
+
 def test_scan_detects_dup_tid(fake_repo):
     _make_task(ctx.TASKS_DIR, "t006", "eps", "backlog")
     _make_task(ctx.ARCHIVE_TASKS_DIR, "t006", "eps", "done")

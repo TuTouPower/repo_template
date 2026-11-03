@@ -44,7 +44,10 @@ def _task_record(fm: dict, *, directory: str, source: str, archived: bool) -> di
     status = fm.get("status", "")
     if status not in ctx.VALID_STATUSES:
         raise ctx.TaskDataError(f"{source}: status 非法（{status!r}）")
-    if archived != (status in ctx.ARCHIVED_STATUSES):
+    # 归档目录只容纳 done/dropped。done 也可停在活跃目录（已 finish、未 integrate，
+    # 目录由 integrate 的 merge commit 归档）；dropped 由 drop 脚本直接移入归档目录。
+    misplaced = status not in ctx.ARCHIVED_STATUSES if archived else status == "dropped"
+    if misplaced:
         raise ctx.TaskDataError(
             f"{source}: status={status} 与所在目录不符"
             f"（位于{'归档' if archived else '活跃'}目录）"
@@ -149,17 +152,18 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
     return _validate_task_records(tasks)
 
 def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
-    """把扫描结果写入两个派生缓存 JSON。"""
+    """把扫描结果写入两个派生缓存 JSON；按目录归属分组，与各自 authority 一致。"""
     tasks = scan_tasks() if tasks is None else tasks
+    archived = [t for t in tasks if t["dir"].startswith("docs/archive/tasks/")]
     groups = (
         (
             ctx.ACTIVE_PATH,
-            [t for t in tasks if t["status"] not in ctx.ARCHIVED_STATUSES],
+            [t for t in tasks if t not in archived],
             "docs/tasks/{tid}_{slug}/note.md front matter",
         ),
         (
             ctx.ARCHIVE_PATH,
-            [t for t in tasks if t["status"] in ctx.ARCHIVED_STATUSES],
+            archived,
             "docs/archive/tasks/{tid}_{slug}/note.md front matter",
         ),
     )
