@@ -275,8 +275,8 @@ def reserve_attempt(tid: str, model: str | None = None) -> dict:
         status = task.get("status", "")
         if status in ctx.ARCHIVED_STATUSES:
             raise ctx.TaskDataError(
-                f"{tid} 已归档（{status}）；拒绝 reserve 新 attempt。"
-                "review 证据问题见 recovery 证据修复（amend 补审进同一执行 commit）；"
+                f"{tid} 已是终态（{status}）；拒绝 reserve 新 attempt。"
+                "review 证据问题见 recovery 证据修复（追加证据 commit）；"
                 "禁止 rewind/reserve 新 attempt。"
             )
         if status != "active":

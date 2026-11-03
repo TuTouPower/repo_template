@@ -544,14 +544,17 @@ def _require_archive_target_free(fm: dict) -> Path:
 
 
 def _close_task(args, status: str, note: str | None, *, prechecked: bool = False) -> None:
-    """done / dropped 收尾：先做 git 侧动作，再单次写盘，最后归档目录。
+    """done / dropped 收尾：先做 git 侧动作，再单次写盘；dropped 最后归档目录。
 
-    单次写盘是为了避免「front matter 已写 done、目录未归档」的中间态——
-    那种状态下 finish/drop/rewind 三条出口全被状态校验挡死，只能手改 front matter。
+    done 只在原位写 `status: done`，目录留在 `docs/tasks/`，由 integrate 的 merge commit
+    移入归档。dropped 仍由本函数把目录移入 `docs/archive/tasks/`。
+    单次写盘是为了避免「front matter 已写 dropped、目录未归档」的中间态——
+    那种状态下 drop/rewind 两条出口全被状态校验挡死，只能手改 front matter。
     归档移动失败时回滚 front matter，同理避免上述死锁。
     prechecked=True 表示调用方（finish）已完成 done 的写前检查。
     """
     task, path, fm, body = load_task(args.tid)
+    archive = status != "done"
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm)
@@ -572,7 +575,7 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
                 )
 
     src = ctx.REPO_ROOT / task["dir"]
-    dst = _require_archive_target_free(fm)
+    dst = _require_archive_target_free(fm) if archive else None
 
     in_own_worktree = in_own_task_worktree(fm)
     if in_own_worktree:
@@ -594,6 +597,9 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     else:
         append_note(fm, f"worktree 未移除：{ctx.effective_worktree(fm)}")
     write_front_matter(path, fm, body)
+    if not archive:
+        print(f"{args.tid} status={status}; 目录留在 {task['dir']}（integrate 时归档）; {wt_msg}")
+        return
 
     ctx.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -615,12 +621,10 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
         )
     # 归档已成功；此后只派生索引重建，失败不反向搬动状态权威（目录/front matter
     # 保持归档终态），只提示索引待重建。
-    # 条件等价于 not in_own_worktree：done 分支前置校验无条件要求自身 worktree，
-    # done 恒 in_own_worktree=True。写 dropped 是为保持该不变量显式可见。
     # main 上直接 drop 会改变 task 的目录归属；同步两个派生索引。
-    # active worktree 中的 finish/drop 由后续 task commit/integrate 收尾索引，
+    # active worktree 中的 drop 由后续 task commit/integrate 收尾索引，
     # 此处不能提前把索引写进执行分支，否则会制造 merge 冲突。
-    if status == "dropped" and not in_own_worktree:
+    if not in_own_worktree:
         try:
             rebuild_index()
         except (OSError, ctx.TaskDataError) as e:
@@ -693,13 +697,11 @@ def _finish_prechecks(args) -> dict:
             sys.exit("finish=FAIL：严格 preflight 未通过（见上）；零写入退出")
         raise
 
-    # 2. AC 全部打勾 + finalization 闭环 + 归档目标空闲
+    # 2. AC 全部打勾 + finalization 闭环
     _check_done_ready(tid, task_dir)
-    _require_archive_target_free(fm)
 
     # 3. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
-    task_dirs = (task["dir"], f"docs/archive/tasks/{fm['tid']}_{fm['slug']}")
-    loose = _unstaged_outside(task_dirs)
+    loose = _unstaged_outside((task["dir"],))
     if loose:
         shown = ", ".join(loose[:8]) + (f" 等共 {len(loose)} 项" if len(loose) > 8 else "")
         sys.exit(
@@ -711,7 +713,7 @@ def _finish_prechecks(args) -> dict:
     if head != fm.get("diff_anchor"):
         sys.exit(
             f"finish=FAIL：HEAD {head[:12]} 不是 diff_anchor {str(fm.get('diff_anchor'))[:12]}；"
-            "一个 task 只允许一个执行 commit，期间不得创建中间 commit。零写入退出"
+            "finish 之前不得创建中间 commit，实现 commit 由 finish 提交。零写入退出"
         )
 
     # 4. review 门禁（复用 evaluate_review，不改实现）
@@ -751,27 +753,19 @@ def _finish_prechecks(args) -> dict:
         sys.exit(f"finish=FAIL：{error}；零写入退出")
     return {
         "args": args, "message_path": message_path, "note_path": path, "task_dir": task_dir,
-        "src_rel": task["dir"], "dst_rel": task_dirs[1], "handoff": handoff,
-        "diff_anchor": head,
+        "task_rel": task["dir"], "handoff": handoff, "diff_anchor": head,
     }
 
 
 def _rollback_finish(plan: dict, note_text: str, index_bytes: bytes) -> list[str]:
-    """撤销 finish 自身的写入：handoff.json、归档移动、front matter、暂存。返回失败项。"""
-    import shutil
+    """撤销 finish 自身的写入：handoff.json、front matter、暂存。返回失败项。"""
     from .documents import atomic_write_text
 
     problems = []
-    src, dst = ctx.REPO_ROOT / plan["src_rel"], ctx.REPO_ROOT / plan["dst_rel"]
     try:
-        # 前置检查保证归档目标原先不存在；仅当目录确实已被移走时才撤销
-        if dst.exists() and not src.exists():
-            (dst / "handoff.json").unlink(missing_ok=True)
-            shutil.move(str(dst), str(src))
-        elif dst.exists():
-            raise OSError(f"{plan['src_rel']} 与 {plan['dst_rel']} 同时存在")
-    except (OSError, shutil.Error) as error:
-        problems.append(f"归档目录还原失败（{error}）")
+        (ctx.REPO_ROOT / plan["task_rel"] / "handoff.json").unlink(missing_ok=True)
+    except OSError as error:
+        problems.append(f"handoff.json 删除失败（{error}）")
     try:
         atomic_write_text(plan["note_path"], note_text)
     except (OSError, ctx.TaskDataError) as error:
@@ -801,25 +795,21 @@ def cmd_finish(args):
                 f"现场不一致，运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，"
                 "勿重复 finish"
             )
-        sys.exit(f"finish=FAIL：{reason}\nfinish 自身写入已全部回滚（front matter、归档移动、handoff.json、暂存）")
+        sys.exit(f"finish=FAIL：{reason}\nfinish 自身写入已全部回滚（front matter、handoff.json、暂存）")
 
     try:
         _close_task(args, "done", None, prechecked=True)
     except SystemExit as stop:
-        fail(f"归档写入失败：{stop.code}")
+        fail(f"done 写入失败：{stop.code}")
     try:
         from .documents import atomic_write_text
         atomic_write_text(
-            ctx.REPO_ROOT / plan["dst_rel"] / "handoff.json",
+            ctx.REPO_ROOT / plan["task_rel"] / "handoff.json",
             json.dumps(plan["handoff"], ensure_ascii=False, indent=2) + "\n",
         )
-        for command in (
-            ["add", "-A", "--", plan["dst_rel"]],
-            ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", plan["src_rel"]],
-        ):
-            staged = _git(command)
-            if staged.returncode != 0:
-                raise ctx.TaskDataError(f"git {' '.join(command[:2])} 失败：{staged.stderr.strip()}")
+        staged = _git(["add", "-A", "--", plan["task_rel"]])
+        if staged.returncode != 0:
+            raise ctx.TaskDataError(f"git add 失败：{staged.stderr.strip()}")
         committed = _git(["commit", "-F", str(message_path)], timeout=600)
     except (OSError, ctx.TaskDataError) as error:
         fail(str(error))
@@ -864,8 +854,8 @@ def cmd_rewind(args):
     if effective not in ctx.STATUS_ORDER:
         sys.exit(
             f"{args.tid} status={effective}；rewind 只处理 {ctx.STATUS_ORDER}。"
-            "已归档不可 rewind；review 证据问题见 recovery 证据修复"
-            "（amend 补审进同一执行 commit），禁止 rewind/reserve 新 attempt。"
+            "done/dropped 不可 rewind；review 证据问题见 recovery 证据修复"
+            "（追加证据 commit），禁止 rewind/reserve 新 attempt。"
         )
     target = args.to or ctx.DEFAULT_REWIND.get(effective)
     if target is None:

@@ -7,7 +7,7 @@ from .documents import parse_front_matter
 from .git_ops import _git, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .locks import control_locked
-from .monitoring import verify_integrate_ready
+from .monitoring import execution_commits, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
@@ -78,8 +78,8 @@ def recovery_state(tid: str) -> dict:
         if head.returncode == 0 and head.stdout.strip() == fm.get("diff_anchor") and record["state"] == "running":
             return phase(
                 "finish_interrupted",
-                "finish 在生成 handoff.json 前被中断（已 done、已归档、无 handoff、无执行 commit）：停止并报告用户；"
-                "不重复 finish、不 reserve。核对 note.md 验证摘要后，由用户决定补写 handoff.json 并提交，或还原归档目录",
+                "finish 在生成 handoff.json 前被中断（已 done、无 handoff、无执行 commit）：停止并报告用户；"
+                "不重复 finish、不 reserve。核对 note.md 验证摘要后，由用户决定补写 handoff.json 并提交，或把 note.md 还原为 active",
             )
     try:
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
@@ -93,15 +93,13 @@ def recovery_state(tid: str) -> dict:
             raise ValueError(head.stderr)
         if head.stdout.strip() == fm["diff_anchor"]:
             if record["state"] == "running":
-                return phase("finished_uncommitted", "finish 在提交前被中断：核验归档 handoff、review 和全部 diff 后暂存并提交执行 commit（沿用原 message）；不重复 finish、不 reserve")
-            raise ValueError("未提交执行 commit 却已关闭 attempt")
-        parent = _git(["rev-parse", "HEAD^1"], root=worktree)
-        if parent.returncode != 0 or parent.stdout.strip() != fm["diff_anchor"]:
-            raise ValueError("HEAD 不是以 diff_anchor 为 first parent 的一个执行 commit")
+                return phase("finished_uncommitted", "finish 在提交前被中断：核验 handoff、review 和全部 diff 后暂存并提交实现 commit（沿用原 message）；不重复 finish、不 reserve")
+            raise ValueError("未提交实现 commit 却已关闭 attempt")
+        execution_commits(head.stdout.strip(), fm["diff_anchor"], task["dir"])
         _, committed_fm, _ = load_task_at_ref(tid, head.stdout.strip())
         committed = json.loads(git_text_at_ref(head.stdout.strip(), f"{task['dir']}/handoff.json"))
         if committed_fm.get("status") != "done" or committed != handoff:
-            raise ValueError("分支 tip 未包含当前归档 handoff")
+            raise ValueError("分支 tip 未包含当前 handoff")
     except (OSError, ValueError, KeyError, TypeError, AttributeError, ctx.TaskDataError) as error:
         state["action"] = f"停止：{error}"
         return state
@@ -139,15 +137,16 @@ def _evidence_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: 
     if _tip_has_successor(tip_sha, branch):
         return (
             f"证据修复：review 门禁失败（{detail}）。"
-            f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不 amend。"
+            f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不追加证据 commit。"
         )
     return (
         f"证据修复：review 门禁失败（{detail}）。"
-        f"在原 worktree 对当前 tip {tip_sha[:12]} 的交付内容重审；"
-        "只改 review 过程文件；"
-        f"git commit --amend 进同一个执行 commit，first parent 必须仍是 diff_anchor {diff_anchor[:12]}；"
-        "禁止第二个 commit、rewind、reserve；"
-        f"amend 后 worktree 必须干净，再按原 identity attempt={attempt} execution_id={execution_id} exact cleanup。"
+        f"在原 worktree 对当前 tip {tip_sha[:12]} 的交付内容重新 review；"
+        "把新报告作为证据 commit 追加（不改写实现 commit），该 commit 只能改当前 task 目录内的 review 过程文件"
+        "（note.md、review_*.md、渲染的 review prompt），不得改 handoff.json、交付文件或其它路径；"
+        f"first parent 链仍须从 diff_anchor {diff_anchor[:12]} 起；"
+        "禁止 rewind、reserve；"
+        f"提交后 worktree 必须干净，再按原 identity attempt={attempt} execution_id={execution_id} exact cleanup。"
     )
 
 

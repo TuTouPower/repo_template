@@ -38,18 +38,18 @@ def _git_bytes(
     except subprocess.TimeoutExpired as error:
         raise ctx.TaskDataError(f"git {' '.join(args)} 超时（{timeout}s）") from error
 
-def default_branch() -> str:
+def default_branch(root: Path | None = None) -> str:
     """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → main。"""
-    r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+    r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root=root)
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().removeprefix("origin/")
-    r = _git(["config", "--get", "init.defaultBranch"])
+    r = _git(["config", "--get", "init.defaultBranch"], root=root)
     if r.returncode == 0 and r.stdout.strip():
         name = r.stdout.strip()
-        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"]).returncode == 0:
+        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], root=root).returncode == 0:
             return name
     for name in ("main", "master"):
-        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"]).returncode == 0:
+        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], root=root).returncode == 0:
             return name
     return "main"
 

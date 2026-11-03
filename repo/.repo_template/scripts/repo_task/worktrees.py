@@ -123,7 +123,7 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
             f"（应为 {expected_branch!r}）；拒绝伪装成 task 分支的普通分支"
         )
     if previous_fm.get("status") not in ctx.ARCHIVED_STATUSES:
-        # 分支 tip 状态由 finish 的归档移动 commit 决定。有效状态显示已完成
+        # 分支 tip 状态由 finish 提交的实现 commit 决定。有效状态显示已完成
         # 而分支 tip 仍是 backlog 时，真实原因是完成状态尚未提交，不是没完成。
         hint = ""
         try:

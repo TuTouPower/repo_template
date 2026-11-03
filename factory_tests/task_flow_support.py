@@ -4,8 +4,8 @@
 并生成 handoff.json 与执行 commit。多数测试需要构造异常现场（非法 handoff、stale
 review、未提交的归档），因此提供：
 
-- archive_done：只做「done + 归档移动」，等价于 finish 引入前的写入步骤，不做前置门禁，
-  也不生成 handoff 或提交；构造异常现场用。
+- mark_done：只做「原位写 status: done」，不做前置门禁，也不生成 handoff 或提交；
+  构造异常现场用。
 - prepare_finish：把 worktree 布置到可通过 finish 全部前置检查的状态，供真实收尾测试用。
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from review_support import ensure_review_evidence
 from repo_task.documents import parse_front_matter
 
-_ARCHIVE_DONE = (
+_MARK_DONE = (
     "import argparse, sys; sys.path.insert(0, '.repo_template/scripts'); "
     "from repo_task import lifecycle; "
     "lifecycle._close_task(argparse.Namespace(tid=sys.argv[1]), 'done', None)"
@@ -30,9 +30,9 @@ def _run(args, cwd):
     )
 
 
-def archive_done(worktree, tid):
-    """在 worktree 内把 active task 写成 done 并移入归档目录（不提交）；断言成功。"""
-    result = _run([sys.executable, "-c", _ARCHIVE_DONE, tid], worktree)
+def mark_done(worktree, tid):
+    """在 worktree 内把 active task 原位写成 done（目录留在 docs/tasks/，不提交）；断言成功。"""
+    result = _run([sys.executable, "-c", _MARK_DONE, tid], worktree)
     assert result.returncode == 0, result.stdout + result.stderr
     return result
 

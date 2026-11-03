@@ -33,7 +33,7 @@ metadata:
 
 ### 独立 review
 
-实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer（reviewer 负责审查代码质量并独立复核实施 Agent 的 AC 打勾真实性）。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。review 判 FAIL 且随后要修改交付内容时，先把 `task.md` 全部 AC 撤回为 `- [ ]`，修复后重跑测试与黑盒，逐条重新打勾，再派下一轮 review；只补报告或处置表、不改交付内容的 INCOMPLETE 不撤回。reviewer 不改 `task.md`。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（amend 同一执行 commit），不 rewind。
+实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer（reviewer 负责审查代码质量并独立复核实施 Agent 的 AC 打勾真实性）。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。review 判 FAIL 且随后要修改交付内容时，先把 `task.md` 全部 AC 撤回为 `- [ ]`，修复后重跑测试与黑盒，逐条重新打勾，再派下一轮 review；只补报告或处置表、不改交付内容的 INCOMPLETE 不撤回。reviewer 不改 `task.md`。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（重新 review 并追加只含 review 过程文件的证据 commit），不 rewind。
 
 ## 实施
 
@@ -45,8 +45,8 @@ metadata:
 6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
 7. 更新 note.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」写好 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要：`finish` 据此机器生成 `handoff.json`，三行为空或仍是「待执行时填写」占位会被拒绝。验证摘要只写这一处，不再另写 handoff。
 8. 暂存全部交付文件：`git add` 实现、测试、文档、pending/finding、specs 等本 task 改动（`git add -N` 不算暂存）；task 目录由 `finish` 自行处理。无关或临时文件删除或移入 `.scratch/`。把执行 commit message 写入仓外或 `.scratch/` 的文件。
-9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}`。脚本依次校验严格 preflight、AC 全部打勾、review 门禁、除 task 目录外无未暂存或未跟踪文件，全部通过后才写 done、归档 task 目录、生成 `handoff.json`，并用该 message 提交唯一的执行 commit。任一前置检查失败则零写入退出，按报错修复后重跑；提交失败（含 pre-commit hook 拒绝）时脚本回滚 finish 自身写入，修复原因后重跑。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。回滚失败或进程被中断时停止，按 `task.py recovery {tid}` 处理。
+9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}`。脚本依次校验严格 preflight、AC 全部打勾、review 门禁、除 task 目录外无未暂存或未跟踪文件，全部通过后才原位写 done、生成 `handoff.json`，并用该 message 提交实现 commit（task 目录留在 `docs/tasks/`，归档由合并完成）。任一前置检查失败则零写入退出，按报错修复后重跑；提交失败（含 pre-commit hook 拒绝）时脚本回滚 finish 自身写入，修复原因后重跑。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。回滚失败或进程被中断时停止，按 `task.py recovery {tid}` 处理。
 
 ## 完成
 
-交给 task-run：tid、分支与执行 commit SHA（finish 输出），并附测试、黑盒、review、pending/finding 和 worktree 摘要。停止时改为报告门禁、所需输入和恢复入口。
+交给 task-run：tid、分支与实现 commit SHA（finish 输出；追加证据 commit 后以分支 tip 为准），并附测试、黑盒、review、pending/finding 和 worktree 摘要。`finish` 之后发现 review 失效：不改交付文件、不另提交其它改动，按 recovery 证据修复重新 review 并只追加证据 commit。停止时改为报告门禁、所需输入和恢复入口。

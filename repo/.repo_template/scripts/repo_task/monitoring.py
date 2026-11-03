@@ -59,6 +59,58 @@ REVIEW_PROCESS_FILES = (
     "handoff.json",
 ) + tuple(name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names)
 
+# 证据 commit 允许触及的 task 目录文件：review 过程文件去掉 handoff.json。
+# handoff.json 是 finish 机器生成、绑定实现 commit identity/base_sha 的执行回执，
+# 证据 commit 不得改写。
+EVIDENCE_COMMIT_FILES = tuple(name for name in REVIEW_PROCESS_FILES if name != "handoff.json")
+
+
+def first_parent_segment(ref: str, base: str) -> list[tuple[str, list[str]]]:
+    """沿 first parent 从 ref 回溯到 base，返回 [(sha, parents)]（由旧到新，不含 base）。
+
+    ref 未超出 base，或 base 不在 ref 的 first-parent 链上（最旧 commit 的 first parent
+    不是 base）时抛 TaskDataError。
+    """
+    resolved = []
+    for name, value in (("ref", ref), ("base", base)):
+        result = _git(["rev-parse", "--verify", "--quiet", f"{value}^{{commit}}"])
+        if result.returncode != 0 or not result.stdout.strip():
+            raise ctx.TaskDataError(f"{name} {value!r} 无法解析为 commit")
+        resolved.append(result.stdout.strip())
+    tip, base_sha = resolved
+    listing = _git(["rev-list", "--first-parent", "--parents", f"{base_sha}..{tip}"])
+    if listing.returncode != 0:
+        raise ctx.TaskDataError(f"无法列出 {base_sha[:12]}..{tip[:12]} 的 first-parent 链：{listing.stderr.strip()}")
+    commits = [line.split() for line in listing.stdout.splitlines() if line.strip()]
+    if not commits:
+        raise ctx.TaskDataError(f"{tip[:12]} 未超出 base {base_sha[:12]}")
+    if commits[-1][1:2] != [base_sha]:
+        raise ctx.TaskDataError(f"base {base_sha[:12]} 不在 {tip[:12]} 的 first-parent 链上")
+    return [(commit[0], commit[1:]) for commit in reversed(commits)]
+
+
+def execution_commits(ref: str, base_sha: str, task_dir: str) -> tuple[str, list[str]]:
+    """校验执行分支形状，返回 (实现 commit, [证据 commit 由旧到新])。
+
+    沿 first parent 从 ref 回溯到 base_sha：最旧的是实现 commit，其后每个证据 commit
+    只能触及 task_dir 内的 EVIDENCE_COMMIT_FILES；整条链必须是线性（单 parent）。
+    """
+    segment = first_parent_segment(ref, base_sha)
+    allowed = {f"{task_dir}/{name}" for name in EVIDENCE_COMMIT_FILES}
+    for sha, parents in segment:
+        if len(parents) != 1:
+            raise ctx.TaskDataError(f"commit {sha[:12]} 是 merge commit，执行分支必须线性")
+    for sha, _ in segment[1:]:
+        changed = _git(["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", "-z", sha])
+        if changed.returncode != 0:
+            raise ctx.TaskDataError(f"无法读取证据 commit {sha[:12]} 的变更：{changed.stderr.strip()}")
+        outside = sorted(path for path in changed.stdout.split("\0") if path and path not in allowed)
+        if outside:
+            raise ctx.TaskDataError(
+                f"证据 commit {sha[:12]} 触及 review 过程文件之外的路径：{', '.join(outside[:5])}"
+            )
+    return segment[0][0], [sha for sha, _ in segment[1:]]
+
 # 仓库级 review 门禁指纹排除（非 task 目录路径）。
 SCOPE_FINGERPRINT_EXCLUDES = (
     ":(exclude)docs/pending", ":(exclude)docs/findings",
@@ -68,13 +120,12 @@ SCOPE_FINGERPRINT_EXCLUDES = (
 )
 
 
-def _review_logical_path(path: str, task_name: str) -> str | None:
-    # finish moves the current task, not its reviewed meaning. Canonicalize both
-    # locations before applying the archive exclusion; keep its spec/attachments.
-    for prefix in (f"docs/tasks/{task_name}/", f"docs/archive/tasks/{task_name}/"):
-        if path.startswith(prefix):
-            suffix = path[len(prefix):]
-            return None if suffix in REVIEW_PROCESS_FILES else f"docs/tasks/{task_name}/{suffix}"
+def _review_scope_path(path: str, task_name: str) -> str | None:
+    # 当前 task 目录在执行分支内始终位于 docs/tasks/（归档发生在 integrate 的 merge
+    # commit，之后不再对该 task 计算指纹）：过程文件排除，spec/附件保留。
+    prefix = f"docs/tasks/{task_name}/"
+    if path.startswith(prefix):
+        return None if path[len(prefix):] in REVIEW_PROCESS_FILES else path
     excluded = [item.removeprefix(":(exclude)") for item in SCOPE_FINGERPRINT_EXCLUDES]
     if any(path == item or path.startswith(item + "/") for item in excluded):
         return None
@@ -89,10 +140,8 @@ def _review_tree(root: Path, ref: str, task_name: str) -> dict[str, tuple[str, s
             continue
         metadata, raw_path = entry.split(b"\t", 1)
         mode, _, oid = metadata.decode("ascii").split()
-        path = _review_logical_path(os.fsdecode(raw_path), task_name)
+        path = _review_scope_path(os.fsdecode(raw_path), task_name)
         if path is not None:
-            if path in tree:
-                raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
             tree[path] = (mode, oid)
     return tree
 
@@ -106,7 +155,7 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
     tree = {}
     for raw in set(data.split(b"\0")) - {b""}:
         physical = os.fsdecode(raw)
-        path = _review_logical_path(physical, task_name)
+        path = _review_scope_path(physical, task_name)
         if path is None:
             continue
         source = root / physical
@@ -114,8 +163,6 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
             mode = source.lstat().st_mode
         except FileNotFoundError:
             continue  # tracked deletion
-        if path in tree:
-            raise ctx.TaskDataError(f"review scope：active/archive 重复路径 {path}")
         if stat.S_ISLNK(mode):
             content, git_mode = os.fsencode(os.readlink(source)), "120000"
             blob = f"blob {len(content)}\0".encode() + content
@@ -148,7 +195,7 @@ def review_scope_fingerprint(
     diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None,
     ref: str | None = None,
 ) -> str:
-    """Hash the delivered content delta, independent of staging/commit/archive.
+    """Hash the delivered content delta, independent of staging/commit.
 
     ref=None reads the complete worktree (including untracked outputs); ref reads
     only immutable committed blobs. A deleted file, mode or symlink change is part
@@ -161,24 +208,20 @@ def review_scope_fingerprint(
         before = _review_tree(root, diff_anchor, task_name)
         after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
         digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
-        task_paths = [f"docs/tasks/{task_name}/note.md", f"docs/archive/tasks/{task_name}/note.md"]
+        task_path = f"docs/tasks/{task_name}/note.md"
         review_level = "full"
-        for task_path in task_paths:
-            if ref:
-                result = _git(["show", f"{ref}:{task_path}"], root=root)
-                if result.returncode:
-                    continue
+        text = None
+        if ref:
+            result = _git(["show", f"{ref}:{task_path}"], root=root)
+            if result.returncode == 0:
                 text = result.stdout
-            else:
-                path = root / task_path
-                if not path.exists():
-                    continue
-                text = path.read_text(encoding="utf-8")
+        elif (root / task_path).exists():
+            text = (root / task_path).read_text(encoding="utf-8")
+        if text is not None:
             fm, _ = parse_front_matter_text(text, source=task_path)
             review_level = fm.get("review_level", "full")
             if review_level not in ctx.REVIEW_LEVELS:
                 raise ctx.TaskDataError(f"review_level 非法：{review_level!r}")
-            break
         _hash_part(digest, b"review_level", review_level.encode())
         for path in sorted(before.keys() | after.keys()):
             if before.get(path) == after.get(path):
@@ -470,29 +513,31 @@ def verify_integrate_ready(
         if handoff.get(key) != expected:
             return "contract", f"{handoff_path} {key}={handoff.get(key)!r} 与当前 {expected!r} 不符"
     tip_result = _git(["rev-parse", f"refs/heads/{branch}^{{commit}}"])
-    parent_result = _git(["rev-parse", f"refs/heads/{branch}^1"])
     base_result = _git(["rev-parse", f"{handoff['base_sha']}^{{commit}}"])
-    if tip_result.returncode != 0 or parent_result.returncode != 0:
-        return "contract", f"分支 {branch!r} tip 或 first parent 无法解析 commit"
+    if tip_result.returncode != 0:
+        return "contract", f"分支 {branch!r} tip 无法解析 commit"
     if base_result.returncode != 0:
         return "contract", f"{handoff_path} base_sha 无法解析 commit"
-    first_parent = parent_result.stdout.strip()
+    base = base_result.stdout.strip()
     diff_anchor = fm.get("diff_anchor")
     if not isinstance(diff_anchor, str) or not diff_anchor:
         return "contract", f"分支 {branch!r} task diff_anchor 缺失或非法"
-    if (
-        base_result.stdout.strip() != first_parent
-        or handoff["base_sha"] != first_parent
-        or diff_anchor != first_parent
-    ):
+    shape = "执行分支必须是一个实现 commit 加仅含 review 过程文件的证据 commit"
+    try:
+        _, evidence = execution_commits(tip_result.stdout.strip(), base, task["dir"])
+    except ctx.TaskDataError as error:
+        return "contract", (
+            f"{handoff_path} base_sha={handoff['base_sha']!r} 与分支 {branch!r} tip 的 "
+            f"first parent 链不符：{error}；{shape}"
+        )
+    if handoff["base_sha"] != base or diff_anchor != base:
         return "contract", (
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
-            f"{diff_anchor!r} 与 branch tip first parent {first_parent!r} 不一致；"
-            "一个 task 必须恰有一个执行 commit"
+            f"{diff_anchor!r} 与实现 commit 的 first parent {base!r} 不一致；{shape}"
         )
     if status == "done":
         from .review import ReviewDataError, evaluate_review
-        scope = review_scope_fingerprint(first_parent, task["dir"], ref=tip_result.stdout.strip())
+        scope = review_scope_fingerprint(base, task["dir"], ref=tip_result.stdout.strip())
         try:
             with tempfile.TemporaryDirectory(prefix="repo-task-review-") as tmp:
                 target = Path(tmp)
@@ -517,6 +562,8 @@ def verify_integrate_ready(
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:
             return "contract", f"review gate：{error}"
     detail = "分支 tip terminal + exact handoff + diff_anchor/first-parent provenance"
+    if evidence:
+        detail += f"（含 {len(evidence)} 个证据 commit）"
     if not has_unmerged_commits(branch):
         detail += "（已合入）"
     return "ready", detail
