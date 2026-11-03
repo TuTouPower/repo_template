@@ -26,6 +26,7 @@ from template_sync.source import resolve_src
 from template_sync.state import active_prompts, cmd_init, cmd_prompt, read_state
 from export_template import export_template
 from skill_registry import render_registry
+from review_support import configure_project_verification
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 
@@ -433,7 +434,8 @@ def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
     assert result.returncode == 0, result.stderr
 
 
-def test_actual_product_export_is_clean_and_passes_contract(tmp_path):
+@pytest.mark.parametrize("configured", [False, True])
+def test_actual_product_export_is_clean_and_passes_contract(tmp_path, configured):
     product = SCRIPTS.parents[1]
     files = subprocess.run(["git", "-C", str(product), "ls-files", "--cached", "--others",
                             "--exclude-standard", "-z", "."], capture_output=True, check=True).stdout
@@ -457,9 +459,14 @@ def test_actual_product_export_is_clean_and_passes_contract(tmp_path):
     (factory / "repo/.env").write_text("dirty secret")
     target = tmp_path / "exported"
     export_template(factory, target)
+    if configured:
+        configure_project_verification(target)
+        assert not (target / ".repo_template/sync_state.json").exists()
     assert not (target / ".env").exists()
     for host in (".claude/skills", ".agents/skills"):
         assert all(path.is_symlink() and path.exists() for path in (target / host).iterdir())
     result = subprocess.run([sys.executable, "-m", "pytest", ".repo_template/tests", "-q", "-m", "contract"],
                             cwd=target, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
+    if configured:
+        assert "1 skipped" in result.stdout
