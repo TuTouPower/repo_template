@@ -18,7 +18,9 @@
 
 ## workflow schema 强制迁移
 
-workflow schema 不做运行时兼容。`repo-template-sync` 的 `apply` 会强制更新主仓 `docs/tasks/` 中的存量 spec/task 模板块（包括把旧 `status: blocked` 改为 `active`、补齐轮次上限字段）；存在已登记 task worktree 时拒绝 apply，必须先完成或 rewind，避免主仓与执行分支各用一套 schema；存在状态为 done 但分支尚未合入默认分支的 task 时同样拒绝 apply 并列出这些分支，先 integrate（done task 的目录改由 integrate 在 merge commit 中归档，旧布局下已在分支内归档的中间形态新工具链不处理）。更新后工具链直接拒绝旧字段和旧状态，不保留双轨解析。
+`apply` 将主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。旧 `spec.md` / `task.md` 布局及 `task.md` / `note.md` 布局均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。
+
+存在已登记 task worktree 时拒绝 apply，先完成或 rewind；存在状态为 done 但尚未合入默认分支的 task 分支时同样拒绝，先 integrate。迁移后工具链只接受当前 schema。
 
 ## 同步版本基线
 
@@ -30,7 +32,7 @@ workflow schema 不做运行时兼容。`repo-template-sync` 的 `apply` 会强�
 
 ## 同步准备与 apply 事务
 
-同步准备仅改 `.scratch/` 来源缓存，取消 prep 与覆盖同步器自举。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；任何内置 contract、项目 doctor/test/blackbox 或写盘失败全部恢复，备份保留。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
+同步准备仅改 `.scratch/` 来源缓存，取消 prep 与覆盖同步器自举。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目 doctor/test/blackbox 或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
 
 ## 降级与 revert
 

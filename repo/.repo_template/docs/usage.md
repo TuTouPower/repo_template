@@ -97,9 +97,9 @@ Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-o
 
 `/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。单个 task 的 `/task-run` 主路径只传 `tid` 与 `owner_id`：主仓 `run-begin` → worktree 内 `preflight` / `render_review_prompts.py` / `check_review_status.py` / `finish` → 主仓 `run-close --result done`；merge 经授权后 `integrate {tid}` 与 `integrate {tid} --continue`。阻塞或失败用 `run-close --result blocked|failed`；`recovery` 与原语子命令只在恢复时使用。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
 
-goal 快照是主仓级单份文件；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列按成员间关系分链：存在 `depends_on` 或 `conflicts_with` 的成员串成一条链，其后成员以链内前一成员分支为 `--base`，无关成员各自从默认分支起步，具体 base 以 `plan --serial --json [tid ...]` 的 `members[].base` 为准；成员阻塞只停所在链，其它链继续。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；存在阻塞成员时输出 `stopped_at=` 行列出阻塞成员与同链被跳过成员，其它链仍有可继续成员则为 INCOMPLETE，无可继续成员才为 STOPPED；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
+goal 快照是主仓级单份文件；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列分链、base 与阻塞规则见[执行拓扑](architecture.md#%E6%89%A7%E8%A1%8C%E6%8B%93%E6%89%91)。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
 
-图合并中断后的 `graph-transaction` 恢复见 `recovery.md`。
+项目验证命令及执行边界见 [testing.md](../../docs/blueprint/testing.md)；图合并中断后的 `graph-transaction` 恢复见 `recovery.md`。
 
 ### `.repo_template/scripts/` 使用示例
 
@@ -124,15 +124,11 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 |可选能力|后台子代理不支持时顺序执行；goal 仅宿主支持时使用；hooks 需显式 install-hooks|
 |网络|本地固定来源可离线同步；URL clone/fetch 与 GitHub issue 需要网络及用户现有凭据|
 
-## 门禁命令的执行边界
-
-`docs/blueprint/testing.md` 的 `doctor_cmd` / `test_cmd` / `blackbox_verify` 由执行者按 task-work 流程运行，并把结果写入 `progress.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`）的 tests/blackbox；reviewer 独立复跑。`task.py preflight` / `finish` / `integrate` 只校验章节存在与格式，不代为执行命令。`repo_sync.py apply` 在模板同步时执行这些命令作为同步门禁。
-
 ## 状态行 Hook 与执行范围
 
 默认不启用。需要时执行 `python3 .repo_template/scripts/repo_sync.py install-hooks --statusline`，将 PostToolUse hook 合并到 `.claude/settings.json`，保留已有配置；JSON 格式错误时拒绝，不改 `core.hooksPath`。已有消费仓的 hook 由消费仓维护，模板同步不增删。
 
-hook 在调度账本存在、命令包含 `start` / `track_worktree` / `--tid` 时，把会话对应的 worktree 写入 `.scratch/statusline_workdir.jsonl`。显示状态行还需在全局 `statusLine.command` 配置读取该文件的渲染脚本。
+hook 在调度账本存在、命令包含 `run-begin` / `start` / `track_worktree` / `--tid` 时，把会话对应的 worktree 写入 `.scratch/statusline_workdir.jsonl`。显示状态行还需在全局 `statusLine.command` 配置读取该文件的渲染脚本。
 
 ## 附属生命周期闭环
 

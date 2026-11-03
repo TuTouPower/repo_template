@@ -22,7 +22,7 @@ metadata:
 - 无参数调用：必须先列出 `task.py plan --serial --json` 拟定执行的成员清单（tid、title、顺序、所属链与 base）并向用户确认，取得明确同意后方可开始执行，禁止静默全量执行。
 - done/dropped 不作为新执行成员。
 - 队列启动后成员和顺序固定；依赖必须位于依赖者之前。队列外依赖须在 start 前已 done 且已合入，否则 `run-begin` 的 start 门禁拒绝。
-- 队列按成员间关系分链：队列内两成员存在 `depends_on`（任一方向）或 `conflicts_with`（任一方声明）即相连，连通的成员属同一链，链内保持队列顺序；无关成员各自成链。执行前运行 `task.py plan --serial --json {队列 tid 按顺序}`（无参数调用直接用默认队列的输出），读取 `members[]` 的 `chain`、`base.tid`、`base.branch` 与 `queue_chains[]` 的 `tail`；队列启动后沿用该结果。
+- 队列按[执行拓扑](../../docs/architecture.md#%E6%89%A7%E8%A1%8C%E6%8B%93%E6%89%91)分链。执行前运行 `task.py plan --serial --json {队列 tid 按顺序}`（无参数调用直接用默认队列的输出），读取 `members[]` 的 `chain`、`base.tid`、`base.branch` 与 `queue_chains[]` 的 `tail`；队列启动后沿用该结果。
 
 ## 执行
 

@@ -2,7 +2,7 @@
 
 多会话并发跑 task（各会话执行 `task-run`）且从消费仓主仓根启动时，状态栏的目录字段若不区分会话，无法看出该会话当前落在哪个 task worktree。本机制在状态栏显示各会话实际关联的 task worktree 名。
 
-> **状态（2026-08-12 核对；2026-09-07 勘误）**：现行宿主附属机制。生产者是 `.repo_template/scripts/track_worktree.py` + 项目 `.claude/settings.json` 的 PostToolUse hook。L36 否决删除本 hook。路径与终态事件以脚本为准。
+> 模板提供映射写入端，默认不启用。启用方式见[状态行 Hook 与执行范围](../../repo/.repo_template/docs/usage.md#状态行-hook-与执行范围)；显示端由仓外工具提供。
 
 ## 数据流
 
@@ -32,25 +32,19 @@ statusline.py resolve_workdir()   ← 按 (agent, session_id) 逆序取记录，
 
 ### tid 提取
 
-从触发命令文本正则提取，三种形式（`extract_tid`）：
+从触发命令文本正则提取，以下形式（`extract_tid`）：
 
 - `--tid tNNN`
 - `--tid=tNNN`
-- 包含 `start tNNN` 的命令文本（实现匹配 `start` + tid，并未限定必须是 task.py）
+- 包含 `start tNNN` 或 `run-begin tNNN` 的命令文本（未限定必须是 task.py）
 
 提取失败返回空，本次不写。
 
 ### ledger 解析与终态抵消
 
-`resolve_worktree()` 顺序读 `docs/runtime/dispatch_ledger.jsonl`，只取该 tid 的记录，按事件推进状态：
+`resolve_worktree()` 从 `docs/runtime/dispatch_ledger.jsonl` 末尾逆序查找该 tid。最新事件为 `report` / `integrated` / `attempt_terminal` 时返回空；否则向前寻找 `start` 事件中的 worktree 路径。`attempt_reserved`、`execution_claimed` 等非终态事件不需要携带路径，也不检查 `state=running`。
 
-| 事件 | 窗口 | 说明 |
-| --- | --- | --- |
-| `start` | 开 | 记录 worktree 相对路径并置 active |
-| `attempt_reserved` 且 `state=running` | 开 | 重新打开窗口，沿用此前 start 记录的路径 |
-| `report` / `integrated` / `attempt_terminal` | 关 | 关闭本次解析窗口，不证明 worktree 已删除；阻塞时目录仍可能保留 |
-
-最终仅当 active 且已有非空 worktree 路径字段时返回 `os.path.normpath(os.path.join(project, worktree))`；否则返回空串，本次不写；生产端不检查目录是否存在。注意终态抵消只是"不再写新记录"，jsonl 中已存在的历史记录不会被清除——integrate 后最后一条记录仍指向已删除的 worktree，清理由消费侧负责（见下节路径校验）。
+找不到 start 或路径为空时不写记录；生产端不检查目录是否存在。终态事件阻止写入新映射，已有 jsonl 记录由显示端按路径存活情况处理。
 
 ### 去重
 
@@ -72,16 +66,15 @@ append 前与 jsonl 末行比较（`append_record`），序列化文本完全相
 
 | 位置 | 作用 |
 | --- | --- |
-| 项目 `.claude/settings.json` `hooks.PostToolUse`（matcher=Bash） | 每次 Bash 调用后执行 `track_worktree.py --write --agent claude-code`，timeout 2s |
+| 项目 `.claude/settings.json` `hooks.PostToolUse`（matcher=Bash） | 每次 Bash 调用后执行 `track_worktree.py --write --agent claude-code`，timeout 5s |
 | 全局 `~/.claude/settings.json` `statusLine.command` | 指向 `statusline.py`，状态栏刷新时执行 |
 
 ## 边界与失效场景
 
 - ledger 文件缺失或不可读 → `resolve_worktree` 返回空，不写。
-- tid 提取失败 → 不写；命令中恰好出现 `start tNNN` 也可能命中，不能据显示结果证明执行过 task 命令。
+- tid 提取失败 → 不写；命令中恰好出现 `start tNNN` / `run-begin tNNN` 也可能命中，不能据显示结果证明执行过 task 命令。
 - 无 `session_id` 的 hook payload → writer 直接返回。
 - terminal/report 后 → 生产端关闭解析窗口，但消费者不读 ledger；若历史记录的目录仍存在（例如 blocked 留场），状态栏仍可能显示它。只有目录删除后才因 `isdir` 失败跳过；更早的有效记录仍可能命中。
-- `attempt_reserved` 必须携带 `state=running` 才重新打开窗口；未携带此字段的事件不会重开。应以真实 ledger 字段核对，不能把此显示机制当作执行状态权威。
 - 同 jsonl 随 `.scratch/` 被 gitignore，仅本地会话态，不随仓库分发。
 
 ## 验证与恢复
