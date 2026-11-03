@@ -1,6 +1,6 @@
 # repo_template 宏观改造方案
 
-> **状态：已裁决，待实施。** 决策状态：2026-11-03 用户批准第 9 节全部推荐项，并采纳 E2、`note.md` → `progress.md` 改名（D-12）与 AC 打勾复核闭环（D-13）；D-11 撤销（原报告已删除）。实现状态：未实施；执行编排见第 11 节。
+> **状态：已裁决，待实施。** 决策状态：2026-11-03 用户批准第 9 节全部推荐项，并采纳 E2、`note.md` → `progress.md` 改名（D-12）、AC 打勾复核闭环（D-13）与测试并行化（D-14）；D-11 撤销（原报告已删除）。实现状态：未实施；执行编排见第 11 节。
 >
 > 编写时间：2026-11-03T21:57:11+08:00。证据基线：工厂 `main` @ `9514f00`。
 >
@@ -51,6 +51,7 @@
 | 已知文档漂移 | 9 处（见 A 组；A6 不处理） | 其余 8 处清零 |
 | 宿主认证 | 未执行 | Claude Code 当前版本完成认证并记录版本 |
 | AC 复核 | reviewer 判定只在报告正文 | 每条 AC 带 `TICK-VALID` / `TICK-VOID`，由脚本门禁 |
+| 工厂全量测试耗时 | 串行约 9.5 分钟（10 核只用 1 核） | 并行运行约 2 分钟（估算，待 H3 实测） |
 
 ### 非目标
 
@@ -75,6 +76,7 @@
 | P10 | 文档漂移 | A1–A9 |
 | P11 | 工厂仓卫生 | B1–B3 |
 | P12 | review FAIL 后 AC 打勾不撤回；reviewer 的 AC 判定不进机器门禁 | J1–J4 |
+| P13 | 工厂全量测试只能串行，单次约 9.5 分钟，拖慢每个工作包的验证 | H3 |
 
 ## 5. 改造项
 
@@ -237,6 +239,7 @@ C3 中 `handoff.json` 的字段来源：
 | --- | --- | --- | --- |
 | H1 | `repo_sync.py` 拆包 | 仿照 `repo_task/` 拆为 `repo_sync/`：`cli`、`source`（固定 checkout / URL 缓存）、`assets`（硬同步与镜像）、`agents_merge`、`shared_files`（gitignore / prettierignore / MCP）、`transaction`、`gates`、`hooks`、`workflow_migration`。入口 `repo_sync.py` 只做路径注入与转发，路径不变，来源运行器与既有 skill 调用不受影响。纯重构，行为不变 | 无需 |
 | H2 | 机制审计 | 对下表每个机制统计 1 个月内消费仓的实际使用（ledger 事件、`tasks_audit.log`、git 历史）。零使用且无事故证据的机制列为删除候选，交用户裁决。沿用 `decision_log.md` 的准入规则：至少两份实证才新增机制 | 审计结果需裁决 |
+| H3 | 测试并行化 | 现状：全量 692 个用例串行约 9.5 分钟；16 处测试直接改写进程级 `os` / `shutil` / `subprocess` 属性，两处 `conftest.py` 因此拒绝 pytest-xdist；工厂集成测试多数新建真实 git 仓库与 worktree。改造：把进程级改写收敛为作用域受控的替换（只影响当前测试）；去掉 xdist 禁令并以 `-n auto` 运行；可选为 git 测试仓库建一次模板、每个测试复制一份。CI 与工厂命令同步改为并行。在 D4 合入后执行，避免与第 2–4 波的测试改动冲突 | D-14 |
 
 H2 机制清单与初判（「待验证」表示缺少使用数据）：
 
@@ -308,7 +311,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | 1 | C1–C5，改写 `task-run` / `task-work` / `task-integrate` 与 `usage.md` 对应段 | D-01–D-03 | C 组验收；导出契约 |
 | 2 | H1（纯重构，放在任何同步迁移代码改动之前）、F1–F4、G1、G2、I3、J1–J4 | D-06、D-07、D-13 | F/G/J 组验收；旧版消费仓同步到新版的迁移测试 |
 | 3 | D1–D3、E1–E2，以及同步器的工作流迁移逻辑；合入后单独执行 D4 改名 | 阶段 1–2；D-04、D-05、D-12 | D/E 组验收；含存量 done task 与旧文件名的消费仓迁移测试 |
-| 4 | I1、I2、H2 审计 | 阶段 1–3 发布 | 认证记录入 `decision_log.md`；审计结果交裁决 |
+| 4 | I1、I2、H2 审计、H3 测试并行化 | 阶段 1–3 发布；H3 在 D4 合入后 | 认证记录入 `decision_log.md`；审计结果交裁决；H3 并行与串行结果一致且记录实测耗时 |
 
 每个阶段单独提交、单独可回退。阶段内按「先测试后实现」推进，旧测试语义失效时整体删除并写明理由，不就地改预期。
 
@@ -365,6 +368,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | D-11 | `123.md` 原报告位置（A6） | 由用户提供 | 撤销：原报告已删除，A6 不处理 |
 | D-12 | `note.md` 改名 `progress.md`（D4），随阶段 3 迁移一次完成 | 采纳 | 采纳 |
 | D-13 | AC 打勾复核闭环：FAIL 后全部撤回打勾，reviewer 用 `TICK-VALID` / `TICK-VOID` 逐条判定，脚本门禁（J 组） | 采纳 | 采纳 |
+| D-14 | 测试并行化（H3），D4 合入后执行 | 采纳 | 采纳 |
 
 ## 10. 裁决后落点
 
@@ -399,6 +403,7 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | 3 | `wp7_queue_topology` | E1、E2 | `task-run` 的「授权与队列」「执行」「停止」段；`plan.py`；`goal.py`；`architecture.md`「执行拓扑」（与 WP6 同文件不同章节） |
 | 4 | `wp8_rename_progress` | D4 | 全仓 `note.md` 引用、task 模板、同步器迁移、相关测试 |
 | 5 | `wp9_dogfood_audit` | I2、H2 | 新建 `~/kar/code/repo_template_dogfood/`；新建 `docs_repo/reflections/analysis_mechanism_usage_2026_11.md`（只读读取各消费仓） |
+| 5 | `wp11_test_parallel` | H3 | `repo/.repo_template/tests/`、`factory_tests/`、两处 `conftest.py` 与 `pytest.ini`、CI 工作流、根 `AGENTS.md` / `README.md` 的测试命令 |
 | 5 | 用户或主会话 | I1 | 需要真实宿主交互会话，不派子代理 |
 
 ### 工作包通用约束
