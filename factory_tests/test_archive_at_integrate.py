@@ -14,7 +14,7 @@ from test_dispatch_integration import (
 )
 from test_finish_atomic import OWNER, _begin
 from task_flow_support import finish_cli, prepare_finish
-from repo_task.documents import parse_front_matter
+from repo_task.documents import parse_front_matter, write_front_matter
 
 ACTIVE = "docs/tasks/t001_alpha"
 ARCHIVE = "docs/archive/tasks/t001_alpha"
@@ -300,3 +300,69 @@ def test_archive_target_already_occupied_is_rejected(git_repo):
     assert prepared.returncode != 0
     assert "同时存在" in prepared.stderr or "归档" in prepared.stderr
     assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
+
+
+# --------------------------------------------------------------------------
+# D3：依赖实现 SHA 查找同时覆盖活跃目录（新历史）与归档目录（旧历史）
+# --------------------------------------------------------------------------
+
+
+def _legacy_archived_history(repo):
+    """旧布局历史：实现 commit 直接在归档目录添加 handoff.json，合并后删除分支。"""
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "-q", "-b", "t001_alpha")
+    _git(repo, "mv", ACTIVE, ARCHIVE)
+    note = repo / ARCHIVE / "note.md"
+    fm, body = parse_front_matter(note)
+    fm["status"] = "done"
+    write_front_matter(note, fm, body)
+    (repo / ARCHIVE / "handoff.json").write_text(json.dumps({
+        "tid": "t001", "attempt": 1, "execution_id": "legacy", "status": "done",
+        "branch": "t001_alpha", "base_sha": base, "tests": "t", "blackbox": "b",
+        "review": "r", "pending": [], "findings": [],
+    }), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(t001): legacy archived implementation")
+    implementation = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--no-ff", "-q", "-m", "merge(t001): t001_alpha", "t001_alpha")
+    _git(repo, "branch", "-D", "t001_alpha")
+    return base, implementation
+
+
+def test_dependency_implementation_found_for_handoff_added_under_active_dir(git_repo):
+    from repo_task import integration
+
+    identity, branch, implementation = _prepare_done(git_repo, "t001", "alpha")
+    _integrated(git_repo, "t001", identity)
+    assert not _git(git_repo, "branch", "--list", branch).stdout.strip()
+    # 合并后 handoff.json 位于归档目录，但添加它的实现 commit 把它放在 docs/tasks/
+    added = _git(git_repo, "show", "--name-status", "--format=", implementation).stdout
+    assert f"A\t{ACTIVE}/handoff.json" in added
+
+    assert integration._dependency_implementations("t001") == [implementation]
+
+
+def test_dependency_implementation_found_for_legacy_history_added_under_archive(git_repo):
+    from repo_task import integration
+
+    _, implementation = _legacy_archived_history(git_repo)
+
+    assert integration._dependency_implementations("t001") == [implementation]
+
+
+def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(git_repo):
+    from repo_task import integration
+    from repo_task.context import TaskDataError
+
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    _integrated(git_repo, "t001", identity)
+    handoff = git_repo / ARCHIVE / "handoff.json"
+    payload = json.loads(handoff.read_text("utf-8"))
+    payload["base_sha"] = "0" * 40
+    handoff.write_text(json.dumps(payload), encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-m", "tamper handoff base_sha")
+
+    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+        integration._dependency_implementations("t001")

@@ -198,7 +198,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     migrations, worktrees, migration_errors = workflow_migration_status(src)
     conv_migrations = conventions_migration_status()
     if migration_errors:
-        print("BLOCKED：以下文档无法自动迁移：")
+        print("BLOCKED：以下问题阻塞自动迁移：")
         for error in migration_errors:
             print(f"- {error}")
     if worktrees:

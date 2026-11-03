@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from repo_task.git_ops import default_branch
+
 from . import context as ctx
 from .common import _git
 
@@ -201,6 +203,54 @@ def _registered_task_worktrees() -> list[tuple[Path, str]]:
     return rows
 
 
+_TASK_BRANCH_RE = re.compile(r"^t[0-9]+_[a-z][a-z0-9_]*$")
+_FRONT_MATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
+_STATUS_LINE_RE = re.compile(r"(?m)^status:[ \t]*[\"']?([A-Za-z]+)[\"']?[ \t]*$")
+
+
+def _branch_task_status(branch: str) -> str:
+    """分支 tip 中该 task 的状态；活跃与归档目录都查，读不到返回空串。"""
+    for directory in ("docs/tasks", "docs/archive/tasks"):
+        for name in ("note.md", "task.md"):
+            shown = _git(ctx.CONSUMER, "show", f"refs/heads/{branch}:{directory}/{branch}/{name}")
+            if shown.returncode != 0:
+                continue
+            front_matter = _FRONT_MATTER_RE.match(shown.stdout)
+            status = _STATUS_LINE_RE.search(front_matter.group(1)) if front_matter else None
+            if status:
+                return status.group(1)
+    return ""
+
+
+def _unintegrated_done_branches() -> tuple[str, list[str]]:
+    """返回 (默认分支, 状态为 done 但尚未合入默认分支的 task 分支)。
+
+    done task 的目录由 integrate 的 merge commit 归档；旧布局下这类分支的目录已在分支内
+    归档，新工具链不处理这种中间形态，必须先 integrate。git 查询失败 fail-closed。
+    """
+    listed = _git(ctx.CONSUMER, "branch", "--format=%(refname:short)", "--list", "t[0-9]*_*")
+    if listed.returncode != 0:
+        raise ctx.SyncError(f"无法查询 task 分支（{listed.stderr.strip()}）；拒绝放行 schema 迁移")
+    branches = [line.strip() for line in listed.stdout.splitlines() if _TASK_BRANCH_RE.fullmatch(line.strip())]
+    base = default_branch(ctx.CONSUMER)
+    if not branches:
+        return base, []
+    unmerged = _git(ctx.CONSUMER, "branch", "--format=%(refname:short)", "--no-merged", base, "--list", "t[0-9]*_*")
+    if unmerged.returncode != 0:
+        raise ctx.SyncError(
+            f"无法判断 task 分支是否已合入 {base}（{unmerged.stderr.strip()}）；拒绝放行 schema 迁移"
+        )
+    pending = {line.strip() for line in unmerged.stdout.splitlines()}
+    return base, [branch for branch in sorted(branches) if branch in pending and _branch_task_status(branch) == "done"]
+
+
+def _unintegrated_done_message(base: str, branches: list[str]) -> str:
+    return (
+        f"以下 task 分支状态为 done 但尚未合入 {base}：{', '.join(branches)}；"
+        "先在主仓 integrate（或 integrate-chain）合入后再同步"
+    )
+
+
 def _collect_workflow_task_dirs() -> list[Path]:
     """返回消费仓所有需要检查的 task 目录（含 docs/tasks 与 docs/archive/tasks）。"""
     dirs: list[Path] = []
@@ -332,17 +382,19 @@ def workflow_migration_status(
     note_template_path = src / ".repo_template/docs/task_template/note.md"
     try:
         worktrees = _registered_task_worktrees()
+        base, unintegrated = _unintegrated_done_branches()
     except ctx.SyncError as err:
         return [], [], [str(err)]
+    layout_errors = [_unintegrated_done_message(base, unintegrated)] if unintegrated else []
     if not task_template_path.is_file() or not note_template_path.is_file():
-        return [], worktrees, []
+        return [], worktrees, layout_errors
     task_template = task_template_path.read_text(encoding="utf-8")
     note_template = note_template_path.read_text(encoding="utf-8")
     if not _guide_blocks_by_heading(task_template) or "## 实施笔记" not in note_template:
-        return [], worktrees, []
+        return [], worktrees, layout_errors
 
     candidates: list[str] = []
-    errors: list[str] = []
+    errors: list[str] = list(layout_errors)
     for task_dir in _collect_workflow_task_dirs():
         dir_candidates, dir_errors, _ = _inspect_workflow_task_dir(
             task_dir, task_template, note_template
@@ -354,6 +406,9 @@ def workflow_migration_status(
 
 
 def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
+    base, unintegrated = _unintegrated_done_branches()
+    if unintegrated:
+        raise ctx.SyncError(_unintegrated_done_message(base, unintegrated))
     task_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/task.md"
     note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/note.md"
     if not task_template_path.is_file() or not note_template_path.is_file():

@@ -1498,6 +1498,71 @@ def test_force_migrate_workflow_rejects_registered_task_worktree(env):
         force_migrate_workflow_tasks(set())
 
 
+def _commit_consumer_baseline(consumer):
+    _git(consumer, 'config', 'user.email', 'test@example.com')
+    _git(consumer, 'config', 'user.name', 'test')
+    _git(consumer, 'add', '-A')
+    _git(consumer, 'commit', '-m', 'baseline')
+
+
+def _task_branch(consumer, tid, slug, status, *, directory='docs/tasks'):
+    """建 task 分支：note.md 状态为 status，目录位于 directory；回到 main。"""
+    branch = f'{tid}_{slug}'
+    _git(consumer, 'checkout', '-b', branch)
+    task_dir = consumer / directory / branch
+    task_dir.mkdir(parents=True)
+    (task_dir / 'note.md').write_text(
+        f'---\ntid: "{tid}"\nslug: "{slug}"\nstatus: "{status}"\n---\n正文\n', encoding='utf-8',
+    )
+    _git(consumer, 'add', '-A')
+    _git(consumer, 'commit', '-m', f'{branch} {status}')
+    _git(consumer, 'checkout', 'main')
+    return branch
+
+
+@pytest.mark.parametrize('directory', ['docs/tasks', 'docs/archive/tasks'])
+def test_workflow_migration_blocks_unintegrated_done_branch(env, directory):
+    consumer = env['consumer']
+    _install_current_workflow_templates(consumer)
+    _commit_consumer_baseline(consumer)
+    branch = _task_branch(consumer, 't001', 'old', 'done', directory=directory)
+
+    _, _, errors = workflow_migration_status(env['src'])
+    assert any(branch in error and 'integrate' in error for error in errors)
+    with pytest.raises(ctx.SyncError, match=f'{branch}.*integrate'):
+        force_migrate_workflow_tasks(set())
+
+    # 合入默认分支后放行
+    _git(consumer, 'merge', '--no-ff', '-m', f'merge({branch})', branch)
+    _, _, errors = workflow_migration_status(env['src'])
+    assert errors == []
+    force_migrate_workflow_tasks(set())
+
+
+@pytest.mark.parametrize('status', ['active', 'backlog'])
+def test_workflow_migration_ignores_unmerged_non_done_branch(env, status):
+    consumer = env['consumer']
+    _install_current_workflow_templates(consumer)
+    _commit_consumer_baseline(consumer)
+    _task_branch(consumer, 't001', 'old', status)
+
+    _, _, errors = workflow_migration_status(env['src'])
+    assert errors == []
+    force_migrate_workflow_tasks(set())
+
+
+def test_workflow_migration_lists_every_unintegrated_done_branch(env):
+    consumer = env['consumer']
+    _install_current_workflow_templates(consumer)
+    _commit_consumer_baseline(consumer)
+    first = _task_branch(consumer, 't001', 'old', 'done')
+    second = _task_branch(consumer, 't002', 'newer', 'done')
+
+    with pytest.raises(ctx.SyncError) as raised:
+        force_migrate_workflow_tasks(set())
+    assert first in str(raised.value) and second in str(raised.value)
+
+
 def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env, monkeypatch):
     consumer = env['consumer']
     conv_file = consumer / "docs/blueprint/conventions.md"
