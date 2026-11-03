@@ -137,7 +137,7 @@ task 状态恢复、迁移备份、`ledger import` 与 `goal --reset` 见 `recov
 
 ## 状态行 Hook 与执行范围
 
-模板在 `.claude/settings.json` 中配置了 PostToolUse hook（调用 `track_worktree.py`），把多 worktree 环境下各会话对应的 task worktree 映射写入 `.scratch/statusline_workdir.jsonl`。模板只提供写入端；状态行渲染需用户在全局 `statusLine.command` 配置读取该文件的脚本，模板不含该脚本，也不宣称复制项目 hook 即启用状态行。
+模板默认不启用状态行 hook，也不再分发 `.claude/settings.json`。需要时在消费仓执行 `python3 .repo_template/scripts/repo_sync.py install-hooks --statusline`，把 PostToolUse hook（调用 `track_worktree.py`）写入 `.claude/settings.json`：文件不存在则创建，已存在则合并并沿用原缩进，重复执行不重复写入，JSON 无法解析时拒绝；该命令不改 `core.hooksPath`。hook 把多 worktree 环境下各会话对应的 task worktree 映射写入 `.scratch/statusline_workdir.jsonl`。模板只提供写入端；状态行渲染需用户在全局 `statusLine.command` 配置读取该文件的脚本，模板不含该脚本，也不宣称写入 hook 即启用状态行。已有消费仓的 `.claude/settings.json` 归消费仓所有，同步不会自动增删其中的 hook。
 
 - **触发与范围**：仅当命令包含 task 调度关键词（`start` / `track_worktree` / `--tid`）且仓库存在调度账本（`docs/runtime/dispatch_ledger.jsonl`）时，才会将当前 session 的 worktree 映射写入 `.scratch/statusline_workdir.jsonl`；
 - **零副作用保证**：所有常规 shell 命令（如 `git`, `pytest`, `npm`, `ls` 等）在 hook 入口毫秒级短路退出，绝不改写仓库代码或生产状态。
