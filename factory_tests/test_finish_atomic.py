@@ -77,14 +77,14 @@ def test_finish_requires_owner_id_and_message_file(git_repo, missing):
     assert result.returncode != 0
     assert missing in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert not _archive(worktree).exists()
 
 
-def test_finish_without_any_option_no_longer_archives(git_repo):
+def test_finish_without_any_option_is_rejected_with_zero_writes(git_repo):
     _, worktree, _ = _ready(git_repo)
+    before = _snapshot(git_repo, worktree)
     result = _task_cli(worktree, "finish", "t001")
     assert result.returncode != 0
-    assert not _archive(worktree).exists()
+    assert _snapshot(git_repo, worktree) == before
 
 
 # --------------------------------------------------------------------------
@@ -211,7 +211,6 @@ def test_finish_rejects_placeholder_or_empty_verification_summary(git_repo, labe
     assert f"`- {label}：`" in result.stderr
     assert "模板占位" in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert not _archive(worktree).exists()
 
 
 def test_finish_rejects_missing_summary_line(git_repo):
@@ -267,7 +266,6 @@ def test_finish_rejects_unstaged_or_untracked_files_with_zero_writes(git_repo, s
     assert result.returncode != 0
     assert "未暂存或未跟踪" in result.stderr and path in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert not _archive(worktree).exists()
     assert (worktree / "docs/tasks/t001_alpha/note.md").is_file()
 
 
@@ -329,7 +327,6 @@ def test_finish_gate_failures_write_nothing(git_repo, break_it, needle):
     assert result.returncode != 0
     assert needle in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert not _archive(worktree).exists()
 
 
 def test_finish_rejects_foreign_owner_and_unclaimed_attempt(git_repo):
@@ -408,7 +405,6 @@ def test_finish_commit_failure_rolls_back_every_write(git_repo):
     assert "hook-says-no" in result.stderr
     assert "已全部回滚" in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert not _archive(worktree).exists()
     assert (worktree / "docs/tasks/t001_alpha/note.md").is_file()
     fm_text = (worktree / "docs/tasks/t001_alpha/note.md").read_text(encoding="utf-8")
     assert 'status: "active"' in fm_text and 'worktree: "../' in fm_text
