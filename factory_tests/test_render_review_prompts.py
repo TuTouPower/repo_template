@@ -426,3 +426,20 @@ def test_real_templates_single_general_anchored(tmp_path, monkeypatch):
     assert f"输出到 `{root}/t001_foo/review_general.md`（仓库内相对路径 `t001_foo`）" in content
     assert "不带" in content and "`git rev-parse --show-toplevel`" in content
     assert f"git -C '{root}' diff abc1234" in content
+
+
+@pytest.mark.stub_anchor
+@pytest.mark.parametrize("level", ["full", "single"])
+def test_real_templates_require_tick_labels_in_every_report(tmp_path, monkeypatch, level):
+    """J2：每份 reviewer 报告都被要求逐条给 TICK-VALID / TICK-VOID 判定（full 的 code 与 test 都含）。"""
+    out, _ = _render_real_templates(tmp_path, monkeypatch, level=level)
+    assert len(out) == (2 if level == "full" else 1)
+    for content in out.values():
+        assert "- AC-NNN：TICK-VALID，re_verified。" in content
+        assert "- AC-NNN：TICK-VOID，trust_prior。" in content
+        assert "### AC 复验方式" in content
+        assert "重新列出全部 AC 行" in content
+        assert "coverage = re_verified / 总 AC 数" in content
+        assert "trust_prior 项" in content
+        # 打勾复核条目：打勾不实除 blocking finding 外，该 AC 行必须标 TICK-VOID
+        assert "必须标 `TICK-VOID`" in content
