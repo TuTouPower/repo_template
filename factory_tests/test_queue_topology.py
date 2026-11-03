@@ -117,3 +117,25 @@ def test_plan_batch_json_does_not_gain_queue_fields(git_repo):
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert "members" not in payload and "queue_chains" not in payload
+
+
+# --------------------------------------------------------------------------
+# 文档契约：skill / architecture 与分链规则一致
+# --------------------------------------------------------------------------
+
+
+def test_task_run_skill_and_architecture_describe_chain_grouping():
+    from pathlib import Path
+
+    product = Path(__file__).resolve().parents[1] / "repo" / ".repo_template"
+    skill = (product / "skills" / "task-run" / "SKILL.md").read_text(encoding="utf-8")
+    assert "plan --serial --json" in skill
+    assert "--base {base.branch}" in skill
+    assert "只停当前链" in skill
+    assert "integrate {tid}" in skill and "integrate-chain {tail_tid}" in skill
+    assert "merge 不在启动授权内" in skill
+    assert "后继 task 以刚完成的前一分支为 `--base`" not in skill
+
+    architecture = (product / "docs" / "architecture.md").read_text(encoding="utf-8")
+    assert "串成线性分支" not in architecture
+    assert "无关成员各自从默认分支起步" in architecture
