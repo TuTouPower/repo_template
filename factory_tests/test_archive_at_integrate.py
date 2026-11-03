@@ -106,27 +106,25 @@ def test_done_in_active_dir_is_not_executable_and_listed_as_done(git_repo):
 def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
     before = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    tip_note = _git(git_repo, "show", f"{branch}:{ACTIVE}/note.md").stdout
 
     merge = _integrated(git_repo, "t001", identity)
 
-    assert _git(git_repo, "rev-list", "--count", f"{before}..{merge}").stdout.strip() != "0"
+    # 归档与派生 index 同在一个 merge commit，其 first parent 是合并前的主干
     assert _git(git_repo, "rev-parse", f"{merge}^1").stdout.strip() == before
+    assert len(_git(git_repo, "rev-parse", f"{merge}^@").stdout.split()) == 2
     changes = _merge_changes(git_repo, merge)
     assert changes[f"{ACTIVE}/note.md"] == "D"
-    assert changes[f"{ACTIVE}/handoff.json"] == "D" if f"{ACTIVE}/handoff.json" in changes else True
     assert changes[f"{ARCHIVE}/note.md"] == "A"
     assert changes[f"{ARCHIVE}/handoff.json"] == "A"
-    assert "docs/tasks_index.json" in changes and "docs/archive/tasks_index.json" in changes
+    assert changes["docs/tasks_index.json"] != "" and changes["docs/archive/tasks_index.json"] != ""
     assert not (git_repo / ACTIVE).exists()
-    assert (git_repo / ARCHIVE / "handoff.json").is_file()
     archive_index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
     assert [item["tid"] for item in archive_index["tasks"]] == ["t001"]
     active_index = json.loads((git_repo / "docs/tasks_index.json").read_text("utf-8"))
     assert "t001" not in [item["tid"] for item in active_index["tasks"]]
     # 归档是纯移动：内容与分支 tip 一致
-    tip_note = _git(git_repo, "show", f"{branch}:{ACTIVE}/note.md", check=False)
-    if tip_note.returncode == 0:
-        assert tip_note.stdout == (git_repo / ARCHIVE / "note.md").read_text("utf-8")
+    assert (git_repo / ARCHIVE / "note.md").read_text("utf-8") == tip_note
     assert _git(git_repo, "status", "--porcelain").stdout == ""
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
@@ -153,9 +151,7 @@ def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
         assert changes[f"docs/archive/tasks/{name}/note.md"] == "A"
     assert not (git_repo / "docs/tasks/t001_alpha").exists()
     assert not (git_repo / "docs/tasks/t002_beta").exists()
-    assert "docs/tasks/t003_gamma" in {
-        path.rsplit("/", 1)[0] for path in _git(git_repo, "ls-files", "docs/tasks/t003_gamma").stdout.split()
-    }
+    assert (git_repo / "docs/tasks/t003_gamma/note.md").is_file()  # 非成员 task 不动
     archive_index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
     assert [item["tid"] for item in archive_index["tasks"]] == ["t001", "t002"]
 
