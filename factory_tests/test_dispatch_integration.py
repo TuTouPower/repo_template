@@ -770,6 +770,48 @@ def test_track_worktree_resolves_from_start_through_execution_claim(tmp_path):
     assert tw.resolve_worktree(str(project), "t001") == ""
 
 
+@pytest.mark.parametrize("command, expected_mapping", [
+    ("python3 .repo_template/scripts/task.py run-begin t001 --owner-id owner-a", True),
+    ("python3 .repo_template/scripts/task.py start t001", True),
+    ("python3 .repo_template/scripts/track_worktree.py --tid t001", True),
+    ("python3 .repo_template/scripts/track_worktree.py --tid=t001", True),
+    ("git status --short", False),
+])
+def test_track_worktree_hook_records_task_commands(tmp_path, command, expected_mapping):
+    project = tmp_path / "project"
+    runtime = project / "docs/runtime"
+    runtime.mkdir(parents=True)
+    ledger = runtime / "dispatch_ledger.jsonl"
+    events = [
+        {"tid": "t001", "event": "start", "worktree": "../project_t001"},
+        {"tid": "t001", "event": "attempt_reserved", "attempt": 1, "state": "running"},
+        {"tid": "t001", "event": "execution_claimed", "attempt": 1, "owner_id": "owner-a"},
+    ]
+    ledger.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    payload = json.dumps({
+        "session_id": "session-a", "cwd": str(project),
+        "tool_input": {"command": command},
+    })
+    args = [sys.executable, str(SCRIPTS_DIR / "track_worktree.py"), "--write", "--agent", "claude-code"]
+    result = subprocess.run(args, input=payload, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    mapping = project / ".scratch/statusline_workdir.jsonl"
+    if not expected_mapping:
+        assert not mapping.exists()
+        return
+    record = json.loads(mapping.read_text(encoding="utf-8"))
+    assert record["tid"] == "t001"
+    assert record["session_id"] == "session-a"
+    assert record["agent"] == "claude-code"
+    assert record["worktree"] == str(tmp_path / "project_t001")
+    before = mapping.read_bytes()
+    with ledger.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"tid": "t001", "event": "attempt_terminal"}) + "\n")
+    result = subprocess.run(args, input=payload, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert mapping.read_bytes() == before
+
+
 def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
     """验证大型账本下按 tid 快速预过滤读取与单次打开追加优化（Issue #57）。"""
     from repo_task import context as ctx
