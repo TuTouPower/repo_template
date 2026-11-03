@@ -37,12 +37,14 @@
 
 11. 在 `testing.md` 明确项目测试与黑盒策略，把 `verification_policy` 改为 `project_configured`，在 `verification_notes` 写验证范围与不适用项理由；然后运行 doctor、`pytest .repo_template/tests -q -m contract` 和项目 test/blackbox。检查软链均有效，全部适用检查通过才算初始化完成。
 
-最短工作路径：初始化通过 → `/task-create` → 无依赖单 task 直接 `/task-run tNNN` → 执行结束后批准 merge。依赖图、多会话、goal、恢复与升级见 usage；自然语言不自动授权这些入口。复制完成后把本 README 改成项目自身介绍。
+最短工作路径：初始化通过 → `/task-create` → 无依赖单 task 直接 `/task-run tNNN` → 执行结束后批准 merge。依赖图、多会话并发、goal 见 usage，接管与恢复见 recovery，模板同步与升级见 sync；自然语言不自动授权这些入口。复制完成后把本 README 改成项目自身介绍。
 
 ## 入口
 
 - Agent 规则：[`AGENTS.md`](AGENTS.md)
 - 模板用法（消费仓 agent）：[`.repo_template/docs/usage.md`](.repo_template/docs/usage.md)
+- 多会话接管与状态恢复：[`.repo_template/docs/recovery.md`](.repo_template/docs/recovery.md)
+- 模板同步、升级与降级：[`.repo_template/docs/sync.md`](.repo_template/docs/sync.md)
 - 项目约定：[`docs/blueprint/conventions.md`](docs/blueprint/conventions.md)
 - 测试方法：[`docs/blueprint/testing.md`](docs/blueprint/testing.md)
 
