@@ -4,19 +4,22 @@ task 工具链的执行拓扑、attempt、review 和合并授权。项目业务�
 
 ## 执行拓扑
 
-每个 task 使用独立分支和 worktree；每个 task 最终形成一个执行 commit。`task-run` 按用户给定顺序串成线性分支：
+每个 task 使用独立分支和 worktree；每个 task 最终形成一个执行 commit。`task-run` 按用户给定顺序串行执行队列，并按队列内成员间的关系分链：两个成员之间存在 `depends_on`（任一方向）或 `conflicts_with`（任一方声明）即相连，连通的成员属同一条链，只看队列内成员。链内保持队列顺序，首个成员以默认分支为 base，其后每个成员以链内紧邻前一成员的分支为 `--base`；无关成员各自从默认分支起步：
 
 ```text
-main ── t001 ── t002 ── t003
+main ─┬─ t001 ── t003 ── t004   链 1：三者经依赖或冲突相连
+      └─ t002                   链 2：与其它成员无关
 ```
 
-后继以紧邻前一 task 分支为 `--base`，因此继承前置成果。`start` 同时检查：
+链内后继因此继承前置成果。每个成员的链编号与 base 由 `task.py plan --serial --json [tid ...]` 的 `members[]` 给出，默认队列与显式 tid 队列共用同一计算；队列中依赖排在依赖者之后时拒绝。队列外依赖仍须在 `start` 前已 done 且已合入。`start` 同时检查：
 
 - `depends_on` 的有效状态均为 done；
 - 实际 base 包含每个依赖的实现 SHA；
 - 分支和 worktree 没有被其它会话占用。
 
-多会话并发由用户手动启动多条独立链。主仓写入不另建调度服务；Git 冲突由 Git 暴露并交用户或 Agent 处理。
+成员阻塞（`report=blocked`）只停所在链：同链排在它之后的成员全部跳过，其它链继续执行。队列结束时报告已完成成员、阻塞点和被跳过成员；`goal-check` 存在阻塞成员时输出 `stopped_at=` 行列出阻塞点与被跳过成员；其它链仍有可继续成员时为 INCOMPLETE，无可继续成员时才为 STOPPED。合并阶段一次性列出全部待合分支：单成员链 `integrate {tid}`，多成员链 `integrate-chain {tail_tid}`，仍须用户单独授权。
+
+多会话并发由用户手动启动多条独立队列。主仓写入不另建调度服务；Git 冲突由 Git 暴露并交用户或 Agent 处理。
 
 ## Attempt
 

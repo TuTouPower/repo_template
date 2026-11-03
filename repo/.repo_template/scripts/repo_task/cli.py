@@ -170,7 +170,15 @@ def main():
     plan.add_argument(
         "--serial",
         action="store_true",
-        help="全串行一条链（依赖序 + 冲突对序号小者先）",
+        help=(
+            "全串行队列（依赖序 + 冲突对序号小者先）；按队列内 depends_on / conflicts_with "
+            "分链，输出每个成员的 chain 与 base"
+        ),
+    )
+    plan.add_argument(
+        "tids",
+        nargs="*",
+        help="显式 tid 队列（须配合 --serial；保持给定顺序，依赖须排在依赖者之前）",
     )
     plan.add_argument(
         "--copy",

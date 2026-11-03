@@ -191,23 +191,51 @@ def test_goal_check_incomplete_then_complete(git_repo):
     assert "GOAL_QUEUE_COMPLETE" in result.stdout
 
 
-def test_goal_check_stopped_on_blocked(git_repo):
+def _stop_t001(git_repo, status, *report_args):
     assert _cli(git_repo, "goal").returncode == 0
     assert _cli(git_repo, "start", "t001").returncode == 0
     identity = _reserve(git_repo, "t001")
+    terminal_status = "completed" if status == "blocked" else "failed"
     terminal = _cli(
         git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
-        "--status", "completed",
+        "--status", terminal_status,
     )
     assert terminal.returncode == 0, terminal.stderr
     report = _cli(
         git_repo, "attempt", "report", "t001", *_identity_args(identity),
-        "--status", "blocked", "--reason", "blackbox 满轮",
+        "--status", status, *report_args,
     )
     assert report.returncode == 0, report.stderr
+
+
+def test_goal_check_blocked_with_independent_member_pending_stays_incomplete(git_repo):
+    _stop_t001(git_repo, "blocked", "--reason", "blackbox 满轮")
+    result = _cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "stopped_at=t001 state=blocked skipped=-" in result.stdout
+    assert "GOAL_QUEUE_INCOMPLETE: 0/2 closed" in result.stdout
+    assert "GOAL_QUEUE_STOPPED" not in result.stdout
+
+
+def test_goal_check_stopped_on_blocked_when_no_member_can_continue(git_repo):
+    _stop_t001(git_repo, "blocked", "--reason", "blackbox 满轮")
+    identity2 = _prepare_done(git_repo, "t002", "beta")
+    _cleanup(git_repo, "t002", identity2)
     result = _cli(git_repo, "goal-check")
     assert result.returncode == 3
     assert "GOAL_QUEUE_STOPPED: t001=blocked" in result.stdout
+
+
+def test_goal_check_failed_follows_same_stop_rules(git_repo):
+    _stop_t001(git_repo, "failed", "--class", "infra", "--reason", "环境不可用")
+    pending = _cli(git_repo, "goal-check")
+    assert pending.returncode == 2
+    assert "stopped_at=t001 state=failed skipped=-" in pending.stdout
+    identity2 = _prepare_done(git_repo, "t002", "beta")
+    _cleanup(git_repo, "t002", identity2)
+    result = _cli(git_repo, "goal-check")
+    assert result.returncode == 3
+    assert "GOAL_QUEUE_STOPPED: t001=failed" in result.stdout
 
 
 def test_goal_check_running_counts_incomplete(git_repo):
@@ -229,25 +257,6 @@ def test_goal_check_dropped_member_stops_instead_of_false_complete(git_repo):
     assert result.returncode == 3
     assert "GOAL_QUEUE_STOPPED: t001=dropped" in result.stdout
     assert "GOAL_QUEUE_COMPLETE" not in result.stdout
-
-
-def test_goal_check_stopped_on_failed(git_repo):
-    assert _cli(git_repo, "goal").returncode == 0
-    assert _cli(git_repo, "start", "t001").returncode == 0
-    identity = _reserve(git_repo, "t001")
-    terminal = _cli(
-        git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
-        "--status", "failed",
-    )
-    assert terminal.returncode == 0, terminal.stderr
-    report = _cli(
-        git_repo, "attempt", "report", "t001", *_identity_args(identity),
-        "--status", "failed", "--class", "infra", "--reason", "环境不可用",
-    )
-    assert report.returncode == 0, report.stderr
-    result = _cli(git_repo, "goal-check")
-    assert result.returncode == 3
-    assert "GOAL_QUEUE_STOPPED: t001=failed" in result.stdout
 
 
 def test_goal_empty_queue_view_keeps_snapshot_reset_clears(git_repo):

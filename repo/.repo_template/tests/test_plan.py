@@ -8,10 +8,13 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+import repo_task.context as ctx  # noqa: E402
 from repo_task.plan import (  # noqa: E402
     compute_batch_plan,
+    compute_queue_topology,
     compute_serial_plan,
     format_plan_text,
+    group_queue,
 )
 
 pytestmark = pytest.mark.contract
@@ -267,3 +270,150 @@ def test_plan_dependency_with_reverse_conflict_satisfies_hard_dependency():
     tasks = plan["chains"][0]["taskIds"]
     assert tasks.index("t002") < tasks.index("t001")
 
+
+
+# --- E1：队列按关系分链，每链内以紧邻前一成员为 base --------------------------
+
+
+def topology(queue, edges):
+    return compute_queue_topology(
+        queue,
+        edges,
+        default_branch="main",
+        branch_of=lambda tid: f"{tid}_slug",
+    )
+
+
+def bases_of(result):
+    return {
+        row["taskId"]: (row["chain"], row["base"]["tid"], row["base"]["branch"])
+        for row in result["members"]
+    }
+
+
+def test_unrelated_members_each_start_from_default_branch():
+    result = topology(["t001", "t002", "t003"], [])
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t002": (2, None, "main"),
+        "t003": (3, None, "main"),
+    }
+    assert [c["taskIds"] for c in result["queue_chains"]] == [["t001"], ["t002"], ["t003"]]
+    assert [c["tail"] for c in result["queue_chains"]] == ["t001", "t002", "t003"]
+
+
+def test_depends_on_puts_members_in_one_chain_with_previous_as_base():
+    result = topology(["t001", "t002", "t003"], [dep("t001", "t002"), dep("t002", "t003")])
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t002": (1, "t001", "t001_slug"),
+        "t003": (1, "t002", "t002_slug"),
+    }
+    assert result["queue_chains"] == [
+        {"chain": 1, "taskIds": ["t001", "t002", "t003"], "tail": "t003"},
+    ]
+
+
+@pytest.mark.parametrize("edge", [conflict("t001", "t002"), conflict("t002", "t001")])
+def test_one_sided_conflicts_with_chains_members_in_either_direction(edge):
+    result = topology(["t001", "t002"], [edge])
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t002": (1, "t001", "t001_slug"),
+    }
+
+
+def test_member_related_to_two_earlier_members_merges_them_into_one_chain():
+    """t003 同时依赖 t001、与 t002 冲突：t001/t002 互无关系，三者仍成一条链。"""
+    result = topology(
+        ["t001", "t002", "t003"],
+        [dep("t001", "t003"), conflict("t003", "t002")],
+    )
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t002": (1, "t001", "t001_slug"),
+        "t003": (1, "t002", "t002_slug"),
+    }
+
+
+def test_interleaved_queue_splits_chains_and_keeps_queue_order_inside_each():
+    result = topology(
+        ["t001", "t002", "t003", "t004"],
+        [dep("t001", "t003"), conflict("t002", "t004")],
+    )
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t002": (2, None, "main"),
+        "t003": (1, "t001", "t001_slug"),
+        "t004": (2, "t002", "t002_slug"),
+    }
+    assert [(c["chain"], c["taskIds"], c["tail"]) for c in result["queue_chains"]] == [
+        (1, ["t001", "t003"], "t003"),
+        (2, ["t002", "t004"], "t004"),
+    ]
+    assert group_queue(
+        ["t001", "t002", "t003", "t004"],
+        [dep("t001", "t003"), conflict("t002", "t004")],
+    ) == [["t001", "t003"], ["t002", "t004"]]
+
+
+def test_relations_to_members_outside_queue_do_not_link_chains():
+    """只看队列内成员：经队列外 t009 间接关联的 t001/t003 仍相互独立。"""
+    result = topology(
+        ["t001", "t003"],
+        [dep("t001", "t009"), conflict("t003", "t009")],
+    )
+    assert bases_of(result) == {
+        "t001": (1, None, "main"),
+        "t003": (2, None, "main"),
+    }
+
+
+def test_queue_with_dependency_after_dependent_is_rejected():
+    with pytest.raises(ctx.TaskDataError, match="t002.*t001"):
+        topology(["t001", "t002"], [dep("t002", "t001")])
+    # 非相邻、非首尾也一样：依赖 t001 排在依赖者 t003 之后
+    with pytest.raises(ctx.TaskDataError, match="t001.*t003"):
+        topology(["t003", "t002", "t001"], [dep("t001", "t003")])
+
+
+def test_explicit_queue_keeps_given_order_and_rejects_unlisted_members():
+    data = {
+        "nodes": [
+            node("t001", "runnable"),
+            node("t002", "runnable"),
+            node("t003", "blocked_deps"),
+            node("t004", "done"),
+        ],
+        "edges": [dep("t001", "t003")],
+    }
+    plan = compute_serial_plan(data, queue=["t002", "t001", "t003"])
+    assert plan["chains"][0]["taskIds"] == ["t002", "t001", "t003"]
+    with pytest.raises(ctx.TaskDataError, match="t004"):
+        compute_serial_plan(data, queue=["t001", "t004"])
+    with pytest.raises(ctx.TaskDataError, match="t009"):
+        compute_serial_plan(data, queue=["t009"])
+    with pytest.raises(ctx.TaskDataError, match="重复"):
+        compute_serial_plan(data, queue=["t001", "t001"])
+
+
+def test_serial_text_shows_chain_and_base_per_member_and_merge_commands():
+    data = {
+        "nodes": [
+            node("t001", "runnable", title="a"),
+            node("t002", "runnable", title="b"),
+            node("t003", "blocked_deps", title="c"),
+        ],
+        "edges": [dep("t001", "t003")],
+    }
+    plan = compute_serial_plan(data)
+    plan.update(topology(plan["chains"][0]["taskIds"], data["edges"]))
+    plan["titles"] = {"t001": "a", "t002": "b", "t003": "c"}
+    text = format_plan_text(plan)
+    assert "t001  a  [链1 base=main]" in text
+    assert "t002  b  [链2 base=main]" in text
+    assert "t003  c  [链1 base=t001_slug]" in text
+    assert "integrate-chain t003" in text
+    assert "integrate t002" in text
+    # 复制模式仍是单行队列
+    assert format_plan_text(plan, copy_only=True).strip() == "/task-run t001 -> t002 -> t003"

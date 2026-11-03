@@ -16,12 +16,13 @@ metadata:
 
 ## 授权与队列
 
-执行范围严格限定在已获授权的队列成员内，队列外任务绝不执行。merge 不在启动授权内，整链完成后必须单独向用户请求明确授权。
+执行范围严格限定在已获授权的队列成员内，队列外任务绝不执行。merge 不在启动授权内，队列处理完后必须单独向用户请求明确授权。
 
 - 显式指定 tid 或 `/goal` 冻结队列：执行范围严格锁定为给定的成员序列；队列内成员按指定顺序执行到各自执行 commit 与 run-close 收尾，不逐 task 询问 commit。
-- 无参数调用：必须先列出 `task.py plan --serial --json` 拟定执行的成员清单（tid、title、顺序）并向用户确认，取得明确同意后方可开始执行，禁止静默全量执行。
+- 无参数调用：必须先列出 `task.py plan --serial --json` 拟定执行的成员清单（tid、title、顺序、所属链与 base）并向用户确认，取得明确同意后方可开始执行，禁止静默全量执行。
 - done/dropped 不作为新执行成员。
-- 队列启动后成员和顺序固定；依赖必须位于依赖者之前。
+- 队列启动后成员和顺序固定；依赖必须位于依赖者之前。队列外依赖须在 start 前已 done 且已合入，否则 `run-begin` 的 start 门禁拒绝。
+- 队列按成员间关系分链：队列内两成员存在 `depends_on`（任一方向）或 `conflicts_with`（任一方声明）即相连，连通的成员属同一链，链内保持队列顺序；无关成员各自成链。执行前运行 `task.py plan --serial --json {队列 tid 按顺序}`（无参数调用直接用默认队列的输出），读取 `members[]` 的 `chain`、`base.tid`、`base.branch` 与 `queue_chains[]` 的 `tail`；队列启动后沿用该结果。
 
 ## 执行
 
@@ -29,12 +30,12 @@ metadata:
 
 对每个 tid：
 
-1. 新 task：`task.py run-begin {tid} --owner-id {owner_id}`（链式后继加 `--base {前一 task 分支}`），一次完成 start、reserve、claim 并输出 JSON identity。已有 active、attempt、worktree 或同名分支时脚本拒绝并提示 recovery，不做隐式恢复：此时运行 `task.py recovery {tid}`，按其 phase 与 `.repo_template/docs/recovery.md` 恢复，不重复 run-begin。
+1. 新 task：`task.py run-begin {tid} --owner-id {owner_id}`，一次完成 start、reserve、claim 并输出 JSON identity。该成员 `base.tid` 非空（链内有前一成员）时加 `--base {base.branch}`；链首 `base.tid` 为空，不加 `--base`，以默认分支起步。已有 active、attempt、worktree 或同名分支时脚本拒绝并提示 recovery，不做隐式恢复：此时运行 `task.py recovery {tid}`，按其 phase 与 `.repo_template/docs/recovery.md` 恢复，不重复 run-begin。
 2. 在登记 worktree 直接读取 `task-work/SKILL.md` 正文执行，原样传递 tid 与 owner_id；不通过原生 Skill 工具调用。task-work 止于 `finish` 提交的执行 commit。
 3. 回到主仓：`task.py run-close {tid} --owner-id {owner_id} --result done`，一次完成 terminal completed、report done 与 exact cleanup；中途失败按提示重跑同一命令（重入安全）。
-4. 后继 task 以刚完成的前一分支为 `--base`。
+4. 同链后继的 `--base` 是刚完成的前一成员分支（即其 `base.branch`）；其它链的成员各自从默认分支起步，互不继承。
 
-阻塞时 task 保持 active：实施笔记记录原因和恢复入口，主仓 `task.py run-close {tid} --owner-id {owner_id} --result blocked --reason {原因}`，保留 worktree 并停止队列。无法继续的失败用 `--result failed [--class infra|task|contract] --reason {原因}`。
+阻塞时 task 保持 active：实施笔记记录原因和恢复入口，主仓 `task.py run-close {tid} --owner-id {owner_id} --result blocked --reason {原因}`，保留 worktree，只停当前链：同链排在它之后的成员全部跳过（不 run-begin），继续执行其它链的成员。无法继续的失败用 `--result failed [--class infra|task|contract] --reason {原因}`，同样只停所在链。
 
 用户补齐条件后，`task.py recovery {tid}` 判定 phase 为 retry_ready，按 `recovery.md` 用恢复原语 `attempt reserve` 与 `attempt claim` 开新 attempt 继续；新 attempt 不重置 review/verify 历史。用户批准追加轮次时先用 `task.py limits` 增加绝对上限。
 
@@ -42,14 +43,21 @@ metadata:
 
 ## 合并
 
-所有成员完成并 cleanup 后询问一次是否 merge。用户同意后直接读取 `task-integrate` 正文 合链尾；不同意则保留分支。不 push。
+所有可执行成员处理完并 cleanup 后，一次性向用户列出全部待合分支并询问是否 merge：单成员链用 `integrate {tid}`，多成员链用 `integrate-chain {tail_tid}`（`queue_chains[].tail`）；被阻塞的链只列已完成的前缀（链尾取最后一个已完成成员），阻塞成员与被跳过成员保留现场，不列入。用户同意后按完成顺序逐项直接读取 `task-integrate` 正文合并；不同意则保留分支。不 push。
 
 ## 停止
 
-遇到以下情况保留现场并报告已完成、当前问题和剩余队列：
+遇到以下情况保留现场，只停当前链（`run-close --result blocked`），跳过同链后续成员，继续其它链：
 
 - preflight、测试、黑盒或 review 门禁无法闭环；
-- 需要密钥、账号、外部环境或产品决策；
+- 需要密钥、账号、外部环境或产品决策。
+
+该障碍显然同样阻断其它链（如共享外部环境不可用）时，一并停止并说明。
+
+遇到以下情况停止整个队列：
+
 - merge 冲突无法可靠裁决；
 - 工作区所有权或无关脏改动冲突；
 - 用户指定停止。
+
+队列结束或整体停止时报告：已完成成员、阻塞点（tid 与原因）、被跳过成员（tid 与所属阻塞点）和剩余队列。
