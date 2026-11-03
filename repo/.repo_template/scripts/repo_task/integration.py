@@ -276,8 +276,10 @@ def cmd_start(args):
             )
         else:
             try:
-                if (worktree.exists() or str(worktree) in worktree_paths()
-                        or _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0):
+                branch_result = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+                if branch_result.returncode not in (0, 1):
+                    raise ctx.TaskDataError(f"无法查询分支：{branch_result.stderr.strip()}")
+                if worktree.exists() or str(worktree) in worktree_paths() or branch_result.returncode == 0:
                     rollback_error = "创建结果未确认，已保留可能存在的 worktree 或分支"
             except (OSError, ctx.TaskDataError) as inspect_error:
                 rollback_error = f"创建结果未确认，无法核实现场：{inspect_error}"
