@@ -2134,6 +2134,30 @@ def test_find_merge_commit_handles_deep_merge_history(git_repo):
     assert found == merge_sha
 
 
+@pytest.mark.parametrize('partial', ['branch', 'worktree'])
+def test_start_timeout_reports_unconfirmed_resources_without_deleting_them(git_repo, monkeypatch, partial):
+    from repo_task import worktrees
+    original_git = worktrees._git
+
+    def interrupted_add(args, **kwargs):
+        if args[:2] != ['worktree', 'add']:
+            return original_git(args, **kwargs)
+        if partial == 'branch':
+            original_git(['branch', args[3], args[-1]], **kwargs)
+        else:
+            assert original_git(args, **kwargs).returncode == 0
+        raise ctx.TaskDataError('模拟 worktree add 超时')
+
+    monkeypatch.setattr(worktrees, '_git', interrupted_add)
+    head = _git(git_repo, 'rev-parse', 'HEAD').stdout.strip()
+    with pytest.raises(SystemExit, match='创建结果未确认'):
+        integration.cmd_start(argparse.Namespace(tid='t001', base=None))
+    assert _git(git_repo, 'rev-parse', 'HEAD').stdout.strip() == head
+    assert _git(git_repo, 'rev-parse', '--verify', 'refs/heads/t001_alpha').stdout.strip() == head
+    assert _worktree_path(git_repo, 't001').exists() == (partial == 'worktree')
+    assert parse_front_matter(git_repo / 'docs/tasks/t001_alpha/progress.md')[0]['status'] == 'backlog'
+
+
 def test_start_failure_does_not_remove_preexisting_worktree(git_repo):
     """验证并发/重复 start 失败时绝不移除已存在会话的合法 worktree 和分支（Issue #32）。"""
     # 会话 A 成功启动

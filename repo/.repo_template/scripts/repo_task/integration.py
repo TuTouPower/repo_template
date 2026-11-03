@@ -274,6 +274,13 @@ def cmd_start(args):
             rollback_error = rollback_start(
                 base_sha=base_sha, branch=branch, worktree_rel=worktree_rel
             )
+        else:
+            try:
+                if (worktree.exists() or str(worktree) in worktree_paths()
+                        or _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0):
+                    rollback_error = "创建结果未确认，已保留可能存在的 worktree 或分支"
+            except (OSError, ctx.TaskDataError) as inspect_error:
+                rollback_error = f"创建结果未确认，无法核实现场：{inspect_error}"
         if rollback_error:
             sys.exit(
                 f"start 失败（{error}）；自动补偿不完整：{rollback_error}。"
