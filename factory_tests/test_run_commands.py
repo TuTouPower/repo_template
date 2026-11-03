@@ -251,6 +251,7 @@ def test_run_close_done_resumes_after_terminal_only(git_repo):
     identity, _, _ = _claimed_done(git_repo)
     terminal = _task_cli(git_repo, "attempt", "terminal", "t001", "--status", "completed")
     assert terminal.returncode == 0, terminal.stderr
+    assert _recovery(git_repo)["phase"] == "committed_unreported"
 
     result = _close(git_repo, "done")
 
