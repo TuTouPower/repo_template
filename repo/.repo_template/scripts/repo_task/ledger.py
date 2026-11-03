@@ -1,5 +1,7 @@
 """Locked JSONL storage primitives for task execution events."""
 
+from __future__ import annotations
+
 import json
 import os
 import sys

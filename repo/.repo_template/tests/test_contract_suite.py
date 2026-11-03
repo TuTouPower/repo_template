@@ -138,3 +138,43 @@ def test_all_consumer_skills_disable_model_invocation():
         assert "disable-model-invocation: true" in fm_lines, (
             f"{skill_md.parent.name}/SKILL.md missing disable-model-invocation: true"
         )
+
+
+def _runtime_union_annotations(tree) -> list[int]:
+    """未启用延迟注解时，函数签名与模块/类级注解里的 `X | Y` 在导入期求值。"""
+    import ast
+    lines = []
+    for node in ast.walk(tree):
+        annotations = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            for arg in args.posonlyargs + args.args + args.kwonlyargs + [args.vararg, args.kwarg]:
+                if arg is not None and arg.annotation is not None:
+                    annotations.append(arg.annotation)
+            if node.returns is not None:
+                annotations.append(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            annotations.append(node.annotation)
+        for annotation in annotations:
+            if any(isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr) for n in ast.walk(annotation)):
+                lines.append(annotation.lineno)
+    return lines
+
+
+def test_toolchain_annotations_importable_on_python39():
+    """模板脚本最低 Python 3.9：PEP 604 注解必须配 `from __future__ import annotations`。"""
+    import ast
+    problems = []
+    for path in sorted(SCRIPTS_DIR.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        has_future = any(
+            isinstance(node, ast.ImportFrom) and node.module == "__future__"
+            and any(alias.name == "annotations" for alias in node.names)
+            for node in tree.body
+        )
+        if has_future:
+            continue
+        for line in _runtime_union_annotations(tree):
+            problems.append(f"{path.relative_to(SCRIPTS_DIR)}:{line}")
+    assert not problems, "Python 3.9 导入期会求值 `X | Y` 注解：" + ", ".join(problems)
