@@ -14,6 +14,7 @@ from test_dispatch_integration import (
     _reserve, _task_cli, _worktree, git_repo,
 )
 from review_support import pass_report
+from task_flow_support import archive_done
 from repo_task.documents import parse_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
@@ -103,7 +104,7 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
     w = _worktree(git_repo, "t001")
     spec = w / "docs/tasks/t001_alpha/task.md"
     spec.write_text(spec.read_text().replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    assert _task_cli(w, "finish", "t001").returncode == 0
+    archive_done(w, "t001")
     branch = "t001_alpha"
     base_sha = _git(w, "rev-parse", "HEAD").stdout.strip()
     archive = w / REL
@@ -146,7 +147,7 @@ def test_report_done_rejects_stale_and_succeeds_after_amend(git_repo):
 def test_reserve_rewind_messages_point_to_recovery(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     # Stale-state reserve already points to recovery (no rewind suggestion).
-    stale_reserve = _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline")
+    stale_reserve = _task_cli(git_repo, "attempt", "reserve", "t001")
     assert stale_reserve.returncode != 0
     # Integrate to main so effective status is archived done, then check
     # the archived reserve/rewind messages.
@@ -157,7 +158,7 @@ def test_reserve_rewind_messages_point_to_recovery(git_repo):
     assert _task_cli(
         git_repo, "integrate", "t001", *_identity_args(identity), "--continue"
     ).returncode == 0
-    reserve = _task_cli(git_repo, "attempt", "reserve", "t001", "--executor", "inline")
+    reserve = _task_cli(git_repo, "attempt", "reserve", "t001")
     assert reserve.returncode != 0
     assert "recovery" in reserve.stderr
     assert "amend" in reserve.stderr

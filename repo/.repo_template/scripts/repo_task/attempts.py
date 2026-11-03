@@ -202,11 +202,63 @@ def validate_execution_context(worktree, tid, current):
         raise ctx.TaskDataError("execution_context 与当前 ledger identity 不一致，可能恢复了旧 ledger；停止并核对备份，拒绝分配或覆盖")
 
 
-def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
+def resolve_identity(
+    tid: str, attempt: int | None = None, execution_id: str | None = None,
+) -> tuple[int, str]:
+    """Resolve the exact ``(attempt, execution_id)`` of ``tid``.
+
+    主仓从 ledger 的当前 attempt 解析；task worktree 从
+    ``docs/runtime/execution_context.json`` 解析，并与主仓 ledger 当前 identity 交叉核对。
+    显式提供的值（recovery 指定 exact identity）必须与解析结果一致。
+    """
+    if (attempt is None) != (execution_id is None):
+        raise ctx.TaskDataError(
+            "--attempt 与 --execution-id 须同时提供（recovery 指定 exact identity）或同时省略"
+        )
+    from .git_ops import in_primary_worktree, primary_worktree_path
+    from .ledger import ledger_read
+
+    if in_primary_worktree():
+        resolved = current_identity(tid, ledger_read(tid=tid))
+        if resolved is None:
+            raise ctx.TaskDataError(
+                f"{tid} 尚无 attempt（ledger 无记录）；先 run-begin，或按 recovery 判定处理"
+            )
+    else:
+        resolved = _execution_context_identity(ctx.REPO_ROOT, tid)
+        ledger_path = primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"
+        current = current_identity(tid, ledger_read(ledger_path, tid=tid))
+        if current != resolved:
+            raise ctx.TaskDataError(
+                f"execution_context identity={resolved!r} 与主仓 ledger 当前 identity={current!r} 不一致；"
+                "停止并运行 task.py recovery"
+            )
+    if attempt is not None and (attempt, execution_id) != resolved:
+        raise ctx.TaskDataError(
+            f"{tid} 当前 identity=({resolved[0]}, {resolved[1]!r})，"
+            f"收到旧或不匹配 identity=({attempt}, {execution_id!r})；显式值与解析结果不一致"
+        )
+    return resolved
+
+
+def _execution_context_identity(worktree, tid: str) -> tuple[int, str]:
+    path = worktree / "docs/runtime/execution_context.json"
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ctx.TaskDataError(
+            f"无法从 {ctx._rel(path)} 解析 identity（{error}）；确认已在 task worktree 内，"
+            "或运行 task.py recovery"
+        ) from error
+    if not isinstance(receipt, dict) or receipt.get("tid") != tid:
+        raise ctx.TaskDataError(f"{ctx._rel(path)} 的 tid 与 {tid} 不匹配")
+    _require_identity_values(receipt.get("attempt"), receipt.get("execution_id"))
+    return receipt["attempt"], receipt["execution_id"]
+
+
+def reserve_attempt(tid: str, model: str | None = None) -> dict:
     if not ctx.TID_RE.fullmatch(tid):
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
-    if executor not in ctx.ATTEMPT_EXECUTORS:
-        raise ctx.TaskDataError("executor 必须是 inline")
 
     # 领域层门禁：task 目录存在时校验 tid 存在、未归档，且必须已 start
     # （effective active + worktree 已登记）。防孤儿 running identity（RT-006）：
@@ -274,7 +326,7 @@ def reserve_attempt(tid: str, executor: str, model: str | None = None) -> dict:
         event = {
             "event": "attempt_reserved",
             "execution_id": execution_id,
-            "executor": executor,
+            "executor": "inline",
             "state": "running",
         }
         if model:

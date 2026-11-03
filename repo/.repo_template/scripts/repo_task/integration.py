@@ -18,6 +18,7 @@ from .attempts import (
     append_integrated_batch,
     current_attempt_record,
     require_exact_terminal,
+    resolve_identity,
 )
 from .documents import parse_front_matter, validate_task_documents, write_front_matter
 from .git_ops import (
@@ -339,26 +340,22 @@ def _verify_exact_handoff(tid: str, attempt: int, execution_id: str) -> None:
         )
 
 
-@control_locked
-def cmd_cleanup_worktree(args):
-    require_primary_worktree()
-    if not ctx.TID_RE.fullmatch(args.tid):
-        sys.exit(f"tid 非法：{args.tid!r}")
+def _cleanup_worktree(tid: str, attempt: int, execution_id: str) -> str:
+    """Exact cleanup of one terminal attempt's worktree; returns the result line."""
     try:
-        _require_execution_gate(args.tid, args.attempt, args.execution_id)
-        branch, _ = _resolve_integrate_branch(args.tid)
-        _verify_exact_handoff(args.tid, args.attempt, args.execution_id)
+        _require_execution_gate(tid, attempt, execution_id)
+        branch, _ = _resolve_integrate_branch(tid)
+        _verify_exact_handoff(tid, attempt, execution_id)
     except ctx.TaskDataError as error:
         sys.exit(str(error))
-    rel = ctx.worktree_rel_path(args.tid)
+    rel = ctx.worktree_rel_path(tid)
     path = (ctx.REPO_ROOT / rel).resolve()
     registered_branch = worktree_paths().get(str(path))
     if registered_branch is None:
         _git(["worktree", "prune"])
         if path.exists():
             sys.exit(f"{rel} 存在但未登记为 git worktree；拒绝删除未知内容")
-        print(f"worktree 已清理：{rel}（幂等）")
-        return
+        return f"worktree 已清理：{rel}（幂等）"
     if registered_branch != branch:
         sys.exit(f"{rel} 登记分支为 {registered_branch!r}，预期 {branch!r}；拒绝清理")
     current = _git(["rev-parse", "--abbrev-ref", "HEAD"], root=path)
@@ -374,7 +371,19 @@ def cmd_cleanup_worktree(args):
     if result.returncode != 0:
         sys.exit(f"git worktree remove 失败：{result.stderr.strip()}")
     _git(["worktree", "prune"])
-    print(f"worktree 已移除：{rel}；分支 {branch!r} 保留")
+    return f"worktree 已移除：{rel}；分支 {branch!r} 保留"
+
+
+@control_locked
+def cmd_cleanup_worktree(args):
+    require_primary_worktree()
+    if not ctx.TID_RE.fullmatch(args.tid):
+        sys.exit(f"tid 非法：{args.tid!r}")
+    try:
+        attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
+    except ctx.TaskDataError as error:
+        sys.exit(str(error))
+    print(_cleanup_worktree(args.tid, attempt, execution_id))
 
 
 def _merge_in_progress() -> bool:
@@ -611,18 +620,19 @@ def _commit_native_merge(expected_head: str, subject_prefix: str) -> str:
 def cmd_integrate(args):
     require_primary_worktree()
     try:
+        attempt, execution_id = resolve_identity(args.tid, args.attempt, args.execution_id)
         record, _ = _require_execution_gate(
-            args.tid, args.attempt, args.execution_id, allow_integrated=True
+            args.tid, attempt, execution_id, allow_integrated=True
         )
         if record["state"] == "integrated" and not _task_branch_names(args.tid):
             print(f"{args.tid} 已 integrated，分支已清理（幂等）")
             return
         branch, sha = _resolve_integrate_branch(args.tid)
-        _verify_exact_handoff(args.tid, args.attempt, args.execution_id)
+        _verify_exact_handoff(args.tid, attempt, execution_id)
         registered = _registered_for_branch(branch)
         if registered:
             raise ctx.TaskDataError(
-                f"分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；先 cleanup-worktree"
+                f"分支 {branch!r} 仍登记 worktree：{', '.join(registered)}；先 run-close --result done（或 cleanup-worktree）"
             )
     except ctx.TaskDataError as error:
         sys.exit(str(error))
@@ -634,7 +644,7 @@ def cmd_integrate(args):
         try:
             merge_sha = _commit_native_merge(sha, subject)
             if record["state"] != "integrated":
-                append_integrated(args.tid, args.attempt, args.execution_id, merge_sha)
+                append_integrated(args.tid, attempt, execution_id, merge_sha)
             if not args.keep_branch:
                 _delete_branches([branch])
         except ctx.TaskDataError as error:
@@ -662,7 +672,7 @@ def cmd_integrate(args):
             )
         try:
             _sync_indexes_after_existing_merge()
-            append_integrated(args.tid, args.attempt, args.execution_id, merge_sha)
+            append_integrated(args.tid, attempt, execution_id, merge_sha)
             if not args.keep_branch:
                 _delete_branches([branch])
         except ctx.TaskDataError as error:

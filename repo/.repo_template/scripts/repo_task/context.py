@@ -28,7 +28,6 @@ DEFAULT_REVIEW_LEVEL = "full"
 LEDGER_REPORT_STATUSES = ("done", "blocked", "failed")
 LEDGER_TERMINAL_STATUSES = ("completed", "failed", "stopped")
 LEDGER_FAIL_CLASSES = ("infra", "task", "contract")
-ATTEMPT_EXECUTORS = ("inline",)
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TASK_BRANCH_RE = re.compile(r"^(t[0-9]+)_[a-z][a-z0-9_]*$")
 TID_RE = re.compile(r"^t([0-9]+)$")

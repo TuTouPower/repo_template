@@ -13,6 +13,8 @@ from .control import (
     cmd_effective_status,
     cmd_ledger_tail,
     cmd_ps,
+    cmd_run_begin,
+    cmd_run_close,
     cmd_view,
 )
 from .goal import cmd_goal, cmd_goal_check
@@ -36,8 +38,8 @@ from .lifecycle import (
 
 
 def _add_identity(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--attempt", type=int, required=True)
-    parser.add_argument("--execution-id", required=True)
+    parser.add_argument("--attempt", type=int, help="省略时自动解析；仅 recovery 指定 exact identity 时提供")
+    parser.add_argument("--execution-id", help="与 --attempt 同时提供或同时省略")
 
 
 def main():
@@ -106,8 +108,13 @@ def main():
     limits.add_argument("--reason", required=True)
     limits.set_defaults(func=cmd_limits)
 
-    finish = sub.add_parser("finish", help="active -> done")
+    finish = sub.add_parser(
+        "finish",
+        help="active -> done：严格校验后归档、生成 handoff.json 并提交执行 commit；提交失败整体回滚",
+    )
     finish.add_argument("tid")
+    finish.add_argument("--owner-id", required=True, help="当前会话执行权，须与 ledger claim 一致")
+    finish.add_argument("--message-file", required=True, help="执行 commit message 文件（仓外或 .scratch/）")
     finish.set_defaults(func=cmd_finish)
 
     drop = sub.add_parser("drop", help="活跃状态 -> dropped")
@@ -177,12 +184,35 @@ def main():
     )
     plan.set_defaults(func=cmd_plan)
 
-    attempt = sub.add_parser("attempt", help="统一 exact attempt 生命周期")
+    run_begin = sub.add_parser(
+        "run-begin",
+        help="start → reserve → claim 一次完成，输出 JSON identity（已有现场时拒绝并提示 recovery）",
+    )
+    run_begin.add_argument("tid")
+    run_begin.add_argument("--owner-id", required=True, help="当前会话唯一标识，写入 ledger claim")
+    run_begin.add_argument("--base", help="可选上一已完成 task 分支")
+    run_begin.set_defaults(func=cmd_run_begin)
+
+    run_close = sub.add_parser(
+        "run-close",
+        help="按结果写 terminal + report（done 另 exact cleanup）；重入安全",
+    )
+    run_close.add_argument("tid")
+    run_close.add_argument("--owner-id", required=True, help="须与 ledger claim 一致")
+    run_close.add_argument("--result", required=True, choices=("done", "blocked", "failed"))
+    run_close.add_argument("--class", dest="fail_class", choices=ctx.LEDGER_FAIL_CLASSES,
+                           help="仅 --result failed")
+    run_close.add_argument("--reason", help="blocked/failed 的原因，写入 report")
+    run_close.set_defaults(func=cmd_run_close)
+
+    attempt = sub.add_parser(
+        "attempt",
+        help="exact attempt 低层原语（恢复用；主路径用 run-begin / run-close）",
+    )
     attempt_sub = attempt.add_subparsers(dest="attempt_cmd", required=True)
 
     reserve = attempt_sub.add_parser("reserve", help="原子分配 attempt/execution_id")
     reserve.add_argument("tid")
-    reserve.add_argument("--executor", required=True, choices=ctx.ATTEMPT_EXECUTORS)
     reserve.add_argument("--model")
     reserve.set_defaults(func=cmd_attempt_reserve)
 
@@ -209,7 +239,7 @@ def main():
     report.add_argument("--reason")
     report.set_defaults(func=cmd_attempt_report)
 
-    cleanup = sub.add_parser("cleanup-worktree", help="清理 exact terminal attempt worktree")
+    cleanup = sub.add_parser("cleanup-worktree", help="清理 exact terminal attempt worktree（恢复用；主路径由 run-close 完成）")
     cleanup.add_argument("tid")
     _add_identity(cleanup)
     cleanup.set_defaults(func=cmd_cleanup_worktree)

@@ -14,6 +14,7 @@ TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
+from task_flow_support import archive_done
 
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -82,7 +83,7 @@ def _worktree(repo, tid):
 
 
 def _reserve(repo, tid):
-    result = _cli(repo, "attempt", "reserve", tid, "--executor", "inline")
+    result = _cli(repo, "attempt", "reserve", tid)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -101,8 +102,7 @@ def _prepare_done(repo, tid, slug):
     if task_file.is_file():
         content = task_file.read_text(encoding="utf-8")
         task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
-    finished = _cli(worktree, "finish", tid)
-    assert finished.returncode == 0, finished.stderr
+    archive_done(worktree, tid)
     branch = f"{tid}_{slug}"
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     archive = worktree / "docs" / "archive" / "tasks" / branch

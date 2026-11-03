@@ -14,6 +14,7 @@ TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
+from task_flow_support import archive_done
 
 from repo_task import context as ctx
 from repo_task import monitoring
@@ -94,8 +95,8 @@ def _worktree(repo, tid):
     return repo.parent / f"{repo.name}_{tid}"
 
 
-def _reserve(repo, tid, executor="inline", model=None):
-    args = ["attempt", "reserve", tid, "--executor", executor]
+def _reserve(repo, tid, model=None):
+    args = ["attempt", "reserve", tid]
     if model:
         args += ["--model", model]
     result = _task_cli(repo, *args)
@@ -145,8 +146,7 @@ def _prepare_done(
         task_file.write_text(content.replace("- [ ] AC-001", "- [x] AC-001"), encoding="utf-8")
     if mutate:
         mutate(worktree)
-    finished = _task_cli(worktree, "finish", tid)
-    assert finished.returncode == 0, finished.stderr
+    archive_done(worktree, tid)
     branch = f"{tid}_{slug}"
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     archive = worktree / "docs" / "archive" / "tasks" / branch
@@ -490,11 +490,6 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
         git_repo, "t001", "alpha", terminal=False
     )
 
-    missing_identity = _task_cli(git_repo, "cleanup-worktree", "t001")
-    assert missing_identity.returncode != 0
-    assert "--attempt" in missing_identity.stderr
-    assert "--execution-id" in missing_identity.stderr
-
     cleanup_running = _task_cli(
         git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
     )
@@ -609,10 +604,6 @@ def test_legacy_cli_paths_fail_explicitly(git_repo):
     )
     assert old_chain.returncode != 0
     assert "--chain" in old_chain.stderr
-
-    no_identity = _task_cli(git_repo, "integrate", "t001")
-    assert no_identity.returncode != 0
-    assert "--attempt" in no_identity.stderr and "--execution-id" in no_identity.stderr
 
 
 # --------------------------------------------------------------------------

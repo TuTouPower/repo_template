@@ -45,7 +45,7 @@ def recovery_state(tid: str) -> dict:
             state["action"] = f"停止：无登记 worktree，{detail}"
             return state
         if task["status"] == "backlog":
-            return phase("pending", "start → reserve；若同名分支残留则先处理所有权")
+            return phase("pending", "run-begin（start → reserve → claim）；若同名分支残留则先处理所有权")
         return state
     if registered_branch != branch:
         state["action"] = "停止：登记 worktree 分支与 task ownership 不符"
@@ -65,12 +65,22 @@ def recovery_state(tid: str) -> dict:
         except ctx.TaskDataError as error:
             return phase("runtime_mismatch", str(error))
         if record["state"] == "running":
-            return phase("executing", "核对 owner_id；先原子 claim。跨会话接管必须确认原会话已停止，不得直接复用 identity 并行实施")
+            if not record.get("owner_id"):
+                return phase("executing", "尚未 claim：按原 identity 用 attempt claim 领取执行权（run-begin 中途失败时的现场），不重复 start/reserve")
+            return phase("executing", "核对 owner_id；同一 owner 直接续行。跨会话接管必须确认原会话已停止并 attempt claim --replace-owner ... --confirm-stopped，不得直接复用 identity 并行实施")
         if (record.get("report") or {}).get("status") in {"blocked", "failed"}:
             return phase("retry_ready", "task 保持 active；直接 reserve 新 identity 后继续")
         return state
     if fm["status"] != "done" or record is None:
         return state
+    if not (task_dir / "handoff.json").exists():
+        head = _git(["rev-parse", "HEAD"], root=worktree)
+        if head.returncode == 0 and head.stdout.strip() == fm.get("diff_anchor") and record["state"] == "running":
+            return phase(
+                "finish_interrupted",
+                "finish 在生成 handoff.json 前被中断（已 done、已归档、无 handoff、无执行 commit）：停止并报告用户；"
+                "不重复 finish、不 reserve。核对 note.md 验证摘要后，由用户决定补写 handoff.json 并提交，或还原归档目录",
+            )
     try:
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
         expected = {"tid": tid, "branch": branch, "status": "done",
@@ -83,7 +93,7 @@ def recovery_state(tid: str) -> dict:
             raise ValueError(head.stderr)
         if head.stdout.strip() == fm["diff_anchor"]:
             if record["state"] == "running":
-                return phase("finished_uncommitted", "核验归档 handoff、review 和全部 diff 后完成“收尾与执行 commit”；不 finish、不 reserve")
+                return phase("finished_uncommitted", "finish 在提交前被中断：核验归档 handoff、review 和全部 diff 后暂存并提交执行 commit（沿用原 message）；不重复 finish、不 reserve")
             raise ValueError("未提交执行 commit 却已关闭 attempt")
         parent = _git(["rev-parse", "HEAD^1"], root=worktree)
         if parent.returncode != 0 or parent.stdout.strip() != fm["diff_anchor"]:
