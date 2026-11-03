@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 TASK_TEMPLATE_DIR = SCRIPTS_DIR.parent / "docs" / "task_template"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -710,7 +710,7 @@ def test_track_worktree_reverse_lookup_and_dedup(tmp_path):
     """验证 track_worktree 逆序读取 ledger 与尾部查重（Issue #61）。"""
     import importlib.util
     import json
-    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    scripts_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
     spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
     tw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tw)
@@ -754,7 +754,7 @@ def test_track_worktree_resolves_from_start_through_execution_claim(tmp_path):
     """start → reserve → claim 后映射仍有效；终态事件才关闭窗口（Issue #74）。"""
     import importlib.util
     import json
-    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    scripts_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
     spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
     tw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tw)
@@ -870,7 +870,7 @@ def test_track_worktree_early_exit_on_regular_commands(tmp_path, monkeypatch):
     """验证 track_worktree 在常规命令下快速短路退出且零副作用（Issue #53）。"""
     import importlib.util
     import json
-    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    scripts_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
     spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
     tw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tw)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "repo_state.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts" / "repo_state.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import repo_state
 

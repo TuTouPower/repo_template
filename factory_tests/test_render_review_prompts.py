@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import pytest
@@ -15,7 +15,7 @@ from render_review_prompts import (
     render_review_prompts,
 )
 
-REAL_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "docs" / "review_prompts"
+REAL_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/docs" / "review_prompts"
 REAL_VALIDATE_DIFF_ANCHOR = rrp.validate_diff_anchor
 
 

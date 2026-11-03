@@ -4,7 +4,7 @@
 
 状态机只校验这些章节存在且格式可执行，不代为运行命令；执行者按 task-work 流程运行并把结果写入 handoff，reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行它们作为同步门禁。
 
-默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂仓全量自测含调度 / 合并 / 同步集成，命令是 `pytest .repo_template/tests -q`（无 `-m`），只在模板工厂跑。
+默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂全量测试（含调度 / 合并 / 同步集成）位于工厂根 `factory_tests/`，不随模板分发，消费仓只含契约测试。
 
 下列默认命令在消费仓根（工厂验产物时为 `repo/`）的 POSIX shell（Linux/macOS/WSL/Git Bash）执行，需要 Python 3、PATH 中可运行的 pytest（及其所属 Python 环境）和 PATH 中的 md_kx。任一检查非零退出则停止后续验收，先区分「环境缺工具」与「shell 不兼容」（Windows 原生 shell 无 `command -v`），修复环境或测试后重跑；收集成功只证明可收集，不等于测试通过。
 
