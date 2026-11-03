@@ -56,7 +56,7 @@ testing.md 是项目验证命令与显式策略唯一权威；verification_polic
 2. 项目定义的黑盒验证，无黑盒时必须由项目策略明确选择并提供替代验收；
 3. 按 `review_level` 执行的独立 review。
 
-`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
+`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入 `note.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 

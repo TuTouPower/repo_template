@@ -2,7 +2,7 @@
 
 模板仓默认门禁命令（复制新项目后按实际工具链替换）。章节名 `verification_policy` / `verification_notes` / `doctor_cmd` / `test_cmd` / `blackbox_verify` 是 preflight 与 skill 的机械锚点，不得改名；命令写在对应章节的 bash/sh 代码块，按 Bash 的 `-e -o pipefail` 执行；文字说明不作为可执行命令。未使用某类时章节保留，正文写「无」。
 
-状态机只校验这些章节存在且格式可执行，不代为运行命令；执行者按 task-work 流程运行并把结果写入 handoff，reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行它们作为同步门禁。
+状态机只校验这些章节存在且格式可执行，不代为运行命令；执行者按 task-work 流程运行并把结果写入 `note.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行它们作为同步门禁。
 
 默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂全量测试（含调度 / 合并 / 同步集成）位于工厂根 `factory_tests/`，不随模板分发，消费仓只含契约测试。
 
