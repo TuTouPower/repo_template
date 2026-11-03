@@ -81,16 +81,14 @@ AGENTS_FORCE_HEADING = "## 开发原则"
 MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
 
 # 模板自有路径：不受消费仓 prettier 门禁约束（Issue #3）。
-# view_static/ 与 test_chain_plan_cases.js 用模板自有风格（2 空格/单引号），
+# view_static/ 用模板自有风格（2 空格/单引号），
 # package.json / sync_state.json 缩进随消费仓 tabWidth 漂移（sync_state.json 每轮 apply 重写），
 # tasks_index.json 系派生索引（store.py 写 indent=4，可重建），handoff.json 由 task 流程逐任务生成，
 # .opencode/package*.json 属本地生成（prettier 不认嵌套 .gitignore）。
 # 由 merge_prettierignore 机械追加，消费独有规则保留。
 PRETTIERIGNORE_TEMPLATE_RULES = (
     ".repo_template/scripts/package.json",
-    ".repo_template/tests/package.json",
     ".repo_template/scripts/repo_task/view_static/",
-    ".repo_template/tests/test_chain_plan_cases.js",
     ".repo_template/sync_state.json",
     ".repo_template/sync_manifest.json",
     ".repo_template/sync_policy.json",

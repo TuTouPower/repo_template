@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import repo_sync as rs
@@ -446,7 +446,7 @@ def test_opencode_commands_status_detects_description_drift(env, capsys):
 
 def test_shipped_skills_have_real_descriptions():
     """模板分发的每个 skill 必须有真实 description（命令文案与按描述路由依赖）。"""
-    skills_dir = Path(__file__).resolve().parents[1] / "skills"
+    skills_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/skills"
     missing: list[str] = []
     for skill in sorted(skills_dir.iterdir()):
         if not skill.is_dir():
@@ -522,6 +522,23 @@ def test_prettierignore_covers_generated_artifacts(env):
     assert "docs/tasks_index.json" in rules
     assert "docs/archive/tasks_index.json" in rules
     assert "docs/**/handoff.json" in rules
+
+
+def test_prettierignore_omits_undistributed_test_paths(env):
+    # G1：测试移出产物后消费仓不再收到这两个文件，规则随之删除，新同步不再追加
+    undistributed = (
+        ".repo_template/tests/package.json",
+        ".repo_template/tests/test_chain_plan_cases.js",
+    )
+    rules = set(rs.PRETTIERIGNORE_TEMPLATE_RULES)
+    assert ".repo_template/scripts/package.json" in rules
+    for rule in undistributed:
+        assert rule not in rules
+    pi = env["consumer"] / ".prettierignore"
+    rs.merge_prettierignore(set())
+    lines = pi.read_text().splitlines()
+    for rule in undistributed:
+        assert rule not in lines
 
 
 def test_detect_json_indent(env):

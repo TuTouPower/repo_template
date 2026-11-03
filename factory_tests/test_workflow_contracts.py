@@ -78,10 +78,10 @@ def test_cleanup_checks_report_not_only_handoff_claim(git_repo, defect):
 
 def test_task_work_requires_untracked_deliverables_visible_to_review():
     skill = (
-        Path(__file__).parents[1] / 'skills/task-work/SKILL.md'
+        Path(__file__).parents[1] / 'repo/.repo_template/skills/task-work/SKILL.md'
     ).read_text(encoding='utf-8')
     prompt = (
-        Path(__file__).parents[1] / 'docs/review_prompts/share_prompt.txt'
+        Path(__file__).parents[1] / 'repo/.repo_template/docs/review_prompts/share_prompt.txt'
     ).read_text(encoding='utf-8')
     assert 'git ls-files --others --exclude-standard' in skill
     assert 'git add -N -- <path...>' in skill

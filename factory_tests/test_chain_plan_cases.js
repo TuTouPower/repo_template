@@ -3,7 +3,7 @@
  * 批计划算法权威在 repo_task.plan.compute_batch_plan，见 test_plan.py。
  * 任何断言失败以非零退出码结束。
  */
-require('../../.repo_template/scripts/repo_task/view_static/chain_plan.js');
+require('../repo/.repo_template/scripts/repo_task/view_static/chain_plan.js');
 var ChainPlan = globalThis.ChainPlan;
 
 var failures = [];

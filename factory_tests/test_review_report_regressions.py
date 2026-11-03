@@ -20,7 +20,7 @@ import repo_task.locks as locks
 import repo_sync as rs
 from export_template import _extract_product
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 
 
 @pytest.mark.parametrize("snippet", [

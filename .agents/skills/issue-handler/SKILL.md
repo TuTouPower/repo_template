@@ -1,6 +1,6 @@
 ---
 name: issue-handler
-description: 模板仓（工厂仓）处理 GitHub 上报的模板问题。优先读取远程 GitHub Issues，必要时回退扫描消费仓本地交接报告；复现并定位根因，向用户报告问题分析与修复计划，批准后改 repo/.repo_template/ 与 repo 根模板文件 AGENTS.md 执行修复并跑测试。当有模板仓 GitHub issue、消费仓上报或用户让「处理/修复模板仓 issue」时调用。仅在模板仓本体运行，不进消费仓产物。
+description: 模板仓（工厂仓）处理 GitHub 上报的模板问题。优先读取远程 GitHub Issues，必要时回退扫描消费仓本地交接报告；复现并定位根因，向用户报告问题分析与修复计划，批准后改 repo/ 产物树内的模板文件执行修复并跑测试。当有模板仓 GitHub issue、消费仓上报或用户让「处理/修复模板仓 issue」时调用。仅在模板仓本体运行，不进消费仓产物。
 ---
 
 # issue-handler
@@ -20,9 +20,9 @@ description: 模板仓（工厂仓）处理 GitHub 上报的模板问题。优�
 
 ## 硬边界
 
-- **只改工厂仓真相源**：`repo/.repo_template/`，以及 `repo/` 根模板文件 `AGENTS.md`。消费仓是副本，通过 `repo-template-sync` 拉取修复；绝不直接改消费仓里的模板产物。
+- **只改工厂仓真相源**：`repo/` 产物树内的模板文件（含 `repo/.repo_template/`、`repo/AGENTS.md`、`repo/README.md`、`repo/.claude/settings.json`、`repo/docs/blueprint/` 等分发文件）。工厂根的 `factory_tests/` 是工厂测试，随修复按需增改。消费仓是副本，通过 `repo-template-sync` 拉取修复；绝不直接改消费仓里的模板产物。
 - **报告后必须等用户批准再改代码**。模板仓改动影响所有消费仓，方案可能有多种取舍；分析+计划先呈用户，批准前不动上述真相源。
-- **复现与定位可读实现**：本 skill 是模板仓 agent，可读 `repo/.repo_template/scripts/*.py`、`hooks/*.py`、`skills/*` 等实现源码——这是它与需求方 skill 的区别。
+- **复现与定位可读实现**：本 skill 是模板仓 agent，可读 `repo/.repo_template/scripts/*.py`、`hooks/pre-commit`、`skills/*` 等实现源码——这是它与需求方 skill 的区别。
 - **复现不改生产树**：在工厂仓 `repo/` 复现用只读命令或 `.scratch/` 隔离；进消费仓复现同样只读 + `.scratch/` 隔离，不碰消费仓生产文件。
 
 ## 流程
@@ -78,15 +78,15 @@ python3 -c 'import pathlib; files = [p for p in pathlib.Path("~/kar/code").expan
 
 ### 6. 执行修复
 
-改工厂仓真相源：`repo/.repo_template/`（脚本 / skill / hook / 模板文件 / 约定文档）与 `repo/` 根模板文件 `AGENTS.md`，按需补或改测试。
+改工厂仓真相源：`repo/` 产物树内的模板文件（`repo/.repo_template/` 的脚本 / skill / hook / 模板文件 / 约定文档，以及 `repo/AGENTS.md`、`repo/README.md`、`repo/docs/blueprint/` 等分发文件），按需补或改测试。契约测试（`pytest.mark.contract`）放 `repo/.repo_template/tests/` 并随产物分发，其余集成测试放工厂根 `factory_tests/`。
 
 ### 7. 验证
 
 ```bash
-pytest repo/.repo_template/tests -q
+pytest repo/.repo_template/tests factory_tests -q -p no:cacheprovider --basetemp "$(mktemp -d)"
 ```
 
-失败 → 修到绿，不提交。
+全量耗时 10 分钟以上，`--basetemp` 用系统临时目录，不用仓内 `.scratch/`。需要快速信号时先跑契约子集 `pytest repo/.repo_template/tests -q -m contract`。失败 → 修到绿，不提交。
 
 ### 8. 回执
 

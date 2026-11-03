@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from review_support import configure_project_verification
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task import context as ctx

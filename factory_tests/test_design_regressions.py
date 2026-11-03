@@ -23,7 +23,7 @@ import repo_sync as rs
 from export_template import export_template
 from skill_registry import render_registry
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 
 
 def _edit(repo, tid, **values):

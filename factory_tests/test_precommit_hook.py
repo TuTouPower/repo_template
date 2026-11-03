@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 HOOK_PATH = SCRIPTS_DIR.parent / "hooks" / "pre-commit"
 
 
