@@ -17,4 +17,4 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 python3 repo/.repo_template/scripts/task.py --help
 ```
 
-工厂改模板必须跑全量（契约测试 + `factory_tests/` 集成测试），需要 pytest 与 pytest-xdist；`-n auto` 按 CPU 并行，内存紧张时可用 `-n 2` 限制 worker，排查时可用 `-n 0` 串行。消费仓只含契约测试，默认门禁是 `pytest .repo_template/tests -q -m contract`，见 `repo/docs/blueprint/testing.md`。
+工厂改模板必须跑全量（契约测试 + `factory_tests/` 集成测试），需要 pytest 与 pytest-xdist。消费仓只含契约测试，默认门禁是 `pytest .repo_template/tests -q -m contract`，见 `repo/docs/blueprint/testing.md`。
