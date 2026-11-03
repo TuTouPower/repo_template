@@ -4,9 +4,9 @@
 
 状态：`已落地` = 已进 AGENTS/skill/prompt/脚本；`开放` = 已裁决未实施；`已否决` = 明确不做；`已落地；被 Ln 取代` = 原方案曾落地，现行以 successor 为准。
 
-核对记录：L1–L36 于 `2026-09-07T00:00:00+08:00` 文档审阅核对；L37 起为之后新增，未纳入该次核对。`2026-11-03T22:30:00+08:00` 仅修订 L6、L7、L10、L13、L15 的落点/状态，其余行未重新核对。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md` 和 `task.py --help` 为准。
+核对记录：L1–L36 于 `2026-09-07T00:00:00+08:00` 文档审阅核对；L37 起为之后新增，未纳入该次核对。`2026-11-03T22:30:00+08:00` 仅修订 L6、L7、L10、L13、L15 的落点/状态，其余行未重新核对。`2026-11-04T05:36:34+08:00` 核对 L13、L14、L23、L36，追加宏观方案 D-01–D-14 对应的 L40–L52（D-11 撤销），并更新改名落点。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md` 和 `task.py --help` 为准。
 
-文件名映射：commit `35d298b` 改名后，旧 `spec.md` = 现 `task.md`（需求规格，含契约区/验收标准）；旧 `task.md`（过程总账、实施笔记、处置表）= 现 `note.md`。裁决列与议题列保留改名前的历史称呼，落点列写现行路径。
+文件名映射：commit `35d298b` 改名后，旧 `spec.md` = 现 `task.md`（需求规格，含契约区/验收标准）；旧 `task.md`（过程总账、实施笔记、处置表）先改为 `note.md`，本次 D-12 再改为 `progress.md`。裁决列与议题列保留改名前的历史称呼，落点列写现行路径。
 
 出处列沿用复盘旧称：`feedback` = `workflow_reflection_1.md`；`retro_t041_t061` = `workflow_reflection_4.md`；`retro_t001_t007` = `workflow_reflection_3.md`；`incident_t071` = `workflow_reflection_2.md`；`analysis` = `workflow_reflection_5.md`。
 
@@ -21,15 +21,15 @@
 | L3 | reviewer 缺决策上下文致撤回率高 | analysis §1b、feedback 再评估节 | spec 契约区与上下文区正文直接注入 prompt，reviewer 不再自行读 spec | `render_review_prompts.py`、`share_prompt.txt` | 已落地 |
 | L4 | branch ≠ worktree，未提交改动丢失 | incident_t071、retro_t041_t061 §1、analysis §11 | 默认每 task 独立 worktree（`../{repo}_{tid}`，`{repo}` = 消费仓目录名）+ `.env` 软链；禁止长期未提交。~~`--no-worktree`~~ 未实现 | `task.py start` / `preflight`、AGENTS「开发原则」 | 已落地 |
 | L5 | 审阅对所有 task 无差别 | feedback §3/C、retro_t041_t061 §2、retro_t001_t007 痛点 3 | `review_level: full\|single` 进 front matter，判不准取 `full`。~~`none`~~ 未实现 | `task.py add --review-level`、`task-work`「独立 review」 | 已落地 |
-| L6 | `plan.md` 退化为 spec 副本、实际弃用 | feedback §1+A、retro_t041_t061 §4、analysis §1b | **删除 plan.md**。根因是 plan 写在信息最少的时刻、用在信息最多的时刻；实施步骤改由执行期记入 `task.md` 实施笔记 | `repo/.repo_template/docs/task_template/` 无 plan.md；`task.md` 契约区/上下文区二分承接上下文；实施步骤记 `note.md`「实施笔记」 | 已落地 |
+| L6 | `plan.md` 退化为 spec 副本、实际弃用 | feedback §1+A、retro_t041_t061 §4、analysis §1b | **删除 plan.md**。根因是 plan 写在信息最少的时刻、用在信息最多的时刻；实施步骤改由执行期记入 `task.md` 实施笔记 | `repo/.repo_template/docs/task_template/` 无 plan.md；`task.md` 契约区/上下文区二分承接上下文；实施步骤记 `progress.md`「实施笔记」 | 已落地 |
 | L7 | spec 写死技术选型 → 过时 → FAIL 循环 | retro_t001_t007 痛点 1、feedback §1 | AC 只写行为；技术选择进 `docs/blueprint/decisions.md`；spec 漂移类 finding 标 `spec_drift`，处置为改 spec，不计 FAIL | `repo/.repo_template/docs/task_template/task.md` 验收标准规范块、`repo/AGENTS.md`「开发原则」、`share_prompt.txt`「blocking 硬阈值」（spec 过时 → 改 spec，不计 FAIL；`spec_drift` 标签现行文件中已不存在） | 已落地 |
 | L8 | `max_review_round` 语义混乱（出场次数 vs 闭环次数） | retro_t041_t061 §3、retro_t001_t007 痛点 5、analysis §1 | round = **回归轮次**：上轮 FAIL 修完重审才计数；新 finding 当轮处置不强制 N+1 | `check_review_status.py`、`architecture.md`「Review 与验证」 | 已落地 |
 | L9 | 横向缺口只标遗留、不开 task | retro_t001_t007 根因节、feedback、analysis §13 | 遗留 finding 须映射 tid；reviewer 引用已有 follow-up 不重复报 | `task-from-pending` skill、`share_prompt.txt`「系统性缺口去重」 | 已落地 |
-| L10 | AC 三处维护（spec / task.md / 处置表） | retro_t001_t007 痛点 7 | AC 唯一源 = spec 契约区；task.md 收尾引用不复制 | `repo/.repo_template/docs/task_template/task.md` 契约区（AC 唯一源）、`note.md`「收尾报告」（引用 `task.md` 不复制） | 已落地 |
+| L10 | AC 三处维护（spec / task.md / 处置表） | retro_t001_t007 痛点 7 | AC 唯一源 = spec 契约区；task.md 收尾引用不复制 | `repo/.repo_template/docs/task_template/task.md` 契约区（AC 唯一源）、`progress.md`「收尾报告」（引用 `task.md` 不复制） | 已落地 |
 | L11 | TDD 顺序违规：改测试适配实现 | analysis §3 | 旧绿测只许保留或整体删除并说明；禁止就地改预期；reviewer 必须复核改测方向 | AGENTS「开发原则」、`task-work`「项目测试」、`test_prompt.txt` | 已落地 |
 | L12 | blocked 无基础设施失败出口 | analysis §4 | 原方案加 `task.py block --reason infra` 与正式 `blocked` 状态。L36 删除正式 blocked 与 `block`/`resume`；阻塞时 task 保持 active，attempt `terminal=stopped` + `report=blocked`；禁止 agent 自定容错上限后绕过 | `architecture.md`「Attempt」、`task-run` | 已落地；被 L36 取代 |
-| L13 | spec 脑补未核实的外部契约 | analysis §5 | spec 上下文区加「未知契约清单」，逐条标 `UNVERIFIED`；reviewer 只提示核实不 blocking | `repo/.repo_template/docs/task_template/task.md`「未知契约清单」、`share_prompt.txt`「blocking 硬阈值」 | 已落地 |
-| L14 | 「一 task 一 commit」与实战脱节 | feedback B、retro_t041_t061 §7 | **保留「一 task 一 commit」**：六份 review 主张放开多 commit，但与黑盒/审阅质量门禁矛盾（回头改要么 amend 破坏历史，要么新 commit 污染历史）。task 太大就回 `task-create` 拆，不在执行期切分 commit。commit 须可独立验证、有工程意义 | `AGENTS.md`「开发原则」+ `task-work`「完成」 | 已落地 |
+| L13 | spec 脑补未核实的外部契约 | analysis §5 | spec 上下文区加「未知契约清单」，逐条标 `UNVERIFIED`；reviewer 只提示核实不 blocking | `repo/.repo_template/docs/task_template/task.md`「未知契约清单」、`share_prompt.txt`「blocking 硬阈值」 | 已落地；原 reviewer 非阻断策略已由现行分类门禁取代，见 task 模板与 share_prompt.txt |
+| L14 | 「一 task 一 commit」与实战脱节 | feedback B、retro_t041_t061 §7 | **保留「一 task 一 commit」**：六份 review 主张放开多 commit，但与黑盒/审阅质量门禁矛盾（回头改要么 amend 破坏历史，要么新 commit 污染历史）。task 太大就回 `task-create` 拆，不在执行期切分 commit。commit 须可独立验证、有工程意义 | `AGENTS.md`「开发原则」+ `task-work`「完成」 | 已落地；被 L43 取代 |
 | L15 | 大模型进 plan mode 不执行既定 plan | 11111#2（已并入本表） | 用户触发 `task-run` 即视为队列已批准；禁止 plan mode、禁止开跑前二次征求同意 | `task-run`「授权与队列」 | 已落地；无参数调用部分已修订：显式 tid 与 `/goal` 冻结队列仍不二次确认，无参数调用 `task-run` 须先列出 `task.py plan --serial --json` 清单并取得用户确认 |
 | L16 | finding 无分类，噪音率靠人工事后统计 | retro_t001_t007 数据概览、review/glm §2.1 | finding 必填 `category`（bug/spec_drift/duplicate/nitpick/coverage_gap）；撤回率由脚本算。字段未进 `task.md` 处置表与 `share_prompt.txt`；现行噪音控制见 L2/L17 | `share_prompt.txt`「blocking 硬阈值」 | 开放 |
 | L17 | 行数与圈复杂度阈值制造 nitpick | 本轮审阅（review/opus + 模板实读） | 两类命中默认不进 finding 表，只在结论段提示；仅当已产出可观测缺陷才按缺陷出 finding | `code_prompt.txt`「降级规则」 | 已落地 |
@@ -38,7 +38,7 @@
 | L20 | 契约在执行期被悄悄改动 | 本轮审阅（配合 L3 注入） | ~~`start` 时锁契约区 hash~~（原方案从未实现）；改为 `render_review_prompts.py` 渲染时 diff 契约区相对 diff_anchor 的变更并附警告块给 reviewer，合法变更可见、静默变更藏不住 | `render_review_prompts.py` | 已落地 |
 | L21 | 依赖关系散落 spec 文字，无法机器校验；后续批次重复依赖 Agent 分析 | feedback D、retro_t041_t061、review_task_batch_scheduling 多路审阅 | task front matter 增加 `depends_on`、`conflicts_with`；`task-schedule` 负责 Agent 分析落盘，`task.py plan` 负责后续纯脚本调度（自原 `next-batch --done` 演化）。~~`schedule_status`~~ 已由 L36 删除，不持久化 | `scripts/task.py`、`task-schedule`、task 模板、`architecture.md`「调度图与计划」 | 已落地；`schedule_status` 被 L36 删除 |
 | L22 | subagent prompt 内联正文撑爆 context | analysis §2 | 派发只传文件路径，正文写 `.scratch/review_prompts/` | `task-work`「独立 review」 | 已落地 |
-| L23 | 遗留待办与 bugs 无统一登记 | 11111#1、analysis §13 | 统一待办入口。原单文件 `docs/pending.md`（`bNNN`/`fNNN` 两节）已演化为 `docs/pending/{todo,parked}/pNNN_{slug}.md`；遗留 finding 的落点是 pending 条目，`task.md` 只留 `fix_ref` | `docs/pending/`、`pending.py`、`pending-record`、`task.md` 模板 | 已落地 |
+| L23 | 遗留待办与 bugs 无统一登记 | 11111#1、analysis §13 | 统一待办入口。原单文件 `docs/pending.md`（`bNNN`/`fNNN` 两节）已演化为 `docs/pending/{todo,parked}/pNNN_{slug}.md`；遗留 finding 的落点是 pending 条目，`task.md` 只留 `fix_ref` | `docs/pending/`、`pending.py`、`pending-record`、`progress.md`「Review 处置」 | 已落地 |
 | L24 | skill 之间规则重叠，可能成新漂移源 | review/glm §2.4 | 状态机、门禁、目录权责只在 AGENTS 定义；用法/写权/skill 调用只在 `usage.md`；执行设计只在 `architecture.md`；skill 只写本阶段顺序、写域和停止条件 | 各 SKILL.md | 开放（2026-09-06 L36 已做一轮收敛，需持续盯） |
 | L25 | 分级与粒度规则本身会成为博弈点 | review/k3 跨文档总评 | `review_level` 由创建期定并向用户说明理由。~~`none` 须在提交询问中列出~~：`none` 未实现，现行只有 `full`/`single` | `task-create` | 开放（`full`/`single` 分级博弈风险仍在） |
 | L26 | 允许 agent 直接手改 index JSON | feedback E | **否决**。并发下会放大损坏；改为派生缓存后该诉求消失 | — | 已否决 |
@@ -51,16 +51,30 @@
 | L33 | skill 被 agent 按语义自动触发，绕过用户批准 | 用户提出 | 禁止模型按语义自动触发：全部消费仓 skill 统一设置 `disable-model-invocation: true`，保留 `description` 供 `/` 菜单与显式调用使用 | 各 `SKILL.md` frontmatter、`test_contract_suite.py` | 已落地 |
 | L34 | 调度控制面边沿触发：worker 全灭无人察觉、integrate 后忘补位 | omni_media 两起事故（2026-08）、用户提出、多路 diff 审阅 | 边沿触发 → 水位触发：`task.py reconcile` 幂等 diff 唯一动作来源 + 空闲许可；调度账本记 attempt；handoff.json 机器验证；失败分类 + cron 兜底 | `archive/plan_dispatch_control_plane.md` | 已落地；被 L35 取代 |
 | L35 | 放弃 dispatch 自动并发，并发只留用户手动 | 用户决定（2026-08-06） | `task-dispatch` 退役；并发只允许用户手动多会话 `task-run`；`task.py view --serve` 只读看板；`start` 加 depends 硬拒与 conflicts 警告。dispatch 配套 API（`bind`/`escalate`/`observe`/`reconcile` 等）删除；executor 仅 `inline`。ledger、handoff.json、`verify_integrate_ready` 保留。~~merge_guard 保留~~ 已由 L36 删除 | `plans/plan_manual_concurrency.md`、`task.py view --serve`、`cmd_start` 调度门、`.repo_template/docs/architecture.md`、`usage.md` | 已落地；merge_guard 被 L36 取代 |
-| L36 | 工作流特殊机制与 skill 过度详细 | 用户逐项裁决（2026-09-06）、`plans/plan_workflow_simplification.md` | 严格模板、测试/黑盒/review、attempt、goal、一 task 一 commit、pending 子代理和同步能力保留；删除 merge token hook 与正式 blocked 状态；attempt report=blocked 继续审计；review/verify limit 均保留并用独立 limits 命令只增；合并改为 Git `merge --no-ff --no-commit` 验证后提交；调度删除 schedule_status、反向冲突边维护和复杂 tie-break；15 个 skill 改为结果与门禁导向，移除重复剧本 | `repo/.repo_template/skills/`、`repo_task/integration.py` / `lifecycle.py` / `scheduling.py`、task 模板、Claude settings、同步脚本 | 已落地 |
+| L36 | 工作流特殊机制与 skill 过度详细 | 用户逐项裁决（2026-09-06）、`plans/plan_workflow_simplification.md` | 严格模板、测试/黑盒/review、attempt、goal、一 task 一 commit、pending 子代理和同步能力保留；删除 merge token hook 与正式 blocked 状态；attempt report=blocked 继续审计；review/verify limit 均保留并用独立 limits 命令只增；合并改为 Git `merge --no-ff --no-commit` 验证后提交；调度删除 schedule_status、反向冲突边维护和复杂 tie-break；15 个 skill 改为结果与门禁导向，移除重复剧本 | `repo/.repo_template/skills/`、`repo_task/integration.py` / `lifecycle.py` / `scheduling.py`、task 模板、Claude settings、同步脚本 | 已落地；默认状态栏启用方式被 L46 取代 |
 | L37 | 消费仓首次追平大改版时同步脚本自举缺口 | md_kx 迁 Mac 实证（2026-09-14） | prep 只能刷新已存在且可跑的脚本：消费仓 `repo_sync.py` 若是旧布局版（旧 state 路径、旧硬同步清单、无 `prep`），调用即失败，无法自举。启动器显式加「先复制模板源 `repo_sync.py` 覆盖消费仓」步骤（任何子命令之前）；`init` 增加旧 state 迁移（带过 `user_prompts`/`last_synced_*`） | `repo/.repo_template/skills/repo-template-sync/SKILL.md`、`repo_sync.py` | 已落地；被 L39 取代 |
 | L38 | `task-bug` 名字与职责不匹配（实为分析并记 pending），用户口述待办时非 bug 事项无需子代理耗时研究 | 用户提出 | `task-bug` 改名 `bug-to-pending`；`pending-record` 区分路由：bug 派子代理按 `bug-to-pending` 研究记录，非 bug 普通记录 pending | `.repo_template/skills/bug-to-pending/`、`pending-record`、`usage.md` | 已落地 |
-
 | L39 | 初始化、组合、依赖合并、执行恢复与同步事务之间的契约断点 | `123.md` 宏观审阅、2026-10-24 实现核验与真实 Git 回归 | Git commit 干净导出；registry 单一角色/调用图，父流程读子正文；backlog 图收缩与来源归档共用持久事务；ledger claim 执行权；active review 单调升级；同步器从来源运行、固定 commit 快照与完整资产事务；项目显式验证策略；版本 manifest、共享 policy 与本机 state 分离；严格 done ledger import、附属生命周期门禁、仅工厂 CI | `export_template.py`、`skill_registry.py`、`repo_task/{graph,file_transaction,validation,finalization}.py`、`attempt claim`、`review-upgrade`、`ledger import`、`repo_sync.py`、`.github/workflows/template_factory.yml` | 已落地；宿主真实 E2E 认证待完成 |
+| L40 | 手工编排执行身份与 attempt 收尾 | 宏观方案 D-01，用户批准 | 主路径使用 run-begin / run-close，默认解析 attempt 与 execution_id，保留恢复原语；claim owner 校验不变 | `repo_task/{control,attempts}.py`、`task-run` | 已落地 |
+| L41 | finish 与 Git 提交分离产生中间态 | 宏观方案 D-02，用户批准 | finish --message-file 在前置门禁通过后原子写 done、回执与实现 commit，失败恢复自身写入 | `repo_task/lifecycle.py`、`test_finish_atomic.py` | 已落地 |
+| L42 | 验证摘要与执行回执重复维护 | 宏观方案 D-03，用户批准 | 验证摘要只写 progress.md，finish 机器生成 handoff.json，不手写回执 | `repo_task/monitoring.py`、`task-work` | 已落地 |
+| L43 | 执行分支归档与 amend 例外 | 宏观方案 D-04，用户批准；修订 L14 | 归档由 integrate 的 merge commit 完成；执行历史为一个实现 commit 加零到多个仅含 review 过程文件的证据 commit，禁止改写实现历史 | `repo_task/{integration,monitoring}.py`、`recovery.md` | 已落地 |
+| L44 | 阻塞传播到无关队列成员 | 宏观方案 D-05，用户批准 E1/E2 | 按依赖与冲突关系分链，无关成员从主干起步；阻塞只停止所在链，无可继续成员才判 STOPPED | `repo_task/{plan,goal}.py`、`task-run` | 已落地 |
+| L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、工厂 CI、`testing.md` | 已落地 |
+| L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json；需要时显式 install-hooks --statusline，保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
+| L47 | 看板 mock demo 与现行实现重复 | 宏观方案 D-08，用户批准 | 删除 demo 源码与 zip，保留 Git 历史；设计计划移入 archive 并注明现行实现 | `docs_repo/archive/plan_board_v2_chain_panel_demo.md` | 已落地 |
+| L48 | 工厂历史 basetemp 占用工作区 | 宏观方案 D-09，用户批准 | 历史测试残留清理；全量 basetemp 使用系统临时目录，缓存与运行产物不提交 | 工厂 `AGENTS.md` | 已落地；当前开发环境仍可使用忽略的 .scratch |
+| L49 | 缺少独立产物消费体验验证 | 宏观方案 D-10，用户批准 | 从已提交版本导出 repo_template_dogfood，发布前完成真实小 task 的 create → run → merge；与工厂测试分开记录 | 工厂 `AGENTS.md`、独立 dogfood 仓 | 已落地；隔离 t001 完成，merge 138865a；不替代 Claude Code 宿主认证 |
+| L50 | note.md 文件名与状态、进展职责不符 | 宏观方案 D-12，用户批准 | 当前过程文件统一 progress.md，标题为 Task 进展；同步事务一次迁移活跃与归档旧布局，两名并存拒绝，失败回滚 | `repo_task/context.py`、`template_sync/workflow_migration.py` | 已落地 |
+| L51 | AC 打勾未进入独立 review 机器门禁 | 宏观方案 D-13，用户批准 | reviewer 用 TICK-VALID / TICK-VOID 逐条复验；FAIL 后需改交付内容时实施方撤回全部打勾，修复重验后重新勾选 | review prompts、`repo_task/review.py`、task 模板 | 已落地 |
+| L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | 工厂 CI、pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案验收记录 |
 
 ## 未闭环
 
 | 议题 | 卡在哪 |
 | --- | --- |
+| Claude Code 宿主认证 | 本机版本 2.1.311 仅查询版本，未完成自然语言/显式入口/跨会话交互认证。隔离仓脚本闭环与独立 review 不替代该证据。 |
+| H2 机制审计 | 本轮聚焦工厂改造，审计不作为前置条件；未据使用频率删除机制，后续单独处理。 |
 | 统一 task 服务（跨仓库/跨会话的状态服务） | 11111#3 提出，等用户决定。L1 已消除并发写冲突，该诉求优先级下降 |
 | 分级效果复测 | analysis 的 PASS 率与遗留数来自单一项目（Electron + 弱测试基础设施）样本。L2/L5 落地后应在非 Electron 项目复测，确认数值而非仅方向 |
 | L16 finding `category` | 已裁决未进模板与脚本；噪音控制目前靠 L2/L17 |

@@ -19,7 +19,7 @@
 | 顺序 | 文件 | 覆盖范围 | 为什么读 |
 | --- | --- | --- | --- |
 | 1 | `decision_log.md` | 全部 | 议题 → 各文档结论 → 当前裁决与落点。改流程从这里开始 |
-| 2 | `plans/plan_macro_overhaul_2026_11.md` | 工厂 `main` @ `9514f00` 的宏观审阅 | 当前改造方案：问题清单、改造项、裁决表 D-01–D-13（D-11 撤销）与并发工作包编排。状态以文首为准（已裁决，待实施） |
+| 2 | `plans/plan_macro_overhaul_2026_11.md` | 工厂 `main` @ `9514f00` 的宏观审阅 | 当前改造方案：问题清单、改造项、裁决表 D-01–D-14（D-11 撤销）与并发工作包编排。已落地改造、提交与验收证据见文末，剩余项见文首 |
 | 3 | `reflections/workflow_reflection_5.md` | omni_usage，t041–t121，80MB 会话日志 | 运行态实证：审阅信噪比、context 溢出、TDD 违规。根因分析质量最高 |
 | 4 | `reflections/analysis_omni_gate_gaps_2026_07.md` | omni_media，150 归档 task 审计 | 门禁缺口：typecheck:test/build/lint 未全覆盖的实证与推荐 |
 | 5 | `reflections/workflow_reflection_4.md` | omni_media，21 task（t041–t061） | merge 冲突、审阅无差别浪费、plan 实际弃用 |

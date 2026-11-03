@@ -1,6 +1,6 @@
 # repo_template 宏观改造方案
 
-> **状态：已裁决，待实施。** 决策状态：2026-11-03 用户批准第 9 节全部推荐项，并采纳 E2、`note.md` → `progress.md` 改名（D-12）、AC 打勾复核闭环（D-13）与测试并行化（D-14）；D-11 撤销（原报告已删除）。实现状态：未实施；执行编排见第 11 节。
+> **状态：本仓改造与隔离验收已完成，工厂全量验证通过。** 用户已批准第 9 节全部推荐项，D-11 撤销。代码已合入 `overhaul/macro_2026_11` @ `1c05bae`；尚未合入工厂 `main`。H2 消费仓机制审计暂缓，不作为工厂改造前置条件；I1 Claude Code 宿主认证未执行。下文保留裁决时的方案与基线，实施证据见文末，现行用法以产物文档为准。
 >
 > 编写时间：2026-11-03T21:57:11+08:00。证据基线：工厂 `main` @ `9514f00`。
 >
@@ -419,3 +419,29 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 - 本波全部 WP 合入集成分支后，全量测试通过（含产物导出后的契约测试）；
 - `repo/` 下本波改动的 Markdown 通过 `md_format.py --check`；
 - 主会话复核各 WP 报告中的范围外发现，决定登记或纳入后续波次。
+
+## 12. 实施验收
+
+记录时间：`2026-11-04T05:36:34+08:00`。裁决状态唯一来源为 `docs_repo/decision_log.md`；本节记录实施与验证证据。
+
+| 范围 | 提交与证据 |
+| --- | --- |
+| WP1–WP7、WP10 | 已合入至 `e80128e`；Claude 会话最后一次集成全量为 890 passed、1 skipped，格式与 registry 通过 |
+| WP8 | 常量收敛 `76bfc19`；改名 `b87161f`；迁移及回归 `b5cd712`；合入 `829d7dd` |
+| WP11 | 测试依赖替身隔离与 xdist `9769df2`；工厂 CI 与命令使用 `-n auto`，消费默认 contract 命令不变 |
+| 隔离验收发现并修复 | `14a0105`、`aec606f`：start 创建超时后查询实际现场，未知资源不误报零写入；`224ad1c`：契约按已提交 verification_policy 识别定制项目，不依赖 worktree 中缺失的本机 state |
+| 代码集成 | `1c05bae`；产物树 `c482c2827313acc8104a3d534b03d8d4ddfffa4a`，与隔离验收来源 `224ad1c:repo` 一致 |
+| 工作区收尾 | WP8、WP11 已合入并删除分支与 worktree，工厂仅保留主工作树；现行 dogfood 同步来源为工厂根 |
+| 工厂验证 | 最终合入状态 900 passed、1 skipped（2 worker，437.11 秒，7 分 17 秒）；前一完整运行 899 passed、1 skipped，新增定制项目导出回归独立 2 passed |
+| 其它门禁 | 合入后 Markdown 全量格式检查、skill registry、task 与 reviewer CLI help、git diff --check 通过 |
+| 隔离验收 | `~/kar/code/repo_template_dogfood/`，来源 `224ad1c`；t001 实现 `4f18f30`、merge `138865a`；create → run-begin → 独立 review → finish → run-close → integrate 闭环，归档与索引随 merge，工作区干净、task 分支及 worktree 已清理 |
+
+隔离仓项目验证为 CLI 3 passed、contract 222 passed / 1 skipped；独立 reviewer Round 1 PASS、零 finding、三条 AC 均 TICK-VALID，checker overall=PASS / review_scope=ok / ac_review=ok。合并后 doctor/test/blackbox 均 PASS；另核对执行回执 identity、实现 first parent、归档 index、integrated 事件与唯一 claim，同 identity 的第二 owner 领取被拒。
+
+先前隔离仓在 `git worktree add` 超时与契约误判时保留现场，后完整保存至 `~/kar/code/repo_template_dogfood_before_contract_fix/`；修复后从干净提交重新导出，不在 active task 中手工替换工具链。现行隔离仓同步来源已改为工厂根，避免依赖临时 worktree。
+
+正常单 task 主路径为 run-begin、preflight、render_review_prompts、check_review_status、finish、run-close、integrate、integrate --continue，共 8 次状态/审查脚本调用；队列 plan 一次后为 9 次。项目测试、格式检查和按需恢复另计。
+
+性能记录使用 Python 3.14.7、pytest 9.2.0、pytest-xdist 3.8.0。本机高负载阶段出现 Git 60/120 秒超时，CPU 尚有空闲但物理内存接近 62GB、压缩约 22GB；未放宽门槛，最终用 `PYTEST_XDIST_AUTO_NUM_WORKERS=2` 约束 `-n auto`。最终全量实测 7 分 17 秒，未达到原两分钟估算；不能把不同负载下的运行结果用于性能提升比例。CI 保留 Python 3.9/3.14 矩阵，本次未触发远端 CI，本机结果只覆盖 Python 3.14.7。
+
+剩余边界：H2 暂缓，未继续扫描或修改现有业务消费仓，也未据此删除机制；I1 只查询到 Claude Code 2.1.311，未执行真实 Claude 宿主认证，不宣称该版本已认证。工厂 main 合并与外部发布仍需各自授权。
