@@ -12,6 +12,7 @@ import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1704,7 +1705,7 @@ def test_run_tests_timeout_handling(env, monkeypatch, capsys):
     def mock_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=120)
 
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    monkeypatch.setattr("template_sync.gates.subprocess", SimpleNamespace(**{**vars(subprocess), "run": mock_run}))
     ret = _run_tests(env["consumer"])
     assert ret is False
     err = capsys.readouterr().err
@@ -1757,15 +1758,13 @@ def test_link_skills_backs_up_and_rolls_back_real_directory(env, monkeypatch):
     real.mkdir(parents=True)
     (real / "sentinel.txt").write_text("keep\n", encoding="utf-8")
 
-    real_symlink = os.symlink
-
     def fail_symlink(*args, **kwargs):
         raise OSError("simulated symlink failure")
 
-    monkeypatch.setattr(os, "symlink", fail_symlink)
+    monkeypatch.setattr("template_sync.skills_links.os", SimpleNamespace(**{**vars(os), "symlink": fail_symlink}))
     with pytest.raises(ctx.SyncError, match="link-skills 失败"):
         cmd_link_skills(Namespace())
-    monkeypatch.setattr(os, "symlink", real_symlink)
+    monkeypatch.setattr("template_sync.skills_links.os", os)
 
     assert real.is_dir() and not real.is_symlink()
     assert (real / "sentinel.txt").read_text(encoding="utf-8") == "keep\n"

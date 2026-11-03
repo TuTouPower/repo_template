@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,7 +120,7 @@ def test_sync_apply_runs_contract_suite(monkeypatch):
         calls["timeout"] = kwargs.get("timeout")
         return Result()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("template_sync.gates.subprocess", SimpleNamespace(**{**vars(subprocess), "run": fake_run}))
     assert _run_tests(REPO_ROOT) is True
     assert calls["command"] == list(ctx.CONSUMER_TEST_COMMAND)
     assert calls["timeout"] == ctx.CONSUMER_TEST_TIMEOUT

@@ -6,6 +6,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -238,7 +239,7 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     def boom(src, dst):
         raise OSError("模拟移动失败")
 
-    monkeypatch.setattr(lifecycle.shutil, "move", boom)
+    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": boom}))
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
     monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
@@ -298,7 +299,7 @@ def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, ca
     def boom_rmtree(path):
         raise OSError("locked tombstone")
 
-    monkeypatch.setattr(lifecycle.shutil, "rmtree", boom_rmtree)
+    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "rmtree": boom_rmtree}))
 
     # 运行 purge，不应抛出未捕获异常退出
     lifecycle.cmd_purge(argparse.Namespace(tid="t001", reason="miscreated"))
@@ -368,7 +369,7 @@ def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch
             raise OSError("flaky disk error")
         return real_move(src, dst)
 
-    monkeypatch.setattr(lifecycle.shutil, "move", flaky_move)
+    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": flaky_move}))
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
     monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))

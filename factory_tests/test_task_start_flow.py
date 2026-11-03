@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2093,7 +2094,7 @@ def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories
             raise OSError('simulated second source archive failure')
         return original_move(source, destination)
 
-    monkeypatch.setattr(lifecycle.shutil, 'move', fail_second_source)
+    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": fail_second_source}))
     with pytest.raises(ctx.TaskDataError, match='已恢复图与来源目录'):
         cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002'))
     after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}

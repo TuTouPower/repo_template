@@ -9,6 +9,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -279,7 +280,7 @@ def test_repo_hygiene_git_timeout(monkeypatch):
     def mock_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
 
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    monkeypatch.setattr(rh, "subprocess", SimpleNamespace(**{**vars(subprocess), "run": mock_run}))
     with pytest.raises(rh.HygieneError, match="超时（30s）"):
         rh._git("status")
 
