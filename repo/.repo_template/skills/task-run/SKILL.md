@@ -38,7 +38,7 @@ metadata:
 
 用户补齐条件后，`task.py recovery {tid}` 判定 phase 为 retry_ready，按 `recovery.md` 用恢复原语 `attempt reserve` 与 `attempt claim` 开新 attempt 继续；新 attempt 不重置 review/verify 历史。用户批准追加轮次时先用 `task.py limits` 增加绝对上限。
 
-`attempt`、`cleanup-worktree` 等原语子命令是 recovery 的低层接口，只在恢复时使用。恢复细节以 `task.py recovery {tid}` 和脚本门禁为准，不在 skill 复制每个中断阶段；current attempt 尚未 terminal 时不得 reserve 新 attempt。running 恢复先核 owner_id，跨会话接管规程见 `recovery.md`，原会话存活则停止，禁止复用他人 owner_id。done 后 review stale 不 rewind/reserve，按 recovery 证据修复 amend 同一执行 commit。
+`attempt`、`cleanup-worktree` 等原语子命令是 recovery 的低层接口，只在恢复时使用。恢复细节以 `task.py recovery {tid}` 和脚本门禁为准，不在 skill 复制每个中断阶段；current attempt 尚未 terminal 时不得 reserve 新 attempt。running 恢复先核 owner_id，跨会话接管规程见 `recovery.md`，原会话存活则停止，禁止复用他人 owner_id。done 后 review stale 不 rewind/reserve，按 recovery 证据修复追加证据 commit。
 
 ## 合并
 

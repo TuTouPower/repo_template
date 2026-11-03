@@ -18,7 +18,7 @@
 
 ## workflow schema 强制迁移
 
-workflow schema 不做运行时兼容。`repo-template-sync` 的 `apply` 会强制更新主仓 `docs/tasks/` 中的存量 spec/task 模板块（包括把旧 `status: blocked` 改为 `active`、补齐轮次上限字段）；存在已登记 task worktree 时拒绝 apply，必须先完成或 rewind，避免主仓与执行分支各用一套 schema。更新后工具链直接拒绝旧字段和旧状态，不保留双轨解析。
+workflow schema 不做运行时兼容。`repo-template-sync` 的 `apply` 会强制更新主仓 `docs/tasks/` 中的存量 spec/task 模板块（包括把旧 `status: blocked` 改为 `active`、补齐轮次上限字段）；存在已登记 task worktree 时拒绝 apply，必须先完成或 rewind，避免主仓与执行分支各用一套 schema；存在状态为 done 但分支尚未合入默认分支的 task 时同样拒绝 apply 并列出这些分支，先 integrate（done task 的目录改由 integrate 在 merge commit 中归档，旧布局下已在分支内归档的中间形态新工具链不处理）。更新后工具链直接拒绝旧字段和旧状态，不保留双轨解析。
 
 ## 同步版本基线
 

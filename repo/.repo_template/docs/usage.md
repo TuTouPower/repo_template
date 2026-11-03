@@ -9,7 +9,7 @@
 |路径|用途|写权归属|
 |---|---|---|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit|
+|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并与 task 目录的归档移动放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit|
 |`docs/archive/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
 |`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|exact identity 为 `(tid, attempt, execution_id)`；主路径只经 `task.py run-begin`（start → reserve → claim）与 `run-close`（terminal → report → cleanup）写入，恢复时才用低层原语 `attempt reserve/claim/terminal/report`、`cleanup-worktree`（`--attempt/--execution-id` 可省略，由脚本从 ledger 当前 attempt 或 worktree 的 `execution_context.json` 解析，显式提供须一致）；`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
@@ -19,7 +19,7 @@
 |`.claude/skills/` / `.agents/skills/`|指向 `.repo_template/skills/` 的软链|只维护软链|
 |`.opencode/commands/`|各 skill 的 opencode `/` 触发器（由 SKILL.md description 生成，调 `skill` 工具执行）|只读（改 SKILL.md 后重跑 `link-skills`）；手写命令保留|
 |`.repo_template/scripts/`|模板自带 task 工具链：`task.py` 是 CLI 入口，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等|仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目|
-|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：链式拓扑以 `--base` 指向上一已完成 task 分支；active task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个执行 commit：`finish --owner-id --message-file` 在 worktree 内校验、归档、机器生成 exact identity 的执行回执 `handoff.json`（不手写）并提交，失败整体回滚；`run-close` 在主仓写 terminal/report 并清理 worktree，随后合并；本地 `.env` 软链回主仓|
+|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`start` 仅从主仓默认分支调用（不要求干净，主仓未提交改动保留不动）：链式拓扑以 `--base` 指向上一已完成 task 分支；active task 的实施、测试、review、finish/drop 只在自身 worktree 执行；每个 task 一个实现 commit（done 后 review 失效时可追加只含 review 过程文件的证据 commit）：`finish --owner-id --message-file` 在 worktree 内校验、原位写 done、机器生成 exact identity 的执行回执 `handoff.json`（不手写）并提交，失败整体回滚；`run-close` 在主仓写 terminal/report 并清理 worktree，随后合并，task 目录由 `integrate` 在 merge commit 中归档；本地 `.env` 软链回主仓|
 
 ## 命令执行约定
 
@@ -87,7 +87,7 @@ CLI/reviewer 接口与 skill 调用图分开：创建有效性用 `preflight {ti
 
 多会话 owner_id、claim、接管与 `task.py recovery` 诊断、`review_limit` / `verify_limit` 上限见 `recovery.md`。
 
-review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交或 finish 的目录迁移改变。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；执行回执（`handoff.json`）的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅。已提交且 review 门禁失败（stale / missing / format_error / FAIL）的修复规程见 `recovery.md`。
+review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交改变；证据 commit 只改过程文件，不改变指纹。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；执行回执（`handoff.json`）的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅。已提交且 review 门禁失败（stale / missing / format_error / FAIL）的修复规程见 `recovery.md`。
 
 workflow schema 强制迁移（`repo-template-sync` 的 `apply`）见 `sync.md`。
 

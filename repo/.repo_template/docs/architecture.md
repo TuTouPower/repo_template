@@ -4,7 +4,7 @@ task 工具链的执行拓扑、attempt、review 和合并授权。项目业务�
 
 ## 执行拓扑
 
-每个 task 使用独立分支和 worktree；每个 task 最终形成一个执行 commit。`task-run` 按用户给定顺序串成线性分支：
+每个 task 使用独立分支和 worktree；每个 task 形成一个实现 commit（含 `handoff.json`），review 失效时可在其后追加只含 review 过程文件的证据 commit。`task-run` 按用户给定顺序串成线性分支：
 
 ```text
 main ── t001 ── t002 ── t003
@@ -60,19 +60,22 @@ testing.md 是项目验证命令与显式策略唯一权威；verification_polic
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
+done 后 review 失效时，重新 review 并把新报告作为证据 commit 追加，不改写实现 commit。证据 commit 只能修改当前 task 目录内的 review 过程文件（`note.md`、`review_*.md`、渲染的 review prompt，与指纹排除清单同源），不得改 `handoff.json`、交付文件或其它路径，因此不改变指纹。cleanup、integrate、integrate-chain 与 `ledger import` 沿 first parent 从分支 tip 回溯到 base，要求最旧的是实现 commit、其后全是此类证据 commit。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
+
 ## 合并
 
 merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。单 task 和链式合并均先完成 exact gate，然后：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
+→ 成员 task 目录 git mv 到 docs/archive/tasks/
 → 重建并暂存派生 index
 → 运行合并后验证
-→ 通过：--continue 重算自动合并 tree；仅原始冲突路径可含人工解决内容，随后创建 merge commit、写 integrated、删除分支
+→ 通过：--continue 重算自动合并 tree；仅原始冲突路径可含人工解决内容，成员目录的归档移动与派生 index 之外的偏离一律拒绝，随后创建 merge commit、写 integrated、删除分支
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置执行 commit。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit 与证据 commit，全部成员目录在同一个 merge commit 中归档。
 
 ## Goal
 
@@ -82,9 +85,9 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 |阶段|写域|职责|
 |---|---|---|
-|task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、归档、机器生成执行回执并提交一个执行 commit（失败整体回滚）|
+|task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、原位写 done、机器生成执行回执并提交实现 commit（失败整体回滚）；done 后 review 失效时追加证据 commit|
 |task-run|主仓控制面|`run-begin`、`run-close`（attempt lifecycle、exact cleanup）、队列推进|
-|task-integrate|主仓 main|经授权准备 Git merge、合并后验证、commit、integrated 和分支清理|
+|task-integrate|主仓 main|经授权准备 Git merge、归档成员 task 目录、合并后验证、commit、integrated 和分支清理|
 
 ## 模板分发与升级
 
