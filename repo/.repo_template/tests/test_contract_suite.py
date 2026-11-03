@@ -12,7 +12,8 @@ TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import repo_sync as rs
+from template_sync import context as ctx
+from template_sync.gates import _run_tests
 
 pytestmark = pytest.mark.contract
 
@@ -97,11 +98,11 @@ def test_testing_md_default_commands_use_contract_marker():
 
 
 def test_sync_apply_runs_contract_suite(monkeypatch):
-    monkeypatch.setattr(rs, "validation_environment", lambda _root: {})
-    assert rs.CONSUMER_TEST_COMMAND == (
+    monkeypatch.setattr("template_sync.gates.validation_environment", lambda _root: {})
+    assert ctx.CONSUMER_TEST_COMMAND == (
         "pytest", ".repo_template/tests/", "-q", "-m", "contract",
     )
-    assert rs.CONSUMER_TEST_TIMEOUT == 60
+    assert ctx.CONSUMER_TEST_TIMEOUT == 60
     calls = {}
 
     class Result:
@@ -118,10 +119,10 @@ def test_sync_apply_runs_contract_suite(monkeypatch):
         calls["timeout"] = kwargs.get("timeout")
         return Result()
 
-    monkeypatch.setattr(rs.subprocess, "run", fake_run)
-    assert rs._run_tests(REPO_ROOT) is True
-    assert calls["command"] == list(rs.CONSUMER_TEST_COMMAND)
-    assert calls["timeout"] == rs.CONSUMER_TEST_TIMEOUT
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert _run_tests(REPO_ROOT) is True
+    assert calls["command"] == list(ctx.CONSUMER_TEST_COMMAND)
+    assert calls["timeout"] == ctx.CONSUMER_TEST_TIMEOUT
 
 
 def test_all_consumer_skills_disable_model_invocation():

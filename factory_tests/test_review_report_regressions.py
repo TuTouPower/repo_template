@@ -17,7 +17,9 @@ from repo_task.finalization import check_finalization, validate_spike
 from repo_task.locks import CONTROL_LOCK_NAME, file_lock, git_common_lock
 from repo_task.validation import ValidationError, run_checks
 import repo_task.locks as locks
-import repo_sync as rs
+from template_sync import context as ctx
+from template_sync.apply import cmd_apply
+from template_sync.gates import _run_tests
 from export_template import _extract_product
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
@@ -106,7 +108,7 @@ def test_agents_semantic_merge_uses_template_principles_and_preserves_project_in
     draft = env["consumer"] / ".scratch/candidate.md"
     draft.parent.mkdir()
     draft.write_text(candidate, encoding="utf-8")
-    assert rs.cmd_apply(Namespace(skip_tests=True, decisions={}, agents_file=draft)) == 0
+    assert cmd_apply(Namespace(skip_tests=True, decisions={}, agents_file=draft)) == 0
     result = (env["consumer"] / "AGENTS.md").read_text()
     assert result.startswith("Private project\n")
     assert "Merged paths" in result
@@ -166,14 +168,14 @@ def test_sync_validation_child_fails_fast_instead_of_waiting_for_parent_lock(git
         policy.write_text(policy.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\n" +
                                                    " ".join(command) + "\n```"), encoding="utf-8")
     else:
-        monkeypatch.setattr(rs, "CONSUMER_TEST_COMMAND", tuple(command))
-        monkeypatch.setattr(rs, "CONSUMER_TEST_TIMEOUT", 5)
+        monkeypatch.setattr(ctx, "CONSUMER_TEST_COMMAND", tuple(command))
+        monkeypatch.setattr(ctx, "CONSUMER_TEST_TIMEOUT", 5)
     with git_common_lock(git_repo, CONTROL_LOCK_NAME):
         if gate == "project":
             with pytest.raises(ValidationError, match="同步验证期间禁止修改"):
                 run_checks(git_repo, timeout=5)
         else:
-            assert not rs._run_tests(git_repo)
+            assert not _run_tests(git_repo)
     assert not list((git_repo / "docs/tasks").glob("t004_*"))
 
 
