@@ -431,14 +431,14 @@ H2 机制清单与初判（「待验证」表示缺少使用数据）：
 | WP11 | 测试依赖替身隔离与 xdist `9769df2`；工厂 CI 与命令使用 `-n auto`，消费默认 contract 命令不变 |
 | 隔离验收发现并修复 | `14a0105`、`aec606f`：start 创建超时后查询实际现场，未知资源不误报零写入；`224ad1c`：契约按已提交 verification_policy 识别定制项目，不依赖 worktree 中缺失的本机 state |
 | 代码集成 | `1c05bae`；产物树 `c482c2827313acc8104a3d534b03d8d4ddfffa4a`，与隔离验收来源 `224ad1c:repo` 一致 |
-| 工作区收尾 | WP8、WP11 已合入并删除分支与 worktree，工厂仅保留主工作树；现行 dogfood 同步来源为工厂根 |
+| 工作区收尾 | WP8、WP11 已合入并删除分支与 worktree，工厂仅保留主工作树；本次临时验收仓已按用户要求删除，后续按需重新导出 |
 | 工厂验证 | 最终合入状态 900 passed、1 skipped（2 worker，437.11 秒，7 分 17 秒）；前一完整运行 899 passed、1 skipped，新增定制项目导出回归独立 2 passed |
 | 其它门禁 | 合入后 Markdown 全量格式检查、skill registry、task 与 reviewer CLI help、git diff --check 通过 |
-| 隔离验收 | `~/kar/code/repo_template_dogfood/`，来源 `224ad1c`；t001 实现 `4f18f30`、merge `138865a`；create → run-begin → 独立 review → finish → run-close → integrate 闭环，归档与索引随 merge，工作区干净、task 分支及 worktree 已清理 |
+| 隔离验收 | 临时仓 `~/kar/code/repo_template_dogfood/`（验收后已删除），来源 `224ad1c`；t001 实现 `4f18f30`、merge `138865a`；create → run-begin → 独立 review → finish → run-close → integrate 闭环，归档与索引随 merge，工作区干净、task 分支及 worktree 已清理 |
 
 隔离仓项目验证为 CLI 3 passed、contract 222 passed / 1 skipped；独立 reviewer Round 1 PASS、零 finding、三条 AC 均 TICK-VALID，checker overall=PASS / review_scope=ok / ac_review=ok。合并后 doctor/test/blackbox 均 PASS；另核对执行回执 identity、实现 first parent、归档 index、integrated 事件与唯一 claim，同 identity 的第二 owner 领取被拒。
 
-先前隔离仓在 `git worktree add` 超时与契约误判时保留现场，后完整保存至 `~/kar/code/repo_template_dogfood_before_contract_fix/`；修复后从干净提交重新导出，不在 active task 中手工替换工具链。现行隔离仓同步来源已改为工厂根，避免依赖临时 worktree。
+先前隔离仓在 `git worktree add` 超时与契约误判时保留现场，后完整保存至 `~/kar/code/repo_template_dogfood_before_contract_fix/`；修复后从干净提交重新导出，不在 active task 中手工替换工具链。验收完成后，按用户要求删除本次临时隔离仓、该故障备份仓及 `review_general_t001_002MDZ/` 临时测试目录（含 pytest 子目录）；后续发布前从拟发布 commit 按需重新导出。修复与验收结论保留在工厂仓。
 
 正常单 task 主路径为 run-begin、preflight、render_review_prompts、check_review_status、finish、run-close、integrate、integrate --continue，共 8 次状态/审查脚本调用；队列 plan 一次后为 9 次。项目测试、格式检查和按需恢复另计。
 
