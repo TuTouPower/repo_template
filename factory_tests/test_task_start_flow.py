@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2093,7 +2094,7 @@ def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories
             raise OSError('simulated second source archive failure')
         return original_move(source, destination)
 
-    monkeypatch.setattr(lifecycle.shutil, 'move', fail_second_source)
+    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": fail_second_source}))
     with pytest.raises(ctx.TaskDataError, match='已恢复图与来源目录'):
         cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002'))
     after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
@@ -2131,6 +2132,30 @@ def test_find_merge_commit_handles_deep_merge_history(git_repo):
     # 4. _find_merge_commit 应当跨越这 55 个无关 merge 找到原 merge commit
     found = _find_merge_commit(second_parent, "task: integrate t001")
     assert found == merge_sha
+
+
+@pytest.mark.parametrize('partial', ['branch', 'worktree'])
+def test_start_timeout_reports_unconfirmed_resources_without_deleting_them(git_repo, monkeypatch, partial):
+    from repo_task import worktrees
+    original_git = worktrees._git
+
+    def interrupted_add(args, **kwargs):
+        if args[:2] != ['worktree', 'add']:
+            return original_git(args, **kwargs)
+        if partial == 'branch':
+            original_git(['branch', args[3], args[-1]], **kwargs)
+        else:
+            assert original_git(args, **kwargs).returncode == 0
+        raise ctx.TaskDataError('模拟 worktree add 超时')
+
+    monkeypatch.setattr(worktrees, '_git', interrupted_add)
+    head = _git(git_repo, 'rev-parse', 'HEAD').stdout.strip()
+    with pytest.raises(SystemExit, match='创建结果未确认'):
+        integration.cmd_start(argparse.Namespace(tid='t001', base=None))
+    assert _git(git_repo, 'rev-parse', 'HEAD').stdout.strip() == head
+    assert _git(git_repo, 'rev-parse', '--verify', 'refs/heads/t001_alpha').stdout.strip() == head
+    assert _worktree_path(git_repo, 't001').exists() == (partial == 'worktree')
+    assert parse_front_matter(git_repo / 'docs/tasks/t001_alpha/progress.md')[0]['status'] == 'backlog'
 
 
 def test_start_failure_does_not_remove_preexisting_worktree(git_repo):

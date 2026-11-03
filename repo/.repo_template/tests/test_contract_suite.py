@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,11 +82,9 @@ def test_contract_collection_matches_allowlist():
 
 
 def test_testing_md_default_commands_use_contract_marker():
-    if (REPO_ROOT / ".repo_template/sync_state.json").is_file() or (
-        REPO_ROOT / ".agents/skills/repo-template-sync/sync_state.json"
-    ).is_file():
-        pytest.skip("消费仓已按自身技术栈定制 testing.md，跳过模板默认命令检查")
     text = (REPO_ROOT / "docs/blueprint/testing.md").read_text(encoding="utf-8")
+    if _section(text, "verification_policy").strip() == "project_configured":
+        pytest.skip("项目已显式选择验证策略，跳过模板默认命令检查")
     doctor = _section(text, "doctor_cmd")
     test_cmd = _section(text, "test_cmd")
     assert _pytest_lines(doctor) == [
@@ -119,7 +118,7 @@ def test_sync_apply_runs_contract_suite(monkeypatch):
         calls["timeout"] = kwargs.get("timeout")
         return Result()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("template_sync.gates.subprocess", SimpleNamespace(**{**vars(subprocess), "run": fake_run}))
     assert _run_tests(REPO_ROOT) is True
     assert calls["command"] == list(ctx.CONSUMER_TEST_COMMAND)
     assert calls["timeout"] == ctx.CONSUMER_TEST_TIMEOUT

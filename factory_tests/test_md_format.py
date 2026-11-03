@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -160,7 +161,7 @@ def test_format_timeout_rolls_back_already_formatted(repo, tmp_path, monkeypatch
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=30)
         return real_run(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", flaky_run)
+    monkeypatch.setattr(mdf, "subprocess", SimpleNamespace(**{**vars(subprocess), "run": flaky_run}))
 
     with pytest.raises(mdf.MdFormatError, match="已回滚"):
         mdf.format_paths(["a.md", "b.md"])

@@ -8,6 +8,7 @@ main 子进程，覆盖默认类别扫描、docs/ 保护、node/scratch/artifact
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -234,7 +235,7 @@ def test_repo_cleanup_git_timeout(monkeypatch):
     def mock_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
 
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    monkeypatch.setattr(rc, "subprocess", SimpleNamespace(**{**vars(subprocess), "run": mock_run}))
     with pytest.raises(rc.CleanupError, match="超时（30s）"):
         rc.repo_root()
 

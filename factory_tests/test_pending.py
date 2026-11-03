@@ -8,6 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -730,7 +731,7 @@ def test_allocate_atomicity_and_cleanup_on_failure(tmp_path, monkeypatch):
     def fail_replace(src, dst):
         raise InjectedError("replace failure")
 
-    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr("_id_scan.os", SimpleNamespace(**{**vars(os), "replace": fail_replace}))
 
     # 1. allocate 写入替换失败
     with pytest.raises(InjectedError):
