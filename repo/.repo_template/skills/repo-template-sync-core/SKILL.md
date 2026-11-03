@@ -26,4 +26,4 @@ metadata:
 
 ## 完成
 
-报告来源、变更、验证、事务、state 和 commit 状态。任何共享冲突、未选定项目验证、失败检查或未结束事务都表示同步尚未完成。详细恢复边界见 usage，机械事实以脚本和持久 transaction.json 为准。
+报告来源、变更、验证、事务、state 和 commit 状态。任何共享冲突、未选定项目验证、失败检查或未结束事务都表示同步尚未完成。详细恢复边界见 `.repo_template/docs/sync.md`，机械事实以脚本和持久 transaction.json 为准。

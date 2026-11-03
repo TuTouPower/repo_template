@@ -54,7 +54,7 @@ testing.md 是项目验证命令与显式策略唯一权威；verification_polic
 2. 项目定义的黑盒验证，无黑盒时必须由项目策略明确选择并提供替代验收；
 3. 按 `review_level` 执行的独立 review。
 
-`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入 handoff，reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
+`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
@@ -74,13 +74,13 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 ## Goal
 
-`task.py goal` 冻结 goal 队列并打印宿主可用的 `/goal` 行；`goal-check` 根据 task、attempt、handoff 和 worktree 输出 COMPLETE、STOPPED 或 INCOMPLETE。COMPLETE 仅表示 execution complete，awaiting_merge 和 integrated 单独输出。goal 只包装 task-run，不改变执行和 merge 授权语义。
+`task.py goal` 冻结 goal 队列并打印宿主可用的 `/goal` 行；`goal-check` 根据 task、attempt、执行回执和 worktree 输出 COMPLETE、STOPPED 或 INCOMPLETE。COMPLETE 仅表示 execution complete，awaiting_merge 和 integrated 单独输出。goal 只包装 task-run，不改变执行和 merge 授权语义。
 
 ## 写域
 
 |阶段|写域|职责|
 |---|---|---|
-|task-work|当前 task worktree|实现、测试、黑盒、review、文档、handoff、finish、一个执行 commit|
+|task-work|当前 task worktree|实现、测试、黑盒、review、文档、执行回执、finish、一个执行 commit|
 |task-run|主仓控制面|start、attempt lifecycle、exact cleanup、队列推进|
 |task-integrate|主仓 main|经授权准备 Git merge、合并后验证、commit、integrated 和分支清理|
 
@@ -90,8 +90,8 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 同步器直接从固定来源运行，consumer 显式指定，core 直接读取。准备阶段只写来源缓存；不自覆盖、不 prep。apply 在控制面锁内保存全部受管资产的 before-image 和持久日志，schema、入口、共享裁定、项目门禁与 state 推进纳入同一事务。失败恢复原始内容且保留备份；恢复失败不得吞错。成功后仍处于 applied，批准提交后 accept，放弃则 rollback。语义 AGENTS 合并先写 scratch，通过 agents-file 进入事务。
 
-sync_manifest 是可入库版本基线；sync_policy 是显式共享保护决策；sync_state 只承载本机来源和私人 prompt。新 clone 依据 manifest 重新接入，本机 ledger 丢失仅从严格验证的 done Git/handoff 重建，active 不猜补。支持范围与灾难恢复步骤见 usage。
+sync_manifest 是可入库版本基线；sync_policy 是显式共享保护决策；sync_state 只承载本机来源和私人 prompt。新 clone 依据 manifest 重新接入，本机 ledger 丢失仅从严格验证的 done Git/执行回执重建，active 不猜补。支持范围见 `usage.md`，灾难恢复步骤见 `recovery.md`，同步与降级步骤见 `sync.md`。
 
 ## 权威分工
 
-AGENTS 保留长期不变量和写权；本文解释机制与取舍；usage 说明接口与恢复；SKILL 说明阶段动作、授权和停止；registry 是角色/调用图唯一事实源。持久事务日志和脚本检查决定机械状态，测试验证这些语义；派生入口与表格由生成器更新。
+AGENTS 保留长期不变量和写权；本文解释机制与取舍；usage 说明日常接口（路径写权、命令约定、命名格式、skill 调用、支持边界）；recovery 说明多会话接管与状态恢复；sync 说明模板同步、升级与降级；SKILL 说明阶段动作、授权和停止；registry 是角色/调用图唯一事实源。持久事务日志和脚本检查决定机械状态，测试验证这些语义；派生入口与表格由生成器更新。
