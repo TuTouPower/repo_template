@@ -69,7 +69,7 @@ def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
     lines = text.split("\n")
     if not lines or _clean_line(lines[0]) != "---":
         raise ctx.TaskDataError(
-            f"{source}:1: note.md 必须以独占一行的 YAML front matter (---) 开头"
+            f"{source}:1: {ctx.PROGRESS_FILE} 必须以独占一行的 YAML front matter (---) 开头"
         )
     end = None
     for index in range(1, len(lines)):
@@ -572,10 +572,10 @@ def validate_task_documents(
                 problems.append(f"task.md AC 编号重复：{ac_id}")
             ac_ids.append(ac_id)
 
-    missing_task_headings = _missing_heading_sequence(task_body, ctx.TASK_REQUIRED_HEADINGS)
+    missing_task_headings = _missing_heading_sequence(task_body, ctx.PROGRESS_REQUIRED_HEADINGS)
     if missing_task_headings:
         problems.append(
-            "note.md 缺必需标题、标题层级错误或顺序错误："
+            f"{ctx.PROGRESS_FILE} 缺必需标题、标题层级错误或顺序错误："
             + "、".join(missing_task_headings)
         )
 
@@ -585,7 +585,7 @@ def validate_task_documents(
         line for line in ctx.IMPLEMENTATION_NOTE_GUIDANCE if line not in visible_task_lines
     ]
     if missing_guidance:
-        problems.append("note.md 实施笔记缺当前模板固定说明；先运行 repo-template-sync 强制迁移")
+        problems.append(f"{ctx.PROGRESS_FILE} 实施笔记缺当前模板固定说明；先运行 repo-template-sync 强制迁移")
 
     notes = _extract_markdown_section(task_body, 2, "实施笔记")
     if notes is not None:
@@ -595,14 +595,14 @@ def validate_task_documents(
             if line.strip() and line.strip() not in ctx.IMPLEMENTATION_NOTE_GUIDANCE
         ]
         if not payload_lines:
-            problems.append("note.md 实施笔记为空；无事项时写「无」")
+            problems.append(f"{ctx.PROGRESS_FILE} 实施笔记为空；无事项时写「无」")
 
     if not allow_template_placeholders:
         visible_text = "\n".join(_visible_markdown_lines(spec_text + "\n" + task_body))
         placeholders = ctx.TEMPLATE_PLACEHOLDER_RE.findall(_strip_inline_code(visible_text))
         if placeholders:
             problems.append(
-                f"task.md / note.md 残留 {len(placeholders)} 个模板占位符："
+                f"task.md / {ctx.PROGRESS_FILE} 残留 {len(placeholders)} 个模板占位符："
                 + "、".join(sorted(set(placeholders))[:3])
             )
 

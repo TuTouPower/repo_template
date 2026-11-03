@@ -33,9 +33,9 @@ def fake_repo(tmp_path, monkeypatch):
     archive.mkdir(parents=True)
     template.mkdir()
     configure_project_verification(tmp_path)
-    # 模板目录必须含 note.md，scan_tasks 跳过 task_template/
+    # 模板目录必须含 progress.md，scan_tasks 跳过 task_template/
     write_front_matter(
-        template / "note.md",
+        template / "progress.md",
         {"tid": "t000", "slug": "example", "status": "backlog"},
         "模板正文\n",
     )
@@ -52,7 +52,7 @@ def _make_task(tasks_dir, tid, slug, status):
     d = tasks_dir / f"{tid}_{slug}"
     d.mkdir()
     write_front_matter(
-        d / "note.md",
+        d / "progress.md",
         {"tid": tid, "slug": slug, "status": status},
         "body\n\n- specs_index: not_applicable: isolated archive lifecycle test\n",
     )
@@ -90,7 +90,7 @@ def test_scan_rejects_dirname_mismatch(fake_repo):
     d = ctx.TASKS_DIR / "t003_wrong"
     d.mkdir()
     write_front_matter(
-        d / "note.md",
+        d / "progress.md",
         {"tid": "t003", "slug": "right", "status": "backlog"},
         "x\n",
     )
@@ -168,9 +168,9 @@ def test_rebuild_index_splits_active_archive(fake_repo):
     archive = json.loads(ctx.ARCHIVE_PATH.read_text(encoding="utf-8"))
     assert [t["tid"] for t in active["tasks"]] == ["t001", "t002"]
     assert [t["tid"] for t in archive["tasks"]] == ["t003"]
-    assert active["authority"] == "docs/tasks/{tid}_{slug}/note.md front matter"
+    assert active["authority"] == "docs/tasks/{tid}_{slug}/progress.md front matter"
     assert archive["authority"] == (
-        "docs/archive/tasks/{tid}_{slug}/note.md front matter"
+        "docs/archive/tasks/{tid}_{slug}/progress.md front matter"
     )
 
 
@@ -227,7 +227,7 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
 
     d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "active")
     write_front_matter(
-        d / "note.md",
+        d / "progress.md",
         {
             "tid": "t001", "slug": "alpha", "status": "active",
             "worktree": "worktrees/t001_wt", "note": "original note",
@@ -245,7 +245,7 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
     with pytest.raises(SystemExit, match="归档移动失败"):
         lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: reason")
-    fm, _ = parse_front_matter(d / "note.md")
+    fm, _ = parse_front_matter(d / "progress.md")
     # 全部字段完整回滚原状
     assert fm["status"] == "active"
     assert fm["worktree"] == "worktrees/t001_wt"
@@ -355,7 +355,7 @@ def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch
 
     d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "active")
     write_front_matter(
-        d / "note.md",
+        d / "progress.md",
         {"tid": "t001", "slug": "alpha", "status": "active", "worktree": "worktrees/t001_wt", "note": "base note"},
         "body\n",
     )
@@ -378,7 +378,7 @@ def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch
     with pytest.raises(SystemExit, match="归档移动失败"):
         lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: drop reason")
 
-    fm1, _ = parse_front_matter(d / "note.md")
+    fm1, _ = parse_front_matter(d / "progress.md")
     # 失败后 note 保持原样
     assert fm1["note"] == "base note"
     assert "dropped:" not in fm1["note"]
@@ -387,7 +387,7 @@ def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch
     should_fail[0] = False
     lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: drop reason")
 
-    archived_note = ctx.ARCHIVE_TASKS_DIR / "t001_alpha" / "note.md"
+    archived_note = ctx.ARCHIVE_TASKS_DIR / "t001_alpha" / "progress.md"
     assert archived_note.is_file()
     fm2, _ = parse_front_matter(archived_note)
     # 重试成功后，note 仅追加了一次

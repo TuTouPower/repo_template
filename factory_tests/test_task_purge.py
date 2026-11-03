@@ -40,7 +40,7 @@ def test_purge_rejects_branch_with_unmerged_commit(git_repo):
     assert added.returncode == 0, added.stderr
     tid = "t004"
     target = _task_dir(git_repo, tid)
-    note = target / "note.md"
+    note = target / "progress.md"
     fm, body = parse_front_matter(note)
     fm["branch"] = "t004_delta"
     write_front_matter(note, fm, body)

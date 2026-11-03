@@ -18,7 +18,7 @@ from repo_task.monitoring import review_scope_fingerprint
     ('t001,t002', ()),
 ])
 def test_start_rejects_dependency_merged_by_chain_but_missing_in_old_base(git_repo, dependencies, base_args):
-    path = git_repo / 'docs/tasks/t003_gamma/note.md'
+    path = git_repo / 'docs/tasks/t003_gamma/progress.md'
     fm, body = parse_front_matter(path)
     fm['depends_on'] = dependencies
     write_front_matter(path, fm, body)
@@ -107,7 +107,7 @@ def test_creation_gate_accepts_classified_blocking_but_start_does_not(git_repo):
 
 
 def test_runtime_rejects_retired_blocked_status_instead_of_compatibility_fallback(git_repo):
-    path = git_repo / 'docs/tasks/t001_alpha/note.md'
+    path = git_repo / 'docs/tasks/t001_alpha/progress.md'
     fm, body = parse_front_matter(path)
     fm['status'] = 'blocked'
     write_front_matter(path, fm, body)
@@ -174,13 +174,13 @@ def test_limits_increase_both_budgets_without_state_transition(git_repo):
     w = _worktree(git_repo, 't001')
     result = _task_cli(w, 'limits', 't001', '--review', '8', '--verify', '7', '--reason', '用户批准')
     assert result.returncode == 0, result.stderr
-    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/note.md')
+    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/progress.md')
     assert fm['status'] == 'active'
     assert fm['review_limit'] == '8' and fm['verify_limit'] == '7'
-    before = (w / 'docs/tasks/t001_alpha/note.md').read_bytes()
+    before = (w / 'docs/tasks/t001_alpha/progress.md').read_bytes()
     result = _task_cli(w, 'limits', 't001', '--review', '8', '--reason', '不能不增')
     assert result.returncode != 0
-    assert (w / 'docs/tasks/t001_alpha/note.md').read_bytes() == before
+    assert (w / 'docs/tasks/t001_alpha/progress.md').read_bytes() == before
 
 
 def test_blocked_attempt_keeps_task_active_and_new_attempt_resumes(git_repo):
@@ -190,7 +190,7 @@ def test_blocked_attempt_keeps_task_active_and_new_attempt_resumes(git_repo):
         result = _task_cli(git_repo, 'attempt', command, 't001', *_identity_args(first), '--status', status)
         assert result.returncode == 0, result.stderr
     w = _worktree(git_repo, 't001')
-    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/note.md')
+    fm, _ = parse_front_matter(w / 'docs/tasks/t001_alpha/progress.md')
     assert fm['status'] == 'active'
     assert _recovery(git_repo)['phase'] == 'retry_ready'
     second = _reserve(git_repo, 't001')
@@ -393,7 +393,7 @@ def test_limits_can_increase_one_budget(git_repo, option, field):
     worktree = _worktree(git_repo, 't001')
     result = _task_cli(worktree, 'limits', 't001', option, '9', '--reason', '用户批准单项追加')
     assert result.returncode == 0, result.stderr
-    fm, _ = parse_front_matter(worktree / 'docs/tasks/t001_alpha/note.md')
+    fm, _ = parse_front_matter(worktree / 'docs/tasks/t001_alpha/progress.md')
     assert fm[field] == '9'
     other = 'verify_limit' if field == 'review_limit' else 'review_limit'
     assert fm[other] == '5'
@@ -415,13 +415,13 @@ def test_merge_continue_rejects_modified_nonconflict_task_path(git_repo):
     identity, branch, _ = _prepare_done(git_repo, 't001', 'alpha')
     _cleanup(git_repo, 't001', identity)
     assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
-    path = git_repo / f'docs/archive/tasks/{branch}/note.md'
+    path = git_repo / f'docs/archive/tasks/{branch}/progress.md'
     path.write_text(path.read_text() + '\n未经 review 的 merge 期改写\n')
     _git(git_repo, 'add', str(path.relative_to(git_repo)))
     result = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
     assert result.returncode != 0
     assert '非冲突文件偏离 Git 自动合并结果' in result.stderr
-    assert f'docs/archive/tasks/{branch}/note.md' in result.stderr
+    assert f'docs/archive/tasks/{branch}/progress.md' in result.stderr
     assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
 
 

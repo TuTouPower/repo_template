@@ -86,7 +86,7 @@ def test_run_begin_accepts_base_for_chain(git_repo):
     _cleanup(git_repo, "t001", first)
     second = _begin(git_repo, "t002", "owner-two", "--base", branch)
     assert second["attempt"] == 1 and second["execution_id"] != first["execution_id"]
-    fm, _ = parse_front_matter(_worktree(git_repo, "t002") / "docs/tasks/t002_beta/note.md")
+    fm, _ = parse_front_matter(_worktree(git_repo, "t002") / "docs/tasks/t002_beta/progress.md")
     assert fm["diff_anchor"] == head
 
 
@@ -125,7 +125,7 @@ def test_run_begin_rejects_existing_attempt_worktree_and_branch(git_repo):
 
 
 def test_run_begin_start_failure_leaves_recovery_pending(git_repo):
-    path = git_repo / "docs/tasks/t001_alpha/note.md"
+    path = git_repo / "docs/tasks/t001_alpha/progress.md"
     fm, body = parse_front_matter(path)
     fm["depends_on"] = "t002"
     write_front_matter(path, fm, body)
@@ -309,7 +309,7 @@ def test_run_close_blocked_stops_attempt_and_keeps_worktree(git_repo):
     assert [(e["status"], e.get("reason")) for e in report] == [("blocked", "缺少外部凭据")]
     assert "sha" not in report[0]
     assert _worktree(git_repo, "t001").is_dir()
-    fm, _ = parse_front_matter(_worktree(git_repo, "t001") / "docs/tasks/t001_alpha/note.md")
+    fm, _ = parse_front_matter(_worktree(git_repo, "t001") / "docs/tasks/t001_alpha/progress.md")
     assert fm["status"] == "active"
     assert _recovery(git_repo)["phase"] == "retry_ready"
     # 重入：不重复写事件

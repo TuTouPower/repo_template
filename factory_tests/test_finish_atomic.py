@@ -191,7 +191,7 @@ def test_full_main_path_begin_finish_close_integrate_uses_only_tid_and_owner(git
 
 
 # --------------------------------------------------------------------------
-# handoff 的 tests / blackbox / review 来自 note.md
+# handoff 的 tests / blackbox / review 来自 progress.md
 # --------------------------------------------------------------------------
 
 
@@ -199,7 +199,7 @@ def test_full_main_path_begin_finish_close_integrate_uses_only_tid_and_owner(git
 @pytest.mark.parametrize("value", ["待执行时填写", ""])
 def test_finish_rejects_placeholder_or_empty_verification_summary(git_repo, label, value):
     _, worktree, message = _ready(git_repo)
-    note = worktree / "docs/tasks/t001_alpha/note.md"
+    note = worktree / "docs/tasks/t001_alpha/progress.md"
     text = note.read_text(encoding="utf-8")
     text = re.sub(rf"(?m)^- {label}：.*$", f"- {label}：{value}".rstrip(), text)
     note.write_text(text, encoding="utf-8")
@@ -215,7 +215,7 @@ def test_finish_rejects_placeholder_or_empty_verification_summary(git_repo, labe
 
 def test_finish_rejects_missing_summary_line(git_repo):
     _, worktree, message = _ready(git_repo)
-    note = worktree / "docs/tasks/t001_alpha/note.md"
+    note = worktree / "docs/tasks/t001_alpha/progress.md"
     note.write_text(re.sub(r"(?m)^- 黑盒：.*\n", "", note.read_text(encoding="utf-8")), encoding="utf-8")
     before = _snapshot(git_repo, worktree)
 
@@ -266,7 +266,7 @@ def test_finish_rejects_unstaged_or_untracked_files_with_zero_writes(git_repo, s
     assert result.returncode != 0
     assert "未暂存或未跟踪" in result.stderr and path in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert (worktree / "docs/tasks/t001_alpha/note.md").is_file()
+    assert (worktree / "docs/tasks/t001_alpha/progress.md").is_file()
 
 
 def test_finish_ignores_ignored_files_and_task_directory_files(git_repo):
@@ -405,8 +405,8 @@ def test_finish_commit_failure_rolls_back_every_write(git_repo):
     assert "hook-says-no" in result.stderr
     assert "已全部回滚" in result.stderr
     assert _snapshot(git_repo, worktree) == before
-    assert (worktree / "docs/tasks/t001_alpha/note.md").is_file()
-    fm_text = (worktree / "docs/tasks/t001_alpha/note.md").read_text(encoding="utf-8")
+    assert (worktree / "docs/tasks/t001_alpha/progress.md").is_file()
+    fm_text = (worktree / "docs/tasks/t001_alpha/progress.md").read_text(encoding="utf-8")
     assert 'status: "active"' in fm_text and 'worktree: "../' in fm_text
     # 回滚后现场可直接重试
     hook.unlink()
@@ -432,10 +432,10 @@ def test_finish_commit_msg_hook_rejection_also_rolls_back(git_repo):
 
 def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
     _, worktree, message = _ready(git_repo)
-    # hook 失败的同时把 note.md 换成目录，使 front matter 无法还原
+    # hook 失败的同时把 progress.md 换成目录，使 front matter 无法还原
     _install_hook(
         git_repo,
-        'rm docs/tasks/t001_alpha/note.md && mkdir docs/tasks/t001_alpha/note.md\n'
+        'rm docs/tasks/t001_alpha/progress.md && mkdir docs/tasks/t001_alpha/progress.md\n'
         'echo "hook-says-no" >&2\nexit 1',
     )
 
@@ -443,7 +443,7 @@ def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
 
     assert result.returncode != 0
     assert "回滚未完成" in result.stderr
-    assert "note.md front matter 还原失败" in result.stderr
+    assert "progress.md front matter 还原失败" in result.stderr
     assert "task.py recovery t001" in result.stderr
 
 

@@ -52,7 +52,7 @@ def recovery_state(tid: str) -> dict:
         return state
     task_dir = worktree / task["dir"]
     state["task_dir"] = str(task_dir)
-    fm, _ = parse_front_matter(task_dir / "note.md")
+    fm, _ = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
     if fm.get("branch") != branch or fm.get("tid") != tid:
         return state
     if fm["status"] == "active":
@@ -79,7 +79,7 @@ def recovery_state(tid: str) -> dict:
             return phase(
                 "finish_interrupted",
                 "finish 在生成 handoff.json 前被中断（已 done、无 handoff、无执行 commit）：停止并报告用户；"
-                "不重复 finish、不 reserve。核对 note.md 验证摘要后，由用户决定补写 handoff.json 并提交，或把 note.md 还原为 active",
+                f"不重复 finish、不 reserve。核对 {ctx.PROGRESS_FILE} 验证摘要后，由用户决定补写 handoff.json 并提交，或把 {ctx.PROGRESS_FILE} 还原为 active",
             )
     try:
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
@@ -143,7 +143,7 @@ def _evidence_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: 
         f"证据修复：review 门禁失败（{detail}）。"
         f"在原 worktree 对当前 tip {tip_sha[:12]} 的交付内容重新 review；"
         "把新报告作为证据 commit 追加（不改写实现 commit），该 commit 只能改当前 task 目录内的 review 过程文件"
-        "（note.md、review_*.md、渲染的 review prompt），不得改 handoff.json、交付文件或其它路径；"
+        f"（{ctx.PROGRESS_FILE}、review_*.md、渲染的 review prompt），不得改 handoff.json、交付文件或其它路径；"
         f"first parent 链仍须从 diff_anchor {diff_anchor[:12]} 起；"
         "禁止 rewind、reserve；"
         f"提交后 worktree 必须干净，再按原 identity attempt={attempt} execution_id={execution_id} exact cleanup。"

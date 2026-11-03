@@ -8,7 +8,7 @@ from repo_task.documents import parse_front_matter, write_front_matter
 
 def _relate(repo, tid, **values):
     """改 front matter 关系字段并提交，使 start 从含关系的 HEAD 创建 worktree。"""
-    path = next((repo / "docs/tasks").glob(f"{tid}_*/note.md"))
+    path = next((repo / "docs/tasks").glob(f"{tid}_*/progress.md"))
     frontmatter, body = parse_front_matter(path)
     frontmatter.update(values)
     write_front_matter(path, frontmatter, body)

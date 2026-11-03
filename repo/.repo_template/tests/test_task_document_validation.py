@@ -14,7 +14,7 @@ from review_support import fill_spec_text
 pytestmark = pytest.mark.contract
 
 SPEC_TEMPLATE = (REPO_ROOT / ".repo_template/docs/task_template/task.md").read_text(encoding="utf-8")
-_, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / ".repo_template/docs/task_template/note.md")
+_, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / ".repo_template/docs/task_template/progress.md")
 
 
 def _fill_spec_text(text: str) -> str:

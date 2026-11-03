@@ -31,14 +31,14 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 
 
 def _edit(repo, tid, **values):
-    path = next((repo / "docs/tasks").glob(f"{tid}_*/note.md"))
+    path = next((repo / "docs/tasks").glob(f"{tid}_*/progress.md"))
     fm, body = parse_front_matter(path)
     fm.update(values)
     write_front_matter(path, fm, body)
 
 
 def _fm(repo, tid):
-    return parse_front_matter(next((repo / "docs/tasks").glob(f"{tid}_*/note.md")))[0]
+    return parse_front_matter(next((repo / "docs/tasks").glob(f"{tid}_*/progress.md")))[0]
 
 
 @pytest.mark.parametrize("new_target", [False, True])
@@ -57,7 +57,7 @@ def test_merge_preserves_downstream_and_unions_external_dependencies(git_repo, n
     assert _fm(repo, target)["depends_on"] == "t004"
     assert "t004" in _fm(repo, target)["conflicts_with"]
     for tid in {"t001", "t002"} - {target}:
-        assert list((repo / "docs/archive/tasks").glob(f"{tid}_*/note.md"))
+        assert list((repo / "docs/archive/tasks").glob(f"{tid}_*/progress.md"))
     assert _task_cli(repo, "plan", "--serial", "--json").returncode == 0
     # The downstream still cannot start before the replacement completes.
     assert _task_cli(repo, "start", "t003").returncode != 0
@@ -66,7 +66,7 @@ def test_merge_preserves_downstream_and_unions_external_dependencies(git_repo, n
 def test_merge_cycle_rejection_is_zero_write(git_repo):
     _edit(git_repo, "t001", depends_on="t003")
     _edit(git_repo, "t003", depends_on="t002")
-    before = {p: p.read_bytes() for p in (git_repo / "docs/tasks").glob("t*/note.md")}
+    before = {p: p.read_bytes() for p in (git_repo / "docs/tasks").glob("t*/progress.md")}
     result = _task_cli(git_repo, "merge-backlog", "t001", "--sources", "t001,t002")
     assert result.returncode != 0 and "依赖环" in result.stderr
     assert all(path.read_bytes() == content for path, content in before.items())
@@ -414,7 +414,7 @@ def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
     begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
     assert begun.returncode == 0, begun.stderr
     w = _worktree(git_repo, "t001")
-    task = w / "docs/tasks/t001_alpha/note.md"
+    task = w / "docs/tasks/t001_alpha/progress.md"
     task.write_text("\n".join(line for line in task.read_text().splitlines()
                               if not line.startswith("- specs_index: not_applicable:")) + "\n")
     message = prepare_finish(w, "t001", "alpha")

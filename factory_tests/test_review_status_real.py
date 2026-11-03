@@ -34,7 +34,7 @@ def test_main_real_fingerprint_pass_then_stale(tmp_path, monkeypatch, capsys):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
     anchor = _git(repo, "rev-parse", "HEAD").stdout.strip()
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         "---\ntid: t001\nreview_level: single\ndiff_anchor: "
         + anchor + "\n---\n## Review 处置\n",
         encoding="utf-8",

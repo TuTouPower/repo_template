@@ -51,7 +51,7 @@ def test_finish_keeps_task_dir_in_place_with_status_done(git_repo):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (worktree / ACTIVE).is_dir()
     assert not (worktree / ARCHIVE).exists()
-    fm, _ = parse_front_matter(worktree / ACTIVE / "note.md")
+    fm, _ = parse_front_matter(worktree / ACTIVE / "progress.md")
     assert fm["status"] == "done"
     assert fm["branch"] == "t001_alpha"
     assert fm["worktree"] == ""
@@ -106,7 +106,7 @@ def test_done_in_active_dir_is_not_executable_and_listed_as_done(git_repo):
 def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
     before = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
-    tip_note = _git(git_repo, "show", f"{branch}:{ACTIVE}/note.md").stdout
+    tip_note = _git(git_repo, "show", f"{branch}:{ACTIVE}/progress.md").stdout
 
     merge = _integrated(git_repo, "t001", identity)
 
@@ -114,8 +114,8 @@ def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     assert _git(git_repo, "rev-parse", f"{merge}^1").stdout.strip() == before
     assert len(_git(git_repo, "rev-parse", f"{merge}^@").stdout.split()) == 2
     changes = _merge_changes(git_repo, merge)
-    assert changes[f"{ACTIVE}/note.md"] == "D"
-    assert changes[f"{ARCHIVE}/note.md"] == "A"
+    assert changes[f"{ACTIVE}/progress.md"] == "D"
+    assert changes[f"{ARCHIVE}/progress.md"] == "A"
     assert changes[f"{ARCHIVE}/handoff.json"] == "A"
     assert changes["docs/tasks_index.json"] != "" and changes["docs/archive/tasks_index.json"] != ""
     assert not (git_repo / ACTIVE).exists()
@@ -124,7 +124,7 @@ def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     active_index = json.loads((git_repo / "docs/tasks_index.json").read_text("utf-8"))
     assert "t001" not in [item["tid"] for item in active_index["tasks"]]
     # 归档是纯移动：内容与分支 tip 一致
-    assert (git_repo / ARCHIVE / "note.md").read_text("utf-8") == tip_note
+    assert (git_repo / ARCHIVE / "progress.md").read_text("utf-8") == tip_note
     assert _git(git_repo, "status", "--porcelain").stdout == ""
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
@@ -147,11 +147,11 @@ def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
     assert int(_git(git_repo, "rev-list", "--merges", "--count", "HEAD").stdout) == merges_before + 1
     changes = _merge_changes(git_repo)
     for name in ("t001_alpha", "t002_beta"):
-        assert changes[f"docs/tasks/{name}/note.md"] == "D"
-        assert changes[f"docs/archive/tasks/{name}/note.md"] == "A"
+        assert changes[f"docs/tasks/{name}/progress.md"] == "D"
+        assert changes[f"docs/archive/tasks/{name}/progress.md"] == "A"
     assert not (git_repo / "docs/tasks/t001_alpha").exists()
     assert not (git_repo / "docs/tasks/t002_beta").exists()
-    assert (git_repo / "docs/tasks/t003_gamma/note.md").is_file()  # 非成员 task 不动
+    assert (git_repo / "docs/tasks/t003_gamma/progress.md").is_file()  # 非成员 task 不动
     archive_index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
     assert [item["tid"] for item in archive_index["tasks"]] == ["t001", "t002"]
 
@@ -287,7 +287,7 @@ def test_archive_target_already_occupied_is_rejected(git_repo):
     _cleanup(git_repo, "t001", identity)
     occupied = git_repo / ARCHIVE
     occupied.mkdir(parents=True)
-    (occupied / "note.md").write_text("occupied\n", encoding="utf-8")
+    (occupied / "progress.md").write_text("occupied\n", encoding="utf-8")
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-m", "occupy archive target")
 
@@ -308,7 +308,7 @@ def _legacy_archived_history(repo):
     base = _git(repo, "rev-parse", "HEAD").stdout.strip()
     _git(repo, "checkout", "-q", "-b", "t001_alpha")
     _git(repo, "mv", ACTIVE, ARCHIVE)
-    note = repo / ARCHIVE / "note.md"
+    note = repo / ARCHIVE / "progress.md"
     fm, body = parse_front_matter(note)
     fm["status"] = "done"
     write_front_matter(note, fm, body)

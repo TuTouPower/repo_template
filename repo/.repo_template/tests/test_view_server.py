@@ -70,7 +70,7 @@ def repo_layout(tmp_path, monkeypatch):
     archive_dir.mkdir(parents=True)
     (tasks_dir / "t001_spec_doc").mkdir()
     (tasks_dir / "t001_spec_doc" / "task.md").write_text("# task 正文\n", encoding="utf-8")
-    (tasks_dir / "t001_spec_doc" / "note.md").write_text("# note 正文\n", encoding="utf-8")
+    (tasks_dir / "t001_spec_doc" / "progress.md").write_text("# note 正文\n", encoding="utf-8")
     (archive_dir / "t002_archived").mkdir()
     (archive_dir / "t002_archived" / "task.md").write_text("# 归档 task\n", encoding="utf-8")
     monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
@@ -83,7 +83,7 @@ def test_resolve_task_doc_ok(repo_layout):
     tasks = {"t001": {"dir": "docs/tasks/t001_spec_doc"}}
     path = view_server._resolve_task_doc(tasks, "t001", "task")
     assert path.read_text(encoding="utf-8") == "# task 正文\n"
-    assert view_server._resolve_task_doc(tasks, "t001", "note").name == "note.md"
+    assert view_server._resolve_task_doc(tasks, "t001", "progress").name == "progress.md"
 
 
 def test_resolve_task_doc_archived_ok(repo_layout):
@@ -152,7 +152,7 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     _git(repo, "commit", "-m", "init")
     _git(repo, "checkout", "-b", "t001_x")
     (repo / "docs/archive/tasks/t001_x").mkdir(parents=True)
-    (repo / "docs/archive/tasks/t001_x/note.md").write_text("# 分支归档 note\n", encoding="utf-8")
+    (repo / "docs/archive/tasks/t001_x/progress.md").write_text("# 分支归档 note\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "task")
     _git(repo, "checkout", "main")
@@ -160,7 +160,7 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     schedule = {"tasks": {"t001": {"dir": "docs/archive/tasks/t001_x"}}}
     sources = {"t001": {"source": "branch", "read_at": "t001_x"}}
-    body = view_server._read_task_doc(schedule, sources, "t001", "note")
+    body = view_server._read_task_doc(schedule, sources, "t001", "progress")
     assert body.decode("utf-8") == "# 分支归档 note\n"
     with pytest.raises(ctx.TaskDataError):
         view_server._read_task_doc(schedule, sources, "t001", "task")

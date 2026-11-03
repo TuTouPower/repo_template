@@ -45,11 +45,11 @@ def git_repo(tmp_path, monkeypatch):
     )
     shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
     shutil.copytree(TASK_TEMPLATE_DIR, template)
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "note.md")
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "progress.md")
     for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
         task_dir = tasks / f"{tid}_{slug}"
         shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(task_dir / "note.md", {
+        write_front_matter(task_dir / "progress.md", {
             "tid": tid, "slug": slug, "title": slug, "status": "backlog",
             "branch": "", "worktree": "", "review_level": "full",
             "diff_anchor": "", "note": "",
@@ -343,7 +343,7 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
 def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     worktree = _worktree(git_repo, "t001")
-    task_path = worktree / "docs/tasks/t001_alpha/note.md"
+    task_path = worktree / "docs/tasks/t001_alpha/progress.md"
     fm, body = parse_front_matter(task_path)
     fm["diff_anchor"] = "0" * 40
     write_front_matter(task_path, fm, body)

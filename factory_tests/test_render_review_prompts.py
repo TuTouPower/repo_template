@@ -142,7 +142,7 @@ def _make_prompts_dir(tmp_path):
 def _make_task_dir(tmp_path, level="full", contract="AC1", context="策略"):
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         f'---\ntid: t001\nslug: foo\ndiff_anchor: "abc1234"\nreview_level: "{level}"\n---\nbody\n',
         encoding="utf-8",
     )
@@ -193,7 +193,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", repo)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: ../private.md\n---\nbody\n",
         encoding="utf-8",
@@ -212,7 +212,7 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
     (repo / "linked_spec.md").symlink_to(outside)
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: linked_spec.md\n---\nbody\n",
         encoding="utf-8",
@@ -226,7 +226,7 @@ def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
         "spec_path: docs\\spec.md\n---\nbody\n",
         encoding="utf-8",
@@ -241,7 +241,7 @@ def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         '---\ntid: t001\nslug: foo\ndiff_anchor: "abc"\n---\nx\n',
         encoding="utf-8",
     )
@@ -255,7 +255,7 @@ def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         '---\ntid: t001\nslug: foo\ndiff_anchor: ""\n---\nx\n',
         encoding="utf-8",
     )
@@ -300,7 +300,7 @@ def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-m", "init")
     anchor = _git(tmp_path, "rev-parse", "--short", "HEAD").stdout.strip()
-    (task_dir / "note.md").write_text(
+    (task_dir / "progress.md").write_text(
         f'---\ntid: t001\nslug: foo\ndiff_anchor: "{anchor}"\nreview_level: "full"\n---\nbody\n',
         encoding="utf-8",
     )

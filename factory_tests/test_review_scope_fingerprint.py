@@ -40,7 +40,7 @@ def git_repo(tmp_path):
     task_dir = root / TASK_REL
     task_dir.mkdir(parents=True)
     (root / "README.md").write_text("repo\n", encoding="utf-8")
-    (task_dir / "note.md").write_text("---\ntid: t001\n---\n", encoding="utf-8")
+    (task_dir / "progress.md").write_text("---\ntid: t001\n---\n", encoding="utf-8")
     (task_dir / "task.md").write_text("## 契约区\nAC1\n", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-m", "init")
@@ -54,7 +54,7 @@ def _fingerprint(repo: Path, anchor: str) -> str:
     return fp
 
 
-@pytest.mark.parametrize("filename", [name for name in REVIEW_PROCESS_FILES if name != "note.md"])
+@pytest.mark.parametrize("filename", [name for name in REVIEW_PROCESS_FILES if name != "progress.md"])
 def test_untracked_review_artifacts_keep_content_fingerprint(git_repo, filename):
     repo, anchor = git_repo
     before = _fingerprint(repo, anchor)
@@ -64,7 +64,7 @@ def test_untracked_review_artifacts_keep_content_fingerprint(git_repo, filename)
 
 def test_task_body_is_excluded_but_review_level_is_bound(git_repo):
     repo, anchor = git_repo
-    path = repo / TASK_REL / "note.md"
+    path = repo / TASK_REL / "progress.md"
     path.write_text("---\nreview_level: full\n---\noriginal notes\n", encoding="utf-8")
     before = _fingerprint(repo, anchor)
     path.write_text("---\nreview_level: full\n---\nupdated notes\n", encoding="utf-8")
@@ -75,7 +75,7 @@ def test_task_body_is_excluded_but_review_level_is_bound(git_repo):
 
 def test_malformed_review_metadata_fails_closed(git_repo):
     repo, anchor = git_repo
-    (repo / TASK_REL / "note.md").write_text("unstructured task metadata\n", encoding="utf-8")
+    (repo / TASK_REL / "progress.md").write_text("unstructured task metadata\n", encoding="utf-8")
     assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo) == ""
 
 
@@ -83,7 +83,7 @@ def test_untracked_foreign_file_changes_fingerprint(git_repo):
     """对照：非流程 untracked 文件仍改指纹——排除不是一刀切放掉 task 目录。"""
     repo, anchor = git_repo
     before = _fingerprint(repo, anchor)
-    (repo / TASK_REL / "stray_note.md").write_text("x\n", encoding="utf-8")
+    (repo / TASK_REL / "stray_progress.md").write_text("x\n", encoding="utf-8")
     assert _fingerprint(repo, anchor) != before
 
 

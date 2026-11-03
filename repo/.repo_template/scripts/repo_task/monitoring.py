@@ -52,7 +52,7 @@ REVIEW_PROMPT_OUTPUT_FILES = {
 }
 # task 目录级 review 流程文件（review 门禁指纹排除全量）：过程文件 + prompt 渲染产物。
 REVIEW_PROCESS_FILES = (
-    "note.md",
+    ctx.PROGRESS_FILE,
     "review_code.md",
     "review_test.md",
     "review_general.md",
@@ -208,7 +208,7 @@ def review_scope_fingerprint(
         before = _review_tree(root, diff_anchor, task_name)
         after = _review_tree(root, ref, task_name) if ref else _review_worktree(root, task_name)
         digest = hashlib.sha256(b"repo-task-review-scope-v2\0")
-        task_path = f"docs/tasks/{task_name}/note.md"
+        task_path = f"docs/tasks/{task_name}/{ctx.PROGRESS_FILE}"
         review_level = "full"
         text = None
         if ref:
@@ -355,7 +355,7 @@ _HANDOFF_TYPES = {
 }
 
 
-# note.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
+# progress.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
 HANDOFF_PLACEHOLDERS = ("待执行时填写",)
 _SUMMARY_LINES = (("tests", "测试"), ("blackbox", "黑盒"), ("review", "review"))
 _PENDING_PATH_RE = re.compile(
@@ -365,18 +365,18 @@ _FINDING_PATH_RE = re.compile(r"^docs/findings/(d[0-9]+)_[^/]+\.md$")
 
 
 def read_verification_summary(note_body: str) -> dict[str, str]:
-    """读取 note.md「收尾报告 / 验收与验证」的测试、黑盒、review 三行；空值或模板占位拒绝。"""
+    """读取 progress.md「收尾报告 / 验收与验证」的测试、黑盒、review 三行；空值或模板占位拒绝。"""
     report = _extract_markdown_section(note_body, 2, "收尾报告")
     section = _extract_markdown_section(report, 3, "验收与验证") if report is not None else None
     if section is None:
-        raise ctx.TaskDataError("note.md 缺「收尾报告 / 验收与验证」小节，无法生成 handoff.json")
+        raise ctx.TaskDataError(f"{ctx.PROGRESS_FILE} 缺「收尾报告 / 验收与验证」小节，无法生成 handoff.json")
     lines = _visible_markdown_lines(section)
     summary = {}
     for key, label in _SUMMARY_LINES:
         pattern = re.compile(rf"^ {{0,3}}-[ \t]+{label}[ \t]*[:：][ \t]*(.*?)[ \t]*$")
         values = [match.group(1) for match in map(pattern.match, lines) if match]
         if not values:
-            raise ctx.TaskDataError(f"note.md「收尾报告 / 验收与验证」缺 `- {label}：` 行")
+            raise ctx.TaskDataError(f"{ctx.PROGRESS_FILE}「收尾报告 / 验收与验证」缺 `- {label}：` 行")
         value = values[0]
         if (
             not value
@@ -384,7 +384,7 @@ def read_verification_summary(note_body: str) -> dict[str, str]:
             or ctx.TEMPLATE_PLACEHOLDER_RE.search(value)
         ):
             raise ctx.TaskDataError(
-                f"note.md「收尾报告 / 验收与验证」的 `- {label}：` 为空或仍是模板占位；"
+                f"{ctx.PROGRESS_FILE}「收尾报告 / 验收与验证」的 `- {label}：` 为空或仍是模板占位；"
                 "写入实际验证结果后再 finish"
             )
         summary[key] = value
@@ -415,7 +415,7 @@ def build_handoff(
     *, tid: str, attempt: int, execution_id: str, branch: str, base_sha: str,
     note_body: str, root: Path,
 ) -> dict:
-    """由 execution context、ledger、暂存区与 note.md 机器生成 handoff.json；不手写。"""
+    """由 execution context、ledger、暂存区与 progress.md 机器生成 handoff.json；不手写。"""
     summary = read_verification_summary(note_body)
     pending, findings = staged_ledger_entries(root)
     handoff = {
@@ -541,11 +541,11 @@ def verify_integrate_ready(
         try:
             with tempfile.TemporaryDirectory(prefix="repo-task-review-") as tmp:
                 target = Path(tmp)
-                for name in ("note.md", "task.md", "review_code.md", "review_test.md", "review_general.md"):
+                for name in (ctx.PROGRESS_FILE, "task.md", "review_code.md", "review_test.md", "review_general.md"):
                     try:
                         text = git_text_at_ref(branch, f"{task['dir']}/{name}")
                     except ctx.TaskDataError:
-                        if name in ("note.md", "task.md"):
+                        if name in (ctx.PROGRESS_FILE, "task.md"):
                             raise
                         continue
                     (target / name).write_text(text, encoding="utf-8")

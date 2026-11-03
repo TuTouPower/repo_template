@@ -86,7 +86,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (toolkit / "tests/test_x.py").write_text("def test_x():\n    pass\n")
     (toolkit / "docs/task_template").mkdir(parents=True)
     (toolkit / "docs/task_template/task.md").write_text("# task\n")
-    (toolkit / "docs/task_template/note.md").write_text("---\ntid: t000\n---\n## 实施笔记\n无\n")
+    (toolkit / "docs/task_template/progress.md").write_text("---\ntid: t000\n---\n## 实施笔记\n无\n")
     (toolkit / "docs/review_prompts").mkdir(parents=True)
     (toolkit / "docs/review_prompts/general_prompt.txt").write_text("general\n")
     (toolkit / "docs/spike_report_template.md").write_text("# report\n")
@@ -1296,9 +1296,9 @@ def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
     target = consumer / '.repo_template/docs/task_template'
     target.mkdir(parents=True, exist_ok=True)
     task = (source / 'task.md').read_text()
-    note = (source / 'note.md').read_text()
+    note = (source / 'progress.md').read_text()
     (target / 'task.md').write_text(task)
-    (target / 'note.md').write_text(note)
+    (target / 'progress.md').write_text(note)
     return task, note
 
 
@@ -1342,7 +1342,7 @@ def test_missing_guide_block_is_restored_and_reported(env):
     task_dir = consumer / 'docs/tasks/t001_missing'
     task_dir.mkdir(parents=True)
     (task_dir / 'task.md').write_text(missing)
-    (task_dir / 'note.md').write_text(current_task)
+    (task_dir / 'progress.md').write_text(current_task)
     migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert 'docs/tasks/t001_missing/task.md' in migrations
     assert worktrees == [] and errors == []
@@ -1358,7 +1358,7 @@ def test_migration_status_reports_malformed_spec_without_raising(env):
     task_dir = consumer / 'docs/tasks/t001_malformed'
     task_dir.mkdir(parents=True)
     (task_dir / 'task.md').write_text(malformed)
-    (task_dir / 'note.md').write_text(current_task)
+    (task_dir / 'progress.md').write_text(current_task)
     migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == []
     assert len(errors) == 1 and 't001_malformed/task.md' in errors[0]
@@ -1372,6 +1372,87 @@ def test_workflow_migrations_are_idempotent_for_current_schema(env):
     current_spec, current_task = _install_current_workflow_templates(env['consumer'])
     assert _replace_guide_blocks(current_spec, current_spec) == current_spec
     assert _migrate_task_text(current_task, current_task) == current_task
+
+
+@pytest.mark.parametrize('parent', ['docs/tasks', 'docs/archive/tasks'])
+@pytest.mark.parametrize('layout', ['spec_task', 'task_note'])
+def test_progress_migration_preserves_task_history(env, parent, layout):
+    consumer = env['consumer']
+    spec, progress = _install_current_workflow_templates(consumer)
+    _install_current_workflow_templates(env['src'])
+    task_dir = consumer / parent / 't001_history'
+    task_dir.mkdir(parents=True)
+    old = progress.replace('# Task 进展', '# Task 过程总账').replace(
+        'note: ""', 'note: "保留审计说明"',
+    ) + '\n```markdown\n# Task 过程总账\n```\n\n保留实施证据。\n'
+    spec_name, progress_name = ('spec.md', 'task.md') if layout == 'spec_task' else ('task.md', 'note.md')
+    (task_dir / spec_name).write_text(spec)
+    (task_dir / progress_name).write_text(old)
+    (task_dir / 'review_general.md').write_text('历史 review，不补 TICK 标签。\n')
+    (task_dir / 'handoff.json').write_text('{"history": true}\n')
+    migrations, worktrees, errors = workflow_migration_status(env['src'])
+    assert str((task_dir / progress_name).relative_to(consumer)) in migrations
+    assert worktrees == [] and errors == []
+
+    changed = set()
+    force_migrate_workflow_tasks(changed)
+
+    assert (task_dir / 'task.md').read_text() == spec
+    assert (task_dir / 'progress.md').read_text() == old.replace('# Task 过程总账', '# Task 进展', 1)
+    assert not (task_dir / 'note.md').exists()
+    assert not (task_dir / 'spec.md').exists()
+    assert (task_dir / 'review_general.md').read_text() == '历史 review，不补 TICK 标签。\n'
+    assert (task_dir / 'handoff.json').read_text() == '{"history": true}\n'
+    assert task_dir / 'progress.md' in changed
+    assert task_dir / progress_name in changed
+    assert force_migrate_workflow_tasks(set()) == []
+
+
+@pytest.mark.parametrize('parent', ['docs/tasks', 'docs/archive/tasks'])
+def test_progress_migration_rejects_duplicate_names_before_any_writes(env, parent):
+    consumer = env['consumer']
+    spec, progress = _install_current_workflow_templates(consumer)
+    _install_current_workflow_templates(env['src'])
+    for slug in ('a_ready', 'z_conflict'):
+        directory = consumer / parent / f't001_{slug}'
+        directory.mkdir(parents=True)
+        (directory / 'task.md').write_text(spec)
+        (directory / 'note.md').write_text(progress.replace('# Task 进展', '# Task 过程总账'))
+    (directory / 'progress.md').write_text(progress)
+    before = {path: path.read_bytes() for path in (consumer / parent).rglob('*') if path.is_file()}
+
+    _, _, errors = workflow_migration_status(env['src'])
+    assert any('note.md' in error and 'progress.md' in error for error in errors)
+    changed = set()
+    with pytest.raises(ctx.SyncError, match='note.md.*progress.md'):
+        force_migrate_workflow_tasks(changed)
+    assert changed == set()
+    assert {path: path.read_bytes() for path in (consumer / parent).rglob('*') if path.is_file()} == before
+
+
+def test_apply_failure_restores_progress_rename_and_history(env, monkeypatch):
+    consumer = env['consumer']
+    spec, progress = _install_current_workflow_templates(env['src'])
+    task_dir = consumer / 'docs/archive/tasks/t001_history'
+    task_dir.mkdir(parents=True)
+    old = progress.replace('# Task 进展', '# Task 过程总账')
+    (task_dir / 'task.md').write_text(spec)
+    (task_dir / 'note.md').write_text(old)
+    state_before = env['state_file'].read_bytes()
+    migrated = []
+
+    def fail_after_migration(changed):
+        migrated.append((task_dir / 'progress.md').read_text())
+        assert not (task_dir / 'note.md').exists()
+        raise ctx.SyncError('模拟迁移后同步失败')
+
+    monkeypatch.setattr('template_sync.apply.migrate_conventions', fail_after_migration)
+    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 1
+    assert migrated == [progress]
+    assert (task_dir / 'note.md').read_text() == old
+    assert (task_dir / 'task.md').read_text() == spec
+    assert not (task_dir / 'progress.md').exists()
+    assert env['state_file'].read_bytes() == state_before
 
 
 def test_force_migrate_workflow_updates_old_task_documents(env):
@@ -1401,9 +1482,9 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     (archive_dir / 'spec.md').write_text(old_spec, encoding="utf-8")
     (archive_dir / 'task.md').write_text(archived_old_task, encoding="utf-8")
 
-    # 迁移前：store.py 扫描会因为缺少 note.md 拒绝扫描
+    # 迁移前：store.py 扫描会因为缺少 progress.md 拒绝扫描
     from repo_task import store as task_store, context as task_ctx
-    with pytest.raises(task_ctx.TaskDataError, match="缺 note.md"):
+    with pytest.raises(task_ctx.TaskDataError, match="缺 progress.md"):
         task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
 
     # 迁移状态应检出活跃和归档下的旧文件
@@ -1420,10 +1501,10 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     # 验证活跃任务已完成布局转换
     assert not (task_dir / 'spec.md').exists()
     assert (task_dir / 'task.md').is_file()
-    assert (task_dir / 'note.md').is_file()
+    assert (task_dir / 'progress.md').is_file()
 
     migrated_spec = (task_dir / 'task.md').read_text(encoding="utf-8")
-    migrated_task = (task_dir / 'note.md').read_text(encoding="utf-8")
+    migrated_task = (task_dir / 'progress.md').read_text(encoding="utf-8")
     assert '旧版规范文字' not in migrated_spec
     for blocks in _guide_blocks_by_heading(current_spec).values():
         for block in blocks:
@@ -1437,17 +1518,17 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert '旧版固定说明' not in migrated_task
     assert task_dir / 'spec.md' in changed
     assert task_dir / 'task.md' in changed
-    assert task_dir / 'note.md' in changed
+    assert task_dir / 'progress.md' in changed
 
     # 验证归档任务已完成布局转换
     assert not (archive_dir / 'spec.md').exists()
     assert (archive_dir / 'task.md').is_file()
-    assert (archive_dir / 'note.md').is_file()
-    migrated_archive_task = (archive_dir / 'note.md').read_text(encoding="utf-8")
+    assert (archive_dir / 'progress.md').is_file()
+    migrated_archive_task = (archive_dir / 'progress.md').read_text(encoding="utf-8")
     assert 'status: done' in migrated_archive_task or 'status: "done"' in migrated_archive_task
     assert archive_dir / 'spec.md' in changed
     assert archive_dir / 'task.md' in changed
-    assert archive_dir / 'note.md' in changed
+    assert archive_dir / 'progress.md' in changed
 
     # 幂等性：迁移后再查 status 为空，再次执行不写盘
     assert _replace_guide_blocks(migrated_spec, current_spec) == migrated_spec
@@ -1485,7 +1566,7 @@ def test_force_migrate_workflow_rejects_registered_task_worktree(env):
     task_dir = consumer / 'docs/tasks/t001_old'
     task_dir.mkdir(parents=True)
     (task_dir / 'task.md').write_text(current_spec)
-    (task_dir / 'note.md').write_text(current_task)
+    (task_dir / 'progress.md').write_text(current_task)
     _git(consumer, 'init', '-b', 'main')
     _git(consumer, 'config', 'user.email', 'test@example.com')
     _git(consumer, 'config', 'user.name', 'test')
@@ -1506,12 +1587,12 @@ def _commit_consumer_baseline(consumer):
 
 
 def _task_branch(consumer, tid, slug, status, *, directory='docs/tasks'):
-    """建 task 分支：note.md 状态为 status，目录位于 directory；回到 main。"""
+    """建 task 分支：progress.md 状态为 status，目录位于 directory；回到 main。"""
     branch = f'{tid}_{slug}'
     _git(consumer, 'checkout', '-b', branch)
     task_dir = consumer / directory / branch
     task_dir.mkdir(parents=True)
-    (task_dir / 'note.md').write_text(
+    (task_dir / 'progress.md').write_text(
         f'---\ntid: "{tid}"\nslug: "{slug}"\nstatus: "{status}"\n---\n正文\n', encoding='utf-8',
     )
     _git(consumer, 'add', '-A')

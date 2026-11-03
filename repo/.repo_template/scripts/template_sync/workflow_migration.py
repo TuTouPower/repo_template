@@ -1,10 +1,17 @@
-"""apply 时强制迁移 active/backlog task 文档到当前 workflow schema。"""
+"""apply 时强制迁移 docs/tasks 与 docs/archive/tasks 下的 task 文档到当前 workflow schema。
+
+迁移一步到位，支持两种旧布局：
+- 最早：spec.md（需求规格）+ task.md（含 front matter 的过程总账）
+- 中间：task.md（需求规格）+ note.md（含 front matter 的过程总账，标题「Task 过程总账」）
+目标布局：task.md + progress.md（标题「Task 进展」）。note.md 与 progress.md 并存时拒绝，不猜测合并。
+"""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
+from repo_task.context import PROGRESS_FILE, PROGRESS_TITLE
 from repo_task.git_ops import default_branch
 
 from . import context as ctx
@@ -13,6 +20,9 @@ from .common import _git
 
 _GUIDE_OPEN = "<!-- 规范（门禁必留，不得删除） -->"
 _GUIDE_CLOSE = "<!-- /规范 -->"
+# D4 之前的过程文件名与标题；仅供识别旧布局，新工具链只认 PROGRESS_FILE / PROGRESS_TITLE。
+_LEGACY_NOTE_FILE = "note.md"
+_LEGACY_NOTE_TITLE = "Task 过程总账"
 _OLD_NOTE_PREFIXES = (
     "执行期边做边写：",
     "创建期不预测实施步骤——",
@@ -123,6 +133,18 @@ def _implementation_guidance(task_template: str) -> list[str]:
     return section
 
 
+def _rename_legacy_title(lines: list[str], frontmatter_end: int) -> None:
+    """把正文中围栏外的一级标题「Task 过程总账」就地改为「Task 进展」；只改第一处。"""
+    in_fence = False
+    for index in range(frontmatter_end + 1 if frontmatter_end else 0, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+        elif not in_fence and stripped == f"# {_LEGACY_NOTE_TITLE}":
+            lines[index] = f"# {PROGRESS_TITLE}"
+            return
+
+
 def _migrate_task_text(text: str, task_template: str) -> str:
     lines = text.splitlines()
     migrated = []
@@ -173,15 +195,17 @@ def _migrate_task_text(text: str, task_template: str) -> str:
         if not has_verify:
             fields.append('verify_limit: "5"')
         migrated[close:close] = fields
+    _rename_legacy_title(migrated, frontmatter_end)
     migrated_text = "\n".join(migrated).rstrip() + "\n"
     migrated_text = re.sub(
         r"-\s*spec\s*[:：]\s*\[`?spec\.md`?\]\(spec\.md\)",
         "- task：[`task.md`](task.md)",
         migrated_text,
     )
-    migrated_text = migrated_text.replace(
-        "无长期 spec 变更时在 task.md 写", "无长期 spec 变更时在 note.md 写"
-    )
+    for old_name in ("task.md", _LEGACY_NOTE_FILE):
+        migrated_text = migrated_text.replace(
+            f"无长期 spec 变更时在 {old_name} 写", f"无长期 spec 变更时在 {PROGRESS_FILE} 写"
+        )
     return migrated_text
 
 
@@ -211,7 +235,7 @@ _STATUS_LINE_RE = re.compile(r"(?m)^status:[ \t]*[\"']?([A-Za-z]+)[\"']?[ \t]*$"
 def _branch_task_status(branch: str) -> str:
     """分支 tip 中该 task 的状态；活跃与归档目录都查，读不到返回空串。"""
     for directory in ("docs/tasks", "docs/archive/tasks"):
-        for name in ("note.md", "task.md"):
+        for name in (PROGRESS_FILE, _LEGACY_NOTE_FILE, "task.md"):
             shown = _git(ctx.CONSUMER, "show", f"refs/heads/{branch}:{directory}/{branch}/{name}")
             if shown.returncode != 0:
                 continue
@@ -281,20 +305,27 @@ def _inspect_workflow_task_dir(
     """
     spec_path = task_dir / "spec.md"
     task_path = task_dir / "task.md"
-    note_path = task_dir / "note.md"
+    note_path = task_dir / PROGRESS_FILE
+    legacy_note_path = task_dir / _LEGACY_NOTE_FILE
 
     candidates: list[str] = []
     errors: list[str] = []
     write_ops: list[tuple[Path, str]] = []
     delete_ops: list[Path] = []
 
+    if legacy_note_path.exists() and note_path.exists():
+        return [], [f"{ctx._rel(task_dir)}: note.md 与 {PROGRESS_FILE} 并存，拒绝猜测合并"], {
+            "legacy": False, "write": [], "delete": [],
+        }
+    source_note_path = legacy_note_path if legacy_note_path.is_file() else note_path
+
     # 判断是否为旧版文件布局：
     # 1. 存在 spec.md（旧版需求规格）
-    # 2. 或者尚无 note.md，但 task.md 存在且内容包含 front matter（旧版过程总账）
+    # 2. 或者尚无过程文件，但 task.md 存在且内容包含 front matter（旧版过程总账）
     is_legacy_layout = False
     if spec_path.is_file():
         is_legacy_layout = True
-    elif not note_path.is_file() and task_path.is_file():
+    elif not source_note_path.is_file() and task_path.is_file():
         try:
             head = task_path.read_text(encoding="utf-8")
             if head.startswith("---") and ("status:" in head or "tid:" in head):
@@ -303,9 +334,9 @@ def _inspect_workflow_task_dir(
             pass
 
     if is_legacy_layout:
-        # 旧版布局向新版 (task.md 需求规格, note.md 过程总账) 迁移
-        # 1. 过程总账：来源于旧 task.md（若存在且尚未有 note.md）或现存 note.md
-        if task_path.is_file() and not note_path.is_file():
+        # 旧版布局迁到 task.md 需求规格与当前过程文件。
+        # 过程记录优先读取独立过程文件，否则读取含 front matter 的旧 task.md。
+        if task_path.is_file() and not source_note_path.is_file():
             candidates.append(ctx._rel(task_path))
             try:
                 old_note_text = task_path.read_text(encoding="utf-8")
@@ -315,17 +346,17 @@ def _inspect_workflow_task_dir(
                 errors.append(f"{ctx._rel(task_path)}: {error}")
             except OSError as error:
                 errors.append(f"{ctx._rel(task_path)}: {error}")
-        elif note_path.is_file():
+        elif source_note_path.is_file():
             try:
-                old_note_text = note_path.read_text(encoding="utf-8")
+                old_note_text = source_note_path.read_text(encoding="utf-8")
                 new_note_text = _migrate_task_text(old_note_text, note_template)
-                if new_note_text != old_note_text:
-                    candidates.append(ctx._rel(note_path))
+                if new_note_text != old_note_text or source_note_path != note_path:
+                    candidates.append(ctx._rel(source_note_path))
                     write_ops.append((note_path, new_note_text))
             except ctx.SyncError as error:
-                errors.append(f"{ctx._rel(note_path)}: {error}")
+                errors.append(f"{ctx._rel(source_note_path)}: {error}")
             except OSError as error:
-                errors.append(f"{ctx._rel(note_path)}: {error}")
+                errors.append(f"{ctx._rel(source_note_path)}: {error}")
 
         # 2. 需求规格：来源于旧 spec.md，迁移写入 task.md，并删除原 spec.md
         if spec_path.is_file():
@@ -342,7 +373,7 @@ def _inspect_workflow_task_dir(
         elif not spec_path.is_file() and task_path.is_file() and not any(p == task_path for p, _ in write_ops):
             delete_ops.append(task_path)
     else:
-        # 新版布局：task.md 为需求规格，note.md 为过程总账
+        # 分离布局：task.md 为需求规格，独立过程文件迁到当前名称。
         if task_path.is_file():
             try:
                 before = task_path.read_text(encoding="utf-8")
@@ -355,18 +386,20 @@ def _inspect_workflow_task_dir(
             except OSError as error:
                 errors.append(f"{ctx._rel(task_path)}: {error}")
 
-        if note_path.is_file():
+        if source_note_path.is_file():
             try:
-                before = note_path.read_text(encoding="utf-8")
+                before = source_note_path.read_text(encoding="utf-8")
                 after = _migrate_task_text(before, note_template)
-                if after != before:
-                    candidates.append(ctx._rel(note_path))
+                if after != before or source_note_path != note_path:
+                    candidates.append(ctx._rel(source_note_path))
                     write_ops.append((note_path, after))
             except ctx.SyncError as error:
-                errors.append(f"{ctx._rel(note_path)}: {error}")
+                errors.append(f"{ctx._rel(source_note_path)}: {error}")
             except OSError as error:
-                errors.append(f"{ctx._rel(note_path)}: {error}")
+                errors.append(f"{ctx._rel(source_note_path)}: {error}")
 
+    if source_note_path == legacy_note_path and any(path == note_path for path, _ in write_ops):
+        delete_ops.append(legacy_note_path)
     plan = {
         "legacy": is_legacy_layout,
         "write": write_ops,
@@ -379,7 +412,7 @@ def workflow_migration_status(
     src: Path,
 ) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
     task_template_path = src / ".repo_template/docs/task_template/task.md"
-    note_template_path = src / ".repo_template/docs/task_template/note.md"
+    note_template_path = src / ".repo_template/docs/task_template" / PROGRESS_FILE
     try:
         worktrees = _registered_task_worktrees()
         base, unintegrated = _unintegrated_done_branches()
@@ -410,7 +443,7 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
     if unintegrated:
         raise ctx.SyncError(_unintegrated_done_message(base, unintegrated))
     task_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/task.md"
-    note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/note.md"
+    note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template" / PROGRESS_FILE
     if not task_template_path.is_file() or not note_template_path.is_file():
         return []
     task_template = task_template_path.read_text(encoding="utf-8")
@@ -440,7 +473,7 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
     reports: list[str] = []
     for plan in all_plans:
         sorted_writes = sorted(
-            plan["write"], key=lambda item: 0 if item[0].name == "note.md" else 1
+            plan["write"], key=lambda item: 0 if item[0].name == PROGRESS_FILE else 1
         )
         for path, content in sorted_writes:
             path.write_text(content, encoding="utf-8")
@@ -450,5 +483,6 @@ def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
             if path.exists():
                 path.unlink()
                 changed.add(path)
-                reports.append(f"{ctx._rel(path)} 已删除（迁移到 task.md）")
+                target = PROGRESS_FILE if path.name == _LEGACY_NOTE_FILE else "task.md"
+                reports.append(f"{ctx._rel(path)} 已删除（迁移到 {target}）")
     return reports

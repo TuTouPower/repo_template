@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .context import TaskDataError
+from .context import PROGRESS_FILE, TaskDataError
 from .documents import extract_ac_statuses, parse_front_matter as _parse_front_matter
 
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
@@ -409,7 +409,7 @@ def evaluate_review(
                 "no_spec" if expected is None else "ok")
     overall = ("INCOMPLETE" if "MISSING" in effective else
                "FAIL" if "FAIL" in effective else "PASS")
-    stats, disposed = _parse_disposition_rows(task_dir / "note.md")
+    stats, disposed = _parse_disposition_rows(task_dir / PROGRESS_FILE)
     reported = reported_findings(fm.get("tid", ""), *reports)
     missing = sorted(reported - disposed)
     scopes = [reviewed_scope(report) for report in reports]

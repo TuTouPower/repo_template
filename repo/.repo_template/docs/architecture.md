@@ -59,11 +59,11 @@ testing.md 是项目验证命令与显式策略唯一权威；verification_polic
 2. 项目定义的黑盒验证，无黑盒时必须由项目策略明确选择并提供替代验收；
 3. 按 `review_level` 执行的独立 review。
 
-`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入 `note.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
+`task.py preflight` / `finish` / `integrate` 只校验 testing.md 章节形状，不代为执行命令；运行结果写入 `progress.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行这些命令。
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
-done 后 review 失效时，重新 review 并把新报告作为证据 commit 追加，不改写实现 commit。证据 commit 只能修改当前 task 目录内的 review 过程文件（`note.md`、`review_*.md`、渲染的 review prompt，与指纹排除清单同源），不得改 `handoff.json`、交付文件或其它路径，因此不改变指纹。cleanup、integrate、integrate-chain 与 `ledger import` 沿 first parent 从分支 tip 回溯到 base，要求最旧的是实现 commit、其后全是此类证据 commit。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
+done 后 review 失效时，重新 review 并把新报告作为证据 commit 追加，不改写实现 commit。证据 commit 只能修改当前 task 目录内的 review 过程文件（`progress.md`、`review_*.md`、渲染的 review prompt，与指纹排除清单同源），不得改 `handoff.json`、交付文件或其它路径，因此不改变指纹。cleanup、integrate、integrate-chain 与 `ledger import` 沿 first parent 从分支 tip 回溯到 base，要求最旧的是实现 commit、其后全是此类证据 commit。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
 
 ## 合并
 

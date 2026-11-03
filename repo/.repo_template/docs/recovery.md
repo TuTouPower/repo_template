@@ -29,7 +29,7 @@
 
 ## review 门禁失败后的修复
 
-如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留分支/证据并请用户决定恢复方式，未经用户同意不得追加 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，把新报告作为证据 commit 追加（不改写实现 commit，禁止 rewind、reserve）：证据 commit 只能改当前 task 目录内的 review 过程文件（`note.md`、`review_*.md`、渲染的 review prompt），触及交付文件、`handoff.json`、task.md、其它 task 目录或其它路径都会被 cleanup、integrate、`ledger import` 拒绝。提交后 worktree 干净，再按原 identity cleanup。已有后继分支以当前 tip 为 ancestor（或 tip 已合入主干）时不得追加证据 commit，否则破坏链的线性；停止并报告。review 指纹的定义见 `usage.md`「skill 调用」。
+如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留分支/证据并请用户决定恢复方式，未经用户同意不得追加 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，把新报告作为证据 commit 追加（不改写实现 commit，禁止 rewind、reserve）：证据 commit 只能改当前 task 目录内的 review 过程文件（`progress.md`、`review_*.md`、渲染的 review prompt），触及交付文件、`handoff.json`、task.md、其它 task 目录或其它路径都会被 cleanup、integrate、`ledger import` 拒绝。提交后 worktree 干净，再按原 identity cleanup。已有后继分支以当前 tip 为 ancestor（或 tip 已合入主干）时不得追加证据 commit，否则破坏链的线性；停止并报告。review 指纹的定义见 `usage.md`「skill 调用」。
 
 ## 图合并中断
 
