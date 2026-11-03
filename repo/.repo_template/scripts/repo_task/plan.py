@@ -4,17 +4,21 @@
 链首 = active/runnable（runnable = compute_schedule 的 selected），冲突裁决
 最大化并行链数，向下游延伸直至汇流点或冲突边界。状态变化后重新调用即得下一批。
 看板 JS 只做展示，不复刻本算法。
+
+串行队列（plan --serial）另按队列内关系分链：group_queue / compute_queue_topology
+是 base 选择的唯一权威，plan 输出与 goal-check 共用。
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from typing import Any
+from typing import Any, Callable
 
 import repo_task.context as ctx
 
 from .documents import tid_sort_key_or_zero
+from .git_ops import default_branch as resolve_default_branch
 from .scheduling import compute_schedule
 
 CHAIN_COLORS = [
@@ -432,8 +436,84 @@ def compute_batch_plan(data: dict) -> dict:
     return plan
 
 
-def compute_serial_plan(data: dict) -> dict:
-    """全部未完成已排程/运行中 task 排成单链（依赖序 + 冲突对序号小者先）。"""
+def group_queue(queue: list[str], edges: list[dict]) -> list[list[str]]:
+    """队列内无向关系图的连通分量，每个分量即一条链。
+
+    成员 A、B 间存在 depends_on（任一方向）或 conflicts_with（任一方声明）即连边，
+    只看队列内成员，队列外的间接关联不连边。分量按首个成员的队列位置排序，
+    分量内保持队列顺序。queue 内 tid 须唯一。
+    """
+    position = {tid: index for index, tid in enumerate(queue)}
+    parent = {tid: tid for tid in queue}
+
+    def find(tid: str) -> str:
+        while parent[tid] != tid:
+            parent[tid] = parent[parent[tid]]
+            tid = parent[tid]
+        return tid
+
+    for edge in edges:
+        left, right = edge["from"], edge["to"]
+        if left in position and right in position:
+            parent[find(left)] = find(right)
+    groups: dict[str, list[str]] = {}
+    for tid in queue:
+        groups.setdefault(find(tid), []).append(tid)
+    return list(groups.values())
+
+
+def compute_queue_topology(
+    queue: list[str],
+    edges: list[dict],
+    *,
+    default_branch: str,
+    branch_of: Callable[[str], str],
+) -> dict:
+    """按分链结果为每个成员选 base：链首用默认分支，其后用同链紧邻前一成员的分支。
+
+    返回 {members, queue_chains}：members 按队列顺序给出 taskId / chain（1 起的分量编号）
+    / base{tid, branch}；queue_chains 给出各链成员与链尾（合并阶段 integrate-chain 的参数）。
+    队列中依赖排在依赖者之后时拒绝。
+    """
+    position = {tid: index for index, tid in enumerate(queue)}
+    for edge in edges:
+        if edge.get("type") != "dep":
+            continue
+        src, dst = edge["from"], edge["to"]
+        if src in position and dst in position and position[src] > position[dst]:
+            raise ctx.TaskDataError(
+                f"invalid_queue: 依赖 {src} 必须排在依赖者 {dst} 之前"
+            )
+    chains = group_queue(queue, edges)
+    chain_no = {tid: no for no, task_ids in enumerate(chains, 1) for tid in task_ids}
+    previous: dict[int, str] = {}
+    members = []
+    for tid in queue:
+        no = chain_no[tid]
+        base_tid = previous.get(no)
+        members.append({
+            "taskId": tid,
+            "chain": no,
+            "base": {
+                "tid": base_tid,
+                "branch": branch_of(base_tid) if base_tid else default_branch,
+            },
+        })
+        previous[no] = tid
+    return {
+        "members": members,
+        "queue_chains": [
+            {"chain": no, "taskIds": task_ids, "tail": task_ids[-1]}
+            for no, task_ids in enumerate(chains, 1)
+        ],
+    }
+
+
+def compute_serial_plan(data: dict, queue: list[str] | None = None) -> dict:
+    """全部未完成已排程/运行中 task 排成单链（依赖序 + 冲突对序号小者先）。
+
+    给出 queue 时保持其顺序（显式 tid 队列），只校验成员均为可排队的未完成 task。
+    """
     unfinished = [
         node for node in data["nodes"] if is_unfinished(node["category"])
     ]
@@ -457,8 +537,21 @@ def compute_serial_plan(data: dict) -> dict:
 
     # 串行已经满足冲突互斥；冲突提示不能添加反向硬依赖而制造环。
 
-    remaining = set(eligible)
     ordered: list[str] = []
+    if queue is not None:
+        seen: set[str] = set()
+        for tid in queue:
+            if tid in seen:
+                raise ctx.TaskDataError(f"invalid_queue: 队列重复 tid：{tid}")
+            seen.add(tid)
+            if tid not in eligible_set:
+                raise ctx.TaskDataError(
+                    f"invalid_queue: {tid} 不在可排队的未完成 task 中（不存在，或已 done/dropped）"
+                )
+        ordered = list(queue)
+        remaining: set[str] = set()
+    else:
+        remaining = set(eligible)
     while remaining:
         ready = sorted(
             (
@@ -552,12 +645,26 @@ def _unlock_rows(plan: dict, data: dict) -> list[dict]:
     return rows
 
 
-def build_execution_plan(*, mode: str = "batch") -> dict:
-    """从当前仓库状态构建完整执行计划。"""
+def build_execution_plan(*, mode: str = "batch", queue: list[str] | None = None) -> dict:
+    """从当前仓库状态构建完整执行计划。
+
+    mode=serial 时附 members / queue_chains（按队列内关系分链并给出各成员 base）；
+    queue 为用户显式给定的 tid 顺序，仅 serial 可用。
+    """
+    if queue is not None and mode != "serial":
+        raise ctx.TaskDataError("invalid_queue: 显式 tid 队列须配合 --serial")
     schedule = compute_schedule()
     data = build_board_model(schedule)
     if mode == "serial":
-        plan = compute_serial_plan(data)
+        plan = compute_serial_plan(data, queue=queue)
+        slug_of = {tid: task["slug"] for tid, task in schedule["tasks"].items()}
+        ordered = [tid for chain in plan["chains"] for tid in chain["taskIds"]]
+        plan.update(compute_queue_topology(
+            ordered,
+            data["edges"],
+            default_branch=resolve_default_branch(),
+            branch_of=lambda tid: f"{tid}_{slug_of[tid]}",
+        ))
     else:
         plan = compute_batch_plan(data)
         plan["mode"] = "batch"
@@ -593,8 +700,10 @@ def format_plan_text(plan: dict, *, copy_only: bool = False) -> str:
         return "\n".join(lines) + "\n"
 
     lines: list[str] = []
+    member_of = {row["taskId"]: row for row in plan.get("members") or []}
     if mode == "serial":
-        lines.append("== 全串行一条链 ==")
+        lines.append("== 全串行队列（按队列内关系分链）==")
+        lines.append("（base 即 run-begin --base：链内以紧邻前一成员分支为 base，链首用默认分支。）")
     else:
         lines.append("== 本波可并发 ==")
         lines.append("（链首 active = 接续运行中；runnable = 新启动。task-run 均可粘贴。）")
@@ -607,13 +716,31 @@ def format_plan_text(plan: dict, *, copy_only: bool = False) -> str:
             head_title = titles.get(chain["taskIds"][0], "")
             kind_tag = "  [接续]" if chain.get("head_kind") == "continue" else ""
             subtitle = f"  · {head_title}" if head_title else ""
-            lines.append(f"{chain['name']}  {cmd}{kind_tag}{subtitle}")
+            label = "队列" if mode == "serial" else chain["name"]
+            lines.append(f"{label}  {cmd}{kind_tag}{subtitle}")
             for tid in chain["taskIds"]:
-                lines.append(f"  {tid}  {titles.get(tid, tid)}")
+                row = member_of.get(tid)
+                topo = (
+                    f"  [链{row['chain']} base={row['base']['branch']}]" if row else ""
+                )
+                lines.append(f"  {tid}  {titles.get(tid, tid)}{topo}")
             stop = chain.get("stop_reason") or ""
             if stop and mode != "serial":
                 lines.append(f"  停因：{stop}")
             lines.append("")
+
+    queue_chains = plan.get("queue_chains") or []
+    if queue_chains:
+        lines.append("== 待合分支（merge 须用户单独授权）==")
+        for item in queue_chains:
+            if len(item["taskIds"]) == 1:
+                lines.append(f"  链{item['chain']}: integrate {item['tail']}")
+            else:
+                lines.append(
+                    f"  链{item['chain']}: integrate-chain {item['tail']}"
+                    f"  ({' -> '.join(item['taskIds'])})"
+                )
+        lines.append("")
 
     deferred = plan.get("deferred") or []
     if deferred:
@@ -656,11 +783,12 @@ def format_plan_text(plan: dict, *, copy_only: bool = False) -> str:
 
 def cmd_plan(args: Any) -> None:
     mode = "serial" if getattr(args, "serial", False) else "batch"
+    queue = list(getattr(args, "tids", None) or []) or None
     try:
-        plan = build_execution_plan(mode=mode)
+        plan = build_execution_plan(mode=mode, queue=queue)
     except ctx.TaskDataError as error:
         message = str(error)
-        if not message.startswith(("invalid_graph:", "invalid_done:")):
+        if not message.startswith(("invalid_graph:", "invalid_done:", "invalid_queue:")):
             message = f"invalid_graph: {message}"
         sys.exit(f"plan=FAIL：{message}")
 
@@ -677,6 +805,9 @@ def cmd_plan(args: Any) -> None:
             "summary": plan.get("summary"),
             "project": plan.get("project"),
         }
+        for key in ("members", "queue_chains"):
+            if key in plan:
+                payload[key] = plan[key]
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
