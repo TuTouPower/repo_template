@@ -174,3 +174,18 @@ def test_worktree_resolves_identity_from_execution_context(git_repo, monkeypatch
     context_path.unlink()
     with pytest.raises(ctx.TaskDataError, match="无法从"):
         attempts.resolve_identity("t001")
+
+
+def test_omitted_identity_keeps_terminal_gate_and_missing_attempt_error(git_repo):
+    # 无 attempt 时省略 identity：明确报错，不猜测
+    for command in ("cleanup-worktree", "integrate"):
+        result = _task_cli(git_repo, command, "t001")
+        assert result.returncode != 0
+        assert "尚无 attempt" in result.stderr
+
+    # 当前 attempt 仍 running：省略 identity 解析到它，随后被 terminal 门禁拒绝
+    _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    for command in ("cleanup-worktree", "integrate"):
+        result = _task_cli(git_repo, command, "t001")
+        assert result.returncode != 0
+        assert "须先 terminal" in result.stderr

@@ -2049,15 +2049,6 @@ def test_chain_start_base_names_uncommitted_finish_as_cause(git_repo):
     assert "完成状态尚未提交" not in plain.stderr
 
 
-def test_cleanup_and_integrate_require_identity_at_parse_time(git_repo):
-    cleanup = _task_cli(git_repo, "cleanup-worktree", "t001")
-    integrate = _task_cli(git_repo, "integrate", "t001")
-    assert cleanup.returncode != 0
-    assert integrate.returncode != 0
-    assert "--attempt" in cleanup.stderr and "--execution-id" in cleanup.stderr
-    assert "--attempt" in integrate.stderr and "--execution-id" in integrate.stderr
-
-
 # --------------------------------------------------------------------------
 # effective-status：有效状态与读取来源（worktree / branch / main）
 # --------------------------------------------------------------------------

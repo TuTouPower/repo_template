@@ -490,11 +490,6 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
         git_repo, "t001", "alpha", terminal=False
     )
 
-    missing_identity = _task_cli(git_repo, "cleanup-worktree", "t001")
-    assert missing_identity.returncode != 0
-    assert "--attempt" in missing_identity.stderr
-    assert "--execution-id" in missing_identity.stderr
-
     cleanup_running = _task_cli(
         git_repo, "cleanup-worktree", "t001", *_identity_args(identity)
     )
@@ -609,10 +604,6 @@ def test_legacy_cli_paths_fail_explicitly(git_repo):
     )
     assert old_chain.returncode != 0
     assert "--chain" in old_chain.stderr
-
-    no_identity = _task_cli(git_repo, "integrate", "t001")
-    assert no_identity.returncode != 0
-    assert "--attempt" in no_identity.stderr and "--execution-id" in no_identity.stderr
 
 
 # --------------------------------------------------------------------------

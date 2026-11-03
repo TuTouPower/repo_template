@@ -235,8 +235,8 @@ def resolve_identity(
             )
     if attempt is not None and (attempt, execution_id) != resolved:
         raise ctx.TaskDataError(
-            f"{tid} 显式 identity=({attempt}, {execution_id!r}) 与解析结果"
-            f"({resolved[0]}, {resolved[1]!r}) 不一致"
+            f"{tid} 当前 identity=({resolved[0]}, {resolved[1]!r})，"
+            f"收到旧或不匹配 identity=({attempt}, {execution_id!r})；显式值与解析结果不一致"
         )
     return resolved
 
