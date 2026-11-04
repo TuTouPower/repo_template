@@ -7,7 +7,7 @@ from .documents import parse_front_matter
 from .git_ops import _git, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .locks import control_locked
-from .monitoring import execution_commits, verify_integrate_ready
+from .monitoring import implementation_commit, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
@@ -95,7 +95,7 @@ def recovery_state(tid: str) -> dict:
             if record["state"] == "running":
                 return phase("finished_uncommitted", "finish 在提交前被中断：核验 handoff、review 和全部 diff 后暂存并提交实现 commit（沿用原 message）；不重复 finish、不 reserve")
             raise ValueError("未提交实现 commit 却已关闭 attempt")
-        execution_commits(head.stdout.strip(), fm["diff_anchor"], task["dir"])
+        implementation_commit(head.stdout.strip(), fm["diff_anchor"])
         _, committed_fm, _ = load_task_at_ref(tid, head.stdout.strip())
         committed = json.loads(git_text_at_ref(head.stdout.strip(), f"{task['dir']}/handoff.json"))
         if committed_fm.get("status") != "done" or committed != handoff:
@@ -105,17 +105,28 @@ def recovery_state(tid: str) -> dict:
         return state
     tip_sha = head.stdout.strip()
     diff_anchor = fm.get("diff_anchor", "")
-    if record.get("state") == "terminal" and record.get("terminal_status") == "completed":
+    report = record.get("report") or {}
+    report_done = report.get("status") == "done"
+    gate_check = record["state"] == "running" or (
+        record["state"] == "terminal" and record.get("terminal_status") == "completed"
+    )
+    if (gate_check or report_done):
         verdict, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
         if verdict != "ready" and "review gate" in gate_detail:
-            action = _evidence_repair_action(
+            if report_done:
+                state["action"] = (
+                    f"停止：report 已写入 done，但 review 门禁失败（{gate_detail}）；"
+                    "不改写实现 commit、不 amend，请人工核查"
+                )
+                return state
+            action = _review_repair_action(
                 tid, record["attempt"], record["execution_id"],
                 tip_sha, diff_anchor, gate_detail, branch,
             )
-            return phase("evidence_repair", action)
+            return phase("review_repair", action)
     if not record.get("report"):
         return phase("committed_unreported", "验证最终提交和 review gate；按原 identity 补缺失的 terminal/report，不重复写已有事件")
-    if record.get("terminal_status") == "completed" and record["report"].get("status") == "done":
+    if record.get("terminal_status") == "completed" and report_done:
         return phase("reported_uncleaned", "按原 identity exact cleanup；脏改动或门禁失败时保留现场")
     return state
 
@@ -133,20 +144,20 @@ def _tip_has_successor(tip_sha: str, current_branch: str) -> bool:
     return False
 
 
-def _evidence_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str, detail: str, branch: str) -> str:
+def _review_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str, detail: str, branch: str) -> str:
     if _tip_has_successor(tip_sha, branch):
         return (
-            f"证据修复：review 门禁失败（{detail}）。"
-            f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不追加证据 commit。"
+            f"review 修复：review 门禁失败（{detail}）。"
+            f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不 amend。"
         )
     return (
-        f"证据修复：review 门禁失败（{detail}）。"
+        f"review 修复：review 门禁失败（{detail}）。"
         f"在原 worktree 对当前 tip {tip_sha[:12]} 的交付内容重新 review；"
-        "把新报告作为证据 commit 追加（不改写实现 commit），该 commit 只能改当前 task 目录内的 review 过程文件"
-        f"（{ctx.PROGRESS_FILE}、review_*.md、渲染的 review prompt），不得改 handoff.json、交付文件或其它路径；"
-        f"first parent 链仍须从 diff_anchor {diff_anchor[:12]} 起；"
-        "禁止 rewind、reserve；"
-        f"提交后 worktree 必须干净，再按原 identity attempt={attempt} execution_id={execution_id} exact cleanup。"
+        "只改 review 过程文件"
+        f"（{ctx.PROGRESS_FILE} 正文、review_*.md、渲染的 review prompt），不得改 handoff.json、交付文件或其它路径；"
+        "用 `git commit --amend --no-edit` 把改动并入同一实现 commit；"
+        f"worktree 干净后在主仓运行 `run-close {tid} --owner-id ... --result done`；"
+        "禁止 rewind、reserve。"
     )
 
 

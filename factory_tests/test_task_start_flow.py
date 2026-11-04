@@ -1,6 +1,7 @@
 """task.py 扇出 start、integrate 合并、worktree 门禁与失败补偿（真实 git 仓库）。"""
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from task_flow_support import mark_done, finish_cli, prepare_finish
 
 from repo_task import context as ctx
 from repo_task import integration, lifecycle, store
+from repo_task.monitoring import review_scope_fingerprint
 from repo_task.documents import parse_front_matter, write_front_matter
 
 
@@ -49,6 +51,7 @@ def git_repo(tmp_path, monkeypatch):
     archive.mkdir(parents=True)
     scripts.mkdir(parents=True)
     shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
+    shutil.copy2(SCRIPTS_DIR / "md_format.py", scripts / "md_format.py")
     shutil.copytree(
         SCRIPTS_DIR / "repo_task",
         scripts / "repo_task",
@@ -84,6 +87,11 @@ def git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
     monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
+    # 隔离宿主机 md_kx：夹具仓库未配置 hooks，finish 的格式检查应走缺二进制跳过分支。
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        path for path in os.environ.get("PATH", "").split(os.pathsep)
+        if path and not (Path(path) / "md_kx").exists()
+    ))
     (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8")
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
@@ -129,7 +137,7 @@ def _identity_args(identity):
     ]
 
 
-def _handoff(tid, branch, identity, base_sha, *, status="done"):
+def _handoff(tid, branch, identity, base_sha, *, status="done", review_scope=""):
     return {
         "tid": tid,
         "attempt": identity["attempt"],
@@ -140,6 +148,7 @@ def _handoff(tid, branch, identity, base_sha, *, status="done"):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
+        "review_scope": review_scope,
         "pending": [],
         "findings": [],
     }
@@ -172,9 +181,10 @@ def _write_handoff(worktree, tid, slug, identity, base_sha, *, status="done"):
     branch = f"{tid}_{slug}"
     task_dir = worktree / "docs" / "tasks" / branch
     ensure_review_evidence(worktree, task_dir, base_sha)
+    scope = review_scope_fingerprint(base_sha, f"docs/tasks/{branch}", repo_root=worktree)
     (task_dir / "handoff.json").write_text(
         json.dumps(
-            _handoff(tid, branch, identity, base_sha, status=status),
+            _handoff(tid, branch, identity, base_sha, status=status, review_scope=scope),
             ensure_ascii=False,
         ),
         encoding="utf-8",

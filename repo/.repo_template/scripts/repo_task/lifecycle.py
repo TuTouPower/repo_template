@@ -665,6 +665,69 @@ def _git_index_path() -> Path:
     return Path(result.stdout.strip()) / "index"
 
 
+def _hooks_mirror_template() -> bool:
+    result = _git(["config", "--get", "core.hooksPath"])
+    configured = result.stdout.strip() if result.returncode == 0 else ""
+    if not configured:
+        return False
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        path = ctx.REPO_ROOT / path
+    return path.resolve() == (ctx.REPO_ROOT / ".repo_template" / "hooks").resolve()
+
+
+def _load_md_format():
+    try:
+        import md_format
+    except ImportError:
+        return None
+    return md_format
+
+
+def _markdown_paths_to_check(md_format, task_dir: Path) -> list[str]:
+    result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"])
+    if result.returncode != 0:
+        sys.exit(f"finish=FAIL：无法列出已暂存 .md：{result.stderr.strip()}；零写入退出")
+    rels = {
+        path for path in result.stdout.split("\0")
+        if path and not path.startswith(md_format.BLACKLIST_PREFIXES)
+    }
+    for path in task_dir.rglob("*.md"):
+        rel = path.relative_to(ctx.REPO_ROOT).as_posix()
+        if not rel.startswith(md_format.BLACKLIST_PREFIXES):
+            rels.add(rel)
+    return sorted(rels)
+
+
+def _check_markdown_format(task_dir: Path) -> None:
+    md_format = _load_md_format()
+    if md_format is None:
+        print("WARN: 缺 md_format.py，跳过 Markdown 格式检查", file=sys.stderr)
+        return
+    rels = _markdown_paths_to_check(md_format, task_dir)
+    if not rels:
+        return
+    if md_format.find_md_kx() is None:
+        if _hooks_mirror_template():
+            sys.exit(
+                "finish=FAIL：已启用 .repo_template/hooks 的 pre-commit，但找不到 md_kx；"
+                "安装后重跑 finish。零写入退出"
+            )
+        print("WARN: 未安装 md_kx，跳过 Markdown 格式检查", file=sys.stderr)
+        return
+    try:
+        drifted = md_format.format_paths(rels, check=True)
+    except md_format.MdFormatError as error:
+        sys.exit(f"finish=FAIL：Markdown 格式检查失败：{error}；零写入退出")
+    if drifted:
+        sys.exit(
+            "finish=FAIL：Markdown 格式漂移："
+            + ", ".join(drifted)
+            + "。先运行 `python3 .repo_template/scripts/md_format.py --changed`；"
+            "交付内容变化须重新 review。零写入退出"
+        )
+
+
 def _finish_prechecks(args) -> dict:
     """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
     from .attempts import current_attempt_record, resolve_identity
@@ -685,6 +748,11 @@ def _finish_prechecks(args) -> dict:
     require_status(fm, "active")
     require_own_task_worktree(fm)
     task_dir = path.parent
+    if message_path.is_relative_to(task_dir.resolve()):
+        sys.exit(
+            f"finish=FAIL：--message-file {args.message_file} 位于当前 task 目录内，"
+            "会被一并提交；移到仓外或 .scratch/。零写入退出"
+        )
 
     # 1. 严格 preflight（等价 preflight --require-verified --owner-id）
     try:
@@ -697,10 +765,14 @@ def _finish_prechecks(args) -> dict:
             sys.exit("finish=FAIL：严格 preflight 未通过（见上）；零写入退出")
         raise
 
-    # 2. AC 全部打勾 + finalization 闭环
+    # 2. AC 全部打勾 + finalization 闭环；done 归档目标只读占用检查
     _check_done_ready(tid, task_dir)
+    _require_archive_target_free(fm)
 
-    # 3. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
+    # 3. Markdown 零写入格式检查（含已暂存 .md 与当前 task 目录）
+    _check_markdown_format(task_dir)
+
+    # 4. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
     loose = _unstaged_outside((task["dir"],))
     if loose:
         shown = ", ".join(loose[:8]) + (f" 等共 {len(loose)} 项" if len(loose) > 8 else "")
@@ -716,7 +788,7 @@ def _finish_prechecks(args) -> dict:
             "finish 之前不得创建中间 commit，实现 commit 由 finish 提交。零写入退出"
         )
 
-    # 4. review 门禁
+    # 5. review 门禁
     scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"])
     try:
         review = evaluate_review(task_dir, fm, scope or None)
@@ -727,10 +799,12 @@ def _finish_prechecks(args) -> dict:
             f"finish=FAIL：review 门禁未通过 overall={review['overall']} "
             f"review_scope={review['review_scope']} "
             f"missing_disposition={review['missing_disposition'] or '-'} "
+            f"ac_review={review['ac_review']} "
+            f"ac_review_detail={review['ac_review_detail']} "
             f"next_action={review['next_action']}；零写入退出"
         )
 
-    # 5. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
+    # 6. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
         attempt, execution_id = resolve_identity(tid)
         ledger = primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"
@@ -743,17 +817,18 @@ def _finish_prechecks(args) -> dict:
             f"owner_id={record.get('owner_id')!r}，与 --owner-id 不符；零写入退出"
         )
 
-    # 6. 机器生成 handoff.json 内容（progress.md 验证摘要为空或仍是占位时拒绝）
+    # 7. 机器生成 handoff.json 内容（progress.md 验证摘要为空或仍是占位时拒绝）
     try:
         handoff = build_handoff(
             tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],
-            base_sha=head, note_body=body, root=ctx.REPO_ROOT,
+            base_sha=head, review_scope=scope, note_body=body, root=ctx.REPO_ROOT,
         )
     except ctx.TaskDataError as error:
         sys.exit(f"finish=FAIL：{error}；零写入退出")
     return {
         "args": args, "message_path": message_path, "note_path": path, "task_dir": task_dir,
         "task_rel": task["dir"], "handoff": handoff, "diff_anchor": head,
+        "review_scope": scope,
     }
 
 
@@ -821,6 +896,14 @@ def cmd_finish(args):
             )
         detail = (committed.stderr.strip() or committed.stdout.strip())[-1500:]
         fail(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
+    from .monitoring import review_scope_fingerprint
+    actual_scope = review_scope_fingerprint(plan["diff_anchor"], plan["task_rel"], ref="HEAD")
+    if actual_scope != plan["review_scope"]:
+        sys.exit(
+            f"finish=FAIL：提交内容与 review 内容不一致（review_scope={plan['review_scope']!r}，"
+            f"HEAD 重算={actual_scope!r}）；HEAD 已前移不回滚，"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 按 review 修复处理"
+        )
     print(f"finish=OK {tid} commit={_get_head()}")
 
 @control_locked
@@ -854,8 +937,8 @@ def cmd_rewind(args):
     if effective not in ctx.STATUS_ORDER:
         sys.exit(
             f"{args.tid} status={effective}；rewind 只处理 {ctx.STATUS_ORDER}。"
-            "done/dropped 不可 rewind；review 证据问题见 recovery 证据修复"
-            "（追加证据 commit），禁止 rewind/reserve 新 attempt。"
+            "done/dropped 不可 rewind；review 失效的修复见 recovery"
+            "（amend 补审进同一实现 commit），禁止 rewind/reserve 新 attempt。"
         )
     target = args.to or ctx.DEFAULT_REWIND.get(effective)
     if target is None:

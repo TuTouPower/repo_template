@@ -17,6 +17,7 @@ from review_support import ensure_review_evidence, configure_project_verificatio
 from task_flow_support import mark_done
 
 from repo_task.documents import parse_front_matter, write_front_matter
+from repo_task.monitoring import review_scope_fingerprint
 
 
 def _git(repo, *args, check=True):
@@ -126,6 +127,9 @@ def _prepare_done(repo, tid, slug):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
+        "review_scope": review_scope_fingerprint(
+            base_sha, f"docs/tasks/{branch}", repo_root=worktree
+        ),
         "pending": [],
         "findings": [],
     }
