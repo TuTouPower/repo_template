@@ -322,7 +322,7 @@ def _classify(
         fail_class = report.get("class", "task")
         return "failed", f"class={fail_class} {report.get('reason', '')}".strip()
     if record["terminal_status"] == "completed" and report.get("status") == "done":
-        verdict, detail = verify_integrate_ready(
+        verdict, _kind, detail = verify_integrate_ready(
             tid, record["attempt"], record["execution_id"]
         )
         if verdict != "ready":

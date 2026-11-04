@@ -350,7 +350,7 @@ def _require_execution_gate(
 
 
 def _verify_exact_handoff(tid: str, attempt: int, execution_id: str) -> None:
-    verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
+    verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id)
     if verdict != "ready":
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} execution_id={execution_id!r} refs/handoff 验证失败：{detail}"

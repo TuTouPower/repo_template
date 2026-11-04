@@ -1059,7 +1059,7 @@ def cmd_finish_unwind(args):
     """
     from .attempts import current_attempt_record, resolve_identity
     from .ledger import ledger_read
-    from .monitoring import implementation_commit, is_review_scope_mismatch, verify_integrate_ready
+    from .monitoring import implementation_commit, verify_integrate_ready
     from .store import discover_effective_tasks
     require_primary_worktree()
     tid = args.tid
@@ -1118,10 +1118,10 @@ def cmd_finish_unwind(args):
         or committed != handoff or committed_fm.get("status") != "done"
     ):
         sys.exit(f"{tid} tip 未包含当前 handoff；现场与 ledger 不一致，停止并人工核查")
-    verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
+    verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id)
     if verdict == "ready":
         sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
-    if not is_review_scope_mismatch(detail):
+    if kind != "review_scope_mismatch":
         sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
     listing = _git(["branch", "--format=%(refname:short)"])
     if listing.returncode != 0:

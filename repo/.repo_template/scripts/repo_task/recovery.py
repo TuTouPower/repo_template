@@ -7,7 +7,7 @@ from .documents import parse_front_matter
 from .git_ops import _git, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .locks import control_locked
-from .monitoring import implementation_commit, is_review_scope_mismatch, verify_integrate_ready
+from .monitoring import implementation_commit, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
@@ -38,7 +38,7 @@ def recovery_state(tid: str) -> dict:
         if task["status"] in ctx.ARCHIVED_STATUSES and (not record or record["state"] == "integrated"):
             return phase("integrated_or_archived", "检查 Git merge 状态和 integrated 记录；不重复执行")
         if record:
-            verdict, detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+            verdict, _kind, detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
             report = record.get("report") or {}
             if verdict == "ready" and record.get("terminal_status") == "completed" and report.get("status") == "done":
                 return phase("closed", "保留分支作下一 --base；整链完成后询问合并授权")
@@ -111,8 +111,8 @@ def recovery_state(tid: str) -> dict:
         record["state"] == "terminal" and record.get("terminal_status") == "completed"
     )
     if gate_check or report_done:
-        verdict, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
-        if verdict != "ready" and is_review_scope_mismatch(gate_detail):
+        verdict, kind, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+        if verdict != "ready" and kind == "review_scope_mismatch":
             if report_done:
                 state["action"] = (
                     f"停止：report 已写入 done，但实现 commit 内容偏离 review 内容（{gate_detail}）；"
@@ -142,7 +142,7 @@ def recovery_state(tid: str) -> dict:
                 "把 progress 还原为 active，然后重新 review 再 finish；"
                 "禁止 rewind、reserve、amend 修复。",
             )
-        if verdict != "ready" and "review gate" in gate_detail:
+        if verdict != "ready" and kind == "review_gate":
             if report_done:
                 state["action"] = (
                     f"停止：report 已写入 done，但 review 门禁失败（{gate_detail}）；"
@@ -212,7 +212,7 @@ def cmd_ledger_import(args):
     if not isinstance(handoff, dict):
         raise ctx.TaskDataError("拒绝导入：handoff 非 JSON 对象")
     attempt, execution_id = handoff.get("attempt"), handoff.get("execution_id")
-    verdict, detail = verify_integrate_ready(args.tid, attempt, execution_id)
+    verdict, _kind, detail = verify_integrate_ready(args.tid, attempt, execution_id)
     if verdict != "ready":
         raise ctx.TaskDataError(f"拒绝导入：{detail}")
     worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(args.tid)).resolve()

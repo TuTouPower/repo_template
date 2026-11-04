@@ -213,7 +213,7 @@ def _rewrite_handoff(repo, tid, slug, content):
 def test_verify_ready_with_valid_handoff(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -230,7 +230,7 @@ def test_verify_incomplete_when_tip_not_terminal(git_repo):
     assert started.returncode == 0, started.stderr
     identity = _reserve(git_repo, "t001")
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -241,7 +241,7 @@ def test_verify_incomplete_when_tip_not_terminal(git_repo):
 def test_verify_incomplete_without_branch(git_repo):
     # verify_integrate_ready 只查分支/handoff/spec，不查 ledger；
     # 直接传假 identity 验证「无本地分支 → incomplete」，无需真实 reserve（RT-006 门禁要求 start 后 reserve）
-    verdict, detail = monitoring.verify_integrate_ready("t001", 1, "fake-execution")
+    verdict, kind, detail = monitoring.verify_integrate_ready("t001", 1, "fake-execution")
 
     assert verdict == "incomplete"
     assert "无本地 task 分支" in detail
@@ -296,7 +296,7 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
         content = json.dumps(payload, ensure_ascii=False)
     _rewrite_handoff(git_repo, "t001", "alpha", content)
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -313,7 +313,7 @@ def test_verify_contract_on_uncompleted_ac(git_repo):
     _git(worktree, "add", str(spec_path))
     _git(worktree, "commit", "--amend", "--no-edit")
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -328,7 +328,7 @@ def test_handoff_rejects_wrong_field_type(git_repo):
     payload["tests"] = ["pytest"]
     _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -343,7 +343,7 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
     payload["base_sha"] = "HEAD"
     _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -361,7 +361,7 @@ def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo
     write_front_matter(task_path, fm, body)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "--amend", "--no-edit")
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -468,7 +468,7 @@ def test_verify_contract_when_multiple_branches(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _git(git_repo, "branch", "t001_beta", "t001_alpha")
 
-    verdict, detail = monitoring.verify_integrate_ready(
+    verdict, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
 
@@ -479,22 +479,25 @@ def test_verify_contract_when_multiple_branches(git_repo):
 def test_verify_handoff_attempt_must_match_parallel_attempt(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
 
-    mismatch_attempt, detail = monitoring.verify_integrate_ready(
+    mismatch_attempt, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"] + 1, identity["execution_id"]
     )
     assert mismatch_attempt == "contract"
+    assert kind == "handoff"
     assert "attempt=" in detail and "不符" in detail
 
-    mismatch_execution, detail = monitoring.verify_integrate_ready(
+    mismatch_execution, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], "wrong"
     )
     assert mismatch_execution == "contract"
+    assert kind == "handoff"
     assert "execution_id" in detail and "不符" in detail
 
-    ready, detail = monitoring.verify_integrate_ready(
+    ready, kind, detail = monitoring.verify_integrate_ready(
         "t001", identity["attempt"], identity["execution_id"]
     )
     assert ready == "ready", detail
+    assert kind == "ready"
 
 
 def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):

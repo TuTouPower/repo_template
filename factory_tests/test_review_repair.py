@@ -94,8 +94,9 @@ def test_amend_review_restores_cleanup(git_repo):
     _amend(worktree)
 
     assert _git(worktree, "rev-list", "--count", f"{anchor}..HEAD").stdout.strip() == "1"
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
     assert verdict == "ready", detail
+    assert kind == "ready"
     _cleanup(git_repo, "t001", identity)
     assert _git(git_repo, "rev-list", "--count", f"main..{branch}").stdout.strip() == "1"
 
@@ -127,7 +128,7 @@ def test_merge_commit_in_execution_branch_is_rejected(git_repo):
     _git(git_repo, "checkout", "-q", "main")
     assert _git(worktree, "merge", "--no-ff", "-m", "merge side", "side", check=False).returncode == 0
 
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
 
     assert verdict == "contract"
     assert "恰好一个实现 commit" in detail
@@ -202,8 +203,9 @@ def test_second_commit_is_rejected_everywhere(git_repo, writer):
     worktree = _worktree(git_repo, "t001")
     writer(worktree)
 
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
     assert verdict == "contract"
+    assert kind == "provenance"
     assert "恰好一个实现 commit" in detail
 
     cleanup = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
@@ -234,9 +236,10 @@ def test_amend_changing_delivery_is_rejected_by_review_scope(git_repo):
     (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
     _amend(worktree)
 
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
 
     assert verdict == "contract"
+    assert kind == "review_scope_mismatch"
     assert "review_scope" in detail
     assert "finish-unwind" in detail
     result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
@@ -254,9 +257,10 @@ def test_handoff_missing_review_scope_is_contract(git_repo):
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     _amend(worktree)
 
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
 
     assert verdict == "contract"
+    assert kind == "handoff"
     assert "review_scope" in detail
     result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
     assert result.returncode != 0
@@ -308,9 +312,10 @@ def test_review_level_downgrade_by_amend_is_rejected(git_repo):
     write_front_matter(path, fm, body)
     _amend(worktree)
 
-    verdict, detail = _verify(identity)
+    verdict, kind, detail = _verify(identity)
 
     assert verdict == "contract"
+    assert kind == "provenance"
     assert "review_level 被降级" in detail
     result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
     assert result.returncode != 0

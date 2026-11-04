@@ -173,7 +173,7 @@ def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
     suffix = "；先按 recovery 判定（review_repair / review_mismatch）处理后重跑 run-close"
     try:
-        verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
+        verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id)
     except ctx.TaskDataError as error:
         sys.exit(f"report=done 拒绝：{error}{suffix}")
     if verdict != "ready":

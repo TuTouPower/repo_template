@@ -417,21 +417,19 @@ def _validate_string_list(name: str, value) -> str | None:
     return None
 
 
-def is_review_scope_mismatch(detail: str) -> bool:
-    """判定 verify 失败是否为「提交内容偏离 review 内容」（指纹不一致）。
-
-    注意：review gate 的失败文案本身也带 review_scope=，须同时含「不一致」才算
-    指纹偏离。recovery 与 finish-unwind 共用此判定，保持口径一致；不要各自匹配字符串。
-    """
-    return "review_scope" in detail and "不一致" in detail
-
-
 def verify_integrate_ready(
     tid: str,
     attempt: int,
     execution_id: str,
-) -> tuple[str, str]:
-    """Verify one execution commit and exact handoff provenance."""
+) -> tuple[str, str, str]:
+    """Verify one execution commit and exact handoff provenance.
+
+    返回 (verdict, kind, detail)。kind 是机器可判的失败类别，调用方（recovery、
+    finish-unwind）按 kind 分流，不得匹配 detail 自然语言：
+    ready（通过）、incomplete（条件未齐）、identity（参数非法）、branch（分支异常）、
+    handoff（执行回执异常）、spec（验收标准异常）、provenance（血缘异常）、
+    review_scope_mismatch（提交内容偏离 review 内容）、review_gate（review 门禁失败）。
+    """
     if (
         not isinstance(attempt, int)
         or isinstance(attempt, bool)
@@ -439,54 +437,54 @@ def verify_integrate_ready(
         or not isinstance(execution_id, str)
         or not execution_id
     ):
-        return "contract", "verify 必须提供正整数 attempt 与非空 execution_id"
+        return "contract", "identity", "verify 必须提供正整数 attempt 与非空 execution_id"
     branches = _task_branch_names(tid)
     if not branches:
-        return "incomplete", "无本地 task 分支"
+        return "incomplete", "incomplete", "无本地 task 分支"
     if len(branches) > 1:
-        return "contract", f"存在多个分支：{', '.join(branches)}"
+        return "contract", "branch", f"存在多个分支：{', '.join(branches)}"
     branch = branches[0]
     try:
         task, fm, _ = load_task_at_ref(tid, branch)
     except ctx.TaskDataError as error:
-        return "incomplete", str(error)
+        return "incomplete", "incomplete", str(error)
     status = fm.get("status")
     if status not in ctx.ARCHIVED_STATUSES:
-        return "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
+        return "incomplete", "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
     handoff_path = f"{task['dir']}/handoff.json"
     try:
         handoff = json.loads(git_text_at_ref(branch, handoff_path))
     except ctx.TaskDataError:
-        return "contract", f"分支 {branch!r} tip 缺 {handoff_path}"
+        return "contract", "handoff", f"分支 {branch!r} tip 缺 {handoff_path}"
     except json.JSONDecodeError:
-        return "contract", f"分支 {branch!r} tip {handoff_path} 无法解析"
+        return "contract", "handoff", f"分支 {branch!r} tip {handoff_path} 无法解析"
     if not isinstance(handoff, dict):
-        return "contract", f"{handoff_path} 非 JSON 对象"
+        return "contract", "handoff", f"{handoff_path} 非 JSON 对象"
     for key, expected in _HANDOFF_TYPES.items():
         if key not in handoff:
-            return "contract", f"{handoff_path} 缺必填字段 {key}"
+            return "contract", "handoff", f"{handoff_path} 缺必填字段 {key}"
         if (
             not isinstance(handoff[key], expected)
             or (key == "attempt" and isinstance(handoff[key], bool))
             or (key == "attempt" and handoff[key] <= 0)
             or (expected is str and not handoff[key])
         ):
-            return "contract", f"{handoff_path} 字段 {key} 类型或值非法"
+            return "contract", "handoff", f"{handoff_path} 字段 {key} 类型或值非法"
     for key in ("pending", "findings"):
         problem = _validate_string_list(key, handoff[key])
         if problem:
-            return "contract", f"{handoff_path} {problem}"
+            return "contract", "handoff", f"{handoff_path} {problem}"
     spec_path = f"{task['dir']}/task.md"
     try:
         spec_text = git_text_at_ref(branch, spec_path)
     except ctx.TaskDataError:
-        return "contract", f"分支 {branch!r} tip 缺 {spec_path}"
+        return "contract", "spec", f"分支 {branch!r} tip 缺 {spec_path}"
     ac_statuses = extract_ac_statuses(spec_text)
     if not ac_statuses:
-        return "contract", f"{spec_path} 验收标准未定义任何 AC"
+        return "contract", "spec", f"{spec_path} 验收标准未定义任何 AC"
     uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
     if uncompleted:
-        return "contract", f"{spec_path} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
+        return "contract", "spec", f"{spec_path} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
     expected_values = {
         "tid": tid,
         "attempt": attempt,
@@ -496,18 +494,18 @@ def verify_integrate_ready(
     }
     for key, expected in expected_values.items():
         if handoff.get(key) != expected:
-            return "contract", f"{handoff_path} {key}={handoff.get(key)!r} 与当前 {expected!r} 不符"
+            return "contract", "handoff", f"{handoff_path} {key}={handoff.get(key)!r} 与当前 {expected!r} 不符"
     tip_result = _git(["rev-parse", f"refs/heads/{branch}^{{commit}}"])
     base_result = _git(["rev-parse", f"{handoff['base_sha']}^{{commit}}"])
     if tip_result.returncode != 0:
-        return "contract", f"分支 {branch!r} tip 无法解析 commit"
+        return "contract", "branch", f"分支 {branch!r} tip 无法解析 commit"
     if base_result.returncode != 0:
-        return "contract", f"{handoff_path} base_sha 无法解析 commit"
+        return "contract", "branch", f"{handoff_path} base_sha 无法解析 commit"
     base = base_result.stdout.strip()
     tip = tip_result.stdout.strip()
     diff_anchor = fm.get("diff_anchor")
     if not isinstance(diff_anchor, str) or not diff_anchor:
-        return "contract", f"分支 {branch!r} task diff_anchor 缺失或非法"
+        return "contract", "provenance", f"分支 {branch!r} task diff_anchor 缺失或非法"
     base_level = "full"
     try:
         base_text = git_text_at_ref(base, f"{task['dir']}/{ctx.PROGRESS_FILE}")
@@ -517,12 +515,12 @@ def verify_integrate_ready(
         base_fm, _ = parse_front_matter_text(base_text, source=f"{base}:{task['dir']}/{ctx.PROGRESS_FILE}")
         base_level = base_fm.get("review_level", "full")
     if base_level not in ctx.REVIEW_LEVELS:
-        return "contract", f"diff_anchor {base[:12]} 处 review_level 非法：{base_level!r}"
+        return "contract", "provenance", f"diff_anchor {base[:12]} 处 review_level 非法：{base_level!r}"
     tip_level = fm.get("review_level", "full")
     if tip_level not in ctx.REVIEW_LEVELS:
-        return "contract", f"分支 {branch!r} tip review_level 非法：{tip_level!r}"
+        return "contract", "provenance", f"分支 {branch!r} tip review_level 非法：{tip_level!r}"
     if tip_level != base_level and not (base_level == "single" and tip_level == "full"):
-        return "contract", (
+        return "contract", "provenance", (
             f"分支 {branch!r} review_level 被降级：{base_level} -> {tip_level}；"
             "review_level 只能保持不变或 single -> full"
         )
@@ -530,19 +528,19 @@ def verify_integrate_ready(
     try:
         implementation_commit(tip, base)
     except ctx.TaskDataError as error:
-        return "contract", (
+        return "contract", "provenance", (
             f"{handoff_path} base_sha={handoff['base_sha']!r} 与分支 {branch!r} tip 不符：{error}；{shape}"
         )
     if handoff["base_sha"] != base or diff_anchor != base:
-        return "contract", (
+        return "contract", "provenance", (
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
             f"{diff_anchor!r} 与实现 commit 的 first parent {base!r} 不一致；{shape}"
         )
     scope = review_scope_fingerprint(base, task["dir"], ref=tip)
     if not scope:
-        return "contract", f"无法计算分支 {branch!r} tip 的 review scope；{shape}"
+        return "contract", "provenance", f"无法计算分支 {branch!r} tip 的 review scope；{shape}"
     if handoff["review_scope"] != scope:
-        return "contract", (
+        return "contract", "review_scope_mismatch", (
             f"{handoff_path} review_scope={handoff['review_scope']!r} 与分支 {branch!r} tip "
             f"重算的 {scope!r} 不一致；提交内容偏离 review 内容，不能 amend——"
             f"无后继分支且 report 未 done 时用 `task.py finish-unwind {tid}` 撤销实现 commit 回到 active 重做"
@@ -562,7 +560,7 @@ def verify_integrate_ready(
                     (target / name).write_text(text, encoding="utf-8")
                 result = evaluate_review(target, fm, scope)
             if result["overall"] != "PASS":
-                return "contract", (
+                return "contract", "review_gate", (
                     f"review gate：overall={result['overall']} "
                     f"review_scope={result['review_scope']} "
                     f"missing_disposition={result['missing_disposition']} "
@@ -571,11 +569,11 @@ def verify_integrate_ready(
                     "最终提交须有同内容的 PASS 证据"
                 )
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:
-            return "contract", f"review gate：{error}"
+            return "contract", "review_gate", f"review gate：{error}"
     detail = "分支 tip terminal + exact handoff + 恰好一个实现 commit + review_scope 一致"
     if not has_unmerged_commits(branch):
         detail += "（已合入）"
-    return "ready", detail
+    return "ready", "ready", detail
 
 
 def compute_ps_rows(
@@ -585,6 +583,7 @@ def compute_ps_rows(
     *,
     verifier=verify_integrate_ready,
 ) -> list[dict]:
+    # verifier 协议与 verify_integrate_ready 同形：(tid, attempt, execution_id) -> (verdict, kind, detail)。
     records = project_attempts(events)
     ledger_tids = {record["tid"] for record in records.values()}
     # 合并 effective 中 active 的 tid：frontmatter 被手工改状态但未走
@@ -621,7 +620,7 @@ def compute_ps_rows(
         elif record["state"] == "running":
             base["state"] = "running(inline)"
         else:
-            verdict, detail = verifier(
+            verdict, _kind, detail = verifier(
                 record["tid"], record["attempt"], record["execution_id"]
             )
             if verdict == "ready":
