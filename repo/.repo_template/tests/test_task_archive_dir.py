@@ -185,15 +185,15 @@ def test_rebuild_index_uses_utf8_and_lf(fake_repo):
     assert '"tasks"' in text
 
 
-def test_unlink_managed_env_links_only_removes_script_links(fake_repo):
+def test_unlink_managed_links_only_removes_script_links(fake_repo):
     source = fake_repo / ".env"
     source.write_text("secret", encoding="utf-8")
     worktree = fake_repo / "worktree"
     worktree.mkdir()
 
-    assert worktrees.link_local_env(worktree) == [".env"]
+    assert worktrees.link_local_files(worktree) == [".env"]
     managed = worktree / ".env"
-    assert worktrees.is_managed_env_link(worktree, managed)
+    assert worktrees.is_managed_link(worktree, managed)
 
     nested = worktree / "config"
     nested.mkdir()
@@ -201,9 +201,9 @@ def test_unlink_managed_env_links_only_removes_script_links(fake_repo):
     other.write_text("other", encoding="utf-8")
     unmanaged = nested / ".env"
     unmanaged.symlink_to(other)
-    assert not worktrees.is_managed_env_link(worktree, unmanaged)
+    assert not worktrees.is_managed_link(worktree, unmanaged)
 
-    worktrees.unlink_managed_env_links(worktree)
+    worktrees.unlink_managed_links(worktree)
     assert not managed.is_symlink()
     assert unmanaged.is_symlink()
 
@@ -213,12 +213,12 @@ def test_managed_env_link_stays_identifiable_after_source_removed(fake_repo):
     source.write_text("secret", encoding="utf-8")
     worktree = fake_repo / "worktree"
     worktree.mkdir()
-    worktrees.link_local_env(worktree)
+    worktrees.link_local_files(worktree)
     source.unlink()
 
     link = worktree / ".env"
-    assert worktrees.is_managed_env_link(worktree, link)
-    worktrees.unlink_managed_env_links(worktree)
+    assert worktrees.is_managed_link(worktree, link)
+    worktrees.unlink_managed_links(worktree)
     assert not link.is_symlink()
 
 

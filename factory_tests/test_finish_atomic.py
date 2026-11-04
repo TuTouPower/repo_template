@@ -195,6 +195,31 @@ def test_full_main_path_begin_finish_close_integrate_uses_only_tid_and_owner(git
     assert (git_repo / "docs/archive/tasks/t001_alpha/handoff.json").is_file()
 
 
+def test_main_path_with_worktree_include_links_keeps_links_out_of_commit(git_repo):
+    """.worktreeinclude 链入的忽略文件与目录不进实现 commit，run-close 清理后主仓目标完好。"""
+    gitignore = git_repo / ".gitignore"
+    gitignore.write_text(gitignore.read_text(encoding="utf-8") + "/data/\n.env.local\n", encoding="utf-8")
+    (git_repo / ".worktreeinclude").write_text("/data/\n.env.local\n", encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "worktree include")
+    (git_repo / "data").mkdir()
+    (git_repo / "data/state.db").write_text("rows\n", encoding="utf-8")
+    (git_repo / ".env.local").write_text("LOCAL=1\n", encoding="utf-8")
+
+    _, worktree, message = _ready(git_repo)
+    assert (worktree / "data").is_symlink() and (worktree / ".env.local").is_symlink()
+    finished = finish_cli(worktree, "t001", OWNER, message)
+    assert finished.returncode == 0, finished.stdout + finished.stderr
+    committed = _git(worktree, "show", "--name-only", "--format=", "HEAD").stdout.splitlines()
+    assert "data" not in committed and ".env.local" not in committed
+
+    closed = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
+    assert closed.returncode == 0, closed.stderr
+    assert not worktree.exists()
+    assert (git_repo / "data/state.db").read_text(encoding="utf-8") == "rows\n"
+    assert (git_repo / ".env.local").read_text(encoding="utf-8") == "LOCAL=1\n"
+
+
 # --------------------------------------------------------------------------
 # handoff 的 tests / blackbox / review 来自 progress.md
 # --------------------------------------------------------------------------

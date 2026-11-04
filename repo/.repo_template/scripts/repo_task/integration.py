@@ -46,10 +46,10 @@ from .store import (
 )
 from .worktrees import (
     create_worktree,
-    link_local_env,
+    link_local_files,
     resolve_start_base,
     rollback_start,
-    unlink_managed_env_links,
+    unlink_managed_links,
 )
 
 
@@ -267,7 +267,7 @@ def cmd_start(args):
         fm["worktree"] = worktree_rel
         fm["diff_anchor"] = base_sha
         write_front_matter(task_path, fm, body)
-        linked = link_local_env(worktree)
+        linked = link_local_files(worktree)
     except (OSError, ctx.TaskDataError) as error:
         rollback_error = None
         if created_worktree:
@@ -398,7 +398,7 @@ def _cleanup_worktree(tid: str, attempt: int, execution_id: str) -> str:
         sys.exit(
             f"{rel} 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先完成 task commit"
         )
-    unlink_managed_env_links(path)
+    unlink_managed_links(path)
     result = _git(["worktree", "remove", str(path)])
     if result.returncode != 0:
         sys.exit(f"git worktree remove 失败：{result.stderr.strip()}")

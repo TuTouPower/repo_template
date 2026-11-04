@@ -480,7 +480,7 @@ def test_start_compensates_when_local_config_link_fails(git_repo, monkeypatch):
     def fail_link(*args, **kwargs):
         raise OSError("模拟本地配置软链失败")
 
-    monkeypatch.setattr(integration, "link_local_env", fail_link)
+    monkeypatch.setattr(integration, "link_local_files", fail_link)
 
     with pytest.raises(SystemExit, match="主仓.*未修改"):
         _start(git_repo)
@@ -1461,8 +1461,8 @@ def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_r
         store.scan_tasks_at_ref("branch_with_dup")
 
 
-def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
-    """验证 link_local_env 排除已存在 worktree、artifacts、scratch 等目录内的 .env（Issue #46）。"""
+def test_link_local_files_excludes_foreign_and_worktree_envs(git_repo):
+    """验证 link_local_files 排除已存在 worktree、artifacts、scratch 等目录内的 .env（Issue #46）。"""
     from repo_task import worktrees
 
     # 1. 主仓根目录合法 .env
@@ -1485,7 +1485,7 @@ def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
     new_wt = git_repo / "worktrees/t002_beta"
     new_wt.mkdir(parents=True, exist_ok=True)
 
-    linked = worktrees.link_local_env(new_wt)
+    linked = worktrees.link_local_files(new_wt)
 
     # 只有根目录的 .env 被链入
     assert linked == [".env"]
@@ -1493,6 +1493,86 @@ def test_link_local_env_excludes_foreign_and_worktree_envs(git_repo):
     assert not (new_wt / ".scratch/.env").exists()
     assert not (new_wt / "artifacts/.env").exists()
     assert not (new_wt / "worktrees/t001_alpha/.env").exists()
+
+
+def _write_worktree_include(repo):
+    (repo / ".gitignore").write_text(
+        "__pycache__/\n*.py[cod]\ndocs/runtime/\n.env\n.env.*\n/data/\nconfig/local.*\n",
+        encoding="utf-8",
+    )
+    (repo / ".worktreeinclude").write_text(
+        "# 本地配置与容器数据\n.env.*\n/data/\nconfig/local.*\nnotes.txt\ndocs/runtime/\n",
+        encoding="utf-8",
+    )
+    (repo / "config").mkdir(exist_ok=True)
+    (repo / "config/app.yaml").write_text("tracked: true\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "worktree include")
+    (repo / ".env.local").write_text("LOCAL=1\n", encoding="utf-8")
+    (repo / "config/local.yaml").write_text("db: local\n", encoding="utf-8")
+    (repo / "data/db").mkdir(parents=True)
+    (repo / "data/db/state.db").write_text("rows\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("用户在途未跟踪文件\n", encoding="utf-8")
+    (repo / "docs/runtime").mkdir(parents=True, exist_ok=True)
+    (repo / "docs/runtime/probe.json").write_text("{}\n", encoding="utf-8")
+
+
+def test_start_links_worktree_include_ignored_paths(git_repo):
+    """.worktreeinclude 命中的 gitignore 文件与整目录软链进 worktree；
+    未被忽略的未跟踪文件、控制面目录与已入库文件不链接。"""
+    _write_worktree_include(git_repo)
+
+    _start(git_repo)
+
+    wt = _worktree_path(git_repo)
+    for rel in (".env.local", "config/local.yaml", "data"):
+        assert (wt / rel).is_symlink(), rel
+    assert (wt / "data/db/state.db").read_text(encoding="utf-8") == "rows\n"
+    assert not (wt / "notes.txt").exists()
+    assert not (wt / "docs/runtime/probe.json").exists()
+    assert not (wt / "config/app.yaml").is_symlink()
+    # 目录软链不匹配 `/data/` 这类仅目录规则；须仍被忽略，不能被 git add 误暂存。
+    status = _git(wt, "status", "--porcelain").stdout.splitlines()
+    assert status == [" M docs/tasks/t001_alpha/progress.md"]
+    # 托管 exclude 只补软链路径：主仓未被忽略的在途文件仍可见。
+    assert _git(git_repo, "status", "--porcelain").stdout.splitlines() == ["?? notes.txt"]
+    common = Path(_git(git_repo, "rev-parse", "--git-common-dir").stdout.strip())
+    exclude = (common if common.is_absolute() else git_repo / common) / "info/exclude"
+    assert "/data" in exclude.read_text(encoding="utf-8").splitlines()
+
+
+def test_worktree_removal_keeps_linked_primary_data(git_repo):
+    """清理 worktree 只删软链本身，主仓被链接的目录与文件完好。"""
+    from repo_task import worktrees
+
+    _write_worktree_include(git_repo)
+    _start(git_repo)
+    wt = _worktree_path(git_repo)
+    rel = ctx.worktree_rel_path("t001")
+    _git(wt, "commit", "-am", "active")
+
+    removed, message = worktrees.remove_worktree(rel, expected_branch="t001_alpha")
+
+    assert removed, message
+    assert not wt.exists()
+    assert (git_repo / "data/db/state.db").read_text(encoding="utf-8") == "rows\n"
+    assert (git_repo / ".env.local").read_text(encoding="utf-8") == "LOCAL=1\n"
+
+
+def test_forced_worktree_discard_does_not_follow_unmanaged_dir_link(git_repo):
+    """即便遗留非托管目录软链，强制丢弃 worktree 也不穿透删除主仓目标。"""
+    from repo_task import worktrees
+
+    _write_worktree_include(git_repo)
+    _start(git_repo)
+    wt = _worktree_path(git_repo)
+    (wt / "extra_data").symlink_to(git_repo / "data")
+
+    removed, message = worktrees.discard_worktree(ctx.worktree_rel_path("t001"))
+
+    assert removed, message
+    assert not wt.exists()
+    assert (git_repo / "data/db/state.db").read_text(encoding="utf-8") == "rows\n"
 
 
 def test_rewind_audit_failure_persists_trace_and_reports_real_state(git_repo, monkeypatch):

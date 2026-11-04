@@ -8,15 +8,89 @@ from pathlib import Path
 
 import repo_task.context as ctx
 
+from .documents import atomic_write_text
 from .git_ops import _get_head, _git, current_branch, default_branch, resolve_local_branch, worktree_paths
+from .locks import git_common_dir
 from .store import discover_effective_sources, load_task_at_ref
 
-def link_local_env(worktree: Path) -> list[str]:
-    """把主仓未入库的 .env 软链进 worktree（同相对路径）。
+WORKTREE_INCLUDE = ".worktreeinclude"
+# 控制面与 Git 元数据不随 .worktreeinclude 共享：worktree 写入 docs/runtime
+# 会混淆主仓 ledger 与 execution_context。
+INCLUDE_DENY = (".git", "docs/runtime")
+EXCLUDE_BLOCK_START = "# repo_template:worktreeinclude start"
+EXCLUDE_BLOCK_END = "# repo_template:worktreeinclude end"
 
-    用 rglob 覆盖任意层级嵌套；跳过 .git、node_modules、.scratch 等
-    噪声目录，避免递归进依赖/缓存树。先物化源列表再建链，防止 rglob
-    在遍历中把刚创建的软链当新源导致级联嵌套。
+
+def _ignored_others(*exclude_args: str) -> list[str]:
+    r = _git(["ls-files", "-z", "--others", "--ignored", "--directory", *exclude_args])
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"git ls-files 失败：{r.stderr.strip()}")
+    return [entry for entry in r.stdout.split("\0") if entry]
+
+
+def _include_sources() -> list[Path]:
+    """主仓 .worktreeinclude（gitignore 语法）命中且确被 gitignore 的路径。
+
+    命中目录时整目录软链；未被 gitignore 的未跟踪路径（用户在途工作）与
+    INCLUDE_DENY 一律跳过，已入库路径不在 --others 结果中，天然排除。
+    """
+    include = ctx.REPO_ROOT / WORKTREE_INCLUDE
+    if not include.is_file():
+        return []
+    ignored = set(_ignored_others("--exclude-standard"))
+    sources = []
+    for entry in _ignored_others(f"--exclude-from={include}"):
+        parts = entry.rstrip("/").split("/")
+        rel = "/".join(parts)
+        if any(rel == deny or rel.startswith(deny + "/") for deny in INCLUDE_DENY):
+            continue
+        ancestors = {"/".join(parts[:i]) + "/" for i in range(1, len(parts))}
+        if entry in ignored or ancestors & ignored:
+            sources.append(ctx.REPO_ROOT / rel)
+    return sources
+
+
+def _untracked_in(worktree: Path, paths: list[str]) -> list[str]:
+    r = _git(["ls-files", "-z", "--others", "--exclude-standard", "--", *paths], root=worktree)
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"git ls-files 失败：{r.stderr.strip()}")
+    return [entry.rstrip("/") for entry in r.stdout.split("\0") if entry]
+
+
+def _ensure_links_ignored(worktree: Path, linked: list[str]) -> None:
+    """以 / 结尾的 gitignore 规则只匹配目录，不匹配同名软链，链接会在 worktree
+    显示为未跟踪而被误暂存。对这类链接在共享 info/exclude 托管块追加锚定规则；
+    这些路径在主仓本已被忽略，规则对主仓与其它 worktree 语义不变。"""
+    if not linked:
+        return
+    missing = _untracked_in(worktree, linked)
+    if not missing:
+        return
+    exclude = git_common_dir(ctx.REPO_ROOT) / "info" / "exclude"
+    lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.is_file() else []
+    if EXCLUDE_BLOCK_START in lines and EXCLUDE_BLOCK_END in lines:
+        start, end = lines.index(EXCLUDE_BLOCK_START), lines.index(EXCLUDE_BLOCK_END)
+        before, block, after = lines[:start], lines[start + 1:end], lines[end + 1:]
+    else:
+        before, block, after = lines, [], []
+    block += [f"/{rel}" for rel in missing if f"/{rel}" not in block]
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        exclude,
+        "\n".join([*before, EXCLUDE_BLOCK_START, *block, EXCLUDE_BLOCK_END, *after]) + "\n",
+    )
+    still = _untracked_in(worktree, linked)
+    if still:
+        raise ctx.TaskDataError(f"软链在 worktree 中未被忽略：{', '.join(still)}")
+
+
+def link_local_files(worktree: Path) -> list[str]:
+    """把主仓未入库的本地文件软链进 worktree（同相对路径）。
+
+    默认链接任意层级的 .env；主仓有 .worktreeinclude 时另链其命中的
+    gitignore 路径（文件或整目录）。.env 扫描跳过 .git、node_modules、
+    .scratch 等噪声目录；先物化源列表再建链，防止遍历中把刚创建的软链
+    当新源导致级联嵌套。
     """
     linked = []
     skip_dirs = {
@@ -43,17 +117,22 @@ def link_local_env(worktree: Path) -> list[str]:
     for root, dirs, files in os.walk(ctx.REPO_ROOT, followlinks=False):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         if ".env" in files:
-            sources.append(Path(root) / ".env")
-    for src in sources:
+            src = Path(root) / ".env"
+            rel = src.relative_to(ctx.REPO_ROOT)
+            if not any(part in skip_dirs for part in rel.parts[:-1]):
+                sources.append(src)
+    env_count = len(sources)
+    sources.extend(_include_sources())
+    included = []
+    for index, src in enumerate(sources):
         try:
             rel = src.relative_to(ctx.REPO_ROOT)
         except ValueError:
             continue
-        if any(part in skip_dirs for part in rel.parts[:-1]):
-            continue
         try:
             src_res = src.resolve()
-            if any(src_res.is_relative_to(wt) for wt in registered_worktrees):
+            if any(src_res == wt or src_res.is_relative_to(wt) or wt.is_relative_to(src_res)
+                   for wt in registered_worktrees):
                 continue
         except (ValueError, OSError):
             pass
@@ -62,18 +141,19 @@ def link_local_env(worktree: Path) -> list[str]:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.symlink_to(os.path.relpath(src, dst.parent))
-        linked.append(str(rel))
+        linked.append(rel.as_posix())
+        if index >= env_count:
+            included.append(rel.as_posix())
+    _ensure_links_ignored(worktree, included)
     return linked
 
-def is_managed_env_link(worktree: Path, link: Path) -> bool:
-    """仅识别 link_local_env() 为主仓对应 .env 创建的软链。"""
+def is_managed_link(worktree: Path, link: Path) -> bool:
+    """仅识别 link_local_files() 为主仓同相对路径创建的软链。"""
     if not link.is_symlink():
         return False
     try:
         rel = link.relative_to(worktree)
     except ValueError:
-        return False
-    if rel.name != ".env":
         return False
     source = ctx.REPO_ROOT / rel
     expected = os.path.relpath(source, link.parent)
@@ -86,13 +166,14 @@ def is_managed_env_link(worktree: Path, link: Path) -> bool:
         and link.resolve(strict=False) == source.resolve(strict=False)
     )
 
-def unlink_managed_env_links(worktree: Path) -> None:
+def unlink_managed_links(worktree: Path) -> None:
     # 用 os.walk 而非 Path.rglob：rglob 在 Python 3.10+ 会跳过 dangling
-    # symlink（源已删的 .env 链接），清理时恰恰需要删除这类残留。
+    # symlink（源已删的链接），清理时恰恰需要删除这类残留。目录软链出现在
+    # dirs 中且 followlinks=False 不会进入，只删链接本身，不触及主仓目标。
     for root, dirs, files in os.walk(worktree, followlinks=False):
-        if ".env" in files:
-            link = Path(root) / ".env"
-            if is_managed_env_link(worktree, link):
+        for name in (*dirs, *files):
+            link = Path(root) / name
+            if is_managed_link(worktree, link):
                 link.unlink()
 
 def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
@@ -177,7 +258,7 @@ def rollback_start(
     registered_branch = worktree_paths().get(str(worktree))
     if registered_branch == branch:
         if worktree.exists():
-            unlink_managed_env_links(worktree)
+            unlink_managed_links(worktree)
         r = _git(["worktree", "remove", "--force", str(worktree)])
         if r.returncode != 0:
             failures.append(
@@ -223,7 +304,7 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
         return True, f"worktree 不在登记表，已 prune：{rel}"
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 回主仓"
-    unlink_managed_env_links(path)
+    unlink_managed_links(path)
     r = _git(["worktree", "remove", "--force", str(path)])
     if r.returncode != 0:
         return False, f"git worktree remove --force 失败（{r.stderr.strip()}）"
@@ -261,7 +342,7 @@ def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bo
         )
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 出去后执行 git worktree remove {rel}"
-    unlink_managed_env_links(path)
+    unlink_managed_links(path)
     r = _git(["worktree", "remove", str(path)])
     if r.returncode != 0:
         return False, f"git worktree remove 失败（{r.stderr.strip()}）；请手动处理 {rel}"
