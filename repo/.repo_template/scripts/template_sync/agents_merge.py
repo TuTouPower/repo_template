@@ -49,13 +49,30 @@ def _replace_agents_force(src_text: str, dst_text: str) -> tuple[str, bool, bool
     )
 
 
+def agents_section_diagnosis(src: Path) -> list[str]:
+    """说明 AGENTS.md 标题协议缺在哪一侧；两侧都完整时返回空列表。"""
+    issues: list[str] = []
+    for label, path in (("模板源", src / "AGENTS.md"), ("消费仓", ctx.CONSUMER / "AGENTS.md")):
+        if not path.exists():
+            continue
+        target = path.resolve() if path.is_symlink() else path
+        try:
+            _agents_parts(target.read_text(encoding="utf-8"))
+        except ctx.SyncError:
+            issues.append(f"{label} AGENTS.md 缺 ## 目录与读写规则 或 ## 开发原则")
+    return issues
+
+
 def agents_section_status(src: Path) -> dict[str, str] | None:
     sp, dp = src / "AGENTS.md", ctx.CONSUMER / "AGENTS.md"
     if not sp.exists() or not dp.exists():
         return None
-    src_parts = _agents_parts(sp.read_text(encoding="utf-8"))
     dst_path = dp.resolve() if dp.is_symlink() else dp
-    dst_parts = _agents_parts(dst_path.read_text(encoding="utf-8"))
+    try:
+        src_parts = _agents_parts(sp.read_text(encoding="utf-8"))
+        dst_parts = _agents_parts(dst_path.read_text(encoding="utf-8"))
+    except ctx.SyncError:
+        return None
     return {
         "intro": "protected" if src_parts["intro"][2] != dst_parts["intro"][2] else "same",
         "merge": "different" if src_parts["merge"][2] != dst_parts["merge"][2] else "same",
@@ -77,7 +94,13 @@ def _apply_agents_sectioned(src: Path, changed: set[Path]) -> bool:
         raise ctx.SyncError("模板 AGENTS.md 已启用分区协议，但消费仓缺少 AGENTS.md")
     target = dp.resolve() if dp.is_symlink() else dp
     dst_text = target.read_text(encoding="utf-8")
-    result, force_changed, merge_diff, intro_diff = _replace_agents_force(src_text, dst_text)
+    try:
+        result, force_changed, merge_diff, intro_diff = _replace_agents_force(src_text, dst_text)
+    except ctx.SyncError as error:
+        raise ctx.SyncError(
+            "消费仓 AGENTS.md 缺 ## 目录与读写规则 或 ## 开发原则；"
+            "按模板补齐 ## 目录与读写规则、## 开发原则 后重跑"
+        ) from error
     if intro_diff:
         print("提示: AGENTS.md 项目介绍与模板不同；按规则保护消费仓内容，不覆盖")
     if merge_diff:

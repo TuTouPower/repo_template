@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import context as ctx
-from .common import _detect_json_indent, _git
+from .common import _detect_json_indent, _git, consumer_locked
 
 
 _RETIRED_MERGE_GUARD_COMMAND = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'
@@ -127,6 +127,7 @@ def _install_statusline_hook() -> int:
     return 0
 
 
+@consumer_locked
 def cmd_install_hooks(args: argparse.Namespace) -> int:
     """幂等设置 core.hooksPath 指向工具链 hooks；--statusline 改为写状态行 hook。
 

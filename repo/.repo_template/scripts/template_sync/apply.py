@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_template import export_template, is_non_distributable
+from repo_task import context as task_context
+from repo_task import store as task_store
 from repo_task.file_transaction import FileTransaction
 from repo_task.validation import run_checks
 
@@ -67,8 +69,16 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
     for rel in ctx.HARD_SYNC_FILES:
         sync_file(src / rel, ctx.CONSUMER / rel, changed)
 
-    for report in force_migrate_workflow_tasks(changed):
+    migration_reports = force_migrate_workflow_tasks(changed)
+    for report in migration_reports:
         print(f"提示: {report}")
+    if migration_reports:
+        try:
+            task_store.rebuild_index()
+        except task_context.TaskDataError as error:
+            raise ctx.SyncError(f"workflow 迁移后重建 tasks index 失败：{error}") from error
+        changed.add(task_context.ACTIVE_PATH)
+        changed.add(task_context.ARCHIVE_PATH)
     for report in migrate_conventions(changed):
         print(f"提示: {report}")
     reports = repair_symlinks(changed)
@@ -120,10 +130,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if expected and source_commit != expected:
         raise ctx.SyncError(f"来源版本已变化：预期 {expected}，实际 {source_commit}；重新 plan")
     changed: set[Path] = set()
+    if (ctx.CONSUMER / "AGENTS.md").is_symlink():
+        raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
-             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/blueprint/conventions.md", *ctx.MCP_CANDIDATES]
+             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/tasks_index.json",
+             "docs/archive/tasks_index.json", "docs/blueprint/conventions.md", *ctx.MCP_CANDIDATES]
     try:
         transaction.begin(paths)
     except ValueError as error:
@@ -147,7 +160,14 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if agents_file:
             candidate = Path(agents_file).read_text(encoding="utf-8")
             current = (ctx.CONSUMER / "AGENTS.md").read_text(encoding="utf-8")
-            if _agents_parts(candidate)["intro"][2] != _agents_parts(current)["intro"][2]:
+            try:
+                current_parts = _agents_parts(current)
+            except ctx.SyncError as error:
+                raise ctx.SyncError(
+                    "消费仓 AGENTS.md 缺 ## 目录与读写规则 或 ## 开发原则；"
+                    "按模板补齐 ## 目录与读写规则、## 开发原则 后重跑"
+                ) from error
+            if _agents_parts(candidate)["intro"][2] != current_parts["intro"][2]:
                 raise ctx.SyncError("AGENTS 语义合并不得修改项目介绍")
             if template_agents is None:
                 raise ctx.SyncError("模板快照缺 AGENTS.md，不能应用语义合并")

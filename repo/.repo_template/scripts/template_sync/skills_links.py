@@ -285,20 +285,28 @@ def skill_status(src: Path) -> list[dict]:
 def symlink_status() -> list[dict]:
     out: list[dict] = []
     valid_names = set()
+    hosts = (
+        (ctx.SKILLS_CLAUDE, ".claude/skills"),
+        (ctx.SKILLS_AGENTS, ".agents/skills"),
+    )
     if ctx.SKILLS_SRC.exists():
         for entry in ctx.SKILLS_SRC.iterdir():
             if not entry.is_dir():
                 continue
             valid_names.add(entry.name)
-            link = ctx.SKILLS_CLAUDE / entry.name
-            if link.is_symlink() and link.resolve() == entry.resolve():
-                out.append({"name": entry.name, "state": "ok"})
-            elif link.exists() and not link.is_symlink():
-                out.append({"name": entry.name, "state": "convert"})
-            else:
-                out.append({"name": entry.name, "state": "repair"})
-    if ctx.SKILLS_CLAUDE.exists():
-        for entry in sorted(ctx.SKILLS_CLAUDE.iterdir()):
+            for host, host_rel in hosts:
+                link = host / entry.name
+                rel = f"{host_rel}/{entry.name}"
+                if link.is_symlink() and link.resolve() == entry.resolve():
+                    out.append({"name": entry.name, "rel": rel, "state": "ok"})
+                elif link.exists() and not link.is_symlink():
+                    out.append({"name": entry.name, "rel": rel, "state": "convert"})
+                else:
+                    out.append({"name": entry.name, "rel": rel, "state": "repair"})
+    for host, host_rel in hosts:
+        if not host.exists():
+            continue
+        for entry in sorted(host.iterdir()):
             if not entry.is_symlink() or entry.name in valid_names:
                 continue
             try:
@@ -311,7 +319,11 @@ def symlink_status() -> list[dict]:
             except (OSError, ValueError):
                 is_managed = False
             if is_managed:
-                out.append({"name": entry.name, "state": "cleanup"})
+                out.append({
+                    "name": entry.name,
+                    "rel": f"{host_rel}/{entry.name}",
+                    "state": "cleanup",
+                })
     return out
 
 

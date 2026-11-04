@@ -39,7 +39,6 @@ CONSUMER_TEST_TIMEOUT = 60
 
 # AGENTS.md 同步协议：按固定标题识别三类内容。
 # 项目介绍永不更新；目录与读写规则只报告差异，由 agent 语义合并；开发原则每轮强制更新。
-AGENTS_INTRO_HEADING = "## 目录与读写规则"
 AGENTS_MERGE_HEADING = "## 目录与读写规则"
 AGENTS_FORCE_HEADING = "## 开发原则"
 MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
