@@ -8,6 +8,7 @@ from test_dispatch_integration import (
     git_repo, _git, _task_cli, _prepare_done, _cleanup, _worktree,
     _reserve, _identity_args, _handoff, _read_ledger,
 )
+from review_support import ensure_review_evidence
 from task_flow_support import mark_done
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.monitoring import review_scope_fingerprint
@@ -135,7 +136,11 @@ def test_recovery_distinguishes_start_reserve_finish_and_commit_boundaries(git_r
     spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
     mark_done(w, 't001')
     task_dir = w / 'docs/tasks/t001_alpha'
-    (task_dir / 'handoff.json').write_text(json.dumps(_handoff('t001', 't001_alpha', identity, base)))
+    ensure_review_evidence(w, task_dir, base)
+    scope = review_scope_fingerprint(base, 'docs/tasks/t001_alpha', repo_root=w)
+    (task_dir / 'handoff.json').write_text(
+        json.dumps(_handoff('t001', 't001_alpha', identity, base, review_scope=scope))
+    )
     state = _recovery(git_repo)
     assert state['phase'] == 'finished_uncommitted'
     assert state['execution_id'] == identity['execution_id']
@@ -379,7 +384,8 @@ def test_recovery_rejects_wrong_handoff_identity(git_repo):
     spec = worktree / 'docs/tasks/t001_alpha/task.md'
     spec.write_text(spec.read_text().replace('- [ ] AC-001', '- [x] AC-001'), encoding='utf-8')
     mark_done(worktree, 't001')
-    handoff = _handoff('t001', 't001_alpha', identity, base)
+    scope = review_scope_fingerprint(base, 'docs/tasks/t001_alpha', repo_root=worktree)
+    handoff = _handoff('t001', 't001_alpha', identity, base, review_scope=scope)
     handoff['execution_id'] = 'wrong-execution-id'
     (worktree / 'docs/tasks/t001_alpha/handoff.json').write_text(json.dumps(handoff))
     state = _recovery(git_repo)

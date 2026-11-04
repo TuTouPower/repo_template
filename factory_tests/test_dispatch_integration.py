@@ -1,6 +1,7 @@
 """Real-git tests for exact handoff, cleanup, single integration, and chain transactions."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,7 @@ def git_repo(tmp_path, monkeypatch):
     scripts = repo / ".repo_template" / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
+    shutil.copy2(SCRIPTS_DIR / "md_format.py", scripts / "md_format.py")
     shutil.copytree(
         SCRIPTS_DIR / "repo_task", scripts / "repo_task",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
@@ -64,6 +66,11 @@ def git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
     monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
+    # 隔离宿主机 md_kx：夹具仓库未配置 hooks，finish 的格式检查应走缺二进制跳过分支。
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        path for path in os.environ.get("PATH", "").split(os.pathsep)
+        if path and not (Path(path) / "md_kx").exists()
+    ))
     (repo / ".gitignore").write_text(
         "__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8"
     )
@@ -111,7 +118,7 @@ def _identity_args(identity):
     ]
 
 
-def _handoff(tid, branch, identity, base_sha, **overrides):
+def _handoff(tid, branch, identity, base_sha, *, review_scope="", **overrides):
     payload = {
         "tid": tid,
         "attempt": identity["attempt"],
@@ -122,6 +129,7 @@ def _handoff(tid, branch, identity, base_sha, **overrides):
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
+        "review_scope": review_scope,
         "pending": [],
         "findings": [],
     }
@@ -151,7 +159,10 @@ def _prepare_done(
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     task_dir = worktree / "docs" / "tasks" / branch
     ensure_review_evidence(worktree, task_dir, base_sha)
-    payload = _handoff(tid, branch, identity, base_sha)
+    review_scope = monitoring.review_scope_fingerprint(
+        base_sha, task_dir.relative_to(worktree).as_posix(), repo_root=worktree,
+    )
+    payload = _handoff(tid, branch, identity, base_sha, review_scope=review_scope)
     payload.update(handoff_overrides or {})
     (task_dir / "handoff.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
@@ -337,7 +348,8 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
     )
 
     assert verdict == "contract"
-    assert "base_sha" in detail and "first parent" in detail
+    assert "base_sha" in detail
+    assert "执行分支必须恰好一个实现 commit" in detail
 
 
 def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo):
@@ -355,7 +367,7 @@ def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo
 
     assert verdict == "contract"
     assert "diff_anchor" in detail
-    assert "一个实现 commit 加仅含 review 过程文件的证据 commit" in detail
+    assert "执行分支必须恰好一个实现 commit" in detail
 
 
 # --------------------------------------------------------------------------

@@ -34,7 +34,7 @@ from .git_ops import (
     worktree_paths,
 )
 from .ledger import _ledger_append_safely, ledger_read
-from .monitoring import first_parent_segment, verify_integrate_ready
+from .monitoring import verify_integrate_ready
 from .store import (
     _local_task_branches,
     _task_branch_names,
@@ -354,6 +354,21 @@ def _verify_exact_handoff(tid: str, attempt: int, execution_id: str) -> None:
     if verdict != "ready":
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} execution_id={execution_id!r} refs/handoff 验证失败：{detail}"
+        )
+
+
+def _require_handoff_base_merged(tid: str, ref: str, base_ref: str) -> None:
+    """handoff.base_sha 必须是 base_ref 的祖先；否则前驱会被单 task merge 夹带进主干。"""
+    try:
+        task, _, _ = load_task_at_ref(tid, ref)
+        handoff = json.loads(git_text_at_ref(ref, f"{task['dir']}/handoff.json"))
+        base_sha = handoff["base_sha"]
+    except (ctx.TaskDataError, ValueError, KeyError, TypeError) as error:
+        raise ctx.TaskDataError(f"{tid} 的 handoff.base_sha 无法读取：{error}") from error
+    if _git(["merge-base", "--is-ancestor", base_sha, base_ref]).returncode != 0:
+        raise ctx.TaskDataError(
+            f"{tid} 的 handoff.base_sha {base_sha[:12]} 不是 {base_ref} 的祖先；"
+            "先 integrate 前驱，或用 integrate-chain 整链合并"
         )
 
 
@@ -782,11 +797,15 @@ def cmd_integrate(args):
             sys.exit(str(error))
         print(f"{branch} 已合入，跳过 merge；integrate 完成：merge={merge_sha[:12]}")
         return
+    try:
+        _require_handoff_base_merged(args.tid, sha, "HEAD")
+    except ctx.TaskDataError as error:
+        sys.exit(str(error))
     _prepare_native_merge(branch, f"merge({args.tid}): {branch}", [branch])
 
 
 def _collect_chain(
-    tail_tid: str, *, base_ref: str = "HEAD",
+    tail_tid: str, *, base_ref: str = "HEAD", require_base_merged: bool = True,
 ) -> list[tuple[str, str, str]]:
     tail_branch, tail_sha = _resolve_integrate_branch(tail_tid)
     candidates = []
@@ -813,14 +832,14 @@ def _collect_chain(
     ))
     if candidates[-1][1] != tail_branch:
         raise ctx.TaskDataError("链尾不是线性 ancestry 的最后成员")
+    if require_base_merged:
+        _require_handoff_base_merged(candidates[0][0], candidates[0][2], base_ref)
     for previous, current in zip(candidates, candidates[1:]):
-        # 后继的实现 commit 必须直接从前驱 tip（含其证据 commit）起，first-parent 链上不得有旁路。
-        try:
-            first_parent_segment(current[2], previous[2])
-        except ctx.TaskDataError:
+        parent = _git(["rev-parse", f"{current[2]}^1"])
+        if parent.returncode != 0 or parent.stdout.strip() != previous[2]:
             raise ctx.TaskDataError(
-                f"链不连续：{current[1]!r} 的 first-parent 链不从 {previous[1]!r} tip 起"
-            ) from None
+                f"链不连续：{current[1]!r} 的 first parent 不是 {previous[1]!r} tip"
+            )
     return candidates
 
 
@@ -839,7 +858,11 @@ def _chain_continue_base(tail_tid: str, tail_sha: str) -> str:
 def _preflight_chain(tail_tid: str, *, continue_merge: bool = False) -> list[dict]:
     _, tail_sha = _resolve_integrate_branch(tail_tid)
     base_ref = _chain_continue_base(tail_tid, tail_sha) if continue_merge else "HEAD"
-    chain = _collect_chain(tail_tid, base_ref=base_ref)
+    # 已完成的 chain merge 重入只做清理/补记，不再准备新 merge，基座祖先检查无防护对象。
+    require_base_merged = not (continue_merge and not _merge_in_progress())
+    chain = _collect_chain(
+        tail_tid, base_ref=base_ref, require_base_merged=require_base_merged
+    )
     events = ledger_read()
     members = []
     for tid, branch, sha in chain:

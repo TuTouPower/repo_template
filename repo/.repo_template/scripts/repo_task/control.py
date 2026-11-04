@@ -171,7 +171,7 @@ def cmd_attempt_terminal(args):
 
 def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None:
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
-    suffix = "；先补审证据并追加证据 commit（见 recovery），仍卡在 committed_unreported"
+    suffix = "；先按 recovery 的 review 修复处理后重跑 run-close"
     try:
         verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
     except ctx.TaskDataError as error:

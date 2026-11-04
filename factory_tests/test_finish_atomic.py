@@ -8,8 +8,10 @@ import pytest
 
 from test_dispatch_integration import git_repo, _git, _task_cli, _worktree, _read_ledger
 from task_flow_support import mark_done, fill_summary, finish_cli, prepare_finish
+from review_support import pass_report
 from repo_task import monitoring
 from repo_task import context as ctx
+from repo_task.documents import parse_front_matter
 
 OWNER = "owner-fin"
 
@@ -134,6 +136,9 @@ def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
         "tests": "pytest -q 通过",
         "blackbox": "无黑盒",
         "review": "PASS",
+        "review_scope": monitoring.review_scope_fingerprint(
+            anchor, "docs/tasks/t001_alpha", repo_root=worktree, ref="HEAD"
+        ),
         "pending": ["p001", "p002", "p003"],
         "findings": ["d001"],
     }
@@ -467,11 +472,15 @@ def test_recovery_detects_finish_interrupted_before_handoff(git_repo):
 def test_recovery_detects_finish_interrupted_before_commit(git_repo):
     identity, worktree, _ = _ready(git_repo)
     mark_done(worktree, "t001")
+    base = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     handoff = {
         "tid": "t001", "attempt": identity["attempt"], "execution_id": identity["execution_id"],
         "status": "done", "branch": "t001_alpha",
-        "base_sha": _git(worktree, "rev-parse", "HEAD").stdout.strip(),
+        "base_sha": base,
         "tests": "t", "blackbox": "b", "review": "r", "pending": [], "findings": [],
+        "review_scope": monitoring.review_scope_fingerprint(
+            base, "docs/tasks/t001_alpha", repo_root=worktree
+        ),
     }
     (_task_dir(worktree) / "handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
 
@@ -479,3 +488,134 @@ def test_recovery_detects_finish_interrupted_before_commit(git_repo):
 
     assert state["phase"] == "finished_uncommitted"
     assert "不重复 finish" in state["action"]
+
+# --------------------------------------------------------------------------
+# M01：提交前后都绑定 review 内容；A03/A04/A05：零写入前置检查
+# --------------------------------------------------------------------------
+
+
+def _fake_md_kx(tmp_path):
+    script = (
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "path = Path(sys.argv[-1])\n"
+        "text = path.read_text(encoding='utf-8')\n"
+        "out = text.replace('|------|------|', '|---|---|')\n"
+        "if '--check' in sys.argv:\n"
+        "    sys.exit(0 if out == text else 1)\n"
+        "path.write_text(out, encoding='utf-8')\n"
+    )
+    bin_dir = tmp_path / "bin_md"
+    bin_dir.mkdir()
+    exe = bin_dir / "md_kx"
+    exe.write_text(script, encoding="utf-8")
+    exe.chmod(0o755)
+    return bin_dir
+
+
+def test_finish_rejects_unformatted_markdown_when_template_hooks_enabled(
+    git_repo, tmp_path, monkeypatch,
+):
+    bin_dir = _fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
+    _git(git_repo, "config", "core.hooksPath", ".repo_template/hooks")
+    _begin(git_repo)
+    worktree = _worktree(git_repo, "t001")
+
+    def deliver(root):
+        (root / "notes.md").write_text(
+            "|a|b|\n|------|------|\n|1|2|\n", encoding="utf-8",
+        )
+
+    message = prepare_finish(worktree, "t001", "alpha", mutate=deliver)
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "Markdown 格式漂移" in result.stderr
+    assert "notes.md" in result.stderr
+    assert "md_format.py --changed" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_rejects_missing_md_kx_when_template_hooks_enabled(git_repo):
+    _, worktree, message = _ready(git_repo)
+    _git(git_repo, "config", "core.hooksPath", ".repo_template/hooks")
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "找不到 md_kx" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_reports_fail_when_hook_rewrites_delivered_markdown(git_repo):
+    _, worktree, message = _ready(git_repo)
+    before_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _install_hook(
+        git_repo,
+        "printf '\\nhook rewrite\\n' >> docs/tasks/t001_alpha/task.md\n"
+        "git add docs/tasks/t001_alpha/task.md",
+    )
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "finish=FAIL：提交内容与 review 内容不一致" in result.stderr
+    assert "finish=OK" not in result.stdout
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() != before_head
+    assert "hook rewrite" in _git(worktree, "show", "HEAD:docs/tasks/t001_alpha/task.md").stdout
+
+
+def test_finish_done_rejects_occupied_archive_target_with_zero_writes(git_repo):
+    _, worktree, message = _ready(git_repo)
+    target = worktree / "docs/archive/tasks/t001_alpha"
+    target.parent.mkdir(parents=True)
+    target.write_text("occupied\n", encoding="utf-8")
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "归档目录已存在" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_gate_failure_reports_ac_review_detail(git_repo):
+    _, worktree, message = _ready(git_repo)
+    task_dir = _task_dir(worktree)
+    fm, _ = parse_front_matter(task_dir / "progress.md")
+    scope = monitoring.review_scope_fingerprint(
+        fm["diff_anchor"], "docs/tasks/t001_alpha", repo_root=worktree,
+    )
+    spec_text = (task_dir / "task.md").read_text(encoding="utf-8")
+    for name in ("review_code.md", "review_test.md"):
+        (task_dir / name).write_text(
+            pass_report(scope, spec_text, round_no=2, tick="TICK-VOID"), encoding="utf-8",
+        )
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "overall=FAIL" in result.stderr
+    assert "ac_review=" in result.stderr and "ac_review_detail=" in result.stderr
+    assert "TICK-VOID" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_rejects_message_file_inside_task_directory(git_repo):
+    _, worktree, _ = _ready(git_repo)
+    message = _task_dir(worktree) / "message.txt"
+    message.write_text("feat: x\n", encoding="utf-8")
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "位于当前 task 目录内" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+

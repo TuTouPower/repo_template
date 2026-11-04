@@ -15,6 +15,7 @@ from test_dispatch_integration import (
 from test_finish_atomic import OWNER, _begin
 from task_flow_support import finish_cli, prepare_finish
 from repo_task.documents import parse_front_matter, write_front_matter
+from repo_task.monitoring import review_scope_fingerprint
 
 ACTIVE = "docs/tasks/t001_alpha"
 ARCHIVE = "docs/archive/tasks/t001_alpha"
@@ -316,6 +317,9 @@ def _legacy_archived_history(repo):
         "tid": "t001", "attempt": 1, "execution_id": "legacy", "status": "done",
         "branch": "t001_alpha", "base_sha": base, "tests": "t", "blackbox": "b",
         "review": "r", "pending": [], "findings": [],
+        "review_scope": review_scope_fingerprint(
+            base, "docs/archive/tasks/t001_alpha", repo_root=repo
+        ),
     }), encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "feat(t001): legacy archived implementation")
@@ -362,3 +366,79 @@ def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(gi
 
     with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
         integration._dependency_implementations("t001")
+
+# --------------------------------------------------------------------------
+# M03：链连续性回归与单 task base 已在主干
+# --------------------------------------------------------------------------
+
+
+def _insert_gap_commit_before_implementation(worktree, first_tip):
+    """在 t002 实现 commit 与前驱 tip 之间插入一个无 task handoff 的空 commit。"""
+    implementation = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _git(worktree, "reset", "--hard", first_tip)
+    _git(worktree, "commit", "--allow-empty", "-m", "gap commit without task handoff")
+    gap = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _git(worktree, "cherry-pick", implementation)
+    task_dir = worktree / "docs/tasks/t002_beta"
+    fm, body = parse_front_matter(task_dir / "progress.md")
+    fm["diff_anchor"] = gap
+    write_front_matter(task_dir / "progress.md", fm, body)
+    payload = json.loads((task_dir / "handoff.json").read_text("utf-8"))
+    payload["base_sha"] = gap
+    payload["review_scope"] = review_scope_fingerprint(
+        gap, "docs/tasks/t002_beta", repo_root=worktree
+    )
+    (task_dir / "handoff.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "--amend", "--no-edit")
+    return gap
+
+
+def test_chain_rejects_non_task_commit_between_members(git_repo):
+    first, first_branch, first_tip = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    second, _, _ = _prepare_done(git_repo, "t002", "beta", base=first_branch)
+    worktree = _worktree(git_repo, "t002")
+    _insert_gap_commit_before_implementation(worktree, first_tip)
+    _cleanup(git_repo, "t002", second)
+
+    result = _task_cli(git_repo, "integrate-chain", "t002")
+
+    assert result.returncode != 0
+    assert "链不连续" in result.stderr
+    assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
+
+
+def test_chain_rejects_predecessor_advanced_after_successor_fork(git_repo):
+    first, first_branch, first_head = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    second, _, _ = _prepare_done(git_repo, "t002", "beta", base=first_branch)
+    _cleanup(git_repo, "t002", second)
+    _git(git_repo, "checkout", "-q", first_branch)
+    _git(git_repo, "commit", "--allow-empty", "-m", "predecessor advanced after fork")
+    _git(git_repo, "checkout", "-q", "main")
+    assert _git(git_repo, "rev-parse", first_branch).stdout.strip() != first_head
+
+    result = _task_cli(git_repo, "integrate-chain", "t002")
+
+    assert result.returncode != 0
+    assert "不是 HEAD 的祖先" in result.stderr
+    assert "integrate-chain" in result.stderr
+    assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
+
+
+def test_single_integrate_rejects_base_not_merged(git_repo):
+    first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    second, _, _ = _prepare_done(git_repo, "t002", "beta", base=first_branch)
+    _cleanup(git_repo, "t002", second)
+
+    result = _task_cli(git_repo, "integrate", "t002", *_identity_args(second))
+
+    assert result.returncode != 0
+    assert "不是 HEAD 的祖先" in result.stderr
+    assert "先 integrate 前驱" in result.stderr
+    assert _git(git_repo, "rev-parse", "--verify", "MERGE_HEAD", check=False).returncode != 0
+
