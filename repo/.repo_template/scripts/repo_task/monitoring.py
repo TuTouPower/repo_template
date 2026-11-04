@@ -500,7 +500,7 @@ def verify_integrate_ready(
     if tip_result.returncode != 0:
         return "contract", "branch", f"分支 {branch!r} tip 无法解析 commit"
     if base_result.returncode != 0:
-        return "contract", "branch", f"{handoff_path} base_sha 无法解析 commit"
+        return "contract", "handoff", f"{handoff_path} base_sha 无法解析 commit"
     base = base_result.stdout.strip()
     tip = tip_result.stdout.strip()
     diff_anchor = fm.get("diff_anchor")

@@ -1137,10 +1137,6 @@ def cmd_finish_unwind(args):
     reset = _git(["reset", "--soft", diff_anchor], root=worktree)
     if reset.returncode != 0:
         sys.exit(f"{tid} git reset --soft 失败（{reset.stderr.strip()}）；分支未动，人工核查后重试")
-    try:
-        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
-    except ctx.TaskDataError as error:
-        sys.exit(f"{tid} 分支已退回但审计写入失败（{error}）；人工补记审计后继续")
     wt_fm = dict(wt_fm)
     wt_fm["status"] = "active"
     # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
@@ -1153,6 +1149,13 @@ def cmd_finish_unwind(args):
         sys.exit(
             f"{tid} 分支已退回 {diff_anchor[:12]}，但 {ctx.PROGRESS_FILE} 写回 active 失败（{error}）；"
             "手动把 status 改回 active 后重新 review 再 finish"
+        )
+    try:
+        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
+    except ctx.TaskDataError as error:
+        sys.exit(
+            f"{tid} 已撤销且进展已回 active，仅审计缺失（{error}）；"
+            "人工补记审计后重新 review 再 finish"
         )
     print(
         f"{tid} 已撤销实现 commit {tip_sha[:12]}：分支退回 {diff_anchor[:12]}，进展回到 active。"

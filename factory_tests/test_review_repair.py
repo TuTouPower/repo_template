@@ -563,3 +563,24 @@ def test_finish_unwind_refuses_terminal_attempt_without_report(git_repo):
     assert refused.returncode != 0
     assert "只处理 running 现场" in refused.stderr
     assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == tip
+
+
+def test_finish_unwind_audit_failure_leaves_consistent_state(git_repo):
+    """审计写在进展写回之后：审计失败时分支与进展已是一致的 unwind 完成态。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    worktree = _worktree(git_repo, "t001")
+    anchor = _git(worktree, "rev-parse", "HEAD^1").stdout.strip()
+    (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
+    _amend(worktree)
+    audit = git_repo / "docs/archive/tasks_audit.log"
+    audit.unlink(missing_ok=True)
+    audit.mkdir()
+
+    refused = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "x", *_identity_args(identity),
+    )
+    assert refused.returncode != 0
+    assert "仅审计缺失" in refused.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == anchor
+    fm, _ = parse_front_matter(worktree / REL / "progress.md")
+    assert fm["status"] == "active"
