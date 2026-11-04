@@ -14,6 +14,15 @@ from .agents_merge import _apply_agents_sectioned
 from .assets import _file_differs
 from .common import _detect_json_indent
 
+SHARED_DISPOSITIONS = (
+    "merge",
+    "merge_into_consumer",
+    "update",
+    "update_from_template",
+    "keep",
+    "keep_consumer",
+)
+
 
 def _blocked(rule: str, substrings: list[str]) -> bool:
     return any(sub in rule for sub in substrings)
@@ -33,14 +42,19 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
             continue
         if stripped in dst_set:
             continue
-        if _blocked(stripped, blocked):
+        if not stripped.startswith("!") and _blocked(stripped, blocked):
             continue
         added.append(stripped)
     if blocked:
         new_dst: list[str] = []
         for ln in dst_lines:
             stripped = ln.strip()
-            if stripped and not stripped.startswith("#") and _blocked(stripped, blocked):
+            if (
+                stripped
+                and not stripped.startswith("#")
+                and not stripped.startswith("!")
+                and _blocked(stripped, blocked)
+            ):
                 removed.append(stripped)
                 continue
             new_dst.append(ln)
@@ -76,15 +90,16 @@ def merge_prettierignore(changed: set[Path]) -> dict:
         if rule not in dst_set:
             added.append(rule)
     header_changed = False
-    if _PRETTIERIGNORE_OLD_HEADER in dst_lines:
-        index = dst_lines.index(_PRETTIERIGNORE_OLD_HEADER)
-        dst_lines[index:index + 1] = list(_PRETTIERIGNORE_HEADER)
-        header_changed = True
+    for index, line in enumerate(dst_lines):
+        if line.strip() == _PRETTIERIGNORE_OLD_HEADER:
+            dst_lines[index:index + 1] = list(_PRETTIERIGNORE_HEADER)
+            header_changed = True
+            break
     if added or header_changed:
         if added:
             if dst_lines and dst_lines[-1].strip():
                 dst_lines.append("")
-            if _PRETTIERIGNORE_HEADER[0] not in dst_lines:
+            if not any(line.strip() == _PRETTIERIGNORE_HEADER[0] for line in dst_lines):
                 dst_lines.extend(_PRETTIERIGNORE_HEADER)
             dst_lines.extend(added)
         text = "\n".join(dst_lines)
@@ -126,15 +141,19 @@ def _sanitize_mcp_args(args: list) -> list:
 
 def _sanitize_mcp_url(value: str) -> str:
     parts = urlsplit(value)
+    try:
+        port = parts.port
+    except ValueError as error:
+        raise ctx.SyncError("MCP URL 端口非法，无法解析") from error
     changed = False
     netloc = parts.netloc
     if parts.username is not None or parts.password is not None:
         host = parts.hostname or ""
-        port = f":{parts.port}" if parts.port else ""
+        port_text = f":{port}" if port else ""
         if parts.password is not None:
-            netloc = f"<url_user_PLACEHOLDER>:<url_password_PLACEHOLDER>@{host}{port}"
+            netloc = f"<url_user_PLACEHOLDER>:<url_password_PLACEHOLDER>@{host}{port_text}"
         else:
-            netloc = f"<url_user_PLACEHOLDER>@{host}{port}"
+            netloc = f"<url_user_PLACEHOLDER>@{host}{port_text}"
         changed = True
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     new_pairs = []
@@ -158,7 +177,7 @@ def _sanitize_mcp_headers(headers: dict) -> dict:
     return headers
 
 
-def _sanitize_mcp_servers(servers: dict) -> dict:
+def _sanitize_mcp_servers(servers: dict, source: str | None = None) -> dict:
     """占位化 MCP 服务端的 env/args/url/headers 凭据（Issue #54、#80）。"""
     clean = {}
     for key, val in servers.items():
@@ -176,7 +195,11 @@ def _sanitize_mcp_servers(servers: dict) -> dict:
             v_copy["args"] = _sanitize_mcp_args(args)
         url = v_copy.get("url")
         if isinstance(url, str):
-            v_copy["url"] = _sanitize_mcp_url(url)
+            try:
+                v_copy["url"] = _sanitize_mcp_url(url)
+            except ctx.SyncError as error:
+                location = f"{source} 的 MCP server {key!r}" if source else f"MCP server {key!r}"
+                raise ctx.SyncError(f"{location} URL 端口非法，无法解析；请修正端口") from error
         headers = v_copy.get("headers")
         if isinstance(headers, dict):
             v_copy["headers"] = _sanitize_mcp_headers(headers)
@@ -202,7 +225,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
         if not dp.exists():
             dp.parent.mkdir(parents=True, exist_ok=True)
             s_servers = sdata.get("mcpServers", {})
-            new_data = {**sdata, "mcpServers": _sanitize_mcp_servers(s_servers)}
+            new_data = {**sdata, "mcpServers": _sanitize_mcp_servers(s_servers, rel)}
             dp.write_text(json.dumps(new_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             changed.add(dp)
             merged.append(f"{ctx._rel(dp)}（新建，已占位化 env/args/url/headers 中的凭据，需审阅全部字段）")
@@ -223,7 +246,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             print(f"WARNING: 消费侧 {rel} 的 mcpServers 非对象，跳过 MCP 合并", file=sys.stderr)
             continue
         touched = False
-        sanitized_src = _sanitize_mcp_servers(sdata.get("mcpServers", {}))
+        sanitized_src = _sanitize_mcp_servers(sdata.get("mcpServers", {}), rel)
         for key, val in sanitized_src.items():
             if key not in dservers:
                 dservers[key] = val
@@ -270,13 +293,10 @@ def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[
     if not decision:
         print(f"裁定单元 {unit} 未提供决策，跳过（待 agent 处理）")
         return
-    if unit == "AGENTS.md":
-        if _apply_agents_sectioned(src, changed):
-            return
     if decision in ("merge", "merge_into_consumer"):
         print(f"裁定单元 {unit} 为 merge：由 agent 编辑消费文件完成语义合并，脚本不整文件覆盖")
         return
-    if decision not in ("update", "update_from_template", "keep", "keep_consumer"):
+    if decision not in SHARED_DISPOSITIONS:
         print(f"裁定单元 {unit} 非法决策 {decision!r}，跳过")
         return
     if decision in ("keep", "keep_consumer"):

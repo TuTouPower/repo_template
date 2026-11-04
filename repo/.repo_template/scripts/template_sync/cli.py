@@ -11,6 +11,7 @@ from repo_task.context import TaskDataError
 from . import context as ctx
 from .apply import cmd_apply
 from .hooks import cmd_install_hooks
+from .shared_files import SHARED_DISPOSITIONS
 from .skills_links import cmd_link_skills
 from .state import cmd_init, cmd_prompt
 from .status_plan import cmd_plan, cmd_status
@@ -23,6 +24,14 @@ def _parse_decisions(items: list[str]) -> dict[str, str]:
         if ":" not in item:
             raise ctx.SyncError(f"--decision 格式应为 UNIT:DISPOSITION，收到 {item!r}")
         unit, disp = item.split(":", 1)
+        if unit in out:
+            raise ctx.SyncError(f"--decision 重复 unit {unit!r}")
+        if unit not in ctx.SHARED_FILES:
+            raise ctx.SyncError(f"--decision 未知 unit {unit!r}（可选：{', '.join(ctx.SHARED_FILES)}）")
+        if disp not in SHARED_DISPOSITIONS:
+            raise ctx.SyncError(
+                f"--decision 未知 disposition {disp!r}（可选：{', '.join(SHARED_DISPOSITIONS)}）"
+            )
         out[unit] = disp
     return out
 
@@ -88,9 +97,9 @@ def main(argv: list[str] | None = None) -> None:
         ctx.configure_consumer(args.consumer)
     ctx.SOURCE_OVERRIDE = args.source if args.cmd != "init" else None
     ctx.CHECKOUT_OVERRIDE = args.checkout
-    if getattr(args, "cmd", None) == "apply":
-        args.decisions = _parse_decisions(args.decision)
     try:
+        if getattr(args, "cmd", None) == "apply":
+            args.decisions = _parse_decisions(args.decision)
         sys.exit(args.func(args))
     except (ctx.SyncError, TaskDataError) as e:
         print(f"错误: {e}", file=sys.stderr)

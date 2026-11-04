@@ -87,28 +87,6 @@ def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
         changed.add(dst)
 
 
-def sync_skill(src_skill: Path, dst_skill: Path, changed: set[Path]) -> None:
-    """整 skill 目录覆盖（含 front matter），保护 sync_state.json，不做 --delete。"""
-    if not dst_skill.exists():
-        dst_skill.mkdir(parents=True)
-    elif not dst_skill.is_dir():
-        raise ctx.SyncError(
-            f"{ctx._rel(dst_skill)} 是文件/软链，模板源是目录；类型不符，停止。"
-            "请人工处理该路径后重跑 apply"
-        )
-    for entry in src_skill.iterdir():
-        if entry.name == "sync_state.json":
-            continue
-        target = dst_skill / entry.name
-        if entry.is_dir():
-            sync_dir(entry, target, changed)
-        else:
-            _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部")
-            if not target.exists() or _file_differs(entry, target):
-                shutil.copy2(entry, target)
-                changed.add(target)
-
-
 def _dir_has_diff(src_dir: Path, dst_dir: Path) -> bool:
     """目录树是否存在实质差异（非噪声）。"""
     if not src_dir.exists() and not dst_dir.exists():

@@ -28,6 +28,8 @@ def read_state() -> dict | None:
             data["template_source"] = {"kind": "url", "value": portable["source_url"]}
     if ctx.SOURCE_OVERRIDE:
         data = dict(data or {"last_synced_commit": None, "user_prompts": []})
+        if "template_source" in data:
+            data["_original_template_source"] = data["template_source"]
         data["template_source"] = source_identity(ctx.SOURCE_OVERRIDE)
     policy = ctx.CONSUMER / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
@@ -43,7 +45,7 @@ def write_state(data: dict) -> None:
     from repo_task.documents import atomic_write_text
     ctx.STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(
-        {key: value for key, value in data.items() if key != "_shared_user_prompts"},
+        {key: value for key, value in data.items() if not key.startswith("_")},
         ensure_ascii=False,
         indent=2,
     ) + "\n"
@@ -154,6 +156,8 @@ def cmd_prompt(args: argparse.Namespace) -> int:
             from repo_task.documents import atomic_write_text
             atomic_write_text(policy_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
         else:
+            if "_original_template_source" in data:
+                data["template_source"] = data.pop("_original_template_source")
             write_state(data)
     if args.action == "list":
         for i, p in enumerate(data.get("user_prompts", [])):

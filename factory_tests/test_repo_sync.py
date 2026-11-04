@@ -23,12 +23,14 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from template_sync import context as ctx
 from template_sync.agents_merge import _apply_agents_sectioned, agents_section_status
 from template_sync.apply import _assert_distributable_tree, cmd_apply
-from template_sync.assets import retired_template_warnings, sync_dir, sync_file, sync_skill
+from template_sync.assets import retired_template_warnings, sync_dir, sync_file
+from template_sync.cli import _parse_decisions, main as repo_sync_main
 from template_sync.common import _detect_json_indent, _git as sync_git
 from template_sync.conventions_migration import conventions_migration_status, migrate_conventions
 from template_sync.gates import _run_tests
 from template_sync.hooks import _RETIRED_MERGE_GUARD_COMMAND, cmd_install_hooks
 from template_sync.shared_files import (
+    _PRETTIERIGNORE_HEADER,
     _PRETTIERIGNORE_OLD_HEADER,
     _sanitize_mcp_servers,
     merge_gitignore,
@@ -191,6 +193,23 @@ def test_prompt_substrings_only_active(env):
     assert set(prompt_substrings(read_state())) == {".gitignore", ".env"}
 
 
+def test_prompt_does_not_persist_source_override(env, tmp_path, monkeypatch):
+    original = read_state()["template_source"]
+    other = tmp_path / "other_src"
+    (other / ".repo_template/scripts").mkdir(parents=True)
+    (other / ".repo_template/scripts/task.py").write_text("print('other')\n")
+
+    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", str(other))
+    assert read_state()["template_source"]["value"] == str(other.resolve())
+    _add_prompt("临时来源下的 prompt", ".gitignore")
+
+    on_disk = json.loads(env["state_file"].read_text(encoding="utf-8"))
+    assert on_disk["template_source"] == original
+    assert "_original_template_source" not in on_disk
+    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", None)
+    assert read_state()["template_source"] == original
+
+
 def test_corrupt_sync_state_raises_sync_error_with_recovery_guidance(env):
     """验证 sync_state.json 损坏或格式错误时抛出 SyncError 并附带恢复指引（Issue #49）。"""
     consumer = env["consumer"]
@@ -276,23 +295,8 @@ def test_sync_dir_rejects_symlink_destination(env, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# skill 覆盖 + sync_state.json 保护 + 软链
+# 软链
 # ---------------------------------------------------------------------------
-
-def test_skill_override_preserves_sync_state(env):
-    src, consumer = env["src"], env["consumer"]
-    dst = consumer / ".repo_template/skills/task-run"
-    dst.mkdir(parents=True)
-    (dst / "SKILL.md").write_text("OLD VERSION\n")
-    protected = dst / "sync_state.json"
-    protected.write_text('{"keep": true}\n')
-
-    changed: set[Path] = set()
-    sync_skill(src / ".repo_template/skills/task-run", dst, changed)
-    assert (dst / "SKILL.md").read_text().startswith("---\nname: task-run")
-    assert protected.read_text() == '{"keep": true}\n'
-    assert protected not in changed
-
 
 def test_repair_symlinks(env):
     src, consumer = env["src"], env["consumer"]
@@ -570,6 +574,25 @@ def test_gitignore_merge_with_prompt_block(env):
     assert gi in changed
 
 
+def test_gitignore_merge_keeps_negation_rules(env):
+    src, consumer = env["src"], env["consumer"]
+    (src / ".gitignore").write_text(
+        "node_modules/\n*.log\n!config/.env.example\n", encoding="utf-8"
+    )
+    gi = consumer / ".gitignore"
+    gi.write_text("node_modules/\n.env\n!.env.example\n", encoding="utf-8")
+
+    changed: set[Path] = set()
+    info = merge_gitignore(src, [".env"], changed)
+
+    lines = gi.read_text(encoding="utf-8").splitlines()
+    assert "!.env.example" in lines
+    assert "!config/.env.example" in lines
+    assert ".env" not in lines
+    assert info["removed"] == [".env"]
+    assert "!config/.env.example" in info["added"]
+
+
 def test_prettierignore_merge_creates_and_dedupes(env):
     consumer = env["consumer"]
     pi = consumer / ".prettierignore"
@@ -602,6 +625,32 @@ def test_prettierignore_preserves_consumer_rules(env):
     for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
         assert rule in lines
     assert pi in changed
+
+
+def test_prettierignore_old_header_matches_stripped_line(env):
+    pi = env["consumer"] / ".prettierignore"
+    pi.write_text("  " + _PRETTIERIGNORE_OLD_HEADER + "  \n", encoding="utf-8")
+
+    merge_prettierignore(set())
+
+    lines = pi.read_text(encoding="utf-8").splitlines()
+    stripped = [line.strip() for line in lines]
+    assert _PRETTIERIGNORE_OLD_HEADER not in stripped
+    assert stripped.count(_PRETTIERIGNORE_HEADER[0]) == 1
+    for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
+        assert rule in lines
+
+
+def test_prettierignore_new_header_presence_matches_stripped_line(env):
+    pi = env["consumer"] / ".prettierignore"
+    pi.write_text("  " + _PRETTIERIGNORE_HEADER[0] + "  \n", encoding="utf-8")
+
+    merge_prettierignore(set())
+
+    lines = pi.read_text(encoding="utf-8").splitlines()
+    assert sum(1 for line in lines if line.strip() == _PRETTIERIGNORE_HEADER[0]) == 1
+    for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
+        assert rule in lines
 
 
 def test_prettierignore_covers_generated_artifacts(env):
@@ -901,6 +950,24 @@ def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monk
     assert ".repo_template/scripts/task.py" in captured.out
     assert "已完整回滚" in captured.err
     assert read_state()["last_synced_commit"] is None
+
+
+def test_parse_decisions_rejects_duplicate_unknown_unit_and_disposition(env, capsys):
+    with pytest.raises(ctx.SyncError, match="重复 unit"):
+        _parse_decisions(["AGENTS.md:update", "AGENTS.md:keep"])
+    with pytest.raises(ctx.SyncError, match="未知 unit"):
+        _parse_decisions(["README.md:update"])
+    with pytest.raises(ctx.SyncError, match="未知 disposition"):
+        _parse_decisions(["AGENTS.md:overwrite"])
+    assert _parse_decisions(["AGENTS.md:update", ".gitignore:keep"]) == {
+        "AGENTS.md": "update",
+        ".gitignore": "keep",
+    }
+
+    with pytest.raises(SystemExit) as exc:
+        repo_sync_main(["apply", "--decision", "AGENTS.md:overwrite"])
+    assert exc.value.code == 1
+    assert "未知 disposition" in capsys.readouterr().err
 
 
 def test_sync_file_rejects_directory_target(env):
@@ -2093,6 +2160,25 @@ def test_mcp_sanitizes_args_url_and_headers(env):
     assert "--verbose" in clean["demo"]["args"] and "x" in clean["demo"]["args"]
     assert clean["demo"]["headers"]["X-Trace"] == "keep"
     assert "x=1" in clean["demo"]["url"]
+
+
+def test_mcp_invalid_url_port_raises_sync_error(env):
+    bad_url = "https://user:SECRET-C@example.invalid:notaport/mcp"
+    with pytest.raises(ctx.SyncError) as direct:
+        _sanitize_mcp_servers({"demo": {"url": bad_url}})
+    message = str(direct.value)
+    assert "demo" in message
+    assert "端口" in message
+    assert "SECRET-C" not in message
+    assert "example.invalid" not in message
+
+    (env["src"] / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"demo": {"url": bad_url}}}), encoding="utf-8"
+    )
+    with pytest.raises(ctx.SyncError) as merged:
+        merge_mcp(env["src"], set())
+    assert ".mcp.json" in str(merged.value)
+    assert "SECRET-C" not in str(merged.value)
 
 
 def test_dirty_tree_rejects_secret_files(env):
