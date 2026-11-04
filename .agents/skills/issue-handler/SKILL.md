@@ -83,10 +83,10 @@ python3 -c 'import pathlib; files = [p for p in pathlib.Path("~/kar/code").expan
 ### 7. 验证
 
 ```bash
-pytest repo/.repo_template/tests factory_tests -q -p no:cacheprovider --basetemp "$(mktemp -d)"
+pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"
 ```
 
-全量耗时 10 分钟以上，`--basetemp` 用系统临时目录，不用仓内 `.scratch/`。需要快速信号时先跑契约子集 `pytest repo/.repo_template/tests -q -m contract`。失败 → 修到绿，不提交。
+全量耗时本机 2 worker 实测 7 分 17 秒（需 pytest-xdist；worker 数依机器与负载变化），`--basetemp` 用系统临时目录，不用仓内 `.scratch/`。需要快速信号时先跑契约子集 `pytest repo/.repo_template/tests -q -m contract`。失败 → 修到绿，不提交。
 
 ### 8. 回执
 

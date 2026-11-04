@@ -9,7 +9,7 @@
 |路径|用途|写权归属|
 |---|---|---|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并与 task 目录的归档移动放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的执行 commit|
+|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并与 task 目录的归档移动放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的实现 commit|
 |`docs/archive/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
 |`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
@@ -19,7 +19,7 @@
 |`.claude/skills/` / `.agents/skills/`|指向 `.repo_template/skills/` 的软链|只维护软链|
 |`.opencode/commands/`|各 skill 的 opencode `/` 触发器（由 SKILL.md description 生成，调 `skill` 工具执行）|只读（改 SKILL.md 后重跑 `link-skills`）；手写命令保留|
 |`.repo_template/scripts/`|模板自带 task 工具链：`task.py` 是 CLI 入口，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等|仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目|
-|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`start` 在主仓默认分支执行，保留主仓未提交改动；实施、测试、review、finish/drop 只在自身 worktree 执行。`finish` 机器生成 `handoff.json`（不手写）并提交实现 commit；`run-close` 在主仓收尾与清理，`integrate` 负责归档；本地 `.env` 软链回主仓|
+|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`run-begin`（内含 start）在主仓默认分支执行，保留主仓未提交改动；实施、测试、review、finish/drop 只在自身 worktree 执行。`finish` 机器生成 `handoff.json`（不手写）并提交实现 commit；`run-close` 在主仓收尾与清理，`integrate` 负责归档；本地 `.env` 软链回主仓|
 
 ## 命令执行约定
 
@@ -81,13 +81,13 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 
 <!-- skill_registry:end -->
 
-父流程直接读取 `.repo_template/skills/{child}/SKILL.md` 执行正文，禁止通过原生 Skill 工具嵌套调用。只接受注册调用边，原样传递 tid、attempt、execution_id、owner_id、写域与授权；父流程授权不扩大，缺少所需授权时停止；`analysis-only` 不含 task 立项或 commit，merge 必须另行授权。自然语言匹配 description 不构成显式授权。
+父流程直接读取 `.repo_template/skills/{child}/SKILL.md` 执行正文，禁止通过原生 Skill 工具嵌套调用。只接受注册调用边，主路径传 tid、owner_id、写域与授权；attempt / execution_id 仅在 recovery 显式指定 exact identity 时传。父流程授权不扩大，缺少所需授权时停止；`analysis-only` 不含 task 立项或 commit，merge 必须另行授权。自然语言匹配 description 不构成显式授权。
 
 CLI/reviewer 接口与 skill 调用图分开：创建有效性用 `preflight {tid} --creation`；执行就绪仍用 `preflight {tid} --allow-backlog`，执行期严格验证用 `preflight --require-verified --owner-id ...`。创建有效性不能替代后两者。reviewer 只读，checker 的 PASS/FAIL/INCOMPLETE 和 next_action 是机械判定，不授予写权。
 
 多会话 owner_id、claim、接管与 `task.py recovery` 诊断、`review_limit` / `verify_limit` 上限见 `recovery.md`。
 
-review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交改变；证据 commit 只改过程文件，不改变指纹。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；执行回执（`handoff.json`）的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅。已提交且 review 门禁失败（stale / missing / format_error / FAIL）的修复规程见 `recovery.md`。
+review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交改变；`handoff.json` 的 `review_scope` 记录 finish 时的指纹，最终提交必须与之一致。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；执行回执（`handoff.json`）的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅。已提交且 review 门禁失败（stale / missing / format_error / FAIL）的修复规程见 `recovery.md`。
 
 workflow schema 强制迁移（`repo-template-sync` 的 `apply`）见 `sync.md`。
 

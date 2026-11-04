@@ -18,7 +18,7 @@ metadata:
 
 执行范围严格限定在已获授权的队列成员内，队列外任务绝不执行。merge 不在启动授权内，队列处理完后必须单独向用户请求明确授权。
 
-- 显式指定 tid 或 `/goal` 冻结队列：执行范围严格锁定为给定的成员序列；队列内成员按指定顺序执行到各自执行 commit 与 run-close 收尾，不逐 task 询问 commit。
+- 显式指定 tid 或 `/goal` 冻结队列：执行范围严格锁定为给定的成员序列；队列内成员按指定顺序执行到各自实现 commit 与 run-close 收尾，不逐 task 询问 commit。
 - 无参数调用：必须先列出 `task.py plan --serial --json` 拟定执行的成员清单（tid、title、顺序、所属链与 base）并向用户确认，取得明确同意后方可开始执行，禁止静默全量执行。
 - done/dropped 不作为新执行成员。
 - 队列启动后成员和顺序固定；依赖必须位于依赖者之前。队列外依赖须在 start 前已 done 且已合入，否则 `run-begin` 的 start 门禁拒绝。
@@ -31,15 +31,15 @@ metadata:
 对每个 tid：
 
 1. 新 task：`task.py run-begin {tid} --owner-id {owner_id}`，一次完成 start、reserve、claim 并输出 JSON identity。该成员 `base.tid` 非空（链内有前一成员）时加 `--base {base.branch}`；链首 `base.tid` 为空，不加 `--base`，以默认分支起步。已有 active、attempt、worktree 或同名分支时脚本拒绝并提示 recovery，不做隐式恢复：此时运行 `task.py recovery {tid}`，按其 phase 与 `.repo_template/docs/recovery.md` 恢复，不重复 run-begin。
-2. 在登记 worktree 直接读取 `task-work/SKILL.md` 正文执行，原样传递 tid 与 owner_id；不通过原生 Skill 工具调用。task-work 止于 `finish` 提交的执行 commit。
+2. 在登记 worktree 直接读取 `task-work/SKILL.md` 正文执行，原样传递 tid 与 owner_id；不通过原生 Skill 工具调用。task-work 止于 `finish` 提交的实现 commit。
 3. 回到主仓：`task.py run-close {tid} --owner-id {owner_id} --result done`，一次完成 terminal completed、report done 与 exact cleanup；中途失败按提示重跑同一命令（重入安全）。
-4. 同链后继的 `--base` 是刚完成的前一成员分支（即其 `base.branch`）；其它链的成员各自从默认分支起步，互不继承。
+4. 同链后继的 `--base` 是刚完成的前一成员分支（即当前成员 `plan` 输出的 `base.branch`）；其它链的成员各自从默认分支起步，互不继承。
 
 阻塞时 task 保持 active：实施笔记记录原因和恢复入口，主仓 `task.py run-close {tid} --owner-id {owner_id} --result blocked --reason {原因}`，保留 worktree，只停当前链：同链排在它之后的成员全部跳过（不 run-begin），继续执行其它链的成员。无法继续的失败用 `--result failed [--class infra|task|contract] --reason {原因}`，同样只停所在链。
 
 用户补齐条件后，`task.py recovery {tid}` 判定 phase 为 retry_ready，按 `recovery.md` 用恢复原语 `attempt reserve` 与 `attempt claim` 开新 attempt 继续；新 attempt 不重置 review/verify 历史。用户批准追加轮次时先用 `task.py limits` 增加绝对上限。
 
-`attempt`、`cleanup-worktree` 等原语子命令是 recovery 的低层接口，只在恢复时使用。恢复细节以 `task.py recovery {tid}` 和脚本门禁为准，不在 skill 复制每个中断阶段；current attempt 尚未 terminal 时不得 reserve 新 attempt。running 恢复先核 owner_id，跨会话接管规程见 `recovery.md`，原会话存活则停止，禁止复用他人 owner_id。done 后 review stale 不 rewind/reserve，按 recovery 证据修复追加证据 commit。
+`attempt`、`cleanup-worktree` 等原语子命令是 recovery 的低层接口，只在恢复时使用。恢复细节以 `task.py recovery {tid}` 和脚本门禁为准，不在 skill 复制每个中断阶段；current attempt 尚未 terminal 时不得 reserve 新 attempt。running 恢复先核 owner_id，跨会话接管规程见 `recovery.md`，原会话存活则停止，禁止复用他人 owner_id。done 后 review stale 按 recovery 的 review 修复处理。
 
 ## 合并
 

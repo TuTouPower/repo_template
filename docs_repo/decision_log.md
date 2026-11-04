@@ -4,7 +4,7 @@
 
 状态：`已落地` = 已进 AGENTS/skill/prompt/脚本；`开放` = 已裁决未实施；`已否决` = 明确不做；`已落地；被 Ln 取代` = 原方案曾落地，现行以 successor 为准。
 
-核对记录：L1–L36 于 `2026-09-07T00:00:00+08:00` 文档审阅核对；L37 起为之后新增，未纳入该次核对。`2026-11-03T22:30:00+08:00` 仅修订 L6、L7、L10、L13、L15 的落点/状态，其余行未重新核对。`2026-11-04T05:36:34+08:00` 核对 L13、L14、L23、L36，追加宏观方案 D-01–D-14 对应的 L40–L52（D-11 撤销），并更新改名落点。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md` 和 `task.py --help` 为准。
+核对记录：L1–L36 于 `2026-09-07T00:00:00+08:00` 文档审阅核对；L37 起为之后新增，未纳入该次核对。`2026-11-03T22:30:00+08:00` 仅修订 L6、L7、L10、L13、L15 的落点/状态，其余行未重新核对。`2026-11-04T05:36:34+08:00` 核对 L13、L14、L23、L36，追加宏观方案 D-01–D-14 对应的 L40–L52（D-10/L49 于 `d43deba` 移除，D-11 撤销），并更新改名落点。`2026-11-04T07:46:52+08:00` 追加 L53（撤销证据 commit、恢复一 task 一 commit）。被取代项在状态列标明 successor，不静默改写原议题。现行行为以 `repo/AGENTS.md`、`repo/.repo_template/docs/usage.md`、`repo/.repo_template/docs/architecture.md`、`repo/.repo_template/docs/recovery.md`、`repo/.repo_template/docs/sync.md` 和 `task.py --help` 为准。
 
 文件名映射：commit `35d298b` 改名后，旧 `spec.md` = 现 `task.md`（需求规格，含契约区/验收标准）；旧 `task.md`（过程总账、实施笔记、处置表）先改为 `note.md`，本次 D-12 再改为 `progress.md`。裁决列与议题列保留改名前的历史称呼，落点列写现行路径。
 
@@ -58,7 +58,7 @@
 | L40 | 手工编排执行身份与 attempt 收尾 | 宏观方案 D-01，用户批准 | 主路径使用 run-begin / run-close，默认解析 attempt 与 execution_id，保留恢复原语；claim owner 校验不变 | `repo_task/{control,attempts}.py`、`task-run` | 已落地 |
 | L41 | finish 与 Git 提交分离产生中间态 | 宏观方案 D-02，用户批准 | finish --message-file 在前置门禁通过后原子写 done、回执与实现 commit，失败恢复自身写入 | `repo_task/lifecycle.py`、`test_finish_atomic.py` | 已落地 |
 | L42 | 验证摘要与执行回执重复维护 | 宏观方案 D-03，用户批准 | 验证摘要只写 progress.md，finish 机器生成 handoff.json，不手写回执 | `repo_task/monitoring.py`、`task-work` | 已落地 |
-| L43 | 执行分支归档与 amend 例外 | 宏观方案 D-04，用户批准；修订 L14 | 归档由 integrate 的 merge commit 完成；执行历史为一个实现 commit 加零到多个仅含 review 过程文件的证据 commit，禁止改写实现历史 | `repo_task/{integration,monitoring}.py`、`recovery.md` | 已落地 |
+| L43 | 执行分支归档与 amend 例外 | 宏观方案 D-04，用户批准；修订 L14 | 归档由 integrate 的 merge commit 完成；执行历史为一个实现 commit 加零到多个仅含 review 过程文件的证据 commit，禁止改写实现历史 | `repo_task/{integration,monitoring}.py`、`recovery.md` | 已落地；证据 commit 部分被 L53 取代 |
 | L44 | 阻塞传播到无关队列成员 | 宏观方案 D-05，用户批准 E1/E2 | 按依赖与冲突关系分链，无关成员从主干起步；阻塞只停止所在链，无可继续成员才判 STOPPED | `repo_task/{plan,goal}.py`、`task-run` | 已落地 |
 | L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、`testing.md` | 已落地 |
 | L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json；需要时显式 install-hooks --statusline，保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
@@ -67,6 +67,7 @@
 | L50 | note.md 文件名与状态、进展职责不符 | 宏观方案 D-12，用户批准 | 当前过程文件统一 progress.md，标题为 Task 进展；同步事务一次迁移活跃与归档旧布局，两名并存拒绝，失败回滚 | `repo_task/context.py`、`template_sync/workflow_migration.py` | 已落地 |
 | L51 | AC 打勾未进入独立 review 机器门禁 | 宏观方案 D-13，用户批准 | reviewer 用 TICK-VALID / TICK-VOID 逐条复验；FAIL 后需改交付内容时实施方撤回全部打勾，修复重验后重新勾选 | review prompts、`repo_task/review.py`、task 模板 | 已落地 |
 | L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案实施记录 |
+| L53 | 撤销证据 commit，恢复一 task 一 commit | review_20261104 D01、用户裁定 | 撤销 L43 的证据 commit 部分（D2），恢复一 task 一 commit，review 失效走 amend 并以 `handoff.review_scope` 约束 | `repo_task/{lifecycle,monitoring,recovery}.py`、`recovery.md`、`architecture.md` | 已落地 |
 
 ## 未闭环
 

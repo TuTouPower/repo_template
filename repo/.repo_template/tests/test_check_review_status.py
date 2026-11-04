@@ -855,7 +855,7 @@ def test_ac_gate_full_level_all_valid_passes(tmp_path, monkeypatch, capsys):
 
 
 def test_ac_gate_without_task_md_still_rejects_void_and_missing_rows(tmp_path, monkeypatch, capsys):
-    """目录里没有 task.md（integrate 门禁的临时目录）无法比对 AC 集合，但 VOID 与缺小节仍拦截。"""
+    """checker 单独运行且目录缺 task.md 时无法比对 AC 集合，但 VOID 与缺小节仍拦截。"""
     task_dir = _ac_task(tmp_path, monkeypatch, _report([ROW_1, ROW_2]), spec=None)
     out = _check(task_dir, monkeypatch, capsys)
     assert out["overall"] == "PASS"

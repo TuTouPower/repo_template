@@ -89,11 +89,11 @@ def test_testing_md_default_commands_use_contract_marker():
     test_cmd = _section(text, "test_cmd")
     assert _pytest_lines(doctor) == [
         "pytest .repo_template/tests -q --collect-only -m contract",
-    ]
+    ], "自定义 test_cmd 的消费仓须先把 verification_policy 改为 project_configured 并填写 verification_notes"
     assert "command -v md_kx" in doctor
     assert _pytest_lines(test_cmd) == [
         "pytest .repo_template/tests -q -m contract",
-    ]
+    ], "自定义 test_cmd 的消费仓须先把 verification_policy 改为 project_configured 并填写 verification_notes"
 
 
 def test_sync_apply_runs_contract_suite(monkeypatch):

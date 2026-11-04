@@ -1,6 +1,6 @@
 ---
 name: task-work
-description: 内部实施流程：task-run 读取正文后在登记 worktree 实施并完成 review，止于一个执行 commit。
+description: 内部实施流程：task-run 读取正文后在登记 worktree 实施并完成 review，止于一个实现 commit。
 disable-model-invocation: true
 user-invocable: false
 metadata:
@@ -9,11 +9,11 @@ metadata:
 
 # task-work
 
-在已登记的 task worktree 中完成一个 task，止于 `finish` 提交的一个执行 commit。主仓 run-begin、run-close 和 merge 由 `task-run` 负责。项目骨架与状态权威见 `AGENTS.md`；工具链写权和调用契约见 `.repo_template/docs/usage.md`。
+在已登记的 task worktree 中完成一个 task，止于 `finish` 提交的一个实现 commit。主仓 run-begin、run-close 和 merge 由 `task-run` 负责。项目骨架与状态权威见 `AGENTS.md`；工具链写权和调用契约见 `.repo_template/docs/usage.md`。
 
 ## 组合契约
 
-仅用户显式授权入口或 registry.json 已登记父流程可执行；作为子流程时由父流程直接读取本正文，原样传递参数、identity、owner_id 与授权，不扩大授权。完整规则见 `.repo_template/docs/usage.md`「skill 调用」。
+仅用户显式授权入口或 registry.json 已登记父流程可执行；作为子流程时由父流程直接读取本正文，原样传递 tid、owner_id、写域与授权，不扩大授权。完整规则见 `.repo_template/docs/usage.md`「skill 调用」。
 
 ## 输入与写域
 
@@ -33,7 +33,7 @@ metadata:
 
 ### 独立 review
 
-实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer（reviewer 负责审查代码质量并独立复核实施 Agent 的 AC 打勾真实性）。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。review 判 FAIL 且随后要修改交付内容时，先把 `task.md` 全部 AC 撤回为 `- [ ]`，修复后重跑测试与黑盒，逐条重新打勾，再派下一轮 review；只补报告或处置表、不改交付内容的 INCOMPLETE 不撤回。reviewer 不改 `task.md`。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 见 recovery 证据修复（重新 review 并追加只含 review 过程文件的证据 commit），不 rewind。
+实施或 reviewer 发现鉴权、迁移、协议等风险扩大时，在自身 worktree 用 `task.py review-upgrade {tid} --reason ...` 将 single 升 full；不得降级，升级后旧 review 失效。按 `review_level` 渲染 prompt并派 reviewer（reviewer 负责审查代码质量并独立复核实施 Agent 的 AC 打勾真实性）。最终报告必须 PASS、finding 全部处置且 `reviewed_scope` 对应最终内容；FAIL 修复后重审，INCOMPLETE 按 checker 的 `next_action` 补报告、处置或重审。review 判 FAIL 且随后要修改交付内容时，先把 `task.md` 全部 AC 撤回为 `- [ ]`，修复后重跑测试与黑盒，逐条重新打勾，再派下一轮 review；只补报告或处置表、不改交付内容的 INCOMPLETE 不撤回。reviewer 不改 `task.md`。达到 `review_limit` 停止并报告。review 后改交付内容必须重新 review。done 后 review stale 按 recovery 的 review 修复处理，禁止 rewind、reserve。
 
 ## 实施
 
@@ -44,7 +44,7 @@ metadata:
 5. 收尾前检查新增调试输出、临时文件和未解释 TODO，运行项目定义的 lint/format/typecheck，并执行 `git diff --check`。检查方式按技术栈选择，不使用通用固定 grep。
 6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
 7. 更新 progress.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」填写 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要，不得为空或「待执行时填写」；`finish` 据此生成 `handoff.json`。
-8. 暂存全部交付文件：`git add` 实现、测试、文档、pending/finding、specs 等本 task 改动（`git add -N` 不算暂存）；task 目录由 `finish` 自行处理。无关或临时文件删除或移入 `.scratch/`。把执行 commit message 写入仓外或 `.scratch/` 的文件。
+8. 暂存全部交付文件：`git add` 实现、测试、文档、pending/finding、specs 等本 task 改动（`git add -N` 不算暂存）；task 目录由 `finish` 自行处理。无关或临时文件删除或移入 `.scratch/`。把实现 commit message 写入仓外或 `.scratch/` 的文件。
 9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}` 完成校验、原位写 done、生成回执并提交实现 commit；归档由 `integrate` 完成。前置检查失败不写入，提交失败则回滚 finish 自身写入，修复后重跑；中断或回滚失败按 `recovery.md`「finish 回滚语义」处理。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。
 
 ## 完成
