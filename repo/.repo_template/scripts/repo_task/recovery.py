@@ -78,7 +78,7 @@ def recovery_state(tid: str) -> dict:
         if head.returncode == 0 and head.stdout.strip() == fm.get("diff_anchor") and record["state"] == "running":
             return phase(
                 "finish_interrupted",
-                "finish 在生成 handoff.json 前被中断（已 done、无 handoff、无执行 commit）：停止并报告用户；"
+                "finish 在生成 handoff.json 前被中断（已 done、无 handoff、无实现 commit）：停止并报告用户；"
                 f"不重复 finish、不 reserve。核对 {ctx.PROGRESS_FILE} 验证摘要后，由用户决定补写 handoff.json 并提交，或把 {ctx.PROGRESS_FILE} 还原为 active",
             )
     try:
@@ -110,8 +110,30 @@ def recovery_state(tid: str) -> dict:
     gate_check = record["state"] == "running" or (
         record["state"] == "terminal" and record.get("terminal_status") == "completed"
     )
-    if (gate_check or report_done):
+    if gate_check or report_done:
         verdict, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+        # 注意：review gate 的失败文案本身也带 review_scope=，须用「不一致」限定为指纹偏离。
+        if verdict != "ready" and "review_scope" in gate_detail and "不一致" in gate_detail:
+            if report_done:
+                state["action"] = (
+                    f"停止：report 已写入 done，但实现 commit 内容偏离 review 内容（{gate_detail}）；"
+                    "不可撤销、不可 amend，人工核查"
+                )
+                return state
+            if _tip_has_successor(tip_sha, branch):
+                state["action"] = (
+                    f"停止：实现 commit 内容偏离 review 内容（{gate_detail}）；"
+                    f"已有后继分支包含当前 tip {tip_sha[:12]}，撤销会使其悬空，人工核查"
+                )
+                return state
+            return phase(
+                "review_mismatch",
+                f"实现 commit 内容偏离 review 内容（{gate_detail}）。"
+                f"无后继分支、report 未写入 done，可执行撤销：运行 "
+                f"`task.py finish-unwind {tid} --reason <原因>` 把分支退回 diff_anchor、"
+                "把 progress 还原为 active，然后重新 review 再 finish；"
+                "禁止 rewind、reserve、amend 修复。",
+            )
         if verdict != "ready" and "review gate" in gate_detail:
             if report_done:
                 state["action"] = (

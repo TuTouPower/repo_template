@@ -74,11 +74,12 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         print(f"提示: {report}")
     if migration_reports:
         try:
-            task_store.rebuild_index()
+            # 消费仓根显式传入：repo_task.context 指向来源仓时也不能写错地方。
+            task_store.rebuild_index_at(ctx.CONSUMER)
         except task_context.TaskDataError as error:
             raise ctx.SyncError(f"workflow 迁移后重建 tasks index 失败：{error}") from error
-        changed.add(task_context.ACTIVE_PATH)
-        changed.add(task_context.ARCHIVE_PATH)
+        changed.add(ctx.CONSUMER / "docs/tasks_index.json")
+        changed.add(ctx.CONSUMER / "docs/archive/tasks_index.json")
     for report in migrate_conventions(changed):
         print(f"提示: {report}")
     reports = repair_symlinks(changed)

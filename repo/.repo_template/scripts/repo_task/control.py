@@ -171,7 +171,7 @@ def cmd_attempt_terminal(args):
 
 def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None:
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
-    suffix = "；先按 recovery 的 review 修复处理后重跑 run-close"
+    suffix = "；先按 recovery 判定（review_repair / review_mismatch）处理后重跑 run-close"
     try:
         verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
     except ctx.TaskDataError as error:
@@ -302,7 +302,7 @@ def cmd_run_close(args):
         sys.exit(f"run-close 拒绝：{tid} attempt={attempt} state={record['state']!r}，无法关闭")
     sha = None
     if args.result == "done":
-        # 先验证再写：任何 ledger 写入前确认分支 tip 已是带 exact handoff 的执行 commit
+        # 先验证再写：任何 ledger 写入前确认分支 tip 已是带 exact handoff 的实现 commit
         try:
             _, sha = _resolve_integrate_branch(tid)
         except ctx.TaskDataError as error:

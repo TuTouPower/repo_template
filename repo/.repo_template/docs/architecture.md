@@ -61,7 +61,7 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
-执行分支恰好 1 个实现 commit；`handoff.json` 的 `review_scope` 绑定 finish 时的交付指纹。done 后 review 失效时，用户同意后对 tip 重新 review，只补 review 过程文件并并入同一实现 commit；交付内容变化须 rewind 重做。cleanup、integrate、integrate-chain 与 `ledger import` 校验分支恰 1 个 commit 且 tip 重算指纹与 `review_scope` 一致。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
+执行分支恰好 1 个实现 commit；`handoff.json` 的 `review_scope` 绑定 finish 时的交付指纹。done 后 review 失效时，用户同意后对 tip 重新 review，只补 review 过程文件并并入同一实现 commit；交付内容变化不能并入同一实现 commit：无后继分支且 report 未写入 done 时用 `task.py finish-unwind` 撤销实现 commit 回到 active 重做，否则停止并报告。cleanup、integrate、integrate-chain 与 `ledger import` 校验分支恰 1 个 commit 且 tip 重算指纹与 `review_scope` 一致。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
 
 ## 合并
 

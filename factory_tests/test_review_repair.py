@@ -9,7 +9,7 @@ from test_dispatch_integration import (
     _reserve, _task_cli, _worktree, git_repo,
 )
 from review_support import ensure_review_evidence, pass_report
-from task_flow_support import mark_done
+from task_flow_support import finish_cli, mark_done, prepare_finish
 from repo_task import monitoring
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -238,7 +238,7 @@ def test_amend_changing_delivery_is_rejected_by_review_scope(git_repo):
 
     assert verdict == "contract"
     assert "review_scope" in detail
-    assert "rewind" in detail
+    assert "finish-unwind" in detail
     result = _task_cli(git_repo, "cleanup-worktree", "t001", *_identity_args(identity))
     assert result.returncode != 0
     assert "review_scope" in result.stderr
@@ -389,7 +389,7 @@ def test_run_close_gate_failure_recovers_with_single_amend(git_repo):
     )
 
     assert blocked.returncode != 0
-    assert "review 修复" in blocked.stderr
+    assert "review_repair" in blocked.stderr
     state = _recovery(git_repo)
     assert state["phase"] == "review_repair"
     assert "run-close t001 --owner-id ... --result done" in state["action"]
@@ -435,3 +435,84 @@ def test_reserve_and_rewind_messages_point_to_review_repair(git_repo):
     assert rewind.returncode != 0
     assert "recovery" in rewind.stderr and "amend" in rewind.stderr
     assert "证据 commit" not in rewind.stderr
+
+
+# --------------------------------------------------------------------------
+# review_scope 不一致 -> review_mismatch -> finish-unwind 撤销重做
+# --------------------------------------------------------------------------
+
+
+def test_review_scope_mismatch_recovers_via_finish_unwind(git_repo):
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    worktree = _worktree(git_repo, "t001")
+    anchor = _git(worktree, "rev-parse", "HEAD^1").stdout.strip()
+    (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
+    _amend(worktree)
+    assert _git(worktree, "rev-parse", "HEAD^1").stdout.strip() == anchor
+
+    state = _recovery(git_repo)
+    assert state["phase"] == "review_mismatch"
+    assert "finish-unwind" in state["action"]
+    assert "禁止 rewind、reserve" in state["action"]
+
+    claimed = _task_cli(
+        git_repo, "attempt", "claim", "t001", *_identity_args(identity), "--owner-id", OWNER,
+    )
+    assert claimed.returncode == 0, claimed.stderr
+    closed = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
+    assert closed.returncode != 0
+    assert "review_scope" in closed.stderr
+
+    rewind = _task_cli(worktree, "rewind", "t001", "--reason", "try")
+    assert rewind.returncode != 0
+
+    unwound = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "test unwind", *_identity_args(identity),
+    )
+    assert unwound.returncode == 0, unwound.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == anchor
+    fm, _ = parse_front_matter(worktree / REL / "progress.md")
+    assert fm["status"] == "active"
+    assert fm["worktree"], "unwind 后 worktree 归属必须恢复，否则后续 finish 认不出自身 worktree"
+
+    message = prepare_finish(worktree, "t001", "alpha")
+    finished = finish_cli(worktree, "t001", OWNER, message)
+    assert finished.returncode == 0, finished.stdout + finished.stderr
+    assert "finish=OK" in finished.stdout
+    again = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
+    assert again.returncode == 0, again.stderr
+    assert _recovery(git_repo)["phase"] == "closed"
+
+
+def test_finish_unwind_refuses_with_successor(git_repo):
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    worktree = _worktree(git_repo, "t001")
+    (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
+    _amend(worktree)
+    tip = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    _git(git_repo, "branch", "t002_follower", tip)
+
+    state = _recovery(git_repo)
+    assert state["phase"] != "review_mismatch"
+    assert "后继" in state["action"]
+    refused = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "x", *_identity_args(identity),
+    )
+    assert refused.returncode != 0
+    assert "后继" in refused.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == tip
+
+
+def test_finish_unwind_refuses_when_report_done(git_repo):
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    worktree = _worktree(git_repo, "t001")
+    (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
+    _amend(worktree)
+
+    state = _recovery(git_repo)
+    assert "report 已写入 done" in state["action"]
+    refused = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "x", *_identity_args(identity),
+    )
+    assert refused.returncode != 0
+    assert "report 已写入 done" in refused.stderr

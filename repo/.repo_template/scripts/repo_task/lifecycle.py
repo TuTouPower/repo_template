@@ -743,7 +743,7 @@ def _finish_prechecks(args) -> dict:
     except OSError as error:
         sys.exit(f"finish=FAIL：无法读取 --message-file {args.message_file}（{error}）")
     if not message.strip():
-        sys.exit(f"finish=FAIL：--message-file {args.message_file} 为空；写入执行 commit message")
+        sys.exit(f"finish=FAIL：--message-file {args.message_file} 为空；写入实现 commit message")
     task, path, fm, body = load_task(tid)
     require_status(fm, "active")
     require_own_task_worktree(fm)
@@ -902,7 +902,7 @@ def cmd_finish(args):
         sys.exit(
             f"finish=FAIL：提交内容与 review 内容不一致（review_scope={plan['review_scope']!r}，"
             f"HEAD 重算={actual_scope!r}）；HEAD 已前移不回滚，"
-            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 按 review 修复处理"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`：判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
         )
     print(f"finish=OK {tid} commit={_get_head()}")
 
@@ -1048,6 +1048,116 @@ def cmd_rewind(args):
     if target == "backlog":
         rebuild_index()
     print(f"{args.tid} status={target} (rewound from {effective}){'; ' + wt_msg if wt_msg else ''}")
+
+@control_locked
+def cmd_finish_unwind(args):
+    """撤销与 review 内容不一致的实现 commit：分支退回 diff_anchor，progress 还原 active。
+
+    只处理 recovery `review_mismatch` 现场：恰好一个实现 commit、tip 重算指纹与
+    handoff.review_scope 不一致、无后继分支、report 未写入 done、worktree 干净。
+    撤销后重新 review 再 finish；禁止用 rewind/amend 处理此类现场。
+    """
+    from .attempts import current_attempt_record, resolve_identity
+    from .ledger import ledger_read
+    from .monitoring import implementation_commit, verify_integrate_ready
+    from .store import discover_effective_tasks
+    require_primary_worktree()
+    tid = args.tid
+    try:
+        attempt, execution_id = resolve_identity(tid, args.attempt, args.execution_id)
+    except ctx.TaskDataError as error:
+        sys.exit(str(error))
+    record = current_attempt_record(tid, ledger_read())
+    if record is None:
+        sys.exit(f"{tid} 无 attempt 记录；按 recovery 判定处理，不撤销")
+    report = record.get("report") or {}
+    if report.get("status") == "done":
+        sys.exit(f"{tid} report 已写入 done；实现 commit 不可撤销，停止并人工核查")
+    if not (record["state"] == "running" or (
+        record["state"] == "terminal" and record.get("terminal_status") == "completed"
+    )):
+        sys.exit(f"{tid} attempt state={record['state']!r}；只有 running 或已完成未 report 时可撤销")
+    effective = discover_effective_tasks().get(tid)
+    if effective is None:
+        sys.exit(f"{tid} 不存在")
+    branch = effective.get("branch") or f"{tid}_{effective['slug']}"
+    worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(tid)).resolve()
+    registered = worktree_paths().get(str(worktree))
+    if registered is None:
+        sys.exit(f"{tid} 无登记 worktree；按 recovery 判定处理，不撤销")
+    if registered != branch:
+        sys.exit(f"{tid} 登记分支 {registered!r} 与 task ownership {branch!r} 不符；停止并报告")
+    task_dir = worktree / effective["dir"]
+    try:
+        wt_fm, wt_body = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
+    except (OSError, ctx.TaskDataError) as error:
+        sys.exit(f"{tid} worktree 进展无法解析（{error}）；停止并人工核查")
+    if wt_fm.get("status") != "done":
+        sys.exit(f"{tid} worktree 进展 status={wt_fm.get('status')!r}；只有 done 且提交偏离时可撤销")
+    diff_anchor = wt_fm.get("diff_anchor") or ""
+    head = _git(["rev-parse", "HEAD"], root=worktree)
+    if head.returncode != 0:
+        sys.exit(f"{tid} worktree HEAD 无法解析：{head.stderr.strip()}")
+    tip_sha = head.stdout.strip()
+    if tip_sha == diff_anchor:
+        sys.exit(f"{tid} 分支 tip 已在 diff_anchor，无实现 commit 可撤销；按 recovery 判定处理")
+    try:
+        implementation_commit(tip_sha, diff_anchor)
+    except ctx.TaskDataError as error:
+        sys.exit(f"{tid} 分支形状不符（{error}）；只有恰好一个实现 commit 时可撤销")
+    try:
+        _, committed_fm, _ = load_task_at_ref(tid, tip_sha)
+        committed = json.loads(git_text_at_ref(tip_sha, f"{effective['dir']}/handoff.json"))
+        handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError, TypeError, ctx.TaskDataError) as error:
+        sys.exit(f"{tid} tip 执行回执无法核验（{error}）；停止并人工核查")
+    expected = {"tid": tid, "branch": branch, "status": "done",
+                "attempt": attempt, "execution_id": execution_id, "base_sha": diff_anchor}
+    if (
+        any(handoff.get(key) != value for key, value in expected.items())
+        or committed != handoff or committed_fm.get("status") != "done"
+    ):
+        sys.exit(f"{tid} tip 未包含当前 handoff；现场与 ledger 不一致，停止并人工核查")
+    verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
+    if verdict == "ready":
+        sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
+    if "review_scope" not in detail:
+        sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
+    listing = _git(["branch", "--format=%(refname:short)"])
+    if listing.returncode != 0:
+        sys.exit(f"无法列出分支：{listing.stderr.strip()}")
+    for other in [name.strip() for name in listing.stdout.splitlines() if name.strip()]:
+        if other == branch:
+            continue
+        if _git(["merge-base", "--is-ancestor", tip_sha, other]).returncode == 0:
+            sys.exit(f"已有后继分支 {other!r} 包含当前 tip；撤销会使其悬空，停止并报告")
+    dirty = porcelain_entries(worktree)
+    if dirty:
+        sys.exit(f"worktree 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先恢复干净再撤销")
+    try:
+        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
+    except ctx.TaskDataError as error:
+        sys.exit(f"{tid} 审计写入失败（{error}）；未改动分支与进展，重试或人工核查")
+    reset = _git(["reset", "--soft", diff_anchor], root=worktree)
+    if reset.returncode != 0:
+        sys.exit(f"{tid} git reset --soft 失败（{reset.stderr.strip()}）；分支未动，人工核查后重试")
+    wt_fm = dict(wt_fm)
+    wt_fm["status"] = "active"
+    # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
+    # 否则后续 finish 的 require_own_task_worktree 认不出自身 worktree。
+    wt_fm["worktree"] = ctx.worktree_rel_path(tid)
+    append_note(wt_fm, f"finish-unwind: 撤销与 review 不一致的实现 commit {tip_sha[:12]}，回到 active 重做（{args.reason}）")
+    try:
+        write_front_matter(task_dir / ctx.PROGRESS_FILE, wt_fm, wt_body)
+    except (OSError, ctx.TaskDataError) as error:
+        sys.exit(
+            f"{tid} 分支已退回 {diff_anchor[:12]}，但 {ctx.PROGRESS_FILE} 写回 active 失败（{error}）；"
+            "手动把 status 改回 active 后重新 review 再 finish"
+        )
+    print(
+        f"{tid} 已撤销实现 commit {tip_sha[:12]}：分支退回 {diff_anchor[:12]}，进展回到 active。"
+        "后续：重新 review（报告须对应当前内容），再跑 finish；禁止 amend 旧 commit。"
+    )
 
 @control_locked
 def cmd_purge(args):

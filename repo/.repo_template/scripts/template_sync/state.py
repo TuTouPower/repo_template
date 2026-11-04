@@ -27,9 +27,13 @@ def read_state() -> dict | None:
         if portable.get("source_url"):
             data["template_source"] = {"kind": "url", "value": portable["source_url"]}
     if ctx.SOURCE_OVERRIDE:
+        had_persisted_source = data is not None and "template_source" in data
         data = dict(data or {"last_synced_commit": None, "user_prompts": []})
-        if "template_source" in data:
+        if had_persisted_source:
             data["_original_template_source"] = data["template_source"]
+        else:
+            # 覆盖值是临时的：持久化 state 里本来就没有来源，prompt 不得把它写盘。
+            data["_ephemeral_source"] = True
         data["template_source"] = source_identity(ctx.SOURCE_OVERRIDE)
     policy = ctx.CONSUMER / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
@@ -146,7 +150,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 @consumer_locked
 def cmd_prompt(args: argparse.Namespace) -> int:
     state = read_state()
-    if not state:
+    if not state or state.pop("_ephemeral_source", False):
         raise ctx.SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
     shared = getattr(args, "scope", "local") == "shared"
     policy_path = ctx.CONSUMER / ".repo_template/sync_policy.json"

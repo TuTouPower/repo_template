@@ -210,6 +210,21 @@ def test_prompt_does_not_persist_source_override(env, tmp_path, monkeypatch):
     assert read_state()["template_source"] == original
 
 
+def test_prompt_refuses_ephemeral_source_without_persisted_template_source(env, tmp_path, monkeypatch):
+    state_file = env["state_file"]
+    state_file.write_text(json.dumps({"last_synced_commit": None, "user_prompts": []}), encoding="utf-8")
+    other = tmp_path / "other_src"
+    (other / ".repo_template/scripts").mkdir(parents=True)
+    (other / ".repo_template/scripts/task.py").write_text("print('other')\n", encoding="utf-8")
+
+    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", str(other))
+    with pytest.raises(ctx.SyncError, match="未初始化"):
+        cmd_prompt(Namespace(action="add", text="x", tags=None, id=None, scope="local"))
+
+    on_disk = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "template_source" not in on_disk
+
+
 def test_corrupt_sync_state_raises_sync_error_with_recovery_guidance(env):
     """验证 sync_state.json 损坏或格式错误时抛出 SyncError 并附带恢复指引（Issue #49）。"""
     consumer = env["consumer"]
@@ -1790,9 +1805,18 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
 
 
-def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, capsys):
+def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, capsys, tmp_path):
     consumer = env["consumer"]
-    _bind_repo_task_context(monkeypatch, consumer)
+    # 模拟「来源仓 ≠ 消费仓」：把 repo_task.context 指向一个无关目录，
+    # 证明索引重建只认消费仓根，不读模块级全局路径。
+    decoy = tmp_path / "foreign_toolkit"
+    decoy.mkdir()
+    from repo_task import context as task_ctx
+    monkeypatch.setattr(task_ctx, "REPO_ROOT", decoy)
+    monkeypatch.setattr(task_ctx, "ACTIVE_PATH", decoy / "docs/tasks_index.json")
+    monkeypatch.setattr(task_ctx, "ARCHIVE_PATH", decoy / "docs/archive/tasks_index.json")
+    monkeypatch.setattr(task_ctx, "TASKS_DIR", decoy / "docs/tasks")
+    monkeypatch.setattr(task_ctx, "ARCHIVE_TASKS_DIR", decoy / "docs/archive/tasks")
     spec, progress = _install_current_workflow_templates(env["src"])
 
     task_dir = consumer / "docs/tasks/t001_old"
@@ -1831,6 +1855,8 @@ def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, 
     assert [(task["tid"], task["status"]) for task in active["tasks"]] == [("t001", "active")]
     archive = json.loads((consumer / "docs/archive/tasks_index.json").read_text(encoding="utf-8"))
     assert [(task["tid"], task["status"]) for task in archive["tasks"]] == [("t002", "done")]
+    # 来源仓侧（decoy）不得被写入任何索引。
+    assert not (decoy / "docs").exists()
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):

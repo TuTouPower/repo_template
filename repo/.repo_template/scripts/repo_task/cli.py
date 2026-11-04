@@ -27,6 +27,7 @@ from .lifecycle import (
     cmd_drop,
     cmd_edit,
     cmd_finish,
+    cmd_finish_unwind,
     cmd_list,
     cmd_preflight,
     cmd_purge,
@@ -114,7 +115,7 @@ def main():
     )
     finish.add_argument("tid")
     finish.add_argument("--owner-id", required=True, help="当前会话执行权，须与 ledger claim 一致")
-    finish.add_argument("--message-file", required=True, help="执行 commit message 文件（仓外或 .scratch/）")
+    finish.add_argument("--message-file", required=True, help="实现 commit message 文件（仓外或 .scratch/）")
     finish.set_defaults(func=cmd_finish)
 
     drop = sub.add_parser("drop", help="活跃状态 -> dropped")
@@ -128,6 +129,15 @@ def main():
     rewind.add_argument("--yes", action="store_true")
     rewind.add_argument("--reason", required=True)
     rewind.set_defaults(func=cmd_rewind)
+
+    unwind = sub.add_parser(
+        "finish-unwind",
+        help="撤销与 review 内容不一致的实现 commit，回到 active（仅 recovery review_mismatch 现场）",
+    )
+    unwind.add_argument("tid")
+    unwind.add_argument("--reason", required=True)
+    _add_identity(unwind)
+    unwind.set_defaults(func=cmd_finish_unwind)
 
     purge = sub.add_parser("purge", help="删除误建 backlog task")
     purge.add_argument("tid")

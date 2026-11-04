@@ -535,7 +535,8 @@ def verify_integrate_ready(
     if handoff["review_scope"] != scope:
         return "contract", (
             f"{handoff_path} review_scope={handoff['review_scope']!r} 与分支 {branch!r} tip "
-            f"重算的 {scope!r} 不一致；交付内容变化必须 rewind 重做 review，不能 amend"
+            f"重算的 {scope!r} 不一致；提交内容偏离 review 内容，不能 amend——"
+            f"无后继分支且 report 未 done 时用 `task.py finish-unwind {tid}` 撤销实现 commit 回到 active 重做"
         )
     if status == "done":
         from .review import ReviewDataError, evaluate_review
