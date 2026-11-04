@@ -61,6 +61,7 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 |skill|角色|
 |---|---|
 |`bug-to-pending`|用户入口|
+|`pending-fix`|用户入口|
 |`pending-record`|用户入口|
 |`repo-cleanup`|用户入口|
 |`repo-hygiene`|用户入口|
@@ -139,7 +140,7 @@ hook 在调度账本存在、命令包含 `run-begin` / `start` / `track_worktre
 
 ## 附属生命周期闭环
 
-pending 归档必须提供非空 `--reason`，说明处理结果、验证依据或转办/去重去向；`--fix-ref` 可选，不要求 task ID，可记录 main、commit、PR、条目或 task。默认 resolution=resolved；转办显式用 `--resolution transferred`，其他类型为 obsolete/duplicate，所有类型均只强制备注，不强制引用。存在 task 时保留 pNNN 与 tid 双向关联；直接在 main 完成时如实写备注，不伪造 task ID。
+pending 归档必须提供非空 `--reason`，说明处理结果、验证依据或转办/去重去向；`--fix-ref` 可选，不要求 task ID，可记录 main、commit、PR、条目或 task。默认 resolution=resolved；转办显式用 `--resolution transferred`，其他类型为 obsolete/duplicate，所有类型均只强制备注，不强制引用。存在 task 时保留 pNNN 与 tid 双向关联；直接在 main 完成时如实写备注，不伪造 task ID。小而低风险的 pending 经用户授权后由 `pending-fix` 在 main 直修，准入与流程见该 skill。
 
 ```bash
 python3 .repo_template/scripts/pending.py archive p001 --reason "按用户要求在 main 修复；专项测试通过" --write

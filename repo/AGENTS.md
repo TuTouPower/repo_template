@@ -20,8 +20,8 @@
 |`docs/archive/`|完结或终止的历史|日常只追加；归档 task 的格式迁移仅由模板同步执行，见[同步规程](.repo_template/docs/sync.md#workflow-schema-%E5%BC%BA%E5%88%B6%E8%BF%81%E7%A7%BB)|
 |`schemas/`|跨服务接口契约|改契约走 task 流程|
 |`config/`|配置（默认 + 环境覆盖 +`.env.example`）|仅`.env.example` 入库；真值写本地 `.env`|
-|`src/` `tests/` `assets/`|源码、测试、静态源|仅在 task 执行期按 spec 修改；debug 复现不得写入|
-|`scripts/`|用户项目脚本|仅在 task 执行期按 spec 修改；debug 复现不得写入|
+|`src/` `tests/` `assets/`|源码、测试、静态源|仅在 task 执行期按 spec 修改，或经授权由 `pending-fix` 在 main 直修；debug 复现不得写入|
+|`scripts/`|用户项目脚本|仅在 task 执行期按 spec 修改，或经授权由 `pending-fix` 在 main 直修；debug 复现不得写入|
 |`.repo_template/`|模板工具链（skills、scripts、docs、hooks）|仅模板演进时修改；细目与写权见`.repo_template/docs/usage.md`|
 |`artifacts/` `data/` `.scratch/`|产物、运行数据、一次性草稿|运行与草稿；debug 复现和临时实验只写`.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/`|
 

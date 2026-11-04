@@ -68,6 +68,7 @@
 | L51 | AC 打勾未进入独立 review 机器门禁 | 宏观方案 D-13，用户批准 | reviewer 用 TICK-VALID / TICK-VOID 逐条复验；FAIL 后需改交付内容时实施方撤回全部打勾，修复重验后重新勾选 | review prompts、`repo_task/review.py`、task 模板 | 已落地 |
 | L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案实施记录 |
 | L53 | 撤销证据 commit，恢复一 task 一 commit | review_20261104 D01、用户裁定 | 撤销 L43 的证据 commit 部分（D2），恢复一 task 一 commit，review 失效走 amend 并以 `handoff.review_scope` 约束 | `repo_task/{lifecycle,monitoring,recovery}.py`、`recovery.md`、`architecture.md` | 已落地 |
+| L54 | 小 pending 走完整 task 过重；worktree 缺 gitignore 本地文件导致容器验证难跑 | 用户裁定（2026-11-05） | 不做 in-place / main 直跑 task（维持 L4、L30）：worktree 经消费仓 `.worktreeinclude` 软链被忽略的本地文件与目录，仅目录规则的链接追加 `info/exclude` 托管块；小而低风险 pending 经 `pending-fix` 在 main 直修，一条一个 fix commit，超出准入转 task | `repo_task/worktrees.py`、`repo/.worktreeinclude`、`usage.md`、`pending-fix` skill、`AGENTS.md` | 已落地 |
 
 ## 未闭环
 

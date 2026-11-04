@@ -4,6 +4,9 @@
     "bug-to-pending": {
       "role": "public"
     },
+    "pending-fix": {
+      "role": "public"
+    },
     "pending-record": {
       "role": "public"
     },
