@@ -31,7 +31,7 @@
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确要求修改，且当前任务不在获准写入的 skill 流程中时，禁止修改未被 gitignore 的代码文件。
 - task 状态以 `task.py effective-status` 为准；进行中 task 的状态在其合并前不进主干，细则见 `.repo_template/docs/usage.md`「task 状态读取」。
-- task 执行期一个实现 commit，review 失效时仅可追加只含 review 过程文件的证据 commit；创建期和状态维护 commit 分开；派生 index 与 task 目录的归档移动在集成时进入同一个 merge commit。每个 commit 必须独立可验证，有工程意义。
+- 每个 task 恰好一个实现 commit；review 失效的修复见 `.repo_template/docs/recovery.md`；创建期和状态维护 commit 分开；派生 index 与 task 目录的归档移动在集成时进入同一个 merge commit。每个 commit 必须独立可验证，有工程意义。
 - 发现 commit 混入不属于当前工作的改动时，立即停止工作并向用户汇报；未经用户确认，不继续提交、合并或修正。
 - 使用 `.repo_template` 提供的工具链、skills、hooks、模板文件时发现缺陷，不静默处理、不自行绕过或修改，报告用户决定。
 - task 状态：`backlog` / `active` / `done` / `dropped`。

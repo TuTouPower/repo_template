@@ -78,19 +78,19 @@ def test_archive_moves_at_integrate_and_agents_has_no_archive_exception():
     assert "`finish`/`drop` 由脚本移入" not in tasks_row
     agents = _text(PRODUCT / "AGENTS.md")
     assert "## 目录与读写规则" in agents and "## 开发原则" in agents
-    assert "证据 commit" in agents and "同一个 merge commit" in agents
+    assert "每个 task 恰好一个实现 commit" in agents and "同一个 merge commit" in agents
 
 
-def test_no_amend_procedure_remains_in_distributed_text():
-    """D2：补审改为追加证据 commit，分发文本中不再有 amend 规程或提示。"""
+def test_evidence_commit_removed_and_amend_only_in_recovery_repair_section():
+    """D01：分发文本不含证据 commit；amend 只在 recovery 的 review 修复一节。"""
     paths = [PRODUCT / "AGENTS.md", *DOCS.glob("*.md"), *SKILLS.glob("*/SKILL.md")]
-    assert [str(path) for path in paths if "amend" in _text(path)] == []
-
-
-def test_recovery_documents_evidence_commit_procedure():
+    assert [str(path) for path in paths if "证据 commit" in _text(path)] == []
+    assert [str(path) for path in paths if "amend" in _text(path)] == [str(DOCS / "recovery.md")]
     recovery = _text(DOCS / "recovery.md")
-    section = recovery.split("## review 门禁失败后的修复", 1)[1].split("\n## ", 1)[0]
-    assert "证据 commit" in section
+    head, rest = recovery.split("## review 门禁失败后的修复", 1)
+    section, tail = rest.split("\n## ", 1)
+    assert "amend" not in head and "amend" not in tail
+    assert "amend" in section
     assert "handoff.json" in section and "后继分支" in section
     architecture = _text(DOCS / "architecture.md")
     assert "git mv" in architecture or "归档" in architecture.split("## 合并", 1)[1].split("\n## ", 1)[0]

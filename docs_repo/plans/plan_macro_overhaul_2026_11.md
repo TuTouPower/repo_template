@@ -161,7 +161,7 @@ C3 中 `handoff.json` 的字段来源：
 | 编号 | 改造 | 说明 |
 | --- | --- | --- |
 | D1 | 归档时机从 `finish` 移到 `integrate` | `finish` 只在原位写 `status: done`。`integrate` / `integrate-chain` 在 `git merge --no-commit` 之后，把成员 task 目录移入 archive，并与派生 index 一起暂存进同一个 merge commit。`_validate_merge_staged_scope` 中的两项校验（staged 路径白名单、非冲突文件不得偏离 Git 自动合并结果）都把豁免集合从「派生 index」扩展为「派生 index + 成员 task 目录的归档 rename」。指纹的双路径规范化随之删除 |
-| D2 | 修订 L14：执行分支 = 1 个实现 commit + 0..n 个证据 commit | 证据 commit 只能修改当前 task 目录内的 review 过程文件（与 `REVIEW_PROCESS_FILES` 同源）。这些文件本已排除在指纹之外，追加证据不会改变指纹。done 后 review 失效时，补审改为追加证据 commit，删除 amend 规程与 archive 例外。「一个工程意义明确的实现 commit」不变 |
+| D2 | **已由 L53 撤销。** 修订 L14：执行分支 = 1 个实现 commit + 0..n 个证据 commit | 证据 commit 只能修改当前 task 目录内的 review 过程文件（与 `REVIEW_PROCESS_FILES` 同源）。这些文件本已排除在指纹之外，追加证据不会改变指纹。done 后 review 失效时，补审改为追加证据 commit，删除 amend 规程与 archive 例外。「一个工程意义明确的实现 commit」不变 |
 | D3 | 依赖实现 SHA 查找适配 | `_dependency_implementations` 现按归档路径查找添加 `handoff.json` 的 commit。D1 后新 task 的 `handoff.json` 添加于 `docs/tasks/` 路径。查找改为用一条 pathspec 同时覆盖该 task 的 `docs/tasks/` 与 `docs/archive/tasks/` 两个位置，旧 task 与新 task 走同一逻辑 |
 | D4 | `note.md` 改名 `progress.md` | 文件承载状态 front matter、实施笔记、Review 处置与收尾报告，从 backlog 存续到归档；`progress.md` 与 `task.md` 构成「做什么 / 做到哪、怎么做的」，并消除 `note.md` 内 `note` 字段的撞名。模板标题改为「Task 进展」。先把文件名收敛为 `repo_task/context.py` 的单一常量，再机械替换脚本、模板、`AGENTS.md`、`usage.md`、review prompt、skill、看板与测试。消费仓迁移沿用 `35d298b` 先例：同步 apply 时对 `docs/tasks/` 与 `docs/archive/tasks/` 一次性改名。D4 在 D1–D3 与 E 组合入后单独执行，本文其余各项在 D4 之前沿用 `note.md` 名称 |
 

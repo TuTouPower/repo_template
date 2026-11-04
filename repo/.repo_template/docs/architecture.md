@@ -4,14 +4,14 @@ task 工具链的执行拓扑、attempt、review 和合并授权。项目业务�
 
 ## 执行拓扑
 
-每个 task 使用独立分支和 worktree；每个 task 形成一个实现 commit（含 `handoff.json`），review 失效时可在其后追加只含 review 过程文件的证据 commit。`task-run` 按用户给定顺序串行执行队列，并按队列内成员间的关系分链：两个成员之间存在 `depends_on`（任一方向）或 `conflicts_with`（任一方声明）即相连，连通的成员属同一条链，只看队列内成员。链内保持队列顺序，首个成员以默认分支为 base，其后每个成员以链内紧邻前一成员的分支为 `--base`；无关成员各自从默认分支起步：
+每个 task 使用独立分支和 worktree；每个 task 形成一个实现 commit（含 `handoff.json`）。`task-run` 按用户给定顺序串行执行队列，并按队列内成员间的关系分链：两个成员之间存在 `depends_on`（任一方向）或 `conflicts_with`（任一方声明）即相连，连通的成员属同一条链，只看队列内成员。链内保持队列顺序，首个成员以默认分支为 base，其后每个成员以链内紧邻前一成员的分支为 `--base`；无关成员各自从默认分支起步：
 
 ```text
 main ─┬─ t001 ── t003 ── t004   链 1：三者经依赖或冲突相连
       └─ t002                   链 2：与其它成员无关
 ```
 
-链内后继因此继承前置成果。每个成员的链编号与 base 由 `task.py plan --serial --json [tid ...]` 的 `members[]` 给出，默认队列与显式 tid 队列共用同一计算；队列中依赖排在依赖者之后时拒绝。队列外依赖仍须在 `start` 前已 done 且已合入。`start` 同时检查：
+链内后继因此继承前置成果。每个成员的链编号与 base 由 `task.py plan --serial --json [tid ...]` 的 `members[]` 给出，默认队列与显式 tid 队列共用同一计算；队列中依赖排在依赖者之后时拒绝。队列外依赖仍须在 `start` 前已 done 且已合入。`run-begin`（内含 start）同时检查：
 
 - `depends_on` 的有效状态均为 done；
 - 实际 base 包含每个依赖的实现 SHA；
@@ -61,7 +61,7 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
-done 后 review 失效时，重新 review 并把新报告作为证据 commit 追加，不改写实现 commit。证据 commit 只能修改当前 task 目录内的 review 过程文件（`progress.md`、`review_*.md`、渲染的 review prompt，与指纹排除清单同源），不得改 `handoff.json`、交付文件或其它路径，因此不改变指纹。cleanup、integrate、integrate-chain 与 `ledger import` 沿 first parent 从分支 tip 回溯到 base，要求最旧的是实现 commit、其后全是此类证据 commit。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
+执行分支恰好 1 个实现 commit；`handoff.json` 的 `review_scope` 绑定 finish 时的交付指纹。done 后 review 失效时，用户同意后对 tip 重新 review，只补 review 过程文件并并入同一实现 commit；交付内容变化须 rewind 重做。cleanup、integrate、integrate-chain 与 `ledger import` 校验分支恰 1 个 commit 且 tip 重算指纹与 `review_scope` 一致。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
 
 ## 合并
 
@@ -76,7 +76,7 @@ git merge --no-ff --no-commit <branch-or-tail>
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit 与证据 commit，全部成员目录在同一个 merge commit 中归档。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，全部成员目录在同一个 merge commit 中归档。
 
 ## Goal
 
@@ -86,7 +86,7 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 |阶段|写域|职责|
 |---|---|---|
-|task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、原位写 done、机器生成执行回执并提交实现 commit（失败整体回滚）；done 后 review 失效时追加证据 commit|
+|task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、原位写 done、机器生成执行回执并提交实现 commit（失败整体回滚）|
 |task-run|主仓控制面|`run-begin`、`run-close`（attempt lifecycle、exact cleanup）、队列推进|
 |task-integrate|主仓 main|经授权准备 Git merge、归档成员 task 目录、合并后验证、commit、integrated 和分支清理|
 

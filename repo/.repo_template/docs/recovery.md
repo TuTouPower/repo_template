@@ -21,7 +21,7 @@
 
 `finish` 先做全部前置检查，任一项失败零写入退出。写入阶段依次为原位写 done、生成 `handoff.json`、暂存、`git commit -F`。提交失败（含 pre-commit / commit-msg hook 拒绝）时脚本回滚 finish 自身的写入：front matter、`handoff.json` 与暂存区恢复到 finish 前，调用方已暂存的交付文件保持暂存，修复原因后可直接重跑 `finish`。回滚失败时脚本如实报错并提示运行 `task.py recovery`，此时现场不一致，不重复 finish。
 
-进程被杀等中断不在脚本回滚范围，由 recovery 阶段检测兜底：`finish_interrupted`（已 done、无 `handoff.json`、无实现 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无实现 commit）核验后暂存并提交实现 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。
+进程被杀等中断不在脚本回滚范围，由 recovery 阶段检测兜底：`finish_interrupted`（已 done、无 `handoff.json`、无实现 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无实现 commit）核验后暂存并提交实现 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（重入安全；owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。已提交但 review 门禁失败时，recovery 判 `review_repair`，按「review 门禁失败后的修复」补审后重跑同一 `run-close`，不要按 `committed_unreported` 只补 terminal/report。
 
 ## 轮次上限
 
@@ -29,7 +29,7 @@
 
 ## review 门禁失败后的修复
 
-如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留分支/证据并请用户决定恢复方式，未经用户同意不得追加 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，把新报告作为证据 commit 追加（不改写实现 commit，禁止 rewind、reserve）：证据 commit 只能改当前 task 目录内的 review 过程文件（`progress.md`、`review_*.md`、渲染的 review prompt），触及交付文件、`handoff.json`、task.md、其它 task 目录或其它路径都会被 cleanup、integrate、`ledger import` 拒绝。提交后 worktree 干净，再按原 identity cleanup。已有后继分支以当前 tip 为 ancestor（或 tip 已合入主干）时不得追加证据 commit，否则破坏链的线性；停止并报告。review 指纹的定义见 `usage.md`「skill 调用」。
+如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留现场并报告用户；未经用户同意不得修改实现 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，只改 review 过程文件（`progress.md` 正文、`review_*.md`、渲染的 review prompt），用 `git commit --amend --no-edit` 并入同一实现 commit；amend 不得改 `handoff.json`、交付文件或其它路径，交付内容变化须 rewind 重做。worktree 干净后在主仓运行 `run-close {tid} --owner-id ... --result done`。只有没有其它分支包含当前 tip（或 tip 尚未合入主干）、且该 attempt 的 report 尚未写入 done 时才可修复；已有后继分支包含当前 tip 或 report 已 done 时停止并报告，不 amend。禁止 rewind、reserve。review 指纹的定义见 `usage.md`「skill 调用」。
 
 ## 图合并中断
 
@@ -41,4 +41,4 @@
 
 运行态只服务本机主 clone，不提供分布式协作。迁移前停止所有会话，备份整个 Git common dir、主仓 `docs/runtime/`、`.repo_template/sync_state.json`、所有 task 分支与 worktree 未提交内容；用隔离副本核对 ledger、Git refs、执行回执（`handoff.json`）和 review 可读后再迁移。不能仅复制 goal 快照或把新 clone 当作原控制面。
 
-ledger 丢失但 done 分支和已入库的执行回执完整时，运行 `task.py ledger import {tid} --confirm-stopped`。脚本验证 exact identity、实现 commit 与证据 commit 的形状、base、`task.md` AC 全部勾选、最终 review 和干净 worktree，原子重建完成事件；已有该 tid 事件则拒绝覆盖。active、缺分支、缺执行回执或坏 review 不可猜补，必须恢复备份；`recovery` 给出停止诊断。goal 快照可用 `goal --reset` 从有效任务重新冻结。
+ledger 丢失但 done 分支和已入库的执行回执完整时，运行 `task.py ledger import {tid} --confirm-stopped`。脚本验证 exact identity、恰好一个实现 commit、base、`task.md` AC 全部勾选、最终 review 和干净 worktree，原子重建完成事件；已有该 tid 事件则拒绝覆盖。active、缺分支、缺执行回执或坏 review 不可猜补，必须恢复备份；`recovery` 给出停止诊断。goal 快照可用 `goal --reset` 从有效任务重新冻结。

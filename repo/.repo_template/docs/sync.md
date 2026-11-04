@@ -12,13 +12,15 @@
 |`## 目录与读写规则`|脚本只报告差异，不覆盖；由 Agent 对照模板智能语义合并|允许增删项目目录、写权和项目专属约定|
 |`## 开发原则`|每次同步从模板强制更新|不允许消费仓改写|
 
-`repo_sync.py plan` 会分别展示三部分状态。`apply` 只自动替换 `## 开发原则`；项目介绍和 `## 目录与读写规则` 均不由脚本覆盖。Agent 必须在同步时读取模板与消费仓差异，完成目录与读写规则的语义合并，并确认项目介绍未被改动。缺少这两个标题时，脚本对旧版模板继续使用旧的整文件裁定逻辑；新模板必须包含这两个标题。
+`repo_sync.py plan` 会分别展示三部分状态。`apply` 只自动替换 `## 开发原则`；项目介绍和 `## 目录与读写规则` 均不由脚本覆盖。Agent 必须在同步时读取模板与消费仓差异，完成目录与读写规则的语义合并，并确认项目介绍未被改动。缺少这两个标题时，脚本对旧版模板继续使用旧的整文件裁定逻辑；新模板必须包含这两个标题。`apply` 不支持软链 `AGENTS.md`，先替换为真实文件。
 
 消费仓允许修改的 AGENTS.md 范围只有项目介绍和 `## 目录与读写规则`；`## 开发原则` 及其后的模板规则不应由消费仓自行改写。
 
 ## workflow schema 强制迁移
 
-`apply` 将主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。旧 `spec.md` / `task.md` 布局及 `task.md` / `note.md` 布局均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。
+`apply` 将主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。
+
+自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
 存在已登记 task worktree 时拒绝 apply，先完成或 rewind；存在状态为 done 但尚未合入默认分支的 task 分支时同样拒绝，先 integrate。迁移后工具链只接受当前 schema。
 
