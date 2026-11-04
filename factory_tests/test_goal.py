@@ -78,6 +78,15 @@ def _snapshot(repo):
     return json.loads(path.read_text("utf-8"))
 
 
+def _relate(repo, tid, **values):
+    path = next((repo / "docs/tasks").glob(f"{tid}_*/progress.md"))
+    frontmatter, body = parse_front_matter(path)
+    frontmatter.update(values)
+    write_front_matter(path, frontmatter, body)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", f"graph: {tid}")
+
+
 def _worktree(repo, tid):
     return repo.parent / f"{repo.name}_{tid}"
 
@@ -159,6 +168,48 @@ def test_goal_explicit_tids_preserve_order_and_validate(git_repo):
     assert _cli(git_repo, "goal", "t001", "t001").returncode != 0
     assert _cli(git_repo, "goal", "t009").returncode != 0
     assert _cli(git_repo, "goal", "bogus").returncode != 0
+
+
+def test_goal_explicit_tids_reject_invalid_topology(git_repo):
+    _relate(git_repo, "t002", depends_on="t001")
+
+    result = _cli(git_repo, "goal", "t002", "t001")
+    assert result.returncode == 1
+    assert "invalid_queue" in result.stderr
+
+    result = _cli(git_repo, "goal", "t001", "t002")
+    assert result.returncode == 0, result.stderr
+    assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
+
+
+def test_goal_snapshot_freezes_queue_edges(git_repo):
+    _relate(git_repo, "t002", depends_on="t001")
+
+    assert _cli(git_repo, "goal", "t001", "t002").returncode == 0
+    assert _snapshot(git_repo)["edges"] == [
+        {"type": "dep", "from": "t001", "to": "t002"},
+    ]
+
+
+def test_goal_check_rejects_legacy_snapshot_without_edges(git_repo):
+    assert _cli(git_repo, "goal").returncode == 0
+    path = git_repo / "docs" / "runtime" / "goal_queue.json"
+    legacy = _snapshot(git_repo)
+    legacy.pop("edges")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    result = _cli(git_repo, "goal-check")
+    assert result.returncode == 1
+    assert "edges" in result.stderr
+    assert "--reset" in result.stderr
+
+    shown = _cli(git_repo, "goal")
+    assert shown.returncode == 1
+    assert "--reset" in shown.stderr
+
+    reset = _cli(git_repo, "goal", "--reset")
+    assert reset.returncode == 0, reset.stderr
+    assert "edges" in _snapshot(git_repo)
 
 
 def test_goal_check_missing_snapshot_errors(git_repo):

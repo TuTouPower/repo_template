@@ -63,6 +63,31 @@ def test_goal_check_blocked_chain_skips_members_and_other_chain_keeps_goal_going
     assert "GOAL_QUEUE_STOPPED: t001=blocked" in result.stdout
 
 
+@pytest.mark.parametrize("field", ["depends_on", "conflicts_with"])
+def test_goal_check_keeps_frozen_edges_after_main_relation_removed(git_repo, field):
+    _relate(git_repo, "t002", **{field: "t001"})
+    _freeze(git_repo, "t001", "t002", "t003")
+    _relate(git_repo, "t002", **{field: ""})
+    _block(git_repo, "t001")
+
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "stopped_at=t001 state=blocked skipped=t002" in result.stdout
+    assert "GOAL_QUEUE_INCOMPLETE: 0/3 closed" in result.stdout
+
+
+@pytest.mark.parametrize("field", ["depends_on", "conflicts_with"])
+def test_goal_check_ignores_main_edges_added_after_freeze(git_repo, field):
+    _freeze(git_repo, "t001", "t002")
+    _relate(git_repo, "t002", **{field: "t001"})
+    _block(git_repo, "t001")
+
+    result = _task_cli(git_repo, "goal-check")
+    assert result.returncode == 2
+    assert "stopped_at=t001 state=blocked skipped=-" in result.stdout
+    assert "GOAL_QUEUE_INCOMPLETE: 0/2 closed" in result.stdout
+
+
 def test_goal_check_other_chain_running_keeps_goal_incomplete(git_repo):
     _relate(git_repo, "t002", depends_on="t001")
     _freeze(git_repo, "t001", "t002", "t003")
