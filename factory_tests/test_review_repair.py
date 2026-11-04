@@ -516,3 +516,45 @@ def test_finish_unwind_refuses_when_report_done(git_repo):
     )
     assert refused.returncode != 0
     assert "report 已写入 done" in refused.stderr
+
+
+def test_finish_unwind_refuses_review_gate_failure(git_repo):
+    """报告过期（review_repair 现场）不得用 finish-unwind 撤销。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    worktree = _worktree(git_repo, "t001")
+    _write_reports(worktree, tick="TICK-VOID")
+    _amend(worktree)
+    tip = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+
+    state = _recovery(git_repo)
+    assert state["phase"] == "review_repair"
+    refused = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "x", *_identity_args(identity),
+    )
+    assert refused.returncode != 0
+    assert "不是内容不一致" in refused.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == tip
+
+
+def test_finish_unwind_refuses_terminal_attempt_without_report(git_repo):
+    """terminal 已关闭又无 report 时不撤销，recovery 直接停止。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha", terminal=False)
+    worktree = _worktree(git_repo, "t001")
+    terminal = _task_cli(
+        git_repo, "attempt", "terminal", "t001", *_identity_args(identity),
+        "--status", "completed",
+    )
+    assert terminal.returncode == 0, terminal.stderr
+    (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
+    _amend(worktree)
+    tip = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+
+    state = _recovery(git_repo)
+    assert state["phase"] != "review_mismatch"
+    assert "人工核查" in state["action"]
+    refused = _task_cli(
+        git_repo, "finish-unwind", "t001", "--reason", "x", *_identity_args(identity),
+    )
+    assert refused.returncode != 0
+    assert "只处理 running 现场" in refused.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == tip

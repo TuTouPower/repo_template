@@ -1053,13 +1053,13 @@ def cmd_rewind(args):
 def cmd_finish_unwind(args):
     """撤销与 review 内容不一致的实现 commit：分支退回 diff_anchor，progress 还原 active。
 
-    只处理 recovery `review_mismatch` 现场：恰好一个实现 commit、tip 重算指纹与
-    handoff.review_scope 不一致、无后继分支、report 未写入 done、worktree 干净。
-    撤销后重新 review 再 finish；禁止用 rewind/amend 处理此类现场。
+    只处理 recovery `review_mismatch` 现场：attempt 为 running、恰好一个实现 commit、
+    tip 重算指纹与 handoff.review_scope 不一致、无后继分支、report 未写入 done、
+    worktree 干净。撤销后重新 review 再 finish；禁止用 rewind/amend 处理此类现场。
     """
     from .attempts import current_attempt_record, resolve_identity
     from .ledger import ledger_read
-    from .monitoring import implementation_commit, verify_integrate_ready
+    from .monitoring import implementation_commit, is_review_scope_mismatch, verify_integrate_ready
     from .store import discover_effective_tasks
     require_primary_worktree()
     tid = args.tid
@@ -1070,13 +1070,13 @@ def cmd_finish_unwind(args):
     record = current_attempt_record(tid, ledger_read())
     if record is None:
         sys.exit(f"{tid} 无 attempt 记录；按 recovery 判定处理，不撤销")
-    report = record.get("report") or {}
+    report = (record.get("report") or {})
     if report.get("status") == "done":
         sys.exit(f"{tid} report 已写入 done；实现 commit 不可撤销，停止并人工核查")
-    if not (record["state"] == "running" or (
-        record["state"] == "terminal" and record.get("terminal_status") == "completed"
-    )):
-        sys.exit(f"{tid} attempt state={record['state']!r}；只有 running 或已完成未 report 时可撤销")
+    # 正常主路径下 run-close 门禁失败不写 terminal；terminal 已关闭又无 report 只会来自
+    # 手工 attempt terminal，撤销后 task 回 active 将无路可走，此处直接拒绝。
+    if record["state"] != "running":
+        sys.exit(f"{tid} attempt state={record['state']!r}；finish-unwind 只处理 running 现场，停止并人工核查")
     effective = discover_effective_tasks().get(tid)
     if effective is None:
         sys.exit(f"{tid} 不存在")
@@ -1121,7 +1121,7 @@ def cmd_finish_unwind(args):
     verdict, detail = verify_integrate_ready(tid, attempt, execution_id)
     if verdict == "ready":
         sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
-    if "review_scope" not in detail:
+    if not is_review_scope_mismatch(detail):
         sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
     listing = _git(["branch", "--format=%(refname:short)"])
     if listing.returncode != 0:
@@ -1134,13 +1134,13 @@ def cmd_finish_unwind(args):
     dirty = porcelain_entries(worktree)
     if dirty:
         sys.exit(f"worktree 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先恢复干净再撤销")
-    try:
-        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
-    except ctx.TaskDataError as error:
-        sys.exit(f"{tid} 审计写入失败（{error}）；未改动分支与进展，重试或人工核查")
     reset = _git(["reset", "--soft", diff_anchor], root=worktree)
     if reset.returncode != 0:
         sys.exit(f"{tid} git reset --soft 失败（{reset.stderr.strip()}）；分支未动，人工核查后重试")
+    try:
+        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
+    except ctx.TaskDataError as error:
+        sys.exit(f"{tid} 分支已退回但审计写入失败（{error}）；人工补记审计后继续")
     wt_fm = dict(wt_fm)
     wt_fm["status"] = "active"
     # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
@@ -1156,6 +1156,7 @@ def cmd_finish_unwind(args):
         )
     print(
         f"{tid} 已撤销实现 commit {tip_sha[:12]}：分支退回 {diff_anchor[:12]}，进展回到 active。"
+        "旧 handoff.json 仍暂存于 worktree，finish 会重新生成，无需手动处理。"
         "后续：重新 review（报告须对应当前内容），再跑 finish；禁止 amend 旧 commit。"
     )
 

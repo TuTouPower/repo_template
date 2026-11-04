@@ -218,7 +218,7 @@ def test_prompt_refuses_ephemeral_source_without_persisted_template_source(env, 
     (other / ".repo_template/scripts/task.py").write_text("print('other')\n", encoding="utf-8")
 
     monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", str(other))
-    with pytest.raises(ctx.SyncError, match="未初始化"):
+    with pytest.raises(ctx.SyncError, match="state 未记录来源"):
         cmd_prompt(Namespace(action="add", text="x", tags=None, id=None, scope="local"))
 
     on_disk = json.loads(state_file.read_text(encoding="utf-8"))

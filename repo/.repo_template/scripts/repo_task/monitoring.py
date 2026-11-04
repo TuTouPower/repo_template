@@ -417,6 +417,15 @@ def _validate_string_list(name: str, value) -> str | None:
     return None
 
 
+def is_review_scope_mismatch(detail: str) -> bool:
+    """判定 verify 失败是否为「提交内容偏离 review 内容」（指纹不一致）。
+
+    注意：review gate 的失败文案本身也带 review_scope=，须同时含「不一致」才算
+    指纹偏离。recovery 与 finish-unwind 共用此判定，保持口径一致；不要各自匹配字符串。
+    """
+    return "review_scope" in detail and "不一致" in detail
+
+
 def verify_integrate_ready(
     tid: str,
     attempt: int,

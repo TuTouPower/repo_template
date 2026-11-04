@@ -7,7 +7,7 @@ from .documents import parse_front_matter
 from .git_ops import _git, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .locks import control_locked
-from .monitoring import implementation_commit, verify_integrate_ready
+from .monitoring import implementation_commit, is_review_scope_mismatch, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
@@ -112,12 +112,20 @@ def recovery_state(tid: str) -> dict:
     )
     if gate_check or report_done:
         verdict, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
-        # 注意：review gate 的失败文案本身也带 review_scope=，须用「不一致」限定为指纹偏离。
-        if verdict != "ready" and "review_scope" in gate_detail and "不一致" in gate_detail:
+        if verdict != "ready" and is_review_scope_mismatch(gate_detail):
             if report_done:
                 state["action"] = (
                     f"停止：report 已写入 done，但实现 commit 内容偏离 review 内容（{gate_detail}）；"
                     "不可撤销、不可 amend，人工核查"
+                )
+                return state
+            if record["state"] != "running":
+                # 正常主路径下 run-close 门禁失败不写 terminal；terminal 已关闭又无 report
+                # 只会来自手工 attempt terminal，finish-unwind 不处理，直接停止。
+                state["action"] = (
+                    f"停止：实现 commit 内容偏离 review 内容（{gate_detail}）；"
+                    f"attempt 已是 {record['state']}:{record.get('terminal_status')} 且无 report，"
+                    "finish-unwind 只处理 running 现场，人工核查"
                 )
                 return state
             if _tip_has_successor(tip_sha, branch):

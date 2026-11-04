@@ -29,7 +29,7 @@
 
 ## review 门禁失败后的修复
 
-如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留现场并报告用户；未经用户同意不得修改实现 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，只改 review 过程文件（`progress.md` 正文、`review_*.md`、渲染的 review prompt），用 `git commit --amend --no-edit` 并入同一实现 commit；amend 不得改 `handoff.json`、交付文件或其它路径。若提交内容已偏离 review 内容（`review_scope` 不一致），amend 修不好：recovery 判 `review_mismatch`，无后继分支且 report 未写入 done 时用 `task.py finish-unwind {tid} --reason …` 撤销实现 commit（分支退回 `diff_anchor`、`progress.md` 还原 active），然后重新 review 再 finish。两种修复都要求：没有其它分支包含当前 tip、tip 尚未合入主干、且该 attempt 的 report 尚未写入 done；有后继分支、tip 已合入主干或 report 已 done 时停止并报告，不 amend、不撤销。禁止 rewind、reserve。review 指纹的定义见 `usage.md`「skill 调用」。
+如已提交且 review 门禁失败（stale / missing / format_error / FAIL），保留现场并报告用户；未经用户同意不得修改实现 commit。用户同意后，在原 worktree 对当前 tip 的交付内容重新 review，只改 review 过程文件（`progress.md` 正文、`review_*.md`、渲染的 review prompt），用 `git commit --amend --no-edit` 并入同一实现 commit；amend 不得改 `handoff.json`、交付文件或其它路径。若提交内容已偏离 review 内容（`review_scope` 不一致），amend 修不好：recovery 判 `review_mismatch`，无后继分支且 report 未写入 done 时用 `task.py finish-unwind {tid} --reason …` 撤销实现 commit（分支退回 `diff_anchor`、`progress.md` 还原 active），然后重新 review 再 finish。撤销后旧 `handoff.json` 仍暂存于 worktree，`finish` 会重新生成，无需手动处理。两种修复都要求：没有其它分支包含当前 tip、tip 尚未合入主干、且该 attempt 的 report 尚未写入 done；有后继分支、tip 已合入主干或 report 已 done 时停止并报告，不 amend、不撤销。禁止 rewind、reserve。review 指纹的定义见 `usage.md`「skill 调用」。
 
 ## 图合并中断
 

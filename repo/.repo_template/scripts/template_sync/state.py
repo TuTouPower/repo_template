@@ -150,8 +150,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 @consumer_locked
 def cmd_prompt(args: argparse.Namespace) -> int:
     state = read_state()
-    if not state or state.pop("_ephemeral_source", False):
+    if not state:
         raise ctx.SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
+    if state.pop("_ephemeral_source", False):
+        raise ctx.SyncError(
+            "state 未记录来源：先运行 init --source <path|url> 初始化来源；"
+            "--source 仅为本次覆盖，不写入 state"
+        )
     shared = getattr(args, "scope", "local") == "shared"
     policy_path = ctx.CONSUMER / ".repo_template/sync_policy.json"
     data = (json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.exists() else {"version": 1, "user_prompts": []}) if shared else state
