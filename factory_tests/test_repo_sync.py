@@ -6,6 +6,7 @@ SRC（模板）与 CONSUMER（消费项目）都在 tmp_path 下构造真实目�
 与 sync_state.json 保护、软链、.gitignore / .prettierignore / MCP 机械合并、apply 全流程与改动清单。
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -20,7 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from template_sync import context as ctx
-from template_sync.agents_merge import _apply_agents_sectioned
+from template_sync.agents_merge import _apply_agents_sectioned, agents_section_status
 from template_sync.apply import _assert_distributable_tree, cmd_apply
 from template_sync.assets import retired_template_warnings, sync_dir, sync_file, sync_skill
 from template_sync.common import _detect_json_indent, _git as sync_git
@@ -54,9 +55,11 @@ from template_sync.state import (
 from template_sync.status_plan import cmd_plan, cmd_status
 from template_sync.workflow_migration import (
     _GUIDE_CLOSE,
+    _GUIDE_OPEN,
     _guide_blocks_by_heading,
     _implementation_guidance,
     _migrate_task_text,
+    _rename_legacy_title,
     _replace_guide_blocks,
     force_migrate_workflow_tasks,
     workflow_migration_status,
@@ -366,10 +369,12 @@ def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
     custom_dir = consumer / ".agents/skills/custom-local"
     custom_dir.mkdir()
 
-    # 校验 symlink_status 报告
+    # 校验 symlink_status 报告：两个宿主目录都报告，路径带宿主前缀
     status = symlink_status()
-    assert {"name": "active-skill", "state": "ok"} in status
-    assert {"name": "old-skill", "state": "cleanup"} in status
+    for rel in (".claude/skills/active-skill", ".agents/skills/active-skill"):
+        assert {"name": "active-skill", "rel": rel, "state": "ok"} in status
+    for rel in (".claude/skills/old-skill", ".agents/skills/old-skill"):
+        assert {"name": "old-skill", "rel": rel, "state": "cleanup"} in status
 
     # 执行 repair_symlinks
     changed = set()
@@ -389,6 +394,28 @@ def test_repair_symlinks_cleans_stale_managed_symlinks(env, tmp_path):
     assert ext_link not in changed
     assert custom_dir.is_dir()
     assert custom_dir not in changed
+
+
+def test_symlink_status_reports_agents_host_missing_and_broken(env, capsys):
+    consumer = env["consumer"]
+    skill = consumer / ".repo_template/skills/task-run"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("run\n", encoding="utf-8")
+    repair_symlinks(set())
+
+    agents_link = consumer / ".agents/skills/task-run"
+    agents_link.unlink()
+    status = symlink_status()
+    assert {"name": "task-run", "rel": ".agents/skills/task-run", "state": "repair"} in status
+    assert {"name": "task-run", "rel": ".claude/skills/task-run", "state": "ok"} in status
+
+    agents_link.symlink_to("../../.repo_template/skills/missing")
+    status = symlink_status()
+    assert {"name": "task-run", "rel": ".agents/skills/task-run", "state": "repair"} in status
+
+    assert cmd_plan(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert ".agents/skills/task-run" in out and ".claude/skills/task-run" in out
 
 
 def test_skill_status_reports_stale_real_dir(env):
@@ -485,6 +512,25 @@ def test_opencode_commands_status_detects_description_drift(env, capsys):
     sample_item = next(it for it in items if it["name"] == "task-sample")
     assert sample_item["state"] == "same"
 
+
+def test_status_and_plan_agree_on_unmanaged_opencode_commands(env, capsys):
+    consumer = env["consumer"]
+    skill_dir = consumer / ".repo_template/skills/task-sample"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: task-sample\ndescription: sample\n---\nbody\n", encoding="utf-8"
+    )
+    command = consumer / ".opencode/commands/task-sample.md"
+    command.parent.mkdir(parents=True)
+    command.write_text("---\ndescription: hand written\n---\ncustom\n", encoding="utf-8")
+
+    assert cmd_status(Namespace()) == 0
+    status_out = capsys.readouterr().out.split("opencode 命令薄层", 1)[1]
+    assert "/task-sample" not in status_out
+
+    assert cmd_plan(Namespace()) == 0
+    plan_out = capsys.readouterr().out
+    assert "齐全一致" in plan_out
 
 
 def test_shipped_skills_have_real_descriptions():
@@ -724,6 +770,47 @@ def test_sectioned_agents_requires_headings(env):
     assert _apply_agents_sectioned(src, set()) is False
 
 
+def test_agents_section_status_missing_headings_returns_none(env):
+    src, consumer = env["src"], env["consumer"]
+    sectioned = "介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n"
+    (src / "AGENTS.md").write_text(sectioned)
+    (consumer / "AGENTS.md").write_text("介绍\n\n## 目录与读写规则\n规则\n")
+    assert agents_section_status(src) is None
+
+
+@pytest.mark.parametrize("missing_side", ["模板源", "消费仓"])
+def test_plan_diagnoses_missing_agents_headings(env, missing_side, capsys):
+    src, consumer = env["src"], env["consumer"]
+    sectioned = "介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n"
+    legacy = "介绍\n\n## 其它\n旧内容\n"
+    if missing_side == "模板源":
+        (src / "AGENTS.md").write_text(legacy)
+        (consumer / "AGENTS.md").write_text(sectioned)
+    else:
+        (src / "AGENTS.md").write_text(sectioned)
+        (consumer / "AGENTS.md").write_text(legacy)
+
+    assert cmd_plan(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert "未识别到完整标题协议" in out
+    assert f"{missing_side} AGENTS.md 缺" in out
+
+
+def test_apply_rejects_consumer_agents_missing_headings_with_guidance(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text(
+        "介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n"
+    )
+    (consumer / "AGENTS.md").write_text("旧格式\n")
+
+    assert cmd_apply(Namespace(
+        allow_dirty_source=True, skip_tests=True, decisions={"AGENTS.md": "update"},
+    )) == 1
+    err = capsys.readouterr().err
+    assert "按模板补齐 ## 目录与读写规则、## 开发原则 后重跑" in err
+    assert (consumer / "AGENTS.md").read_text() == "旧格式\n"
+
+
 # ---------------------------------------------------------------------------
 # apply 全流程 + 改动清单
 # ---------------------------------------------------------------------------
@@ -753,6 +840,23 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     # 改动清单输出（点名 add 依据）
     assert ".repo_template/scripts/task.py" in out
     assert "AGENTS.md" in out
+
+
+def test_symlinked_agents_warned_in_status_plan_and_rejected_by_apply(env, tmp_path, capsys):
+    consumer = env["consumer"]
+    target = tmp_path / "shared_agents.md"
+    target.write_text("shared\n", encoding="utf-8")
+    (consumer / "AGENTS.md").symlink_to(target)
+    warning = "apply 不支持软链 AGENTS.md，先替换为真实文件"
+
+    assert cmd_status(Namespace()) == 0
+    assert warning in capsys.readouterr().out
+    assert cmd_plan(Namespace()) == 0
+    assert warning in capsys.readouterr().out
+
+    with pytest.raises(ctx.SyncError, match="apply 不支持软链 AGENTS.md"):
+        cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={}))
+    assert not (consumer / ".scratch/repo_sync_rollback/transaction.json").exists()
 
 
 def test_apply_skips_unresolved_shared_unit(env):
@@ -956,6 +1060,24 @@ def test_install_hooks_sets_and_idempotent(tmp_path, monkeypatch, capsys):
     # 幂等：已指向目标 → no-op
     assert cmd_install_hooks(Namespace()) == 0
     assert "无需改动" in capsys.readouterr().out
+
+
+def test_install_hooks_uses_consumer_lock_for_both_paths(tmp_path, monkeypatch):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    _ensure_hook(consumer)
+    monkeypatch.setattr(ctx, "CONSUMER", consumer)
+    calls = []
+
+    def fake_lock(root, name):
+        calls.append((root, name))
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr("template_sync.common.git_common_lock", fake_lock)
+    assert cmd_install_hooks(Namespace()) == 0
+    assert cmd_install_hooks(Namespace(statusline=True)) == 0
+    assert [root for root, _ in calls] == [consumer, consumer]
 
 
 def test_install_hooks_refuses_foreign_path(tmp_path, monkeypatch, capsys):
@@ -1303,6 +1425,16 @@ def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
     return task, note
 
 
+def _bind_repo_task_context(monkeypatch: pytest.MonkeyPatch, consumer: Path) -> None:
+    from repo_task import context as task_ctx
+
+    monkeypatch.setattr(task_ctx, "REPO_ROOT", consumer)
+    monkeypatch.setattr(task_ctx, "ACTIVE_PATH", consumer / "docs/tasks_index.json")
+    monkeypatch.setattr(task_ctx, "ARCHIVE_PATH", consumer / "docs/archive/tasks_index.json")
+    monkeypatch.setattr(task_ctx, "TASKS_DIR", consumer / "docs/tasks")
+    monkeypatch.setattr(task_ctx, "ARCHIVE_TASKS_DIR", consumer / "docs/archive/tasks")
+
+
 def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
     old_spec = spec.replace(
         '只写可观察、可独立验证的行为；每条使用稳定且不复用的 `AC-NNN`。需真实部署或人工环境验证时在编号前加 `[deploy]`。创建时均为未勾选（`- [ ]`）；实施验证通过后由实施 Agent 就地打勾（`- [x]`）；由 Review Agent 独立复核打勾真实性。技术选型不作为行为 AC。',
@@ -1319,6 +1451,44 @@ def _old_task_documents(spec: str, task: str) -> tuple[str, str]:
         '创建期不预测实施步骤——旧版固定说明。',
     )
     return old_spec, old_task
+
+
+def test_guide_blocks_ignore_fenced_headings_and_blocks():
+    text = (
+        "### 范围\n\n"
+        "```markdown\n### 验收标准\n"
+        f"{_GUIDE_OPEN}\n伪规范\n{_GUIDE_CLOSE}\n"
+        "```\n\n"
+        f"{_GUIDE_OPEN}\n真规范\n{_GUIDE_CLOSE}\n"
+    )
+    blocks = _guide_blocks_by_heading(text)
+    assert set(blocks) == {"范围"}
+    assert len(blocks["范围"]) == 1
+    assert "真规范" in blocks["范围"][0]
+    assert "伪规范" not in blocks["范围"][0]
+
+
+def test_replace_guide_blocks_ignores_fenced_heading():
+    current = f"### 验收标准\n\n{_GUIDE_OPEN}\n现行规范\n{_GUIDE_CLOSE}\n"
+    old = "### 范围\n\n```markdown\n### 验收标准\n旧代码\n```\n\n保留内容\n"
+    assert _replace_guide_blocks(old, current) == old
+
+
+def test_rename_legacy_title_tracks_mixed_and_longer_fences():
+    mixed = [
+        "# Task spec", "```markdown", "~~~",
+        "# Task 过程总账", "~~~", "```", "# Task 过程总账",
+    ]
+    _rename_legacy_title(mixed, 0)
+    assert mixed[3] == "# Task 过程总账"
+    assert mixed[6] == "# Task 进展"
+
+    longer = [
+        "````markdown", "```", "# Task 过程总账", "````", "# Task 过程总账",
+    ]
+    _rename_legacy_title(longer, 0)
+    assert longer[2] == "# Task 过程总账"
+    assert longer[4] == "# Task 进展"
 
 
 def test_legacy_full_spec_schema_migrates_as_heading_groups(env):
@@ -1433,10 +1603,16 @@ def test_progress_migration_rejects_duplicate_names_before_any_writes(env, paren
 
 def test_apply_failure_restores_progress_rename_and_history(env, monkeypatch):
     consumer = env['consumer']
+    _bind_repo_task_context(monkeypatch, consumer)
     spec, progress = _install_current_workflow_templates(env['src'])
     task_dir = consumer / 'docs/archive/tasks/t001_history'
     task_dir.mkdir(parents=True)
-    old = progress.replace('# Task 进展', '# Task 过程总账')
+    expected_progress = (
+        progress.replace('tid: t000', 'tid: t001')
+        .replace('slug: example_slug', 'slug: history')
+        .replace('status: backlog', 'status: done')
+    )
+    old = expected_progress.replace('# Task 进展', '# Task 过程总账')
     (task_dir / 'task.md').write_text(spec)
     (task_dir / 'note.md').write_text(old)
     state_before = env['state_file'].read_bytes()
@@ -1449,10 +1625,12 @@ def test_apply_failure_restores_progress_rename_and_history(env, monkeypatch):
 
     monkeypatch.setattr('template_sync.apply.migrate_conventions', fail_after_migration)
     assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 1
-    assert migrated == [progress]
+    assert migrated == [expected_progress]
     assert (task_dir / 'note.md').read_text() == old
     assert (task_dir / 'task.md').read_text() == spec
     assert not (task_dir / 'progress.md').exists()
+    assert not (consumer / 'docs/tasks_index.json').exists()
+    assert not (consumer / 'docs/archive/tasks_index.json').exists()
     assert env['state_file'].read_bytes() == state_before
 
 
@@ -1543,6 +1721,49 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert [t['tid'] for t in tasks] == ['t001', 't002']
     assert tasks[0]['status'] == 'active' and tasks[0]['dir'] == 'docs/tasks/t001_old'
     assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
+
+
+def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, capsys):
+    consumer = env["consumer"]
+    _bind_repo_task_context(monkeypatch, consumer)
+    spec, progress = _install_current_workflow_templates(env["src"])
+
+    task_dir = consumer / "docs/tasks/t001_old"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.md").write_text(spec, encoding="utf-8")
+    old_note = (
+        progress.replace("tid: t000", "tid: t001")
+        .replace("slug: example_slug", "slug: old")
+        .replace("status: backlog", "status: blocked")
+        .replace("# Task 进展", "# Task 过程总账")
+    )
+    (task_dir / "note.md").write_text(old_note, encoding="utf-8")
+
+    archive_dir = consumer / "docs/archive/tasks/t002_archived"
+    archive_dir.mkdir(parents=True)
+    archived = (
+        progress.replace("tid: t000", "tid: t002")
+        .replace("slug: example_slug", "slug: archived")
+        .replace("status: backlog", "status: done")
+    )
+    (archive_dir / "progress.md").write_text(archived, encoding="utf-8")
+
+    (consumer / "docs/tasks_index.json").write_text('{"stale": true}\n', encoding="utf-8")
+    (consumer / "docs/archive/tasks_index.json").write_text('{"stale": true}\n', encoding="utf-8")
+
+    assert cmd_apply(Namespace(
+        allow_dirty_source=True, skip_tests=True, decisions={},
+    )) == 0
+    out = capsys.readouterr().out
+    assert "docs/tasks_index.json" in out
+    assert "docs/archive/tasks_index.json" in out
+
+    assert (task_dir / "progress.md").is_file()
+    assert not (task_dir / "note.md").exists()
+    active = json.loads((consumer / "docs/tasks_index.json").read_text(encoding="utf-8"))
+    assert [(task["tid"], task["status"]) for task in active["tasks"]] == [("t001", "active")]
+    archive = json.loads((consumer / "docs/archive/tasks_index.json").read_text(encoding="utf-8"))
+    assert [(task["tid"], task["status"]) for task in archive["tasks"]] == [("t002", "done")]
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):

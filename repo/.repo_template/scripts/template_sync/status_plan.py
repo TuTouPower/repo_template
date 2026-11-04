@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from . import context as ctx
-from .agents_merge import agents_section_status
+from .agents_merge import agents_section_diagnosis, agents_section_status
 from .assets import hard_sync_status, retired_template_warnings
 from .common import _git, consumer_locked
 from .conventions_migration import conventions_migration_status
@@ -42,6 +42,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"生效 user_prompts: {len(prompts)} 条（共 {len(state.get('user_prompts', []))} 条）")
     for i, p in enumerate(prompts):
         print(f"  #{i} {p.get('at')} {p.get('text')}")
+    if (ctx.CONSUMER / "AGENTS.md").is_symlink():
+        print("警告: apply 不支持软链 AGENTS.md，先替换为真实文件")
     print("\n硬同步差异:")
     for item in hard_sync_status(src):
         mark = {"write": "需写入", "delete": "需删除", "same": "一致"}[item["state"]]
@@ -80,7 +82,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("  齐全")
     print("\nopencode 命令薄层 (.opencode/commands):")
     cmd_items = opencode_commands_status()
-    drifted_cmds = [it for it in cmd_items if it["state"] != "same"]
+    drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
     if not cmd_items:
         print("  无")
     elif not drifted_cmds:
@@ -151,9 +153,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print(_md_table(["单元", "分类", "disposition"], rows))
 
     print("\n### AGENTS.md 分区")
+    if (ctx.CONSUMER / "AGENTS.md").is_symlink():
+        print("apply 不支持软链 AGENTS.md，先替换为真实文件")
     section_status = agents_section_status(src)
     if section_status is None:
         print("未识别到完整标题协议：需要 ## 目录与读写规则、## 开发原则")
+        for issue in agents_section_diagnosis(src):
+            print(f"- {issue}")
     else:
         print(_md_table(["区段", "状态", "处置"], [
             ["项目介绍", section_status["intro"], "绝不更新，保留消费仓内容"],
@@ -171,7 +177,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "convert": "需转软链（原内容入回滚栈）",
             "cleanup": "需清理（skill 已删除）",
         }[item["state"]]
-        rows.append([f".claude/skills/{item['name']}", item["state"], mark])
+        rows.append([item["rel"], item["state"], mark])
     print(_md_table(["路径", "状态", "说明"], rows))
 
     print("\n### format 豁免（.prettierignore 机械合并）")

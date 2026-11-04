@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from repo_task.context import PROGRESS_FILE, PROGRESS_TITLE
+from repo_task.context import PROGRESS_FILE, PROGRESS_TITLE, TASK_BRANCH_RE
 from repo_task.git_ops import default_branch
 
 from . import context as ctx
@@ -30,13 +30,43 @@ _OLD_NOTE_PREFIXES = (
 )
 
 
+def _fence_states(lines: list[str]) -> list[bool]:
+    """标记每行是否属于代码围栏；闭围栏须与开围栏字符相同且长度不短于开围栏。"""
+    states: list[bool] = []
+    fence_char = ""
+    fence_len = 0
+    for line in lines:
+        match = re.match(r"^(`{3,}|~{3,})(.*)$", line.strip())
+        if fence_char:
+            states.append(True)
+            if (
+                match
+                and match.group(1)[0] == fence_char
+                and len(match.group(1)) >= fence_len
+                and not match.group(2).strip()
+            ):
+                fence_char = ""
+                fence_len = 0
+        elif match:
+            fence_char = match.group(1)[0]
+            fence_len = len(match.group(1))
+            states.append(True)
+        else:
+            states.append(False)
+    return states
+
+
 def _guide_blocks_by_heading(text: str) -> dict[str, list[str]]:
     heading = ""
     blocks: dict[str, list[str]] = {}
     lines = text.splitlines()
+    fenced = _fence_states(lines)
     index = 0
     while index < len(lines):
         line = lines[index]
+        if fenced[index]:
+            index += 1
+            continue
         if line.startswith("### "):
             heading = line[4:].strip()
         if line.strip() == _GUIDE_OPEN:
@@ -59,11 +89,12 @@ def _replace_guide_blocks(text: str, current_template: str) -> str:
     if not current:
         return text
     lines = text.splitlines()
+    fenced = _fence_states(lines)
     output: list[str] = []
     index = 0
     while index < len(lines):
         stripped = lines[index].strip()
-        if not stripped.startswith("### "):
+        if fenced[index] or not stripped.startswith("### "):
             output.append(lines[index])
             index += 1
             continue
@@ -71,7 +102,7 @@ def _replace_guide_blocks(text: str, current_template: str) -> str:
         end = index + 1
         while end < len(lines):
             marker = lines[end].strip()
-            if marker.startswith("### ") or marker.startswith("## "):
+            if not fenced[end] and (marker.startswith("### ") or marker.startswith("## ")):
                 break
             end += 1
         section = lines[index:end]
@@ -79,7 +110,7 @@ def _replace_guide_blocks(text: str, current_template: str) -> str:
         cursor = 1
         old_block_count = 0
         while cursor < len(section):
-            if section[cursor].strip() != _GUIDE_OPEN:
+            if fenced[index + cursor] or section[cursor].strip() != _GUIDE_OPEN:
                 content.append(section[cursor])
                 cursor += 1
                 continue
@@ -134,13 +165,14 @@ def _implementation_guidance(task_template: str) -> list[str]:
 
 def _rename_legacy_title(lines: list[str], frontmatter_end: int) -> None:
     """把正文中围栏外的一级标题「Task 过程总账」就地改为「Task 进展」；只改第一处。"""
-    in_fence = False
-    for index in range(frontmatter_end + 1 if frontmatter_end else 0, len(lines)):
-        stripped = lines[index].strip()
-        if stripped.startswith(("```", "~~~")):
-            in_fence = not in_fence
-        elif not in_fence and stripped == f"# {_LEGACY_NOTE_TITLE}":
-            lines[index] = f"# {PROGRESS_TITLE}"
+    start = frontmatter_end + 1 if frontmatter_end else 0
+    body = lines[start:]
+    fenced = _fence_states(body)
+    for offset, line in enumerate(body):
+        if fenced[offset]:
+            continue
+        if line.strip() == f"# {_LEGACY_NOTE_TITLE}":
+            lines[start + offset] = f"# {PROGRESS_TITLE}"
             return
 
 
@@ -226,7 +258,6 @@ def _registered_task_worktrees() -> list[tuple[Path, str]]:
     return rows
 
 
-_TASK_BRANCH_RE = re.compile(r"^t[0-9]+_[a-z][a-z0-9_]*$")
 _FRONT_MATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
 _STATUS_LINE_RE = re.compile(r"(?m)^status:[ \t]*[\"']?([A-Za-z]+)[\"']?[ \t]*$")
 
@@ -254,7 +285,7 @@ def _unintegrated_done_branches() -> tuple[str, list[str]]:
     listed = _git(ctx.CONSUMER, "branch", "--format=%(refname:short)", "--list", "t[0-9]*_*")
     if listed.returncode != 0:
         raise ctx.SyncError(f"无法查询 task 分支（{listed.stderr.strip()}）；拒绝放行 schema 迁移")
-    branches = [line.strip() for line in listed.stdout.splitlines() if _TASK_BRANCH_RE.fullmatch(line.strip())]
+    branches = [line.strip() for line in listed.stdout.splitlines() if TASK_BRANCH_RE.fullmatch(line.strip())]
     base = default_branch(ctx.CONSUMER)
     if not branches:
         return base, []
