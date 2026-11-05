@@ -84,20 +84,37 @@ def test_finish_does_not_require_unrelated_historical_task_directories(git_repo)
         (root / "docs/specs/old.md").write_text("# Historical feature\n", encoding="utf-8")
         (root / "docs/specs_index.md").write_text(
             "|slug|task 清单|最后更新时间|\n|---|---|---|\n"
-            "|old|t999|2026-10-24T00:00:00+08:00|\n"
-            "|feature|t001,t998|2026-10-24T00:00:00+08:00|\n"
-            "|missing_historical_spec|t997|2026-10-24T00:00:00+08:00|\n", encoding="utf-8")
+            "|old|t999|2026-10-24|\n"
+            "|feature|t001,t998|2026-10-24|\n", encoding="utf-8")
 
     message = prepare_finish(worktree, "t001", "alpha", mutate=write_specs)
     result = finish_cli(worktree, "t001", "owner-a", message)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "WARN: 历史" in result.stdout
+
+
+def test_historical_missing_spec_blocks_finish(git_repo):
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", "owner-a")
+    assert begun.returncode == 0, begun.stderr
+    worktree = _worktree(git_repo, "t001")
+
+    def write_specs(root):
+        (root / "docs/specs").mkdir()
+        (root / "docs/specs/feature.md").write_text("# Current feature\n", encoding="utf-8")
+        (root / "docs/specs_index.md").write_text(
+            "|slug|task 清单|最后更新时间|\n|---|---|---|\n"
+            "|feature|t001|2026-10-24|\n"
+            "|missing|t999|2026-10-24|\n", encoding="utf-8")
+
+    message = prepare_finish(worktree, "t001", "alpha", mutate=write_specs)
+    result = finish_cli(worktree, "t001", "owner-a", message)
+    assert result.returncode != 0 and "不存在的 spec" in result.stderr
+    assert not (worktree / "docs/archive/tasks/t001_alpha").exists()
 
 
 def test_current_task_spec_reference_remains_a_hard_gate(git_repo):
     directory = git_repo / "docs/tasks/t001_alpha"
     (git_repo / "docs/specs_index.md").write_text(
-        "|slug|task 清单|最后更新时间|\n|---|---|---|\n|missing|t001|2026-10-24T00:00:00+08:00|\n",
+        "|slug|task 清单|最后更新时间|\n|---|---|---|\n|missing|t001|2026-10-24|\n",
         encoding="utf-8")
     with pytest.raises(ValueError, match="不存在的 spec"):
         check_finalization(git_repo, "t001", directory)

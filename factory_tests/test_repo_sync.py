@@ -28,6 +28,11 @@ from template_sync.cli import _parse_decisions, main as repo_sync_main
 from template_sync.common import _detect_json_indent, _git as sync_git
 from template_sync.conventions_migration import conventions_migration_status, migrate_conventions
 from template_sync.gates import _run_tests
+from template_sync.specs_index_migration import (
+    migrate_specs_index,
+    specs_index_migration_status,
+    specs_index_report,
+)
 from template_sync.hooks import _RETIRED_MERGE_GUARD_COMMAND, cmd_install_hooks
 from template_sync.shared_files import (
     _PRETTIERIGNORE_HEADER,
@@ -1992,6 +1997,91 @@ def test_migrate_conventions_updates_atomic_write_preserving_custom_content(env,
     # 幂等：再次执行无迁移
     assert conventions_migration_status() == []
     assert migrate_conventions(set()) == []
+
+
+def _write_specs_index(consumer, text):
+    index = consumer / "docs/specs_index.md"
+    index.write_text(text, encoding="utf-8")
+    return index
+
+
+def test_migrate_specs_index_drops_empty_supersedes_column(env, capsys):
+    consumer = env["consumer"]
+    (consumer / "docs/specs").mkdir()
+    (consumer / "docs/specs/feature.md").write_text("# feature\n", encoding="utf-8")
+    index = _write_specs_index(consumer, (
+        "# 当前生效 spec 清单\n\n"
+        "在表即生效。每个 task 收尾时写入或更新对应行（须已过黑盒）；废弃时整行删除，spec 移入 `docs/archive/specs/`。历史清单由 `docs/archive/specs/` 目录承载。替代旧需求时在 `supersedes` 列填旧 slug；无则填 `-`。\n\n"
+        "|slug|task 清单|最后更新时间|supersedes|\n"
+        "|---|---|---|---|\n"
+        "|feature|t001|2026-10-24|-|\n"
+    ))
+    assert specs_index_migration_status() == [ctx._rel(index)]
+
+    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 0
+    text = index.read_text(encoding="utf-8")
+    assert "在表即生效" in text
+    assert "历史清单由" in text
+    assert "替代旧需求时" not in text
+    assert "supersedes" not in text
+    assert "|slug|task 清单|最后更新时间|" in text
+    assert "|feature|t001|2026-10-24|" in text
+    assert specs_index_report() == []
+    assert ctx._rel(index) in capsys.readouterr().out
+
+
+def test_migrate_specs_index_removes_legacy_note_on_three_column_table(env):
+    consumer = env["consumer"]
+    (consumer / "docs/specs").mkdir()
+    (consumer / "docs/specs/feature.md").write_text("# feature\n", encoding="utf-8")
+    index = _write_specs_index(consumer, (
+        "# 当前生效 spec 清单\n\n"
+        "在表即生效。每个 task 收尾时写入或更新对应行（须已过黑盒）；废弃时整行删除，spec 移入 `docs/archive/specs/`。历史清单由 `docs/archive/specs/` 目录承载。替代旧需求时在 `supersedes` 列填旧 slug；无则填 `-`。\n\n"
+        "|slug|task 清单|最后更新时间|\n"
+        "|---|---|---|\n"
+        "|feature|t001|2026-10-24|\n"
+    ))
+    assert specs_index_migration_status() == [ctx._rel(index)]
+    changed = set()
+    assert len(migrate_specs_index(changed)) == 1
+    text = index.read_text(encoding="utf-8")
+    assert "替代旧需求时" not in text
+    assert "在表即生效" in text
+    assert "|slug|task 清单|最后更新时间|" in text
+    assert "|feature|t001|2026-10-24|" in text
+    assert specs_index_report() == []
+
+
+def test_migrate_specs_index_keeps_column_with_real_supersedes_data(env):
+    consumer = env["consumer"]
+    before = (
+        "|slug|task 清单|最后更新时间|supersedes|\n"
+        "|---|---|---|---|\n"
+        "|feature|t001|2026-10-24|old_slug|\n"
+    )
+    index = _write_specs_index(consumer, before)
+    changed = set()
+    assert migrate_specs_index(changed) == []
+    assert changed == set()
+    assert index.read_text(encoding="utf-8") == before
+    assert specs_index_migration_status() == []
+
+
+def test_apply_reports_remaining_specs_index_violations(env, capsys):
+    _write_specs_index(env["consumer"], (
+        "|slug|验证方式|task 清单|最后固化时间|\n"
+        "|---|---|---|---|\n"
+        "|feature|API|t001|2026-10-24|\n"
+    ))
+    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 0
+    assert "specs_index 契约违规:" in capsys.readouterr().out
+
+
+def test_status_and_plan_show_specs_index_contract(env, capsys):
+    assert cmd_status(Namespace()) == 0
+    assert "specs_index 契约" in capsys.readouterr().out
+    assert cmd_plan(Namespace()) == 0
+    assert "specs_index 契约" in capsys.readouterr().out
 
 
 def test_workflow_migration_blocks_when_git_worktree_fails(env, monkeypatch):

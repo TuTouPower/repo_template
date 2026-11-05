@@ -342,11 +342,11 @@ def unverified_contract_gate(
 
     return problems, warnings
 
-def _visible_markdown_lines(text: str) -> list[str]:
-    """返回 fenced code 外的 Markdown 行。"""
+def _visible_markdown_numbered_lines(text: str) -> list[tuple[int, str]]:
+    """返回 (行号, 行) 序列，剔除 fenced code 内的行。"""
     lines = []
     fence_marker = None
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), 1):
         if fence_marker is not None:
             fence = ctx.FENCE_CLOSE_RE.match(line)
             if (
@@ -360,8 +360,13 @@ def _visible_markdown_lines(text: str) -> list[str]:
         if fence:
             fence_marker = (fence.group(1)[0], len(fence.group(1)))
             continue
-        lines.append(line)
+        lines.append((number, line))
     return lines
+
+
+def _visible_markdown_lines(text: str) -> list[str]:
+    """返回 fenced code 外的 Markdown 行。"""
+    return [line for _, line in _visible_markdown_numbered_lines(text)]
 
 def _strip_inline_code(text: str) -> str:
     """剥除 inline code 片段（一对反引号包裹的内容）。

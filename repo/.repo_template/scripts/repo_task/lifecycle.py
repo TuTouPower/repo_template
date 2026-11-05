@@ -530,8 +530,7 @@ def _check_done_ready(tid: str, task_dir: Path) -> None:
     try:
         from .validation import load_policy
         load_policy(ctx.REPO_ROOT)
-        for warning in check_finalization(ctx.REPO_ROOT, tid, task_dir):
-            print(f"WARN: {warning}")
+        check_finalization(ctx.REPO_ROOT, tid, task_dir)
     except ValueError as error:
         sys.exit(f"finish=FAIL：{error}")
 

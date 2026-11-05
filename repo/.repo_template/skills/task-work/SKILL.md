@@ -40,7 +40,7 @@ metadata:
 1. 读取 task.md、progress.md、`AGENTS.md`、项目约定和现有现场，运行 `task.py preflight {tid} --owner-id {owner_id}`。`UNVERIFIED-SPIKE` 先实验并将标记改写为结论；一次性实验仅写 .scratch，若建立正式 spike，必须记录 sid，补全 report、finding、采纳结论、后续 tid 或无需后续理由，并按 repo-hygiene 归档；改写后加 `--require-verified` 再跑 preflight，严格 PASS 后再实施。无 spike 时 `finish` 内含同一严格 preflight，不必提前重复。
 2. Agent 自主决定阅读、调试和实现顺序。对可测试行为，默认先建立失败测试或复现证据；不适用时在实施笔记简述原因。
 3. 实现 AC，依次通过项目测试和黑盒门禁；验证通过后在 `task.md` 验收标准中就地将对应条目勾选为 `- [x]`。
-4. 逐项检查 finalization：累积或更新 `docs/specs/<slug>.md`，同步 `docs/specs_index.md`（在表即生效）；废弃 spec 删除索引行并归档；不适用时在 progress.md 明确理由（`- specs_index: not_applicable: 具体原因`）。更新因实现而过时的 blueprint、guides、README 或接口文档。派审前用 `git ls-files --others --exclude-standard` 找出本 task 新文件，剔除无关、临时和 `.scratch/` 内容后，对明确路径执行 `git add -N -- <path...>`，使新文件进入 reviewer 可见的 diff；然后完成最终 review。
+4. 逐项检查 finalization：累积或更新 `docs/specs/<slug>.md`，同步 `docs/specs_index.md`（在表即生效；格式按 `.repo_template/docs/usage.md` 的 specs_index 契约）；废弃 spec 删除索引行并归档；不适用时在 progress.md 明确理由（`- specs_index: not_applicable: 具体原因`）。更新因实现而过时的 blueprint、guides、README 或接口文档。派审前用 `git ls-files --others --exclude-standard` 找出本 task 新文件，剔除无关、临时和 `.scratch/` 内容后，对明确路径执行 `git add -N -- <path...>`，使新文件进入 reviewer 可见的 diff；然后完成最终 review。
 5. 收尾前检查新增调试输出、临时文件和未解释 TODO，运行项目定义的 lint/format/typecheck，并执行 `git diff --check`。检查方式按技术栈选择，不使用通用固定 grep。
 6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
 7. 更新 progress.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」填写 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要，不得为空或「待执行时填写」；`finish` 据此生成 `handoff.json`。

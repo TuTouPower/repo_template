@@ -25,6 +25,7 @@ from .common import _git, _now_iso, consumer_locked
 from .conventions_migration import migrate_conventions
 from .gates import _run_tests
 from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
+from .specs_index_migration import migrate_specs_index, specs_index_report
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import prompt_substrings, read_state, write_state
@@ -82,6 +83,10 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         changed.add(ctx.CONSUMER / "docs/archive/tasks_index.json")
     for report in migrate_conventions(changed):
         print(f"提示: {report}")
+    for report in migrate_specs_index(changed):
+        print(f"提示: {report}")
+    for problem in specs_index_report():
+        print(f"specs_index 契约违规: {problem}")
     reports = repair_symlinks(changed)
     for r in reports:
         print(f"提示: {r}")
@@ -137,7 +142,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
              "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/tasks_index.json",
-             "docs/archive/tasks_index.json", "docs/blueprint/conventions.md", *ctx.MCP_CANDIDATES]
+             "docs/archive/tasks_index.json", "docs/blueprint/conventions.md", "docs/specs_index.md",
+             *ctx.MCP_CANDIDATES]
     try:
         transaction.begin(paths)
     except ValueError as error:

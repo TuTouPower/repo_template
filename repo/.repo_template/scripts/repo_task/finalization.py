@@ -4,6 +4,7 @@ import re
 
 from . import context as ctx
 from .documents import _visible_markdown_lines, _strip_inline_code
+from .specs_index import parse_specs_index
 
 
 def _prose(text):
@@ -46,31 +47,8 @@ def validate_spike(root, directory):
 
 
 def check_finalization(root, tid, task_dir):
-    index = root / "docs/specs_index.md"
-    if not index.is_file():
-        raise ValueError("缺 docs/specs_index.md；不能确认长期 spec 是否闭环")
-    text = re.sub(r"<!--.*?-->", "", index.read_text(encoding="utf-8"), flags=re.S)
-    included = False
-    seen = set()
-    warnings = []
-    for line in text.splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
-        slug = cells[0]
-        if slug == "slug" or re.fullmatch(r"[-: ]+", slug):
-            continue
-        tids = re.findall(r"\bt[0-9]{3,}\b", cells[1]) if len(cells) > 1 else []
-        if tid not in tids:
-            if not ctx.SLUG_RE.fullmatch(slug) or len(cells) != 3 or not (root / "docs/specs" / f"{slug}.md").is_file():
-                warnings.append(f"历史 specs_index 条目需维护：{slug}；不阻断当前 {tid}")
-            continue
-        if not ctx.SLUG_RE.fullmatch(slug) or len(cells) != 3 or slug in seen:
-            raise ValueError(f"specs_index 行格式错误或重复：{line}")
-        seen.add(slug)
-        if not (root / "docs/specs" / f"{slug}.md").is_file():
-            raise ValueError(f"specs_index 引用不存在的 spec：{slug}")
-        included = True
+    entries = parse_specs_index(root)
+    included = any(tid in tokens for tokens in entries.values())
     if included:
         matches = [path for parent in ("docs/tasks", "docs/archive/tasks")
                    for path in (root / parent).glob(f"{tid}_*/{ctx.PROGRESS_FILE}")]
@@ -86,4 +64,3 @@ def check_finalization(root, tid, task_dir):
         if len(directories) != 1:
             raise ValueError(f"正式 spike 引用缺失或重复：{sid}")
         validate_spike(root, directories[0])
-    return warnings

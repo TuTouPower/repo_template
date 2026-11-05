@@ -146,6 +146,8 @@ pending 归档必须提供非空 `--reason`，说明处理结果、验证依据�
 python3 .repo_template/scripts/pending.py archive p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
 
-finish 仅强校验包含当前 tid 的 specs_index 行、对应 spec 与当前 task 引用；历史 task 目录缺失不阻断当前收尾，其他历史索引异常仅告警。当前 task 必须被索引覆盖；无长期 spec 变更时在 progress.md 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 先删索引行再归档。正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
+`docs/specs_index.md` 是唯一 spec 清单，全文只允许一张表（HTML 注释与围栏代码块内的行不参与），表头严格为 `|slug|task 清单|最后更新时间|`（单元格两端空白允许，紧凑/对齐写法均可），分隔行每格匹配 `:?-+:?`，说明性表格不得放进本文件。数据行 3 列：slug 匹配 `^[a-z][a-z0-9_]*$`、全表不重复、不加反引号，且 `docs/specs/<slug>.md` 必须存在；task 清单用半角逗号分隔，每个 token 是 `t\d{3,}` 或 `baseline`（spec 早于 task 体系、无 tid 可登记时写 `baseline`）；最后更新时间为 `YYYY-MM-DD`。finish 严格校验整张表，违规一次全部列出（带行号）并使收尾失败，没有「历史条目需维护」告警降级。当前 task 满足其一即可：当前 tid 出现在某行的 task 清单（在表即生效），或无长期 spec 变更时在 progress.md 写 `- specs_index: not_applicable: 具体原因`。历史 tid 不要求对应 task 目录仍存在。废弃 spec 先删索引行再归档。
+
+正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 archive-spike 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
 Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。

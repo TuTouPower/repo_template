@@ -125,3 +125,7 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
 | Python 3.9 | 按用户要求作为最低版本。移除 tarfile.extractall(filter=...) 依赖，受控解包保留路径/软链/类型校验；联合注解延迟求值，替换较新 Path.write_text newline 参数；md_kx 采用独立工具环境。 |
 
 后续缺陷验证：Python 3.9.6 全量 599 passed，Python 3.14.7 全量 599 passed，均无跳过；Python 3.9 专项 100 passed。原生 Windows 尚未实机运行。
+
+## #85：specs_index 严格 schema（取代「历史索引异常仅告警」）
+
+上表「历史 task 目录连带阻断」行的「历史索引异常仅告警」口径已被 #85 取代；原条目不改写、保留历史记录。现行行为：`docs/specs_index.md` 由 `repo_task/specs_index.py` 单点定义严格 schema（全文一张表、固定 3 列、slug `^[a-z][a-z0-9_]*$`、task 清单为 `tNNN`/`baseline` 且不重复、日期 `YYYY-MM-DD`）；finish 校验整张表，违规一次全部列出（带行号）并使收尾失败，不再有「历史 specs_index 条目需维护」WARN 静默降级。`template_sync/specs_index_migration.py` 在同步时精确移除旧 supersedes 说明句、收敛无数据的 4 列 supersedes 布局，status/plan/apply 报告剩余违规清单。消费仓历史数据（说明性表格、额外列、kebab-case slug、含中文描述的 task 清单）属漂移，须人工收敛，不兼容。落点：`repo/.repo_template/scripts/repo_task/specs_index.py`、`repo_task/finalization.py`、`template_sync/specs_index_migration.py`、`.repo_template/docs/usage.md`。

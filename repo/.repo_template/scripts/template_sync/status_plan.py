@@ -12,6 +12,7 @@ from .conventions_migration import conventions_migration_status
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
 from .source import assert_not_self, resolve_src, src_dirty
+from .specs_index_migration import specs_index_migration_status, specs_index_report
 from .state import active_prompts, prompt_substrings, read_state
 from .workflow_migration import workflow_migration_status
 
@@ -92,6 +93,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
     for warning in retired_template_warnings():
         print(f"  STALE: {warning}")
+    print("\nspecs_index 契约:")
+    si_migrations = specs_index_migration_status()
+    si_problems = specs_index_report()
+    for path in si_migrations:
+        print(f"  migrate {path}")
+    for problem in si_problems:
+        print(f"  违规: {problem}")
+    if not si_migrations and not si_problems:
+        print("  一致")
     return 0
 
 
@@ -225,4 +235,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print(f"SRC dirty，apply 可写盘但**不**推进 last_synced_commit")
     else:
         print(f"apply 通过后推进 last_synced_commit -> {head}")
+    print("\n### specs_index 契约")
+    si_migrations = specs_index_migration_status()
+    si_problems = specs_index_report()
+    for path in si_migrations:
+        print(f"- migrate {path}")
+    for problem in si_problems:
+        print(f"- 违规: {problem}")
+    if not si_migrations and not si_problems:
+        print("一致")
     return 0

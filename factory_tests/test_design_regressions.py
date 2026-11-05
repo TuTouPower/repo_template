@@ -427,7 +427,7 @@ def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
         (root / "docs/specs").mkdir()
         (root / "docs/specs/feature.md").write_text("# feature\n")
         (root / "docs/specs_index.md").write_text(
-            "|slug|task 清单|最后更新时间|\n|---|---|---|\n|feature|t001|2026-10-24T00:00:00+08:00|\n")
+            "|slug|task 清单|最后更新时间|\n|---|---|---|\n|feature|t001|2026-10-24|\n")
 
     message = prepare_finish(w, "t001", "alpha", mutate=add_spec)
     result = finish_cli(w, "t001", "owner-a", message)
