@@ -222,6 +222,33 @@ def test_managed_env_link_stays_identifiable_after_source_removed(fake_repo):
     assert not link.is_symlink()
 
 
+def test_link_local_files_does_not_query_git_worktrees(fake_repo, monkeypatch):
+    """链接本地配置不依赖 git worktree 发现：临时目录落在 git 仓库内也必须判绿。"""
+    def forbidden():
+        raise AssertionError("link_local_files 不应查询 git worktree 登记表")
+
+    monkeypatch.setattr(worktrees, "worktree_paths", forbidden)
+    source = fake_repo / ".env"
+    source.write_text("secret", encoding="utf-8")
+    worktree = fake_repo / "worktree"
+    worktree.mkdir()
+    assert worktrees.link_local_files(worktree) == [".env"]
+
+
+def test_link_local_files_skips_sources_inside_target_worktree(fake_repo):
+    """目标 worktree 落在主仓内时，其内部的 .env 不得被当成主仓源链入。"""
+    source = fake_repo / ".env"
+    source.write_text("secret", encoding="utf-8")
+    worktree = fake_repo / "worktree"
+    worktree.mkdir()
+    nested = worktree / "nested"
+    nested.mkdir()
+    (nested / ".env").write_text("nested", encoding="utf-8")
+
+    assert worktrees.link_local_files(worktree) == [".env"]
+    assert not (worktree / "nested" / ".env").is_symlink()
+
+
 def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     """归档 move 失败时完整回滚 front matter（含 status/worktree/note），避免中间态（Issue #51）。"""
     import argparse
@@ -243,7 +270,6 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
     monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
-    monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
     with pytest.raises(SystemExit, match="归档移动失败"):
         lifecycle._close_task(argparse.Namespace(tid="t001"), "dropped", "dropped: reason")
     fm, _ = parse_front_matter(d / "progress.md")
@@ -373,7 +399,6 @@ def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch
     monkeypatch.setattr(lifecycle, "require_own_task_worktree", lambda fm: None)
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm: False)
     monkeypatch.setattr(lifecycle, "remove_worktree", lambda wt, **kw: (True, ""))
-    monkeypatch.setattr(worktrees, "worktree_paths", lambda: {})
 
     # 1. 首次 drop 失败
     with pytest.raises(SystemExit, match="归档移动失败"):

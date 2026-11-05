@@ -89,8 +89,8 @@ def link_local_files(worktree: Path) -> list[str]:
 
     默认链接任意层级的 .env；主仓有 .worktreeinclude 时另链其命中的
     gitignore 路径（文件或整目录）。.env 扫描跳过 .git、node_modules、
-    .scratch 等噪声目录；先物化源列表再建链，防止遍历中把刚创建的软链
-    当新源导致级联嵌套。
+    .scratch 等噪声目录；先物化源列表再建链，并跳过落在目标 worktree
+    之内的源，防止把 worktree 内部文件当成主仓源造成级联嵌套。
     """
     linked = []
     skip_dirs = {
@@ -101,17 +101,6 @@ def link_local_files(worktree: Path) -> list[str]:
         worktree_resolved = worktree.resolve()
     except OSError:
         worktree_resolved = None
-
-    try:
-        repo_root_res = ctx.REPO_ROOT.resolve()
-        registered_worktrees = {
-            Path(p).resolve() for p in worktree_paths().keys()
-            if Path(p).resolve() != repo_root_res
-        }
-    except Exception:
-        registered_worktrees = set()
-    if worktree_resolved and worktree_resolved != ctx.REPO_ROOT.resolve():
-        registered_worktrees.add(worktree_resolved)
 
     sources = []
     for root, dirs, files in os.walk(ctx.REPO_ROOT, followlinks=False):
@@ -131,8 +120,11 @@ def link_local_files(worktree: Path) -> list[str]:
             continue
         try:
             src_res = src.resolve()
-            if any(src_res == wt or src_res.is_relative_to(wt) or wt.is_relative_to(src_res)
-                   for wt in registered_worktrees):
+            if worktree_resolved and (
+                src_res == worktree_resolved
+                or src_res.is_relative_to(worktree_resolved)
+                or worktree_resolved.is_relative_to(src_res)
+            ):
                 continue
         except (ValueError, OSError):
             pass

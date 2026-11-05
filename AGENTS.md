@@ -18,3 +18,11 @@ python3 repo/.repo_template/scripts/task.py --help
 ```
 
 工厂改模板必须跑全量（契约测试 + `factory_tests/` 集成测试），需要 pytest 与 pytest-xdist。消费仓只含契约测试，默认门禁是 `pytest .repo_template/tests -q -m contract`，见 `repo/docs/blueprint/testing.md`。
+
+## 修改原则
+
+本仓改动以**架构设计最优、技术债最少**为第一目标。达成该目标不以改动规模、开发时间、实现难度为取舍依据：能一次修到根因、不留隐式依赖与权宜之计的方案，优先于局部补丁或兼容包袱。
+
+- 范围仍限定在当前问题，不以架构优化为名重构无关模块。
+- 优先消除隐式 I/O、静默降级、环境耦合、重复测试替身等债务；破坏性升级优于保留兼容层。
+- 验证以全量测试通过为准，不因耗时跳过。
