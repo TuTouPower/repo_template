@@ -16,7 +16,7 @@ from export_template import export_template, is_non_distributable
 from repo_task import context as task_context
 from repo_task import store as task_store
 from repo_task.file_transaction import FileTransaction
-from repo_task.validation import run_checks
+from repo_task.validation import load_policy
 
 from . import context as ctx
 from .agents_merge import _agents_parts, _replace_agents_force
@@ -181,13 +181,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
             result, *_ = _replace_agents_force(template_agents, candidate)
             (ctx.CONSUMER / "AGENTS.md").write_text(result, encoding="utf-8")
             changed.add(ctx.CONSUMER / "AGENTS.md")
+        load_policy(ctx.CONSUMER)
         if not args.skip_tests:
             if not _run_tests(ctx.CONSUMER):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
-            for result in run_checks(ctx.CONSUMER):
-                print(result)
         else:
-            print("跳过测试验证（--skip-tests，仅开发验证，不可作为提交门禁）")
+            print("跳过模板契约测试（--skip-tests，仅开发验证；项目策略仍须通过校验）")
         if not dirty:
             head = source_commit
             state["last_synced_commit"] = head

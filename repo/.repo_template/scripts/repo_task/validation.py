@@ -1,12 +1,9 @@
-"""Project verification policy and executable gates, shared by task and sync."""
+"""Project verification policy parsing, shared by task and sync."""
 
 import re
-import subprocess
 from pathlib import Path
 
 import repo_task.context as ctx
-
-from .locks import validation_environment
 
 
 class ValidationError(ValueError):
@@ -91,24 +88,12 @@ def parse_policy(text: str) -> dict[str, str]:
             commands[name] = ""
             continue
         blocks = _bash_blocks(body)
-        if not blocks or not any(block.strip() for block in blocks):
+        if len(blocks) > 1:
+            raise ValidationError(
+                f"{name} 只允许一个 bash/sh 代码块，检测到 {len(blocks)} 个；"
+                "示例、占位符或说明块请改用非 bash/sh 围栏或写在正文，避免被拼接成真实门禁执行"
+            )
+        if not blocks or not blocks[0].strip():
             raise ValidationError(f"{name} 必须有可执行 bash/sh 代码块，或写「无」并在 verification_notes 说明理由")
-        commands[name] = "\n".join(blocks)
+        commands[name] = blocks[0]
     return commands
-
-
-def run_checks(root: Path, *, timeout: int = 300) -> list[str]:
-    commands = load_policy(root)
-    completed = []
-    for name, command in commands.items():
-        if command:
-            try:
-                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command],
-                                        cwd=root, capture_output=True, text=True, timeout=timeout,
-                                        env=validation_environment(root))
-            except (OSError, subprocess.TimeoutExpired) as error:
-                raise ValidationError(f"{name} 执行失败：{error}") from error
-            if result.returncode:
-                raise ValidationError(f"{name} 失败（exit {result.returncode}）：\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
-        completed.append(f"{name}: {'PASS' if command else '无（项目已明确选择）'}")
-    return completed

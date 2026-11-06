@@ -24,6 +24,20 @@
 
 存在已登记 task worktree 时拒绝 apply，先完成或 rewind；存在状态为 done 但尚未合入默认分支的 task 分支时同样拒绝，先 integrate。迁移后工具链只接受当前 schema。
 
+## testing.md 单块门禁迁移
+
+旧版允许同一门禁章节包含多个 bash/sh 代码块；新版要求 `doctor_cmd`、`test_cmd`、`blackbox_verify` 各自最多一个可执行块。此限制有意拒绝歧义，避免把示例或占位命令当作门禁。`docs/blueprint/testing.md` 属消费仓自有文件，同步不会覆盖或自动合并，必须在升级前人工收敛：
+
+1. 在消费仓根保存现有 diff，并备份 `docs/blueprint/testing.md`。
+2. 逐节核对真实门禁，把确实需要执行的命令按原顺序合入一个 bash/sh 块；示例和占位说明改为 `text` 围栏或正文。不适用的门禁整节正文写「无」，理由放入 `verification_notes`。保留已配置的项目策略。
+3. 在消费仓根用本轮固定模板源校验。下列 `product` 为已核实、固定来源 SHA 的产物根绝对路径；工厂来源为 `<checkout>/repo`，产物来源为 `<checkout>`。命令只解析当前消费仓策略，不运行项目门禁；退出码 0 才可继续同步，非零则先修正文档。
+
+    ```bash
+    python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from repo_task.validation import load_policy; load_policy(Path.cwd())' "$product/.repo_template/scripts"
+    ```
+
+4. 校验通过后再按正式流程执行 apply。若升级已因策略错误失败，先核对 `transaction status` 与实际 diff；存在未恢复事务时按「同步准备与 apply 事务」恢复流程处理，再修正文档并重跑。`--skip-tests` 不跳过策略校验，不能用于绕过此迁移。
+
 ## 同步版本基线
 
 同步版本的可移植基线为 `.repo_template/sync_manifest.json`（随同步 commit 入库），只保存 resolved commit 和可共享 URL；共享保护决策通过 `prompt add --scope shared` 写入可入库的 `.repo_template/sync_policy.json`；本机来源路径、缓存与私人 user_prompts 留在忽略的 sync_state 中，迁机须备份。新 clone 无 state 时读取 manifest，路径源用 `init --source <新机器路径>` 重新接入，保留版本基线；私人保护策略从备份恢复后再同步。不要把含凭据 URL 或本机路径写进 manifest。
@@ -34,7 +48,11 @@
 
 ## 同步准备与 apply 事务
 
-同步准备仅改 `.scratch/` 来源缓存，取消 prep 与覆盖同步器自举。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目 doctor/test/blackbox 或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
+同步准备仅改 `.scratch/` 来源缓存，取消 prep 与覆盖同步器自举。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目验证策略校验或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
+
+同步只执行模板工具链契约测试，不执行消费仓 doctor/test/blackbox。apply 始终校验 `testing.md` 存在性、业务策略配置和命令格式；`--skip-tests` 只跳过模板契约测试，策略非法仍失败并回滚。跳过的契约测试必须在 accept 前补验。
+
+`transaction accept` 每次都重读并校验当前 `testing.md`，即使 apply 已验证、受管资产指纹未变，也不能复用旧策略校验结果。模板契约测试仍只在 apply 未验证或受管资产指纹变化时复跑；任一校验失败均保持 applied。`testing.md` 不纳入模板事务资产，避免回滚覆盖消费仓自有配置。
 
 ## 降级与 revert
 
@@ -42,7 +60,7 @@
 
 ## 同步验证锁
 
-同步验证保持事务排他锁。同线程锁可重入；验证子进程不得写同一 Git common dir 的控制面，违规立即失败并回滚，不等待父进程释放锁。需要测试 task CLI 的项目测试应创建隔离 Git 仓库；普通只读 task 命令与隔离仓库不受此限制。
+同步验证保持事务排他锁。同线程锁可重入；验证子进程不得写同一 Git common dir 的控制面，违规立即失败并回滚，不等待父进程释放锁。需要测试 task CLI 写操作的工具链测试应创建隔离 Git 仓库；普通只读 task 命令与隔离仓库不受此限制。
 
 ## .prettierignore 机械追加
 

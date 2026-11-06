@@ -1,8 +1,8 @@
 # 测试
 
-模板仓默认门禁命令（复制新项目后按实际工具链替换）。章节名 `verification_policy` / `verification_notes` / `doctor_cmd` / `test_cmd` / `blackbox_verify` 是 preflight 与 skill 的机械锚点，不得改名；命令写在对应章节的 bash/sh 代码块，按 Bash 的 `-e -o pipefail` 执行；文字说明不作为可执行命令。未使用某类时章节保留，正文写「无」。
+模板仓默认门禁命令（复制新项目后按实际工具链替换）。章节名 `verification_policy` / `verification_notes` / `doctor_cmd` / `test_cmd` / `blackbox_verify` 是 preflight 与 skill 的机械锚点，不得改名；命令写在对应章节的 bash/sh 代码块，按 Bash 的 `-e -o pipefail` 执行；文字说明不作为可执行命令。未使用某类时章节保留，正文写「无」。每个门禁章节（`doctor_cmd` / `test_cmd` / `blackbox_verify`）只允许一个 bash/sh 代码块；示例、占位符与说明请改用非 bash/sh 围栏或写在正文，多个 bash/sh 块会被直接拒绝，避免示例被拼接成真实门禁执行。
 
-状态机只校验这些章节存在且格式可执行，不代为运行命令；执行者按 task-work 流程运行并把结果写入 `progress.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 在模板同步时执行它们作为同步门禁。
+状态机只校验这些章节存在且格式可执行，不代为运行命令；执行者按 task-work 流程运行并把结果写入 `progress.md`「收尾报告 / 验收与验证」，`finish` 据此生成执行回执（`handoff.json`），reviewer 独立复跑。`repo_sync.py apply` 与 `transaction accept` 每次都校验本文件存在性、项目策略配置与命令格式，--skip-tests 也不跳过策略校验；同步不执行上述项目门禁，实际执行门禁仅为模板工具链契约测试。多块旧配置升级前按[同步规程](../../.repo_template/docs/sync.md)「testing.md 单块门禁迁移」收敛。
 
 默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂全量测试（含调度 / 合并 / 同步集成）位于工厂根 `factory_tests/`，不随模板分发，消费仓只含契约测试。
 

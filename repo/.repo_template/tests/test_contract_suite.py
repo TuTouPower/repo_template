@@ -29,6 +29,7 @@ CONTRACT_MODULES = frozenset({
     "test_repo_cleanup.py",
     "test_specs_index.py",
     "test_contract_suite.py",
+    "test_validation_policy.py",
 })
 
 

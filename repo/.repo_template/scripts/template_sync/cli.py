@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply = sub.add_parser("apply", help="执行对齐写盘")
     apply.add_argument("--decision", action="append", default=[], metavar="UNIT:DISP",
                        help="裁定单元决策（可重复），如 AGENTS.md:update / AGENTS.md:keep")
-    apply.add_argument("--skip-tests", action="store_true", help="跳过模板契约测试（-m contract）")
+    apply.add_argument("--skip-tests", action="store_true", help="仅跳过模板契约测试（-m contract），仍校验项目策略")
     apply.add_argument("--allow-dirty-source", action="store_true", help="显式开发模式；不推进 resolved commit")
     apply.add_argument("--expected-commit", help="必须与 plan 的完整来源 SHA 相同，否则零写入拒绝")
     apply.add_argument("--agents-file", type=Path, help="在事务内应用已裁定的 AGENTS 语义合并；项目介绍必须保留")

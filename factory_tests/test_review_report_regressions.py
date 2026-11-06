@@ -16,7 +16,6 @@ from task_flow_support import finish_cli, prepare_finish
 from test_repo_sync import env
 from repo_task.finalization import check_finalization, validate_spike
 from repo_task.locks import CONTROL_LOCK_NAME, file_lock, git_common_lock
-from repo_task.validation import ValidationError, run_checks
 import repo_task.locks as locks
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
@@ -183,33 +182,24 @@ def test_shared_lock_sentinel_is_written_only_after_os_lock(tmp_path, monkeypatc
     assert observed == [0]
 
 
-@pytest.mark.parametrize("gate", ["project", "contract"])
-def test_sync_validation_child_fails_fast_instead_of_waiting_for_parent_lock(git_repo, monkeypatch, gate):
+def test_sync_validation_child_fails_fast_instead_of_waiting_for_parent_lock(git_repo, monkeypatch):
     command = [sys.executable, ".repo_template/scripts/task.py", "add", "--title", "child", "--slug", "child"]
-    if gate == "project":
-        policy = git_repo / "docs/blueprint/testing.md"
-        policy.write_text(policy.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\n" +
-                                                   " ".join(command) + "\n```"), encoding="utf-8")
-    else:
-        monkeypatch.setattr(ctx, "CONSUMER_TEST_COMMAND", tuple(command))
-        monkeypatch.setattr(ctx, "CONSUMER_TEST_TIMEOUT", 5)
+    monkeypatch.setattr(ctx, "CONSUMER_TEST_COMMAND", tuple(command))
+    monkeypatch.setattr(ctx, "CONSUMER_TEST_TIMEOUT", 5)
     with git_common_lock(git_repo, CONTROL_LOCK_NAME):
-        if gate == "project":
-            with pytest.raises(ValidationError, match="同步验证期间禁止修改"):
-                run_checks(git_repo, timeout=5)
-        else:
-            assert not _run_tests(git_repo)
+        assert not _run_tests(git_repo)
     assert not list((git_repo / "docs/tasks").glob("t004_*"))
 
 
-def test_sync_validation_can_test_mutating_cli_in_an_isolated_repository(git_repo):
+def test_sync_validation_can_test_mutating_cli_in_an_isolated_repository(git_repo, monkeypatch):
     isolated = git_repo.parent / "isolated"
     _git(git_repo, "clone", str(git_repo), str(isolated))
-    policy = git_repo / "docs/blueprint/testing.md"
-    command = f'cd "{isolated}"\n"{sys.executable}" .repo_template/scripts/task.py add --title isolated --slug isolated'
-    policy.write_text(policy.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\n" + command + "\n```"), encoding="utf-8")
+    command = (sys.executable, str(isolated / ".repo_template/scripts/task.py"),
+               "add", "--title", "isolated", "--slug", "isolated")
+    monkeypatch.setattr(ctx, "CONSUMER_TEST_COMMAND", command)
+    monkeypatch.setattr(ctx, "CONSUMER_TEST_TIMEOUT", 10)
     with git_common_lock(git_repo, CONTROL_LOCK_NAME):
-        run_checks(git_repo, timeout=10)
+        assert _run_tests(git_repo)
     assert list((isolated / "docs/tasks").glob("t004_isolated"))
     assert not list((git_repo / "docs/tasks").glob("t004_*"))
 

@@ -37,6 +37,8 @@
 
 ## 状态恢复与升级
 
+升级到单块门禁策略前，须人工收敛 `docs/blueprint/testing.md` 中各门禁章节的 bash/sh 块，步骤见[同步规程](sync.md)「testing.md 单块门禁迁移」。该文件由消费仓维护，同步不自动覆盖。若 start、preflight、finish 或 apply 报多块错误，先按迁移步骤修正文档；同步失败还须核对持久事务和实际 diff，必要时按同步恢复流程 rollback。`--skip-tests` 不绕过策略校验。
+
 各 task worktree 的 `docs/runtime/execution_context.json` 留存原 reserve identity，ledger 丢失时用于 fail-closed 诊断，不代替 ledger、不入库。
 
 运行态只服务本机主 clone，不提供分布式协作。迁移前停止所有会话，备份整个 Git common dir、主仓 `docs/runtime/`、`.repo_template/sync_state.json`、所有 task 分支与 worktree 未提交内容；用隔离副本核对 ledger、Git refs、执行回执（`handoff.json`）和 review 可读后再迁移。不能仅复制 goal 快照或把新 clone 当作原控制面。

@@ -94,7 +94,7 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 初始化只从指定 Git commit 的产品树导出，拒绝 tracked secret 与本机状态；dirty 工作区不参与分发。
 
-同步器直接从固定来源运行，consumer 显式指定，core 直接读取。准备阶段只写来源缓存；不自覆盖、不 prep。apply 在控制面锁内保存全部受管资产的 before-image 和持久日志，schema、入口、共享裁定、项目门禁与 state 推进纳入同一事务。失败恢复原始内容且保留备份；恢复失败不得吞错。成功后仍处于 applied，批准提交后 accept，放弃则 rollback。语义 AGENTS 合并先写 scratch，通过 agents-file 进入事务。
+同步器直接从固定来源运行，consumer 显式指定，core 直接读取。准备阶段只写来源缓存；不自覆盖、不 prep。apply 在控制面锁内保存全部受管资产的 before-image 和持久日志，schema、入口、共享裁定、项目策略校验、模板契约测试与 state 推进纳入同一事务。apply 始终校验 testing.md 存在性、策略配置与命令格式，--skip-tests 仅跳过模板契约测试；accept 每次重读策略，契约测试按未验证或受管资产变化决定是否复跑。同步不执行项目 doctor/test/blackbox。失败恢复原始内容且保留备份；恢复失败不得吞错。成功后仍处于 applied，批准提交后 accept，放弃则 rollback。语义 AGENTS 合并先写 scratch，通过 agents-file 进入事务。
 
 sync_manifest 是可入库版本基线；sync_policy 是显式共享保护决策；sync_state 只承载本机来源和私人 prompt。新 clone 依据 manifest 重新接入，本机 ledger 丢失仅从严格验证的 done Git/执行回执重建，active 不猜补。支持范围见 `usage.md`，灾难恢复步骤见 `recovery.md`，同步与降级步骤见 `sync.md`。
 

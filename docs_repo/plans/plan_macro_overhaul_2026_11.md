@@ -312,7 +312,7 @@ C3 中 `handoff.json` 的字段来源：
 ### 步骤
 
 1. 执行 `repo_sync.py plan`，核对受管资产差异。
-2. 执行 `apply`。同步事务内会运行契约测试与项目 doctor/test/blackbox。
+2. 执行 `apply`。原方案要求同步事务运行契约测试与项目 doctor/test/blackbox；其中同步执行项目门禁部分已被 [L55](../decision_log.md) 取代。
 3. 检查 `AGENTS.md`「目录与读写规则」的语义合并结果，确认项目介绍未改动。
 4. 用户批准后提交同步 commit，再执行 `transaction accept`。
 

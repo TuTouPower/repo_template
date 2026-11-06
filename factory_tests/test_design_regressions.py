@@ -19,7 +19,6 @@ from task_flow_support import finish_cli, prepare_finish
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.file_transaction import FileTransaction
 from repo_task.monitoring import review_scope_fingerprint
-from repo_task.validation import ValidationError, run_checks
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
 from template_sync.source import resolve_src
@@ -186,46 +185,6 @@ def test_unconfigured_business_verification_blocks_execution_but_not_creation(gi
     assert creation.returncode == 0 and "项目验证策略尚未确认" in creation.stdout
     execution = _task_cli(git_repo, "preflight", "t001", "--allow-backlog")
     assert execution.returncode != 0 and "不能代替业务验收" in execution.stdout
-
-
-def test_project_gates_stop_on_failure_and_pipe_failure(env):
-    consumer = env["consumer"]
-    path = consumer / "docs/blueprint/testing.md"
-    path.write_text(path.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\nfalse | true\n```"))
-    with pytest.raises(ValidationError, match="test_cmd 失败"):
-        run_checks(consumer)
-
-
-def test_sync_apply_runs_real_gates_and_succeeds(env, monkeypatch):
-    """真实可执行门禁通过时 apply 完成；失败路径由上一条覆盖（Issue #82）。"""
-    consumer = env["consumer"]
-    policy = consumer / "docs/blueprint/testing.md"
-    policy.write_text(policy.read_text().replace(
-        "## test_cmd\n\n无",
-        "## test_cmd\n\n```bash\npython3 -c \"import sys; sys.exit(0)\"\n```",
-    ))
-    monkeypatch.setattr("template_sync.apply._run_tests", lambda _: True)
-    result = cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
-    assert result == 0
-    assert (consumer / ".repo_template/scripts/task.py").exists()
-
-
-def test_sync_business_failure_restores_assets_state_and_preserves_backup(env, monkeypatch):
-    consumer = env["consumer"]
-    old_state = env["state_file"].read_bytes()
-    agents = consumer / "AGENTS.md"
-    agents.write_text("private project rules\n")
-    policy = consumer / "docs/blueprint/testing.md"
-    policy.write_text(policy.read_text().replace("## test_cmd\n\n无", "## test_cmd\n\n```bash\nexit 7\n```"))
-    monkeypatch.setattr("template_sync.apply._run_tests", lambda _: True)
-    result = cmd_apply(Namespace(skip_tests=False, decisions={"AGENTS.md": "update"}))
-    assert result == 1
-    assert agents.read_text() == "private project rules\n"
-    assert env["state_file"].read_bytes() == old_state
-    assert not (consumer / ".repo_template/scripts/task.py").exists()
-    backup = consumer / ".scratch/repo_sync_rollback"
-    assert (backup / "AGENTS.md").read_text() == "private project rules\n"
-    assert json.loads((backup / "transaction.json").read_text())["status"] == "rolled_back"
 
 
 def test_transaction_recovers_across_process_boundary_and_protects_later_edits(tmp_path):

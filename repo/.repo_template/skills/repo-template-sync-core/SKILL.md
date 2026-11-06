@@ -18,11 +18,11 @@ metadata:
 ## 流程
 
 1. **核验**：来源 clean、固定 SHA 与输入相符。读取本机 state、共享 policy 与可移植 manifest；无 state 时 `--source` 提供临时身份，不提前 init。检查 active worktree；存在则先完成或 rewind，禁止混用 workflow schema。
-2. **预览**：status、plan。明确硬同步、共享裁定、保护项和删除候选。确认 `testing.md` 项目验证策略已选定；模板默认未确认不得作为业务绿灯。
+2. **预览**：status、plan。明确硬同步、共享裁定、保护项和删除候选。确认 `testing.md` 项目验证策略已选定；模板默认未确认不得作为业务绿灯。旧版各门禁章节存在多个 bash/sh 块时，先按 `sync.md`「testing.md 单块门禁迁移」人工收敛，再 apply；同步不会覆盖该消费仓自有文件。
 3. **裁定**：工具链/入口按模板；gitignore、prettierignore、MCP 做安全合并；宿主 settings 只合明确无 secret 片段。AGENTS 项目介绍保留，开发原则按模板，目录规则由 Agent 语义合并。语义结果先存 `.scratch/`，通过 `apply --agents-file <结果文件>` 纳入事务，不提前写消费资产；未完成裁定不 apply。
-4. **apply**：确认会覆盖的未提交内容已纳入事务，业务改动可隔离。运行 `apply --expected-commit {来源完整SHA}`，带完整 `--decision` 和适用的 `--agents-file`。不得跳过测试。正式写盘从该 commit 的 Git archive 快照读取，源工作区后续变化不影响本轮。失败后按下一步核对回滚状态，不据退出码假定现场已恢复。
+4. **apply**：确认会覆盖的未提交内容已纳入事务，业务改动可隔离。运行 `apply --expected-commit {来源完整SHA}`，带完整 `--decision` 和适用的 `--agents-file`。不得跳过模板契约测试。保留 `testing.md` 存在性、项目策略配置和命令格式检查，但不执行消费仓 doctor/test/blackbox。正式写盘从该 commit 的 Git archive 快照读取，源工作区后续变化不影响本轮。失败后按下一步核对回滚状态，不据退出码假定现场已恢复。
 5. **恢复**：apply 失败即停止且不 commit；异常中断运行 `transaction status`，先备份中断后的新改动，再 `transaction rollback --confirm-restore`。成功 apply 但用户放弃时 `transaction rollback`；现场后续变化会阻止静默覆盖。恢复失败保留日志和备份，报告人工恢复条件。
-6. **审批**：列出来源 SHA、全部实际路径、保护/跳过、contract 与项目测试、state/manifest、未决项，询问是否 commit。仅批准后提交本轮内容，提交包含 sync_manifest；随后 `transaction accept`。提交前拒绝则恢复，不把“未提交”等同于可恢复。批准的批量 commit 授权可复用，不重复询问。
+6. **审批**：列出来源 SHA、全部实际路径、保护/跳过、contract 与项目策略校验、state/manifest、未决项，询问是否 commit。仅批准后提交本轮内容，提交包含 sync_manifest；随后 `transaction accept`。accept 始终重读并校验当前项目策略，不能因已有验证记录而跳过；模板契约仅在未验证或受管资产变化时补跑。提交前拒绝则恢复，不把“未提交”等同于可恢复。批准的批量 commit 授权可复用，不重复询问。
 
 ## 完成
 

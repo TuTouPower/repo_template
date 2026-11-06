@@ -69,6 +69,7 @@
 | L52 | 工厂全量串行验证耗时长 | 宏观方案 D-14，用户批准 | 测试替身隔离到被测模块，删除 xdist 禁令；工厂全量用 -n auto，消费默认门禁不变 | pytest.ini、测试替身、工厂 `AGENTS.md` | 已落地；本机 2 worker 实测 7 分 17 秒，未达原两分钟估算，见方案实施记录 |
 | L53 | 撤销证据 commit，恢复一 task 一 commit | review_20261104 D01、用户裁定 | 撤销 L43 的证据 commit 部分（D2），恢复一 task 一 commit，review 失效走 amend 并以 `handoff.review_scope` 约束 | `repo_task/{lifecycle,monitoring,recovery}.py`、`recovery.md`、`architecture.md` | 已落地 |
 | L54 | 小 pending 走完整 task 过重；worktree 缺 gitignore 本地文件导致容器验证难跑 | 用户裁定（2026-11-05） | 不做 in-place / main 直跑 task（维持 L4、L30）：worktree 经消费仓 `.worktreeinclude` 软链被忽略的本地文件与目录，仅目录规则的链接追加 `info/exclude` 托管块；小而低风险 pending 经 `pending-fix` 在 main 直修，一条一个 fix commit，超出准入转 task | `repo_task/worktrees.py`、`repo/.worktreeinclude`、`usage.md`、`pending-fix` skill、`AGENTS.md` | 已落地 |
+| L55 | 模板同步与消费项目业务测试的运行环境、耗时耦合；策略校验存在跳过和缓存盲区 | 用户裁定（2026-11-06）、SYNC 范围与闭环审阅；部分取代 M-01 | SYNC 只执行模板 contract，项目 doctor/test/blackbox 仍由 task-work 与 reviewer 按项目策略执行；apply 始终校验 testing.md，--skip-tests 仅跳过 contract；accept 始终重读策略，契约测试按原指纹条件复跑；删除失去生产调用方的业务执行器。保留单块 fail-closed，消费仓自有 testing.md 升级前人工迁移 | `template_sync/{apply,transaction,cli}.py`、`repo_task/validation.py`、`sync.md`、`recovery.md` | 已落地 |
 
 ## 未闭环
 
@@ -91,7 +92,7 @@
 | H-04 | 存在；原 identity 可被多会话接续 | ledger 内原子 claim owner_id，接管比较原 owner 并要求确认已停止，preflight 核对 owner |
 | H-05 | 存在；自举/prep 不属于 apply 基线 | 删除覆盖自身与 prep；来源脚本直接运行，正式内容取 Git archive 快照，before-image 持久日志覆盖资产、schema、门禁与 state；备份不消费，失败不吞错 |
 | H-06 | 存在；工厂根/URL 示例不可执行 | 先统一 product/checkout，来源 runner 显式 consumer/source；产物、工厂与 file URL 均有真实 Git 测试 |
-| M-01 | 存在；默认 contract 可被当作业务充分验证 | 显式 verification_policy/notes；start、preflight、finish 检查策略；同步事务运行 contract 和项目 doctor/test/blackbox，失败完整恢复 |
+| M-01 | 存在；默认 contract 可被当作业务充分验证 | 显式 verification_policy/notes；start、preflight、finish 检查策略；同步事务运行 contract 和项目 doctor/test/blackbox，失败完整恢复。同步执行项目命令部分已被 L55 取代，其余策略校验要求保留 |
 | M-02 | 存在；active 无合法升级入口 | review-upgrade 仅 single→full；review_level 纳入指纹，旧 PASS 失效，禁止降级 |
 | M-03 | 单机边界属取舍；恢复缺口存在 | manifest/policy 可共享，state/runtime 留本机；done Git/handoff 严格 import；active 留执行 identity，缺 ledger 时 fail-closed；补迁机、备份、离线、固定版本与 revert runbook |
 | M-04 | 存在；tid 序可能违反依赖，COMPLETE 含未 merge | 默认队列复用依赖拓扑，串行不添加冲突反向边；输出 execution_complete、integrated、awaiting_merge |
