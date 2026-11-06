@@ -170,11 +170,18 @@ def cmd_apply(args: argparse.Namespace) -> int:
             try:
                 current_parts = _agents_parts(current)
             except ctx.SyncError as error:
-                raise ctx.SyncError(
-                    "消费仓 AGENTS.md 缺 ## 目录与读写规则 或 ## 开发原则；"
-                    "按模板补齐 ## 目录与读写规则、## 开发原则 后重跑"
-                ) from error
-            if _agents_parts(candidate)["intro"][2] != current_parts["intro"][2]:
+                msg = str(error)
+                if not msg.startswith("消费仓 "):
+                    msg = f"消费仓 {msg}"
+                raise ctx.SyncError(msg) from error
+            try:
+                candidate_parts = _agents_parts(candidate)
+            except ctx.SyncError as error:
+                msg = str(error)
+                if not msg.startswith("候选 "):
+                    msg = f"候选 {msg}"
+                raise ctx.SyncError(msg) from error
+            if candidate_parts["intro"][2] != current_parts["intro"][2]:
                 raise ctx.SyncError("AGENTS 语义合并不得修改项目介绍")
             if template_agents is None:
                 raise ctx.SyncError("模板快照缺 AGENTS.md，不能应用语义合并")

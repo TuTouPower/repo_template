@@ -21,7 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from template_sync import context as ctx
-from template_sync.agents_merge import _apply_agents_sectioned, agents_section_status
+from template_sync.agents_merge import _apply_agents_sectioned, _replace_agents_force, agents_section_status
 from template_sync.apply import _assert_distributable_tree, cmd_apply
 from template_sync.assets import retired_template_warnings, sync_dir, sync_file
 from template_sync.cli import _parse_decisions, main as repo_sync_main
@@ -878,6 +878,105 @@ def test_apply_rejects_consumer_agents_missing_headings_with_guidance(env, capsy
     err = capsys.readouterr().err
     assert "按模板补齐 ## 目录与读写规则、## 开发原则 后重跑" in err
     assert (consumer / "AGENTS.md").read_text() == "旧格式\n"
+
+
+def test_plan_reports_forbidden_and_warning_for_extra_agents_headings(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text("介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n")
+    consumer_agents = (
+        "消费介绍\n\n## 核心铁律\n铁律\n\n## 目录与读写规则\n消费规则\n\n"
+        "## 开发原则\n原则\n\n## 下载与兜底约定\n私有规则\n"
+    )
+    (consumer / "AGENTS.md").write_text(consumer_agents)
+
+    assert cmd_plan(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert "额外标题: ## 下载与兜底约定" in out
+    assert "forbidden" in out
+    assert "在 ## 开发原则 之后存在额外标题" in out
+    assert "项目专属规则须移至 ## 目录与读写规则 之前（项目介绍区）" in out
+
+
+def test_plan_reports_forbidden_for_headings_between_merge_and_force(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text("介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n")
+    consumer_agents = (
+        "消费介绍\n\n## 目录与读写规则\n消费规则\n\n"
+        "## 开发工作流\n旧工作流\n\n## 开发原则\n原则\n"
+    )
+    (consumer / "AGENTS.md").write_text(consumer_agents)
+
+    assert cmd_plan(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert "额外标题: ## 开发工作流" in out
+    assert "forbidden" in out
+    assert "在 ## 目录与读写规则 和 ## 开发原则 之间存在额外标题" in out
+
+
+def test_apply_rejects_consumer_agents_with_extra_headings_after_force(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text("介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n新原则\n")
+    consumer_agents = (
+        "消费介绍\n\n## 目录与读写规则\n消费规则\n\n"
+        "## 开发原则\n旧原则\n\n## 下载与兜底约定\n私有规则\n"
+    )
+    (consumer / "AGENTS.md").write_text(consumer_agents)
+
+    assert cmd_apply(Namespace(
+        allow_dirty_source=True, skip_tests=True, decisions={"AGENTS.md": "update"},
+    )) == 1
+    err = capsys.readouterr().err
+    assert "在 ## 开发原则 之后存在额外标题" in err
+    assert "## 下载与兜底约定" in err
+    assert (consumer / "AGENTS.md").read_text() == consumer_agents
+
+
+def test_apply_rejects_candidate_agents_file_with_extra_headings(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    (src / "AGENTS.md").write_text("介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n新原则\n")
+    consumer_agents = "消费介绍\n\n## 目录与读写规则\n消费规则\n\n## 开发原则\n旧原则\n"
+    (consumer / "AGENTS.md").write_text(consumer_agents)
+    candidate_agents = (
+        "消费介绍\n\n## 目录与读写规则\n合并规则\n\n## 开发原则\n旧原则\n\n## 项目门牌与硬约束\n私有\n"
+    )
+    candidate_file = consumer / ".scratch/candidate.md"
+    candidate_file.parent.mkdir(parents=True, exist_ok=True)
+    candidate_file.write_text(candidate_agents)
+
+    assert cmd_apply(Namespace(
+        allow_dirty_source=True, skip_tests=True, decisions={}, agents_file=str(candidate_file),
+    )) == 1
+    err = capsys.readouterr().err
+    assert "候选" in err
+    assert "在 ## 开发原则 之后存在额外标题" in err
+    assert "## 项目门牌与硬约束" in err
+
+
+def test_agents_headings_in_code_fences_are_ignored(env, capsys):
+    src, consumer = env["src"], env["consumer"]
+    source = "介绍\n\n## 目录与读写规则\n规则\n\n## 开发原则\n原则\n"
+    target = (
+        "消费介绍\n\n## 目录与读写规则\n规则\n```bash\n## 这是代码块内的注释\n```\n\n## 开发原则\n原则\n"
+    )
+    (src / "AGENTS.md").write_text(source)
+    (consumer / "AGENTS.md").write_text(target)
+
+    status = agents_section_status(src)
+    assert status is not None
+    assert "extra" not in status
+    assert cmd_plan(Namespace()) == 0
+    out = capsys.readouterr().out
+    assert "forbidden" not in out
+
+
+def test_replace_agents_force_replaces_cleanly_to_eof():
+    src_text = "模板介绍\n\n## 目录与读写规则\n模板目录\n\n## 开发原则\n新原则1\n新原则2\n"
+    dst_text = "消费介绍\n\n## 目录与读写规则\n消费目录\n\n## 开发原则\n旧原则\n旧段落\n"
+    result, force_changed, merge_diff, intro_diff = _replace_agents_force(src_text, dst_text)
+    assert force_changed is True
+    assert merge_diff is True
+    assert intro_diff is True
+    assert result == "消费介绍\n\n## 目录与读写规则\n消费目录\n\n## 开发原则\n新原则1\n新原则2\n"
 
 
 # ---------------------------------------------------------------------------

@@ -171,11 +171,18 @@ def cmd_plan(args: argparse.Namespace) -> int:
         for issue in agents_section_diagnosis(src):
             print(f"- {issue}")
     else:
-        print(_md_table(["区段", "状态", "处置"], [
+        rows = [
             ["项目介绍", section_status["intro"], "绝不更新，保留消费仓内容"],
             ["目录与读写规则", section_status["merge"], "agent 语义合并，脚本不覆盖"],
             ["开发原则", section_status["force"], "每轮强制从模板更新"],
-        ]))
+        ]
+        extra = section_status.get("extra", [])
+        for heading in extra:
+            rows.append([f"额外标题: {heading}", "forbidden", "协议禁止；须移至 ## 目录与读写规则 之前（项目介绍区）"])
+        print(_md_table(["区段", "状态", "处置"], rows))
+        if extra:
+            for issue in agents_section_diagnosis(src):
+                print(f"警告: {issue}")
 
     print("\n### 软链")
     rows = []
