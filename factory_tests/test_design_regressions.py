@@ -302,7 +302,7 @@ def test_shared_sync_policy_and_version_survive_local_state_loss(env):
 
 def test_sync_state_write_failure_restores_entire_upgrade(env, monkeypatch):
     previous = env["state_file"].read_bytes()
-    def fail_write(_):
+    def fail_write(_data, **_kwargs):
         raise OSError("simulated state write failure")
     monkeypatch.setattr("template_sync.apply.write_state", fail_write)
     assert cmd_apply(Namespace(skip_tests=True, decisions={})) == 1

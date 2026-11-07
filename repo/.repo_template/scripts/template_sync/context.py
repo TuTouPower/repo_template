@@ -1,9 +1,10 @@
-"""同步器的路径、共享常量、可变全局状态与错误类型。
+"""同步器的共享常量、不可变 SyncContext 与错误类型。
 
-其它模块用 ``from . import context as ctx`` 并以 ``ctx.X`` 访问，
-configure_consumer / 测试替换 ``ctx.X`` 对所有模块生效。
+仓库身份由入口构造 ``SyncContext`` 并显式传递；其它模块只从本模块读取
+业务常量（目录清单、marker、错误类型等）。
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -70,12 +71,46 @@ def _rel(path: Path) -> str:
     return path.relative_to(CONSUMER).as_posix()
 
 
-def configure_consumer(path: Path) -> None:
-    global CONSUMER, STATE_PATH, SKILLS_SRC, SKILLS_AGENTS, SKILLS_CLAUDE, COMMANDS_OPENCODE, CONVENTIONS_PATH
-    CONSUMER = path.expanduser().resolve()
-    STATE_PATH = CONSUMER / ".repo_template/sync_state.json"
-    SKILLS_SRC = CONSUMER / ".repo_template/skills"
-    SKILLS_AGENTS = CONSUMER / ".agents/skills"
-    SKILLS_CLAUDE = CONSUMER / ".claude/skills"
-    COMMANDS_OPENCODE = CONSUMER / ".opencode/commands"
-    CONVENTIONS_PATH = CONSUMER / "docs/blueprint/conventions.md"
+@dataclass(frozen=True)
+class SyncContext:
+    """不可变同步身份：消费仓根与全部派生路径。"""
+
+    consumer: Path
+    state_path: Path
+    skills_src: Path
+    skills_agents: Path
+    skills_claude: Path
+    commands_opencode: Path
+    conventions_path: Path
+
+    @classmethod
+    def for_consumer(cls, consumer: Path) -> "SyncContext":
+        root = consumer.expanduser().resolve()
+        return cls(
+            consumer=root,
+            state_path=root / ".repo_template/sync_state.json",
+            skills_src=root / ".repo_template/skills",
+            skills_agents=root / ".agents/skills",
+            skills_claude=root / ".claude/skills",
+            commands_opencode=root / ".opencode/commands",
+            conventions_path=root / "docs/blueprint/conventions.md",
+        )
+
+    def rel(self, path: Path) -> str:
+        return path.relative_to(self.consumer).as_posix()
+
+    def legacy_state_path(self) -> Path:
+        return self.consumer / ".agents/skills/repo-template-sync/sync_state.json"
+
+
+def current_sync() -> SyncContext:
+    """过渡期默认身份：读取可被测试替换的模块级路径。A15 收尾时删除。"""
+    return SyncContext(
+        consumer=CONSUMER,
+        state_path=STATE_PATH,
+        skills_src=SKILLS_SRC,
+        skills_agents=SKILLS_AGENTS,
+        skills_claude=SKILLS_CLAUDE,
+        commands_opencode=COMMANDS_OPENCODE,
+        conventions_path=CONVENTIONS_PATH,
+    )

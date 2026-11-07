@@ -102,10 +102,11 @@ def _replace_agents_force(src_text: str, dst_text: str) -> tuple[str, bool, bool
     )
 
 
-def agents_section_diagnosis(src: Path) -> list[str]:
+def agents_section_diagnosis(src: Path, sync=None) -> list[str]:
     """说明 AGENTS.md 标题协议问题；两侧都完整合规时返回空列表。"""
+    sync = sync or ctx.current_sync()
     issues: list[str] = []
-    for label, path in (("模板源", src / "AGENTS.md"), ("消费仓", ctx.CONSUMER / "AGENTS.md")):
+    for label, path in (("模板源", src / "AGENTS.md"), ("消费仓", sync.consumer / "AGENTS.md")):
         if not path.exists():
             continue
         target = path.resolve() if path.is_symlink() else path
@@ -119,8 +120,9 @@ def agents_section_diagnosis(src: Path) -> list[str]:
     return issues
 
 
-def agents_section_status(src: Path) -> dict[str, Any] | None:
-    sp, dp = src / "AGENTS.md", ctx.CONSUMER / "AGENTS.md"
+def agents_section_status(src: Path, sync=None) -> dict[str, Any] | None:
+    sync = sync or ctx.current_sync()
+    sp, dp = src / "AGENTS.md", sync.consumer / "AGENTS.md"
     if not sp.exists() or not dp.exists():
         return None
     dst_path = dp.resolve() if dp.is_symlink() else dp
@@ -141,8 +143,9 @@ def agents_section_status(src: Path) -> dict[str, Any] | None:
     return status
 
 
-def _apply_agents_sectioned(src: Path, changed: set[Path]) -> bool:
-    sp, dp = src / "AGENTS.md", ctx.CONSUMER / "AGENTS.md"
+def _apply_agents_sectioned(src: Path, changed: set[Path], sync=None) -> bool:
+    sync = sync or ctx.current_sync()
+    sp, dp = src / "AGENTS.md", sync.consumer / "AGENTS.md"
     if not sp.exists():
         return False
     src_text = sp.read_text(encoding="utf-8")

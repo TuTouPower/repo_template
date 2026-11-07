@@ -28,9 +28,10 @@ def _blocked(rule: str, substrings: list[str]) -> bool:
     return any(sub in rule for sub in substrings)
 
 
-def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
+def merge_gitignore(src: Path, blocked: list[str], changed: set[Path], sync=None) -> dict:
     """追加模板独有规则（去重、遵从 prompt 拦截）；删除消费侧 prompt 禁止的 ignore 行。"""
-    dst = ctx.CONSUMER / ".gitignore"
+    sync = sync or ctx.current_sync()
+    dst = sync.consumer / ".gitignore"
     src_lines = (src / ".gitignore").read_text(encoding="utf-8").splitlines()
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
     dst_set = {ln.strip() for ln in dst_lines}
@@ -70,7 +71,7 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path]) -> dict:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(text.encode("utf-8"))
         changed.add(dst)
-    return {"added": added, "removed": removed, "dst": ctx._rel(dst)}
+    return {"added": added, "removed": removed, "dst": sync.rel(dst)}
 
 
 _PRETTIERIGNORE_OLD_HEADER = "# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束"
@@ -80,9 +81,10 @@ _PRETTIERIGNORE_HEADER = (
 )
 
 
-def merge_prettierignore(changed: set[Path]) -> dict:
+def merge_prettierignore(changed: set[Path], sync=None) -> dict:
     """机械合并 .prettierignore：模板自有路径去重追加，消费独有规则保留。"""
-    dst = ctx.CONSUMER / ".prettierignore"
+    sync = sync or ctx.current_sync()
+    dst = sync.consumer / ".prettierignore"
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
     dst_set = {ln.strip() for ln in dst_lines}
     added: list[str] = []
@@ -108,7 +110,7 @@ def merge_prettierignore(changed: set[Path]) -> dict:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(text.encode("utf-8"))
         changed.add(dst)
-    return {"added": added, "dst": ctx._rel(dst)}
+    return {"added": added, "dst": sync.rel(dst)}
 
 
 _SECRET_KEY_RE = re.compile(
@@ -207,11 +209,12 @@ def _sanitize_mcp_servers(servers: dict, source: str | None = None) -> dict:
     return clean
 
 
-def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
+def merge_mcp(src: Path, changed: set[Path], sync=None) -> list[str]:
     """按 server 键合并 MCP：模板新增键加入，已有键保留消费值（禁冲密钥）。"""
+    sync = sync or ctx.current_sync()
     merged: list[str] = []
     for rel in ctx.MCP_CANDIDATES:
-        sp, dp = src / rel, ctx.CONSUMER / rel
+        sp, dp = src / rel, sync.consumer / rel
         if not sp.exists():
             continue
         try:
@@ -228,7 +231,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
             new_data = {**sdata, "mcpServers": _sanitize_mcp_servers(s_servers, rel)}
             dp.write_text(json.dumps(new_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             changed.add(dp)
-            merged.append(f"{ctx._rel(dp)}（新建，已占位化 env/args/url/headers 中的凭据，需审阅全部字段）")
+            merged.append(f"{sync.rel(dp)}（新建，已占位化 env/args/url/headers 中的凭据，需审阅全部字段）")
             continue
         try:
             draw = dp.read_text(encoding="utf-8")
@@ -254,7 +257,7 @@ def merge_mcp(src: Path, changed: set[Path]) -> list[str]:
         if touched:
             dp.write_bytes((json.dumps(ddata, ensure_ascii=False, indent=_detect_json_indent(draw)) + "\n").encode("utf-8"))
             changed.add(dp)
-            merged.append(ctx._rel(dp))
+            merged.append(sync.rel(dp))
     return merged
 
 
@@ -270,23 +273,25 @@ def shared_class(src_path: Path, dst_path: Path) -> str:
     return "none"
 
 
-def shared_status(src: Path) -> list[dict]:
+def shared_status(src: Path, sync=None) -> list[dict]:
     """裁定单元分类（AGENTS.md 目的地为软链时解引用实体再比对）。"""
+    sync = sync or ctx.current_sync()
     out: list[dict] = []
     for unit in ctx.SHARED_FILES:
         s = src / unit
         if unit == "AGENTS.md":
-            d = ctx.CONSUMER / "AGENTS.md"
+            d = sync.consumer / "AGENTS.md"
             if d.is_symlink():
                 d = d.resolve()
         else:
-            d = ctx.CONSUMER / unit
+            d = sync.consumer / unit
         out.append({"unit": unit, "cls": shared_class(s, d)})
     return out
 
 
-def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[Path]) -> None:
+def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[Path], sync=None) -> None:
     # 标题协议下只自动更新开发原则；其余部分分别保护或交 Agent。
+    sync = sync or ctx.current_sync()
     if unit == "AGENTS.md" and _apply_agents_sectioned(src, changed):
         print("AGENTS.md 已按标题协议处理：开发原则强制更新，目录规则交 agent 合并，项目介绍保留")
         return
@@ -302,7 +307,7 @@ def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[
     if decision in ("keep", "keep_consumer"):
         return
     s = src / unit
-    d = ctx.CONSUMER / unit
+    d = sync.consumer / unit
     if d.is_symlink():
         d = d.resolve()
     if not s.exists():

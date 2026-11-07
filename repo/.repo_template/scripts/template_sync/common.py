@@ -15,7 +15,9 @@ from . import context as ctx
 def consumer_locked(function):
     @wraps(function)
     def locked(*args, **kwargs):
-        with git_common_lock(ctx.CONSUMER, CONTROL_LOCK_NAME):
+        sync = kwargs.get("sync") or getattr(args[0], "sync", None) if args or "sync" in kwargs else None
+        sync = sync or ctx.current_sync()
+        with git_common_lock(sync.consumer, CONTROL_LOCK_NAME):
             return function(*args, **kwargs)
     return locked
 

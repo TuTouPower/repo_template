@@ -30,13 +30,14 @@ def source_identity(value: str) -> dict:
     raise ctx.SyncError(f"模板源路径不存在：{value}；不把拼错路径当 URL")
 
 
-def resolve_src(state: dict | None, *, refresh: bool = True) -> Path:
+def resolve_src(state: dict | None, *, refresh: bool = True, sync=None) -> Path:
     """解析模板源。URL 源 refresh=False 时只读缓存，不 clone/pull（Issue #72）。"""
     if not state or not state.get("template_source", {}).get("value"):
         raise ctx.SyncError("未初始化：缺少 template_source。先运行 init --source <path|url>")
     ts = state["template_source"]
     kind = ts.get("kind", "path")
     value = ts["value"]
+    sync = sync or ctx.current_sync()
     if ctx.CHECKOUT_OVERRIDE is not None:
         src = _as_product(Path(ctx.CHECKOUT_OVERRIDE).expanduser().resolve())
         if kind == "url":
@@ -45,7 +46,7 @@ def resolve_src(state: dict | None, *, refresh: bool = True) -> Path:
                 raise ctx.SyncError("固定 checkout 的 origin 与来源身份不符")
         return src
     if kind == "url":
-        cache = ctx.CONSUMER / ".scratch/repo_template_sync_src"
+        cache = sync.consumer / ".scratch/repo_template_sync_src"
         if not (cache / ".git").exists():
             # 首次没有缓存只能 clone；有缓存后 refresh=False 完全离线。
             cache.parent.mkdir(parents=True, exist_ok=True)
@@ -76,8 +77,9 @@ def _as_product(src: Path) -> Path:
     raise ctx.SyncError(f"模板源无效：{src} 不含 {ctx.PRODUCT_MARKER}（也不是含 repo/ 的工厂根）")
 
 
-def assert_not_self(src: Path) -> None:
-    if src == ctx.CONSUMER:
+def assert_not_self(src: Path, *, sync=None) -> None:
+    sync = sync or ctx.current_sync()
+    if src == sync.consumer:
         raise ctx.SyncError("当前仓库与 template_source 同一路径，禁止在模板仓当推送源同步")
 
 

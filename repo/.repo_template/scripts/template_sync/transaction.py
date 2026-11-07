@@ -13,9 +13,10 @@ from .common import _git
 from .gates import _run_tests
 
 
-def cmd_transaction(args):
-    with git_common_lock(ctx.CONSUMER, CONTROL_LOCK_NAME):
-        transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
+def cmd_transaction(args, sync=None):
+    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    with git_common_lock(sync.consumer, CONTROL_LOCK_NAME):
+        transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
         try:
             if args.action == "status":
                 print(json.dumps(transaction.read(), ensure_ascii=False, indent=2))
@@ -26,12 +27,12 @@ def cmd_transaction(args):
                 data = transaction.read()
                 if not data or data["status"] != "applied":
                     raise ctx.SyncError("只有 applied 事务可以 accept")
-                status = _git(ctx.CONSUMER, "status", "--porcelain", "--", *data["paths"])
+                status = _git(sync.consumer, "status", "--porcelain", "--", *data["paths"])
                 if status.returncode or status.stdout.strip():
                     raise ctx.SyncError("accept 前须提交本轮同步资产；不接受未提交现场")
-                load_policy(ctx.CONSUMER)
-                if not data.get("gates_verified") or data.get("after") != fingerprint(ctx.CONSUMER, data["paths"]):
-                    if not _run_tests(ctx.CONSUMER):
+                load_policy(sync.consumer)
+                if not data.get("gates_verified") or data.get("after") != fingerprint(sync.consumer, data["paths"]):
+                    if not _run_tests(sync.consumer):
                         raise ctx.SyncError("accept 前 contract 复验失败，事务保持 applied")
                 transaction.accept(verified=True)
                 print("同步事务已接受；备份保留到下次同步")

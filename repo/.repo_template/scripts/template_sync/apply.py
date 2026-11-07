@@ -84,59 +84,62 @@ def _require_current_schema(src: Path) -> None:
         )
 
 
-def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str]) -> None:
+def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str], sync=None) -> None:
     """apply 的写盘主体；OSError 由调用方回滚（F16）。"""
+    sync = sync or ctx.current_sync()
     for rel in ctx.HARD_SYNC_DIRS:
-        s, d = src / rel, ctx.CONSUMER / rel
+        s, d = src / rel, sync.consumer / rel
         if s.exists():
-            sync_dir(s, d, changed)
+            sync_dir(s, d, changed, sync=sync)
         elif d.exists():
             shutil.rmtree(d)
             changed.add(d)
     for rel in ctx.HARD_SYNC_FILES:
-        sync_file(src / rel, ctx.CONSUMER / rel, changed)
+        sync_file(src / rel, sync.consumer / rel, changed)
 
-    reports = repair_symlinks(changed)
+    reports = repair_symlinks(changed, sync=sync)
     for r in reports:
         print(f"提示: {r}")
-    for r in sync_opencode_commands(changed):
+    for r in sync_opencode_commands(changed, sync=sync):
         print(f"提示: {r}")
 
     if (src / ".gitignore").exists():
-        info = merge_gitignore(src, blocked, changed)
+        info = merge_gitignore(src, blocked, changed, sync=sync)
         if info["added"]:
             print(f".gitignore 追加 {len(info['added'])} 条（模板独有）")
         if info["removed"]:
             print(f".gitignore 删除 {len(info['removed'])} 条（prompt 禁止 ignore）")
-    prettier_info = merge_prettierignore(changed)
+    prettier_info = merge_prettierignore(changed, sync=sync)
     if prettier_info["added"]:
         print(f".prettierignore 追加 {len(prettier_info['added'])} 条（模板自有路径豁免 prettier）")
-    for warning in retired_template_warnings():
+    for warning in retired_template_warnings(sync=sync):
         print(f"提示: {warning}")
-    merge_mcp(src, changed)
+    merge_mcp(src, changed, sync=sync)
 
     for unit in ctx.SHARED_FILES:
         if unit == ".gitignore":
             continue
         decision = decisions.get(unit)
-        _apply_shared_unit(unit, decision, src, changed)
+        _apply_shared_unit(unit, decision, src, changed, sync=sync)
 
 
-def _print_changed(paths: set[Path], header: str) -> None:
+def _print_changed(paths: set[Path], header: str, sync=None) -> None:
+    sync = sync or ctx.current_sync()
     print(header)
     for path in sorted(paths, key=str):
-        print(ctx._rel(path))
+        print(sync.rel(path))
     if not paths:
         print("（无改动）")
 
 
 @consumer_locked
-def cmd_apply(args: argparse.Namespace) -> int:
-    state = read_state()
+def cmd_apply(args: argparse.Namespace, sync=None) -> int:
+    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无同步来源；使用 --source 或 init --source <path|url>")
-    src = resolve_src(state)
-    assert_not_self(src)
+    src = resolve_src(state, sync=sync)
+    assert_not_self(src, sync=sync)
     dirty = src_dirty(src)
     if dirty and not getattr(args, "allow_dirty_source", False):
         raise ctx.SyncError("模板源 dirty；正式同步必须使用 clean commit。开发验证须显式 --allow-dirty-source")
@@ -150,9 +153,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
-    if (ctx.CONSUMER / "AGENTS.md").is_symlink():
+    if (sync.consumer / "AGENTS.md").is_symlink():
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
-    transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
+    transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
              "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/blueprint/conventions.md",
@@ -168,19 +171,24 @@ def cmd_apply(args: argparse.Namespace) -> int:
             _assert_distributable_tree(src)
             if (src / "AGENTS.md").exists():
                 template_agents = (src / "AGENTS.md").read_text(encoding="utf-8")
-            _apply_sync_write(src, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state))
+            _apply_sync_write(
+                src, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state), sync=sync
+            )
         else:
-            with tempfile.TemporaryDirectory(prefix="repo_sync_source_", dir=ctx.CONSUMER / ".scratch") as directory:
+            with tempfile.TemporaryDirectory(prefix="repo_sync_source_", dir=sync.consumer / ".scratch") as directory:
                 snapshot = Path(directory)
                 export_template(src, snapshot, source_commit)
                 _as_product(snapshot)  # Fail closed before writing if export is incomplete.
                 if (snapshot / "AGENTS.md").exists():
                     template_agents = (snapshot / "AGENTS.md").read_text(encoding="utf-8")
-                _apply_sync_write(snapshot, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state))
+                _apply_sync_write(
+                    snapshot, getattr(args, "decisions", None) or {}, changed,
+                    prompt_substrings(state), sync=sync,
+                )
         agents_file = getattr(args, "agents_file", None)
         if agents_file:
             candidate = Path(agents_file).read_text(encoding="utf-8")
-            current = (ctx.CONSUMER / "AGENTS.md").read_text(encoding="utf-8")
+            current = (sync.consumer / "AGENTS.md").read_text(encoding="utf-8")
             try:
                 current_parts = _agents_parts(current)
             except ctx.SyncError as error:
@@ -200,10 +208,10 @@ def cmd_apply(args: argparse.Namespace) -> int:
             if template_agents is None:
                 raise ctx.SyncError("模板快照缺 AGENTS.md，不能应用语义合并")
             result, *_ = _replace_agents_force(template_agents, candidate)
-            (ctx.CONSUMER / "AGENTS.md").write_text(result, encoding="utf-8")
-            changed.add(ctx.CONSUMER / "AGENTS.md")
-        load_policy(ctx.CONSUMER)
-        specs_problems = specs_index_report()
+            (sync.consumer / "AGENTS.md").write_text(result, encoding="utf-8")
+            changed.add(sync.consumer / "AGENTS.md")
+        load_policy(sync.consumer)
+        specs_problems = specs_index_report(sync=sync)
         if specs_problems:
             for problem in specs_problems:
                 print(f"specs_index 契约违规: {problem}")
@@ -211,7 +219,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 "docs/specs_index.md 契约违规（同步中止）：" + "；".join(specs_problems)
             )
         if not args.skip_tests:
-            if not _run_tests(ctx.CONSUMER):
+            if not _run_tests(sync.consumer):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
         else:
             print("跳过模板契约测试（--skip-tests，仅开发验证；项目策略仍须通过校验）")
@@ -230,12 +238,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 if parsed.password or parsed.query or parsed.fragment:
                     remote = None
             manifest = {"version": 1, "resolved_commit": head, "source_url": remote}
-            (ctx.CONSUMER / ".repo_template/sync_manifest.json").write_text(
+            (sync.consumer / ".repo_template/sync_manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            changed.add(ctx.CONSUMER / ".repo_template/sync_manifest.json")
+            changed.add(sync.consumer / ".repo_template/sync_manifest.json")
         state["last_synced_at"] = _now_iso()
         state["resolved_checkout"] = str(src)
-        write_state(state)
+        write_state(state, sync=sync)
         transaction.applied(verified=not args.skip_tests)
     except (OSError, ValueError, ctx.SyncError, subprocess.SubprocessError) as error:
         rollback_ok = False
@@ -246,15 +254,15 @@ def cmd_apply(args: argparse.Namespace) -> int:
             print(f"WARNING: 事务自动回滚失败（{rb_err}），现场可能残留未恢复文件", file=sys.stderr)
 
         if rollback_ok:
-            _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===")
+            _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===", sync=sync)
             print(f"错误: {error}；已完整回滚本次写入与 state。"
                   "回滚备份保留在 .scratch/repo_sync_rollback", file=sys.stderr)
         else:
-            _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===")
+            _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===", sync=sync)
             print(f"错误: {error}；自动回滚未完全成功，现场可能存在混合版本工具文件！"
                   "备份保留在 .scratch/repo_sync_rollback，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
         return 1
-    _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===")
+    _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===", sync=sync)
     print("state 推进：last_synced_commit=" + ("已更新" if not dirty else "SRC dirty，未推进"))
     print("事务 applied；拒绝同步可 transaction rollback，提交并确认后 transaction accept")
     return 0

@@ -17,7 +17,8 @@ from .common import _load_json_object, consumer_locked
 from .hooks import _remove_retired_merge_guard_setting
 
 
-def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Path], reports: list[str]) -> None:
+def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Path], reports: list[str], sync=None) -> None:
+    sync = sync or ctx.current_sync()
     if link.is_symlink():
         if link.resolve() == expected:
             return
@@ -31,37 +32,38 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
         shutil.rmtree(link)
         os.symlink(target_rel, link)
         changed.add(link)
-        reports.append(f"{ctx._rel(link)} 旧真实目录已转软链（原内容入回滚栈）")
+        reports.append(f"{sync.rel(link)} 旧真实目录已转软链（原内容入回滚栈）")
         return
     if link.exists():
-        reports.append(f"{ctx._rel(link)} 非本机制管理，跳过")
+        reports.append(f"{sync.rel(link)} 非本机制管理，跳过")
         return
     link.parent.mkdir(parents=True, exist_ok=True)
     os.symlink(target_rel, link)
     changed.add(link)
 
 
-def repair_symlinks(changed: set[Path]) -> list[str]:
+def repair_symlinks(changed: set[Path], sync=None) -> list[str]:
     """建/修宿主软链，指向 .repo_template/。清理已删除 skill 的残留软链。非本机制链接报告不碰。"""
+    sync = sync or ctx.current_sync()
     reports: list[str] = []
     valid_names = set()
-    if ctx.SKILLS_SRC.exists():
-        for entry in ctx.SKILLS_SRC.iterdir():
+    if sync.skills_src.exists():
+        for entry in sync.skills_src.iterdir():
             if not entry.is_dir():
                 continue
             valid_names.add(entry.name)
             expected = entry.resolve()
             _ensure_symlink(
-                ctx.SKILLS_CLAUDE / entry.name,
+                sync.skills_claude / entry.name,
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
                 expected, changed, reports,
             )
             _ensure_symlink(
-                ctx.SKILLS_AGENTS / entry.name,
+                sync.skills_agents / entry.name,
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
                 expected, changed, reports,
             )
-    for host_dir in (ctx.SKILLS_CLAUDE, ctx.SKILLS_AGENTS):
+    for host_dir in (sync.skills_claude, sync.skills_agents):
         if not host_dir.exists():
             continue
         for item in sorted(host_dir.iterdir()):
@@ -69,7 +71,7 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
                 continue
             try:
                 target_resolved = item.resolve(strict=False)
-                skills_src_resolved = ctx.SKILLS_SRC.resolve()
+                skills_src_resolved = sync.skills_src.resolve()
                 is_managed = (
                     target_resolved != skills_src_resolved
                     and target_resolved.is_relative_to(skills_src_resolved)
@@ -79,7 +81,7 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
             if is_managed:
                 item.unlink()
                 changed.add(item)
-                reports.append(f"{ctx._rel(item)} 已清理（对应 skill 已删除）")
+                reports.append(f"{sync.rel(item)} 已清理（对应 skill 已删除）")
     return reports
 
 
@@ -102,10 +104,11 @@ def _skill_description(skill_dir: Path, name: str) -> str:
     return desc.replace('"', "'")
 
 
-def _expected_opencode_command_content(name: str) -> str:
+def _expected_opencode_command_content(name: str, sync=None) -> str:
+    sync = sync or ctx.current_sync()
     return (
         "---\n"
-        f'description: "{_skill_description(ctx.SKILLS_SRC / name, name)}"\n'
+        f'description: "{_skill_description(sync.skills_src / name, name)}"\n'
         "---\n"
         f"> {ctx.COMMAND_MARKER} '{name}'. Do not edit directly.\n\n"
         f"Load and execute the `{name}` skill via the `skill` tool, "
@@ -114,8 +117,9 @@ def _expected_opencode_command_content(name: str) -> str:
     )
 
 
-def _load_skill_roles() -> dict | None:
-    path = ctx.SKILLS_SRC / "registry.json"
+def _load_skill_roles(sync=None) -> dict | None:
+    sync = sync or ctx.current_sync()
+    path = sync.skills_src / "registry.json"
     if not path.exists():
         return None
     data = _load_json_object(path, "skills/registry.json")
@@ -138,27 +142,28 @@ def _public_skill_names(names: list[str]) -> list[str]:
     return [name for name in names if roles[name].get("role") == "public"]
 
 
-def opencode_commands_status() -> list[dict]:
+def opencode_commands_status(sync=None) -> list[dict]:
     """返回 opencode 命令薄层状态：[{"name": ..., "rel": ..., "state": ..., "desc": ...}]。"""
+    sync = sync or ctx.current_sync()
     items = []
-    if not ctx.SKILLS_SRC.exists():
+    if not sync.skills_src.exists():
         return items
-    names = sorted(e.name for e in ctx.SKILLS_SRC.iterdir() if e.is_dir())
+    names = sorted(e.name for e in sync.skills_src.iterdir() if e.is_dir())
     names = _public_skill_names(names)
     for name in names:
-        dest = ctx.COMMANDS_OPENCODE / f"{name}.md"
+        dest = sync.commands_opencode / f"{name}.md"
         expected = _expected_opencode_command_content(name)
         if not dest.exists():
             items.append({
                 "name": name,
-                "rel": ctx._rel(dest),
+                "rel": sync.rel(dest),
                 "state": "create",
                 "desc": "缺失命令薄层（apply 生成）",
             })
         elif not dest.is_file():
             items.append({
                 "name": name,
-                "rel": ctx._rel(dest),
+                "rel": sync.rel(dest),
                 "state": "unmanaged",
                 "desc": "非文件目标，跳过",
             })
@@ -168,36 +173,36 @@ def opencode_commands_status() -> list[dict]:
                 if existing == expected:
                     items.append({
                         "name": name,
-                        "rel": ctx._rel(dest),
+                        "rel": sync.rel(dest),
                         "state": "same",
                         "desc": "一致",
                     })
                 elif ctx.COMMAND_MARKER not in existing:
                     items.append({
                         "name": name,
-                        "rel": ctx._rel(dest),
+                        "rel": sync.rel(dest),
                         "state": "unmanaged",
                         "desc": "疑似手写命令，跳过",
                     })
                 else:
                     items.append({
                         "name": name,
-                        "rel": ctx._rel(dest),
+                        "rel": sync.rel(dest),
                         "state": "update",
                         "desc": "描述或正文已漂移（apply 更新）",
                     })
             except OSError:
                 continue
 
-    if ctx.COMMANDS_OPENCODE.exists() and ctx.COMMANDS_OPENCODE.is_dir():
-        for md in sorted(ctx.COMMANDS_OPENCODE.glob("*.md")):
+    if sync.commands_opencode.exists() and sync.commands_opencode.is_dir():
+        for md in sorted(sync.commands_opencode.glob("*.md")):
             if md.stem not in names:
                 try:
                     text = md.read_text(encoding="utf-8")
                     if ctx.COMMAND_MARKER in text:
                         items.append({
                             "name": md.stem,
-                            "rel": ctx._rel(md),
+                            "rel": sync.rel(md),
                             "state": "cleanup",
                             "desc": "skill 已移除，残留薄层（apply 清理）",
                         })
@@ -206,7 +211,7 @@ def opencode_commands_status() -> list[dict]:
     return items
 
 
-def sync_opencode_commands(changed: set[Path]) -> list[str]:
+def sync_opencode_commands(changed: set[Path], sync=None) -> list[str]:
     """项目级 opencode 命令薄层：每个 skill 生成同名 /<skill> 命令。
 
     opencode 能直接识别 .agents/skills，但缺 / 触发器。命令正文只做一件事：
@@ -214,15 +219,16 @@ def sync_opencode_commands(changed: set[Path]) -> list[str]:
     取自 SKILL.md frontmatter（SKILL.md 是唯一真相源）。
     手写命令（无本机制标记）永不覆盖/删除；skill 删除后仅清理带标记残留。
     """
+    sync = sync or ctx.current_sync()
     reports: list[str] = []
-    if not ctx.SKILLS_SRC.exists():
+    if not sync.skills_src.exists():
         return reports
-    ctx.COMMANDS_OPENCODE.mkdir(parents=True, exist_ok=True)
-    names = sorted(e.name for e in ctx.SKILLS_SRC.iterdir() if e.is_dir())
+    sync.commands_opencode.mkdir(parents=True, exist_ok=True)
+    names = sorted(e.name for e in sync.skills_src.iterdir() if e.is_dir())
     names = _public_skill_names(names)
     for name in names:
         content = _expected_opencode_command_content(name)
-        dest = ctx.COMMANDS_OPENCODE / f"{name}.md"
+        dest = sync.commands_opencode / f"{name}.md"
         if dest.exists() and not dest.is_file():
             continue
         if dest.is_file():
@@ -230,11 +236,11 @@ def sync_opencode_commands(changed: set[Path]) -> list[str]:
             if existing == content:
                 continue
             if ctx.COMMAND_MARKER not in existing:
-                reports.append(f"{ctx._rel(dest)} 疑似手写命令（与 skill 同名），跳过")
+                reports.append(f"{sync.rel(dest)} 疑似手写命令（与 skill 同名），跳过")
                 continue
         dest.write_text(content, encoding="utf-8")
         changed.add(dest)
-    for md in ctx.COMMANDS_OPENCODE.glob("*.md"):
+    for md in sync.commands_opencode.glob("*.md"):
         if md.stem in names:
             continue
         try:
@@ -246,18 +252,19 @@ def sync_opencode_commands(changed: set[Path]) -> list[str]:
     return reports
 
 
-def skill_status(src: Path) -> list[dict]:
+def skill_status(src: Path, sync=None) -> list[dict]:
     """skill 状态：模板侧 override；消费侧独有 keep；旧真实目录 stale。"""
+    sync = sync or ctx.current_sync()
     out: list[dict] = []
     src_skills = src / ".repo_template/skills"
     if src_skills.exists():
         for s in src_skills.iterdir():
             if s.is_dir():
-                d = ctx.SKILLS_SRC / s.name
+                d = sync.skills_src / s.name
                 diff = not d.exists() or _dir_has_diff(s, d)
                 out.append({"name": s.name, "action": "override" if diff else "same"})
-    if ctx.SKILLS_AGENTS.exists():
-        for d in ctx.SKILLS_AGENTS.iterdir():
+    if sync.skills_agents.exists():
+        for d in sync.skills_agents.iterdir():
             if not d.is_dir():
                 continue
             if d.is_symlink():
@@ -269,15 +276,16 @@ def skill_status(src: Path) -> list[dict]:
     return out
 
 
-def symlink_status() -> list[dict]:
+def symlink_status(sync=None) -> list[dict]:
+    sync = sync or ctx.current_sync()
     out: list[dict] = []
     valid_names = set()
     hosts = (
-        (ctx.SKILLS_CLAUDE, ".claude/skills"),
-        (ctx.SKILLS_AGENTS, ".agents/skills"),
+        (sync.skills_claude, ".claude/skills"),
+        (sync.skills_agents, ".agents/skills"),
     )
-    if ctx.SKILLS_SRC.exists():
-        for entry in ctx.SKILLS_SRC.iterdir():
+    if sync.skills_src.exists():
+        for entry in sync.skills_src.iterdir():
             if not entry.is_dir():
                 continue
             valid_names.add(entry.name)
@@ -298,7 +306,7 @@ def symlink_status() -> list[dict]:
                 continue
             try:
                 target_resolved = entry.resolve(strict=False)
-                skills_src_resolved = ctx.SKILLS_SRC.resolve()
+                skills_src_resolved = sync.skills_src.resolve()
                 is_managed = (
                     target_resolved != skills_src_resolved
                     and target_resolved.is_relative_to(skills_src_resolved)
@@ -315,9 +323,10 @@ def symlink_status() -> list[dict]:
 
 
 @consumer_locked
-def cmd_link_skills(args: argparse.Namespace) -> int:
+def cmd_link_skills(args: argparse.Namespace, sync=None) -> int:
+    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
     changed: set[Path] = set()
-    transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
+    transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
     paths = [".claude/skills", ".agents/skills", ".opencode/commands"]
     try:
         transaction.begin(paths)
@@ -346,5 +355,5 @@ def cmd_link_skills(args: argparse.Namespace) -> int:
     if not changed:
         print("软链均已正确")
     for path in sorted(changed, key=str):
-        print(f"已修: {ctx._rel(path)}")
+        print(f"已修: {sync.rel(path)}")
     return 0

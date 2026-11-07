@@ -93,8 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.consumer:
-        ctx.configure_consumer(args.consumer)
+    consumer = (
+        args.consumer.expanduser().resolve() if args.consumer else ctx.TOOLKIT_ROOT.parent
+    )
+    args.sync = ctx.SyncContext.for_consumer(consumer)
     ctx.SOURCE_OVERRIDE = args.source if args.cmd != "init" else None
     ctx.CHECKOUT_OVERRIDE = args.checkout
     try:

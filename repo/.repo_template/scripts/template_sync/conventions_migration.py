@@ -24,23 +24,25 @@ def _migrate_conventions_text(text: str) -> str:
     return text
 
 
-def conventions_migration_status() -> list[str]:
-    if not ctx.CONVENTIONS_PATH.is_file():
+def conventions_migration_status(sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    if not sync.conventions_path.is_file():
         return []
-    before = ctx.CONVENTIONS_PATH.read_text(encoding="utf-8")
+    before = sync.conventions_path.read_text(encoding="utf-8")
     after = _migrate_conventions_text(before)
     if after != before:
-        return [ctx._rel(ctx.CONVENTIONS_PATH)]
+        return [sync.rel(sync.conventions_path)]
     return []
 
 
-def migrate_conventions(changed: set[Path]) -> list[str]:
-    if not ctx.CONVENTIONS_PATH.is_file():
+def migrate_conventions(changed: set[Path], sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    if not sync.conventions_path.is_file():
         return []
-    before = ctx.CONVENTIONS_PATH.read_text(encoding="utf-8")
+    before = sync.conventions_path.read_text(encoding="utf-8")
     after = _migrate_conventions_text(before)
     if after != before:
-        ctx.CONVENTIONS_PATH.write_text(after, encoding="utf-8")
-        changed.add(ctx.CONVENTIONS_PATH)
-        return [f"{ctx._rel(ctx.CONVENTIONS_PATH)} 已自动迁移原子写约定为 from repo_task.documents import atomic_write_text（保留消费仓自定义内容）"]
+        sync.conventions_path.write_text(after, encoding="utf-8")
+        changed.add(sync.conventions_path)
+        return [f"{sync.rel(sync.conventions_path)} 已自动迁移原子写约定为 from repo_task.documents import atomic_write_text（保留消费仓自定义内容）"]
     return []

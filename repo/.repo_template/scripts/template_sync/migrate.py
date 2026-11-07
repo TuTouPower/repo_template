@@ -22,8 +22,9 @@ from .workflow_migration import force_migrate_workflow_tasks, workflow_migration
 KINDS = ("legacy-state", "workflow-schema", "conventions", "specs-index", "retired-hooks")
 
 
-def _transactional(paths: list[str], action, verify, label: str) -> list[str]:
-    transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
+def _transactional(paths: list[str], action, verify, label: str, sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
     try:
         transaction.begin(paths)
     except ValueError as error:
@@ -49,17 +50,17 @@ def _transactional(paths: list[str], action, verify, label: str) -> list[str]:
     return reports
 
 
-def _resolve_source() -> "Path":
-    state = read_state()
+def _resolve_source(sync) -> "Path":
+    state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无同步来源，无法读取模板 schema")
-    src = resolve_src(state)
-    assert_not_self(src)
+    src = resolve_src(state, sync=sync)
+    assert_not_self(src, sync=sync)
     return src
 
 
-def _migrate_workflow(src: "Path") -> list[str]:
-    migrations, worktrees, errors = workflow_migration_status(src)
+def _migrate_workflow(src: "Path", sync) -> list[str]:
+    migrations, worktrees, errors = workflow_migration_status(src, sync=sync)
     blockers = list(errors)
     if worktrees:
         blockers.extend(f"已登记 task worktree {branch} @ {root}" for root, branch in worktrees)
@@ -71,43 +72,47 @@ def _migrate_workflow(src: "Path") -> list[str]:
     return _transactional(
         ["docs/tasks", "docs/archive/tasks"],
         lambda changed: force_migrate_workflow_tasks(
-            changed, template_template_dir=template_dir
+            changed, template_template_dir=template_dir, sync=sync
         ),
-        lambda: [path for path in workflow_migration_status(src)[0]],
+        lambda: [path for path in workflow_migration_status(src, sync=sync)[0]],
         "workflow schema",
+        sync=sync,
     )
 
 
-def _migrate_conventions() -> list[str]:
-    if not conventions_migration_status():
+def _migrate_conventions(sync) -> list[str]:
+    if not conventions_migration_status(sync=sync):
         return []
     return _transactional(
         ["docs/blueprint/conventions.md"],
         migrate_conventions,
-        lambda: conventions_migration_status(),
+        lambda: conventions_migration_status(sync=sync),
         "conventions 原子写约定",
+        sync=sync,
     )
 
 
-def _migrate_specs_index() -> list[str]:
-    if not specs_index_migration_status():
+def _migrate_specs_index(sync) -> list[str]:
+    if not specs_index_migration_status(sync=sync):
         return []
     return _transactional(
         ["docs/specs_index.md"],
         migrate_specs_index,
-        lambda: specs_index_migration_status() + specs_index_report(),
+        lambda: specs_index_migration_status(sync=sync) + specs_index_report(sync=sync),
         "specs_index schema",
+        sync=sync,
     )
 
 
-def _migrate_retired_hooks() -> list[str]:
-    if not retired_hooks_status():
+def _migrate_retired_hooks(sync) -> list[str]:
+    if not retired_hooks_status(sync=sync):
         return []
     return _transactional(
         [".claude/hooks/merge_guard.py", ".claude/settings.json"],
-        lambda _changed: migrate_retired_hooks(),
-        retired_hooks_status,
+        lambda _changed: migrate_retired_hooks(sync=sync),
+        lambda: retired_hooks_status(sync=sync),
         "退役 hooks 清理",
+        sync=sync,
     )
 
 
@@ -121,14 +126,15 @@ _STEPS = {
 
 def cmd_migrate(args: argparse.Namespace) -> int:
     """执行显式迁移；`all` 按固定顺序逐项执行，宁可停下也不猜测数据。"""
+    sync = getattr(args, "sync", None) or ctx.current_sync()
     if args.kind == "legacy-state":
-        return state_migrate(argparse.Namespace(kind="legacy-state"))
+        return state_migrate(argparse.Namespace(kind="legacy-state", sync=sync))
     kinds = KINDS[1:] if args.kind == "all" else (args.kind,)
     for kind in kinds:
         step = _STEPS.get(kind)
         if step is None:
             raise ctx.SyncError(f"未知迁移目标：{kind}")
-        reports = step(_resolve_source()) if kind == "workflow-schema" else step()
+        reports = step(_resolve_source(sync), sync) if kind == "workflow-schema" else step(sync)
         if not reports:
             print(f"{kind}: 已是当前格式，无需迁移")
             continue

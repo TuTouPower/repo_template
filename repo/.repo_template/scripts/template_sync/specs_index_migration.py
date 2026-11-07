@@ -50,19 +50,21 @@ def _migrate_specs_index_text(text: str) -> str | None:
     return result if result != text else None
 
 
-def specs_index_migration_status() -> list[str]:
-    path = ctx.CONSUMER / SPECS_INDEX_REL
+def specs_index_migration_status(sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    path = sync.consumer / SPECS_INDEX_REL
     if not path.is_file():
         return []
     before = path.read_text(encoding="utf-8")
     after = _migrate_specs_index_text(before)
     if after is not None and after != before:
-        return [ctx._rel(path)]
+        return [sync.rel(path)]
     return []
 
 
-def migrate_specs_index(changed: set[Path]) -> list[str]:
-    path = ctx.CONSUMER / SPECS_INDEX_REL
+def migrate_specs_index(changed: set[Path], sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    path = sync.consumer / SPECS_INDEX_REL
     if not path.is_file():
         return []
     before = path.read_text(encoding="utf-8")
@@ -71,8 +73,9 @@ def migrate_specs_index(changed: set[Path]) -> list[str]:
         return []
     path.write_text(after, encoding="utf-8")
     changed.add(path)
-    return [f"{ctx._rel(path)} 已迁移 specs_index 旧说明句/无数据 supersedes 列（保留其余内容）"]
+    return [f"{sync.rel(path)} 已迁移 specs_index 旧说明句/无数据 supersedes 列（保留其余内容）"]
 
 
-def specs_index_report() -> list[str]:
-    return specs_index_errors(ctx.CONSUMER)
+def specs_index_report(sync=None) -> list[str]:
+    sync = sync or ctx.current_sync()
+    return specs_index_errors(sync.consumer)

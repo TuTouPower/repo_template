@@ -11,21 +11,22 @@ from .common import _load_json_object, _now_iso, consumer_locked
 from .source import source_identity
 
 
-def legacy_state_path():
-    return ctx.CONSUMER / ".agents/skills/repo-template-sync/sync_state.json"
+def legacy_state_path(sync=None):
+    return (sync or ctx.current_sync()).legacy_state_path()
 
 
-def read_state() -> dict | None:
+def read_state(sync=None) -> dict | None:
     """只读当前本地 state；旧布局 state 必须经 `migrate legacy-state` 显式迁移。"""
-    path = ctx.STATE_PATH
-    data = _load_json_object(path, f"状态文件 {ctx._rel(path)}") if path.exists() else None
-    manifest = ctx.CONSUMER / ".repo_template/sync_manifest.json"
+    sync = sync or ctx.current_sync()
+    path = sync.state_path
+    data = _load_json_object(path, f"状态文件 {sync.rel(path)}") if path.exists() else None
+    manifest = sync.consumer / ".repo_template/sync_manifest.json"
     if data is None and manifest.exists():
-        portable = _load_json_object(manifest, f"清单文件 {ctx._rel(manifest)}")
+        portable = _load_json_object(manifest, f"清单文件 {sync.rel(manifest)}")
         resolved = portable.get("resolved_commit")
         if not isinstance(resolved, str) or not resolved.strip():
             raise ctx.SyncError(
-                f"清单文件 {ctx._rel(manifest)} 缺 resolved_commit；"
+                f"清单文件 {sync.rel(manifest)} 缺 resolved_commit；"
                 "请修复或重新运行 init --source <path|url>"
             )
         data = {"last_synced_commit": resolved, "user_prompts": []}
@@ -40,25 +41,26 @@ def read_state() -> dict | None:
             # 覆盖值是临时的：持久化 state 里本来就没有来源，prompt 不得把它写盘。
             data["_ephemeral_source"] = True
         data["template_source"] = source_identity(ctx.SOURCE_OVERRIDE)
-    policy = ctx.CONSUMER / ".repo_template/sync_policy.json"
+    policy = sync.consumer / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
-        policy_data = _load_json_object(policy, f"策略文件 {ctx._rel(policy)}")
+        policy_data = _load_json_object(policy, f"策略文件 {sync.rel(policy)}")
         prompts = policy_data.get("user_prompts", [])
         if not isinstance(prompts, list):
-            raise ctx.SyncError(f"策略文件 {ctx._rel(policy)} 的 user_prompts 必须是数组")
+            raise ctx.SyncError(f"策略文件 {sync.rel(policy)} 的 user_prompts 必须是数组")
         data["_shared_user_prompts"] = prompts
     return data
 
 
-def write_state(data: dict) -> None:
+def write_state(data: dict, sync=None) -> None:
     from repo_task.documents import atomic_write_text
-    ctx.STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    sync = sync or ctx.current_sync()
+    sync.state_path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(
         {key: value for key, value in data.items() if not key.startswith("_")},
         ensure_ascii=False,
         indent=2,
     ) + "\n"
-    atomic_write_text(ctx.STATE_PATH, text)
+    atomic_write_text(sync.state_path, text)
 
 
 def active_prompts(state: dict | None) -> list[dict]:
@@ -107,16 +109,17 @@ def _merge_legacy_state(data: dict, legacy: dict) -> list[str]:
 
 @consumer_locked
 def cmd_init(args: argparse.Namespace) -> int:
+    sync = getattr(args, "sync", None) or ctx.current_sync()
     if not args.source:
         raise ctx.SyncError("init 需要 --source <path|url>")
-    legacy = legacy_state_path()
-    if not ctx.STATE_PATH.exists() and legacy.exists():
+    legacy = legacy_state_path(sync)
+    if not sync.state_path.exists() and legacy.exists():
         raise ctx.SyncError(
-            f"检测到旧布局 state：{ctx._rel(legacy)}；普通 init 不再隐式合并。"
+            f"检测到旧布局 state：{sync.rel(legacy)}；普通 init 不再隐式合并。"
             "先运行 `python3 .repo_template/scripts/repo_sync.py migrate legacy-state`"
         )
     identity = source_identity(args.source)
-    data = read_state() or {
+    data = read_state(sync) or {
         "template_source": None,
         "last_synced_commit": None,
         "last_synced_at": None,
@@ -124,7 +127,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     }
     data["template_source"] = identity
     kind = data["template_source"]["kind"]
-    write_state(data)
+    write_state(data, sync)
     print(f"template_source 已写：kind={kind}, value={data['template_source']['value']}")
     return 0
 
@@ -132,35 +135,36 @@ def cmd_init(args: argparse.Namespace) -> int:
 @consumer_locked
 def cmd_migrate(args: argparse.Namespace) -> int:
     """显式迁移入口：把旧布局数据一次性收敛到当前格式。"""
+    sync = getattr(args, "sync", None) or ctx.current_sync()
     if args.kind != "legacy-state":
         raise ctx.SyncError(f"未知迁移目标：{args.kind}")
-    legacy = legacy_state_path()
+    legacy = legacy_state_path(sync)
     if not legacy.exists():
-        raise ctx.SyncError(f"未找到旧布局 state：{ctx._rel(legacy)}")
+        raise ctx.SyncError(f"未找到旧布局 state：{sync.rel(legacy)}")
     try:
         legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ctx.SyncError(
-            f"旧布局 state 无法解析，保留原文件不删除：{ctx._rel(legacy)}（{error}）"
+            f"旧布局 state 无法解析，保留原文件不删除：{sync.rel(legacy)}（{error}）"
         ) from error
     if not isinstance(legacy_data, dict):
-        raise ctx.SyncError(f"旧布局 state 顶层不是对象，保留原文件：{ctx._rel(legacy)}")
-    data = read_state() or {
+        raise ctx.SyncError(f"旧布局 state 顶层不是对象，保留原文件：{sync.rel(legacy)}")
+    data = read_state(sync) or {
         "template_source": None,
         "last_synced_commit": None,
         "last_synced_at": None,
         "user_prompts": [],
     }
     merged = _merge_legacy_state(data, legacy_data)
-    write_state(data)
+    write_state(data, sync)
     try:
         legacy.unlink()
     except OSError as error:
         raise ctx.SyncError(
-            f"state 已迁移，但旧文件删除失败：{ctx._rel(legacy)}（{error}）；请人工删除"
+            f"state 已迁移，但旧文件删除失败：{sync.rel(legacy)}（{error}）；请人工删除"
         ) from error
     print(
-        f"已迁移旧布局 state：{ctx._rel(legacy)} → {ctx._rel(ctx.STATE_PATH)}"
+        f"已迁移旧布局 state：{sync.rel(legacy)} → {sync.rel(sync.state_path)}"
         + (f"；并入字段 {', '.join(sorted(set(merged)))}" if merged else "")
     )
     return 0
@@ -168,7 +172,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
 @consumer_locked
 def cmd_prompt(args: argparse.Namespace) -> int:
-    state = read_state()
+    sync = getattr(args, "sync", None) or ctx.current_sync()
+    state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")
     if state.pop("_ephemeral_source", False):
@@ -177,7 +182,7 @@ def cmd_prompt(args: argparse.Namespace) -> int:
             "--source 仅为本次覆盖，不写入 state"
         )
     shared = getattr(args, "scope", "local") == "shared"
-    policy_path = ctx.CONSUMER / ".repo_template/sync_policy.json"
+    policy_path = sync.consumer / ".repo_template/sync_policy.json"
     data = (json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.exists() else {"version": 1, "user_prompts": []}) if shared else state
     def persist():
         if shared:
@@ -186,7 +191,7 @@ def cmd_prompt(args: argparse.Namespace) -> int:
         else:
             if "_original_template_source" in data:
                 data["template_source"] = data.pop("_original_template_source")
-            write_state(data)
+            write_state(data, sync)
     if args.action == "list":
         for i, p in enumerate(data.get("user_prompts", [])):
             rev = " [revoked]" if p.get("revoked") else ""
