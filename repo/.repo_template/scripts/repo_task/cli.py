@@ -21,6 +21,7 @@ from .goal import cmd_goal, cmd_goal_check
 from .recovery import cmd_recovery, cmd_ledger_import
 from .graph import cmd_merge_backlog, cmd_graph_transaction
 from .plan import cmd_plan
+from .review_status import cmd_review_status
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
     cmd_add,
@@ -101,6 +102,13 @@ def main():
     preflight.add_argument("--require-verified", action="store_true")
     preflight.add_argument("--owner-id", help="当前会话执行权，须与 ledger claim 一致")
     preflight.set_defaults(func=cmd_preflight)
+
+    review_status = sub.add_parser(
+        "review-status",
+        help="读 review 报告与处置表输出 verdict/证据完整性/回归轮次（与 finish/integrate 同源）",
+    )
+    review_status.add_argument("--task-dir", required=True)
+    review_status.set_defaults(func=cmd_review_status)
 
     limits = sub.add_parser("limits", help="增加 active task 的 review/verify 绝对上限")
     limits.add_argument("tid")

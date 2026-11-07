@@ -31,5 +31,5 @@
 ## 路径隐私
 
 - 已跟踪的非归档文本文件（含 `docs/tasks/{tid}_{slug}/` 下的 `review_*.md`、`progress.md`、`task.md` 及 `src/`、根目录文本等全部已跟踪内容）禁止出现开发者家目录绝对路径（macOS/Linux 用户家目录、Windows `C:\Users\<dev>` 与 Linux root 家目录及其子路径）；统一使用仓库相对路径或 `<worktree>` 占位符。
-- 公共扫描入口：`from repo_task.privacy import find_developer_path_leaks, scan_git_index_privacy, scan_git_tree_privacy`。`check_review_status.py`/`task.py finish` 扫描 index 全量与提交后 HEAD 快照，`.repo_template/hooks/pre-commit` 扫描 index 全量；三处结论一致且 fail-closed。
+- 公共扫描入口：`from repo_task.privacy import find_developer_path_leaks, scan_git_index_privacy, scan_git_tree_privacy`。`task.py review-status`/`task.py finish` 扫描 index 全量与提交后 HEAD 快照，`.repo_template/hooks/pre-commit` 扫描 index 全量；三处结论一致且 fail-closed。
 - 非个人环境的固定路径需求只能在 `repo_task/privacy.py` 的 `FIXED_PATH_EXCEPTIONS` 中显式列出有环境依据的完整路径，不为用户名或容器身份开全局豁免。

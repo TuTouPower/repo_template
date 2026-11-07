@@ -646,7 +646,7 @@ def test_porcelain_entries_fails_closed_on_git_error(git_repo, monkeypatch):
 
 def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
     """RT-002：未跟踪文件（未 git add -N）加入后 scope 指纹必须变，防静默绕过 review 门禁。"""
-    import check_review_status as crs
+    from repo_task import review_status as crs
 
     monkeypatch.setattr(crs, "REPO_ROOT", git_repo)
     anchor = _git(git_repo, "rev-parse", "HEAD").stdout.strip()

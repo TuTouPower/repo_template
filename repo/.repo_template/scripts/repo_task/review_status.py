@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
-"""check_review_status.py - 读 review 报告与处置表，输出 verdict、证据完整性与回归轮次（review 处置用）。
+"""review 状态门禁：读 review 报告与处置表，输出 verdict、证据完整性与回归轮次。
 
-用法：
-  python3 .repo_template/scripts/check_review_status.py --task-dir docs/tasks/t001_foo
-  python3 .repo_template/scripts/check_review_status.py --task-dir docs/tasks/t001_foo --max-review-round 3
+由 `task.py review-status --task-dir <task_dir>` 调用，与 `finish` / `integrate`
+共用同一 `repo_task.review` 评估器与持久化 limits。
 
 按 front matter 的 review_level 自动选报告文件：
   full   → review_code.md + review_test.md（两轴）
@@ -16,11 +14,11 @@
   general_verdict=PASS|FAIL|MISSING    # single 才有
   overall=PASS|FAIL|INCOMPLETE
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
-  max_review_round=N      # 来自 progress.md review_limit；旧 task 默认 5
+  max_review_round=N      # 来自 progress.md review_limit
   max_verify_round=N      # 来自 progress.md verify_limit
   next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_ac_review|sanitize_review_paths|complete_disposition
-  review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
-  ac_review=ok|void|incomplete|no_spec        # 每份报告最后一轮「AC 复验方式」小节的门禁状态
+  review_scope=ok|stale|missing|format_error  # 指纹比对状态
+  ac_review=ok|void|incomplete|no_spec        # 每份报告最后一轮「AC 复验方式」小节门禁状态
   ac_review_detail=...                        # void / incomplete 的具体原因（逐份报告）
   privacy_review=ok|leak                      # 报告是否泄漏开发者家目录绝对路径
   privacy_review_detail=...                   # leak 时的具体文件、行号与路径片段
@@ -29,7 +27,7 @@ AC 复验门禁：每份应有报告最后一轮须逐条列出 task.md 全部 A
   - 全部 TICK-VALID、行集合与 task.md 的 AC 编号一致、task.md 全部已打勾 → 不影响 verdict
   - 任一行 TICK-VOID → overall=FAIL（即使 verdict 写 PASS）
   - 缺小节 / 缺行 / 多出未知 AC / 重复 / 格式无法解析 / task.md 有未打勾 AC 标了 TICK-VALID
-    → PASS 降为 INCOMPLETE，next_action=complete_ac_review（由 reviewer 补全 AC 复验方式）
+    → PASS 降为 INCOMPLETE，next_action=complete_ac_review
   - no_spec：目录里没有 task.md，无法比对 AC 集合，只拦 TICK-VOID、缺小节与格式错误
 """
 
@@ -41,19 +39,20 @@ from pathlib import Path
 
 from repo_task.context import PROGRESS_FILE, TaskDataError
 from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 from repo_task.review import (
-    ReviewDataError, read, visible_markdown_lines, extract_verdicts, parse_front_matter, regression_rounds, extract_h2_lines, table_cells, is_separator_row, disposition_stats, disposed_findings, reported_findings, reviewed_scope, reviewed_scope_hint,
-    VALID_REVIEW_LEVELS, evaluate_review, review_limits,
+    ReviewDataError,
+    VALID_REVIEW_LEVELS,
+    evaluate_review,
+    parse_front_matter,
+    review_limits,
 )
 
-def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
-    """当前被审 diff 指纹；委托 monitoring.review_scope_fingerprint（单一真相源）。
+# 与 repo_task.context 的仓库根保持一致；测试可替换本模块属性隔离真实仓库。
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
-    缺 diff_anchor 返回 None；git 失败返回 None 并打印 WARNING（F39），
-    与「无 diff_anchor」区分。
-    """
+
+def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
+    """当前被审 diff 指纹；缺 diff_anchor 或 git 失败返回 None（不可验证）。"""
     if not diff_anchor:
         return None
     try:
@@ -89,33 +88,34 @@ def resolve_task_dir(value: str) -> Path:
     return candidate
 
 
-def main():
-    p = argparse.ArgumentParser(
-        description="读 review 报告与处置表输出 verdict / 回归轮次 / 撤回率",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    p.add_argument("--task-dir", required=True)
-    p.add_argument("--max-review-round", type=int, help="只读兼容参数；不能提高已持久化上限")
-    args = p.parse_args()
+def run_review_status(task_dir: str) -> tuple[dict, dict[str, int]]:
+    """评估指定 task 目录，返回 (评估结果, 持久化 limits)。"""
+    resolved = resolve_task_dir(task_dir)
+    fm = parse_front_matter(resolved / PROGRESS_FILE)
+    if fm.get("review_level", "full") not in VALID_REVIEW_LEVELS:
+        raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
+    limits = review_limits(fm)
+    scope = current_scope_fingerprint(resolved, fm.get("diff_anchor", ""))
+    return evaluate_review(resolved, fm, scope), limits
+
+
+def cmd_review_status(args: argparse.Namespace) -> None:
     try:
-        if args.max_review_round is not None and args.max_review_round < 1:
-            raise ReviewDataError("max-review-round must be at least 1")
-        task_dir = resolve_task_dir(args.task_dir)
-        fm = parse_front_matter(task_dir / PROGRESS_FILE)
-        if fm.get("review_level", "full") not in VALID_REVIEW_LEVELS:
-            raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
-        limits = review_limits(fm)
-        if args.max_review_round is not None and args.max_review_round > limits["review_limit"]:
-            raise ReviewDataError("先经 task.py limits --review 持久化用户批准的上限")
-        result = evaluate_review(task_dir, fm, current_scope_fingerprint(task_dir, fm.get("diff_anchor", "")))
-    except (ReviewDataError, TaskDataError, OSError) as e:
-        p.error(str(e))
+        result, limits = run_review_status(args.task_dir)
+    except (ReviewDataError, TaskDataError, OSError) as error:
+        print(f"review-status=FAIL：{error}", file=sys.stderr)
+        sys.exit(1)
     for key, value in result.items():
         if value != "":
             print(f"{key}={value}")
-    print(f"max_review_round={args.max_review_round or limits['review_limit']}")
+    print(f"max_review_round={limits['review_limit']}")
     print(f"max_verify_round={limits['verify_limit']}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="review 状态门禁（与 finish/integrate 同源）")
+    parser.add_argument("--task-dir", required=True)
+    cmd_review_status(parser.parse_args(argv))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""check_review_status.py 测试。"""
+"""task.py review-status 门禁测试。"""
 import sys
 from pathlib import Path
 
@@ -7,15 +7,19 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import check_review_status as crs
-from repo_task.review import AC_ROW_RE
-from review_support import ac_review_section
-from check_review_status import (
+from repo_task import review_status as crs
+from repo_task.review import (
+    AC_ROW_RE,
     ReviewDataError,
     disposition_stats,
     extract_verdicts,
+    parse_front_matter,
     regression_rounds,
+    reported_findings,
+    reviewed_scope,
+    reviewed_scope_hint,
 )
+from review_support import ac_review_section
 
 pytestmark = pytest.mark.contract
 
@@ -75,7 +79,7 @@ def test_extract_verdicts_info_string_fence_is_content_not_close(tmp_path):
         encoding="utf-8",
     )
     assert extract_verdicts(p) == ["PASS"]
-    assert crs.reviewed_scope(p) == "0123456789abcdef"
+    assert reviewed_scope(p) == "0123456789abcdef"
 
 
 def test_reviewed_scope_ignores_fenced_example(tmp_path):
@@ -87,7 +91,7 @@ def test_reviewed_scope_ignores_fenced_example(tmp_path):
         "```markdown\nreviewed_scope: ffffffffffffffff\n```\n",
         encoding="utf-8",
     )
-    assert crs.reviewed_scope(p) == "0123456789abcdef"
+    assert reviewed_scope(p) == "0123456789abcdef"
 
 
 def test_reviewed_scope_hint_ignores_fenced_only_mention(tmp_path):
@@ -96,8 +100,8 @@ def test_reviewed_scope_hint_ignores_fenced_only_mention(tmp_path):
         "```markdown\nreviewed_scope: not-hex\n```\nverdict: PASS\n",
         encoding="utf-8",
     )
-    assert crs.reviewed_scope(p) is None
-    assert crs.reviewed_scope_hint(p) is False
+    assert reviewed_scope(p) is None
+    assert reviewed_scope_hint(p) is False
 
 
 # --- regression_rounds ---
@@ -277,26 +281,11 @@ def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     with pytest.raises(SystemExit) as exc:
         crs.main()
-    assert exc.value.code == 2
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "check_review_status.py",
-            "--task-dir",
-            str(task_dir),
-            "--max-review-round",
-            "0",
-        ],
-    )
-    with pytest.raises(SystemExit) as exc:
-        crs.main()
-    assert exc.value.code == 2
+    assert exc.value.code == 1
 
 
 def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
@@ -304,11 +293,11 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["check_review_status.py", "--task-dir", "docs/tasks/missing"],
+        ["task.py", "--task-dir", "docs/tasks/missing"],
     )
     with pytest.raises(SystemExit) as exc:
         crs.main()
-    assert exc.value.code == 2
+    assert exc.value.code == 1
 
 
 def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
@@ -332,7 +321,7 @@ def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -353,7 +342,7 @@ def test_main_reports_missing_disposition_for_heading_findings(tmp_path, monkeyp
     )
     monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args: SCOPE)
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -373,7 +362,7 @@ def test_disposition_legacy_requires_fix_ref(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ReviewDataError, match="fix_ref"):
-        crs.disposition_stats(p)
+        disposition_stats(p)
 
 
 def test_disposition_legacy_rejects_free_text_fix_ref(tmp_path):
@@ -387,7 +376,7 @@ def test_disposition_legacy_rejects_free_text_fix_ref(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ReviewDataError, match="fix_ref 非法"):
-        crs.disposition_stats(p)
+        disposition_stats(p)
 
 
 def test_disposition_legacy_requires_fix_ref_column(tmp_path):
@@ -400,7 +389,7 @@ def test_disposition_legacy_requires_fix_ref_column(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ReviewDataError, match="fix_ref 列"):
-        crs.disposition_stats(p)
+        disposition_stats(p)
 
 
 def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys):
@@ -422,7 +411,7 @@ def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys)
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -440,7 +429,7 @@ def test_reported_findings_ignores_foreign_task(tmp_path):
         "| t099_code_f001 | 历史引用 |\n",
         encoding="utf-8",
     )
-    assert crs.reported_findings("t001", p) == {"t001_gen_f001"}
+    assert reported_findings("t001", p) == {"t001_gen_f001"}
 
 
 def test_reported_findings_accepts_heading_format(tmp_path):
@@ -460,7 +449,7 @@ def test_reported_findings_accepts_heading_format(tmp_path):
         "| t001_gen_f007 | minor |\n",
         encoding="utf-8",
     )
-    assert crs.reported_findings("t001", p) == {
+    assert reported_findings("t001", p) == {
         "t001_gen_f001", "t001_gen_f002", "t001_gen_f005", "t001_gen_f007",
     }
 
@@ -498,7 +487,7 @@ def test_main_pass_requires_matching_scope(tmp_path, monkeypatch, capsys):
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -515,7 +504,7 @@ def test_main_pass_stale_scope_fails(tmp_path, monkeypatch, capsys):
         crs, "current_scope_fingerprint", lambda task_dir, anchor: "0" * 16
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -530,7 +519,7 @@ def test_main_pass_missing_scope_fails(tmp_path, monkeypatch, capsys):
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -547,7 +536,7 @@ def test_main_scope_tolerates_backtick_wrapped(tmp_path, monkeypatch, capsys):
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -567,7 +556,7 @@ def test_main_scope_tolerates_bold_and_list_prefix(
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -583,7 +572,7 @@ def test_main_scope_reports_format_error(tmp_path, monkeypatch, capsys):
         crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
     )
     monkeypatch.setattr(
-        sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)]
+        sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
     crs.main()
     out = capsys.readouterr().out
@@ -596,16 +585,12 @@ def test_checker_reads_persisted_budget_and_refuses_implicit_raise(tmp_path, mon
     path = task_dir / 'progress.md'
     path.write_text(path.read_text().replace('review_level: single', 'review_level: single\nreview_limit: 8\nverify_limit: 7'))
     monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: SCOPE)
-    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir)])
+    monkeypatch.setattr(sys, 'argv', ['task.py', '--task-dir', str(task_dir)])
     crs.main()
     out = capsys.readouterr().out
     assert 'max_review_round=8' in out
     assert 'max_verify_round=7' in out
     assert 'next_action=finalize' in out
-    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir), '--max-review-round', '9'])
-    with pytest.raises(SystemExit) as exc:
-        crs.main()
-    assert exc.value.code == 2
 
 
 @pytest.mark.parametrize('defect,action', [
@@ -620,7 +605,7 @@ def test_incomplete_has_explicit_recovery_action(tmp_path, monkeypatch, capsys, 
     elif defect == 'missing_disposition':
         report.write_text(report.read_text() + '\n|t001_gen_f001|important|bug|\n')
     monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: '0' * 16 if defect == 'stale' else SCOPE)
-    monkeypatch.setattr(sys, 'argv', ['check_review_status.py', '--task-dir', str(task_dir)])
+    monkeypatch.setattr(sys, 'argv', ['task.py', '--task-dir', str(task_dir)])
     crs.main()
     out = capsys.readouterr().out
     assert 'overall=INCOMPLETE' in out
@@ -666,7 +651,7 @@ def _ac_task(tmp_path, monkeypatch, reports, spec=SPEC_TICKED, level="single"):
 
 
 def _check(task_dir, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["check_review_status.py", "--task-dir", str(task_dir)])
+    monkeypatch.setattr(sys, "argv", ["task.py", "--task-dir", str(task_dir)])
     crs.main()
     return dict(
         line.split("=", 1) for line in capsys.readouterr().out.splitlines() if "=" in line
@@ -984,8 +969,8 @@ def test_privacy_gate_detects_bare_and_subpath_home_tokens(
 def test_review_parse_front_matter_raises_on_missing_or_corrupt_file(tmp_path):
     """A05：review.parse_front_matter 不再把缺失或损坏元数据降级为 {}。"""
     with pytest.raises(ReviewDataError):
-        crs.parse_front_matter(tmp_path / "missing.md")
+        parse_front_matter(tmp_path / "missing.md")
     bad = tmp_path / "corrupt.md"
     bad.write_text("---\ntid: t001\ntid: t001\n---\n", encoding="utf-8")
     with pytest.raises(ReviewDataError, match="front matter 重复键"):
-        crs.parse_front_matter(bad)
+        parse_front_matter(bad)

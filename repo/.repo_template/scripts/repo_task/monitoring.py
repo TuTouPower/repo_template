@@ -45,7 +45,7 @@ def _hash_part(digest, label: bytes, value: bytes) -> None:
 
 # review prompt 渲染输出文件名（按 review_level）：render_review_prompts 的输出 dict key
 # 同源于此（单一真相源）。产物经 --out-dir 落 task 目录后是 untracked 文件，若不入指纹
-# 排除列表会参与重算 → check_review_status 误判 review_scope=stale；本常量防两处漂移。
+# 排除列表会参与重算 → review-status 误判 review_scope=stale；本常量防两处漂移。
 REVIEW_PROMPT_OUTPUT_FILES = {
     "full": ("code_review_prompt.md", "test_review_prompt.md"),
     "single": ("general_review_prompt.md",),

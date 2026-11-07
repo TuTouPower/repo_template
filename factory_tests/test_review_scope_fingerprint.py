@@ -1,7 +1,7 @@
 """review_scope_fingerprint（repo_task.monitoring）集成测试。
 
 防回归：render_review_prompts 的产物（code/test/general_review_prompt.md）经 --out-dir
-落 task 目录后是 untracked 文件，若未进指纹排除列表会参与重算，check_review_status 随之
+落 task 目录后是 untracked 文件，若未进指纹排除列表会参与重算，review-status 门禁随之
 误判 review_scope=stale。真实 git 仓库，不 stub 指纹函数，直接触达 monitoring 哈希逻辑。
 """
 import subprocess

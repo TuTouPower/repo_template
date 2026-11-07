@@ -70,7 +70,13 @@ def cmd_add(args):
             "conflicts_with": "",
             "note": args.note or "",
         })
-        fm.pop("schedule_status", None)
+        stale_fields = sorted(set(fm) - set(ctx.FRONT_MATTER_KEYS))
+        if stale_fields:
+            shutil.rmtree(task_dir, ignore_errors=True)
+            sys.exit(
+                f"模板 front matter 含当前契约外字段：{', '.join(stale_fields)}；"
+                "请先更新 .repo_template/docs/task_template/，旧字段只能经显式迁移处理"
+            )
         write_front_matter(note_md, fm, body)
         try:
             rebuild_index()

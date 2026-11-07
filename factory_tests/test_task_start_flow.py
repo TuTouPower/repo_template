@@ -263,6 +263,24 @@ def test_add_rejects_invalid_template_before_copy(git_repo):
     assert not (git_repo / "docs/tasks/t004_delta").exists()
 
 
+def test_add_rejects_template_with_stale_front_matter_field_before_copy(git_repo):
+    """A13：模板含当前契约外字段（如已删除的 schedule_status）时在建目录前失败，不静默清除。"""
+    template_task = git_repo / ".repo_template/docs/task_template/progress.md"
+    template_task.write_text(
+        template_task.read_text(encoding="utf-8").replace(
+            'conflicts_with: ""\n', 'conflicts_with: ""\nschedule_status: scheduled\n', 1
+        ),
+        encoding="utf-8",
+    )
+
+    result = _task_cli(git_repo, "add", "--title", "delta", "--slug", "delta")
+
+    assert result.returncode != 0
+    assert "当前契约外字段" in result.stderr
+    assert "schedule_status" in result.stderr
+    assert not (git_repo / "docs/tasks/t004_delta").exists()
+
+
 def test_start_keeps_main_unchanged_and_activates_only_worktree(git_repo):
     initial_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
 

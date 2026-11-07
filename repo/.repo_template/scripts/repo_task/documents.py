@@ -117,7 +117,7 @@ def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
 def parse_front_matter(path: Path) -> tuple[dict, str]:
     """返回 (front matter dict, 正文)。缺失或不合法抛 ctx.TaskDataError。
 
-    本模块是唯一真相源；render_review_prompts.py / check_review_status.py 直接
+    本模块是唯一真相源；render_review_prompts.py / repo_task.review_status 直接
     委托本实现，各自只在 CLI 边界转换错误语义。
     """
     return parse_front_matter_text(
