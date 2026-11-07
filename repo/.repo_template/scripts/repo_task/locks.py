@@ -129,11 +129,20 @@ def validation_environment(repo_root: Path):
     return environment
 
 
+def _repo_from_call(args, kwargs):
+    from . import context as ctx
+
+    repo = kwargs.get("repo")
+    if repo is None and args:
+        repo = getattr(args[0], "repo", None)
+    return repo or ctx.current_context()
+
+
 def control_locked(function):
     """Serialize main control-plane mutations across tasks and template upgrades."""
     @wraps(function)
     def locked(*args, **kwargs):
-        from . import context as ctx
-        with git_common_lock(ctx.REPO_ROOT, CONTROL_LOCK_NAME):
+        repo = _repo_from_call(args, kwargs)
+        with git_common_lock(repo.primary_root, CONTROL_LOCK_NAME):
             return function(*args, **kwargs)
     return locked

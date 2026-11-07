@@ -114,15 +114,18 @@ def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
     body = "\n".join(lines[end + 1:]).lstrip("\n")
     return fm, body
 
-def parse_front_matter(path: Path) -> tuple[dict, str]:
+def parse_front_matter(
+    path: Path, *, repo: "ctx.RepoContext | None" = None,
+) -> tuple[dict, str]:
     """返回 (front matter dict, 正文)。缺失或不合法抛 ctx.TaskDataError。
 
     本模块是唯一真相源；render_review_prompts.py / repo_task.review_status 直接
     委托本实现，各自只在 CLI 边界转换错误语义。
     """
+    repo = repo or ctx.current_context()
     return parse_front_matter_text(
         path.read_text(encoding="utf-8"),
-        source=ctx._rel(path),
+        source=repo.rel(path),
     )
 
 def dump_front_matter(fm: dict) -> str:
@@ -522,6 +525,7 @@ def validate_task_documents(
     require_verified: bool = False,
     allow_template_placeholders: bool = False,
     creation: bool = False,
+    repo: "ctx.RepoContext | None" = None,
 ) -> tuple[list[str], list[str]]:
     """校验 task 创建骨架与未知契约门禁，返回 (阻塞项, 警告项)。"""
     problems, warnings = [], []
@@ -534,7 +538,7 @@ def validate_task_documents(
         )
 
     # 规范块属于严格模板契约；repo-template-sync 负责先强制迁移存量 task。
-    template_spec_path = ctx.TEMPLATE_DIR / "task.md"
+    template_spec_path = (repo or ctx.current_context()).template_dir / "task.md"
     if template_spec_path.is_file():
         template_blocks = _extract_guide_blocks(
             template_spec_path.read_text(encoding="utf-8")

@@ -107,6 +107,11 @@ class RepoContext:
         return fm.get("worktree") or self.worktree_rel(fm["tid"])
 
 
+def current_context() -> "RepoContext":
+    """过渡期默认身份：读取可被测试替换的模块级路径。A15 收尾时删除。"""
+    return RepoContext.for_root(REPO_ROOT)
+
+
 # 过渡期默认上下文：入口（task.py）会构造并显式传递；旧调用点在迁移完成前
 # 仍可省略参数。A15 收尾时删除该默认值与同名模块级路径。
 DEFAULT_CONTEXT = RepoContext.from_code_location(Path(__file__))
