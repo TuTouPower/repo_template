@@ -13,6 +13,7 @@ from test_dispatch_integration import (
     _cleanup, _git, _identity_args, _prepare_done, _read_ledger, _task_cli, _worktree, git_repo,
 )
 from test_finish_atomic import OWNER, _begin
+from review_support import valid_spec
 from task_flow_support import finish_cli, prepare_finish
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.monitoring import review_scope_fingerprint
@@ -441,4 +442,116 @@ def test_single_integrate_rejects_base_not_merged(git_repo):
     assert "不是 HEAD 的祖先" in result.stderr
     assert "先 integrate 前驱" in result.stderr
     assert _git(git_repo, "rev-parse", "--verify", "MERGE_HEAD", check=False).returncode != 0
+
+
+# --------------------------------------------------------------------------
+# A06 / A09：三方解冲突保护定义与正文；materialize 拒绝非普通文件模式
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tamper_kind",
+    ["title", "review_level", "note", "body", "unknown_field"],
+)
+def test_auto_conflict_resolution_preserves_conflict_when_main_edits_definition_or_body(
+    git_repo, tamper_kind
+):
+    """A06：主干修改了 title、review_level、note、未知字段或正文时，拒绝自动覆盖，保留原生冲突。"""
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", identity)
+    note_path = git_repo / ACTIVE / "progress.md"
+    fm, body = parse_front_matter(note_path)
+    if tamper_kind == "title":
+        fm["title"] = "main changed title"
+        write_front_matter(note_path, fm, body)
+    elif tamper_kind == "review_level":
+        fm["review_level"] = "single"
+        write_front_matter(note_path, fm, body)
+    elif tamper_kind == "note":
+        fm["note"] = "main independent note"
+        write_front_matter(note_path, fm, body)
+    elif tamper_kind == "body":
+        write_front_matter(note_path, fm, body.replace("\n无\n", "\n主干独立编辑正文\n", 1))
+    elif tamper_kind == "unknown_field":
+        raw = note_path.read_text(encoding="utf-8")
+        note_path.write_text(raw.replace("---\ntid:", "---\ncustom_ext: '1'\ntid:", 1), encoding="utf-8")
+    _git(git_repo, "add", str(note_path.relative_to(git_repo)))
+    _git(git_repo, "commit", "-m", f"main edit {tamper_kind}")
+
+    prepared = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
+
+    assert prepared.returncode != 0
+    assert "progress.md" in prepared.stderr
+    _git(git_repo, "merge", "--abort")
+
+
+def test_auto_conflict_resolution_accepts_authorized_review_upgrade_and_limits(git_repo):
+    """A06：分支经授权执行 review-upgrade 与 limits 调大时，三方比较认可合法演进。"""
+    from repo_task.integration import _is_pure_backlog_to_done_member_conflict
+
+    first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    added = _task_cli(
+        git_repo, "add", "--title", "delta", "--slug", "delta", "--review-level", "single"
+    )
+    assert added.returncode == 0, added.stderr
+    t004_dir = git_repo / "docs/tasks/t004_delta"
+    (t004_dir / "task.md").write_text(valid_spec(), encoding="utf-8")
+    t004_note = t004_dir / "progress.md"
+    t004_note.write_text(
+        t004_note.read_text(encoding="utf-8") + "\n- specs_index: not_applicable: 测试。\n",
+        encoding="utf-8",
+    )
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "add t004 on main")
+
+    begun = _task_cli(
+        git_repo, "run-begin", "t004", "--owner-id", OWNER, "--base", first_branch
+    )
+    assert begun.returncode == 0, begun.stderr
+    wt4 = _worktree(git_repo, "t004")
+    assert _task_cli(wt4, "review-upgrade", "t004", "--reason", "安全面扩大").returncode == 0
+    assert _task_cli(wt4, "limits", "t004", "--review", "8", "--reason", "用户批准").returncode == 0
+    msg4 = prepare_finish(wt4, "t004", "delta")
+    assert finish_cli(wt4, "t004", OWNER, msg4).returncode == 0
+    assert _task_cli(
+        git_repo, "run-close", "t004", "--owner-id", OWNER, "--result", "done"
+    ).returncode == 0
+
+    assert _is_pure_backlog_to_done_member_conflict(
+        "t004_delta", ["t001_alpha", "t004_delta"], "docs/tasks/t004_delta/progress.md"
+    )
+
+
+def test_materialize_task_dir_rejects_symlink_and_preserves_executable_mode(git_repo):
+    """A09：materialize 保留 100644/100755，遇到 120000 symlink 在零写入前拒绝且不残留 worktree/分支。"""
+    first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    added = _task_cli(git_repo, "add", "--title", "delta", "--slug", "delta")
+    assert added.returncode == 0, added.stderr
+    t004_dir = git_repo / "docs/tasks/t004_delta"
+    (t004_dir / "task.md").write_text(valid_spec(), encoding="utf-8")
+    script = t004_dir / "helper.sh"
+    script.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+    script.chmod(0o755)
+    link = t004_dir / "bad_link"
+    link.symlink_to("task.md")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "add t004 with symlink")
+
+    failed = _task_cli(git_repo, "start", "t004", "--base", first_branch)
+    assert failed.returncode != 0
+    assert "mode=120000" in failed.stderr
+    assert not _worktree(git_repo, "t004").exists()
+    assert not _git(git_repo, "branch", "--list", "t004_delta").stdout.strip()
+
+    # 移除 symlink 后，普通文件与 100755 可执行文件正常物化
+    link.unlink()
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "remove symlink from t004")
+    ok = _task_cli(git_repo, "start", "t004", "--base", first_branch)
+    assert ok.returncode == 0, ok.stderr
+    wt4_script = _worktree(git_repo, "t004") / "docs/tasks/t004_delta/helper.sh"
+    assert wt4_script.is_file() and not wt4_script.is_symlink()
+    assert wt4_script.stat().st_mode & 0o111
 

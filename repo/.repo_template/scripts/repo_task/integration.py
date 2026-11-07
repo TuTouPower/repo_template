@@ -142,6 +142,28 @@ def _dependency_implementations(dep: str) -> list[str]:
     )
 
 
+def _validate_task_dir_tree_modes(ref: str, task_rel: str) -> list[tuple[str, str]]:
+    """校验 ref:task_rel 下的完整 tree 清单，仅允许 100644/100755 普通文件（A09）。"""
+    listing = _git(["ls-tree", "-r", "-z", "--end-of-options", ref, "--", task_rel])
+    if listing.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 {ref}:{task_rel}：{listing.stderr.strip()}")
+    entries: list[tuple[str, str]] = []
+    for item in listing.stdout.split("\0"):
+        if not item:
+            continue
+        meta, rel_path = item.split("\t", 1)
+        mode = meta.split()[0]
+        if mode not in ("100644", "100755"):
+            raise ctx.TaskDataError(
+                f"{ref}:{rel_path} 含不支持的 Git 对象模式 mode={mode}"
+                "（task 目录仅允许 100644/100755 普通文件，拒绝 symlink/gitlink）"
+            )
+        entries.append((mode, rel_path))
+    if not entries:
+        raise ctx.TaskDataError(f"{ref}:{task_rel} 无可物化文件")
+    return entries
+
+
 def _load_validated_start_task(
     tid: str, base_sha: str, effective: dict[str, dict], *, auto_selected: bool = False,
 ) -> tuple[dict, dict, str, str]:
@@ -154,14 +176,14 @@ def _load_validated_start_task(
     """
     try:
         _, base_fm, _ = load_task_at_ref(tid, base_sha)
-    except ctx.TaskDataError:
+    except ctx.TaskNotFoundError:
         base_fm = None
     if base_fm is not None:
         require_status(base_fm, "backlog")
 
     try:
         task, ref_fm, ref_task_body, source_ref = load_task_backlog_baseline(tid, base_sha)
-    except ctx.TaskDataError:
+    except ctx.TaskNotFoundError:
         if tid in effective:
             sys.exit(f"start=FAIL：{tid} 在主干尚未提交；请先提交创建与调度变更后再 start")
         raise
@@ -173,6 +195,10 @@ def _load_validated_start_task(
         ]
         if dirty_in_task:
             sys.exit(f"start=FAIL：{task['dir']} 在主干有未提交改动；请先提交后再 start")
+        try:
+            _validate_task_dir_tree_modes(source_ref, task["dir"])
+        except ctx.TaskDataError as error:
+            sys.exit(f"start=FAIL：{error}")
     spec_path = f"{task['dir']}/task.md"
     try:
         spec_text = git_text_at_ref(source_ref, spec_path)
@@ -195,27 +221,23 @@ def _load_validated_start_task(
 
 
 def _materialize_task_dir_from_ref(ref: str, task_rel: str, worktree: Path) -> None:
-    """将主干 backlog 权威 ref 中的 task 目录完整物化到新创建的 worktree。"""
-    listing = _git(["ls-tree", "-r", "-z", ref, "--", task_rel])
-    if listing.returncode != 0:
-        raise ctx.TaskDataError(f"无法读取 {ref}:{task_rel}：{listing.stderr.strip()}")
+    """将主干 backlog 权威 ref 中的 task 目录完整物化到新创建的 worktree（A09）。"""
+    entries = _validate_task_dir_tree_modes(ref, task_rel)
+    blobs: list[tuple[str, str, bytes]] = []
+    for mode, rel_path in entries:
+        blob = _git_bytes(["show", f"{ref}:{rel_path}"])
+        if blob.returncode != 0:
+            raise ctx.TaskDataError(f"无法读取 {ref}:{rel_path}")
+        blobs.append((mode, rel_path, blob.stdout))
     target_dir = worktree / task_rel
     if target_dir.exists():
         shutil.rmtree(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    for item in listing.stdout.split("\0"):
-        if not item:
-            continue
-        meta, rel_path = item.split("\t", 1)
-        mode = meta.split()[0]
-        blob = _git_bytes(["show", f"{ref}:{rel_path}"])
-        if blob.returncode != 0:
-            raise ctx.TaskDataError(f"无法读取 {ref}:{rel_path}")
+    for mode, rel_path, content in blobs:
         dest = worktree / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(blob.stdout)
-        if mode == "100755":
-            dest.chmod(0o755)
+        dest.write_bytes(content)
+        dest.chmod(0o755 if mode == "100755" else 0o644)
 
 
 @control_locked
@@ -618,7 +640,17 @@ def _normalize_spec_checkboxes(text: str) -> str:
 def _is_pure_backlog_to_done_member_conflict(
     branch: str, names: list[str], path: str,
 ) -> bool:
-    """判断 merge 冲突是否仅源于「主干保留 backlog 初态，而分支已演进为验证通过的 done 终态」。"""
+    """三方比较判断 merge 冲突是否仅源于「主干保留 backlog 初态，分支合法演进为 done 终态」（A06）。
+
+    保护规则：
+    1. 存在任何未知 front matter 字段时拒绝自动消解；
+    2. 定义字段（tid, slug, title, depends_on, conflicts_with）在主干与分支必须完全相等；
+    3. review_level 仅允许相等，或分支经授权 single -> full（note 含升级证据且主干未相对 merge-base 改写）；
+    4. review_limit / verify_limit 仅允许相等，或分支经授权调大（note 含 budget 证据且主干未相对 merge-base 改写）；
+    5. 主干 note 若非空，必须是分支 note 的精确值或 `; ` 前缀；且主干未相对 merge-base 独立改写 note；
+    6. progress.md 正文：若 merge-base 存在该文件，主干正文必须等于 merge-base 正文（无主干独立正文修改）；
+       若 merge-base 不存在该文件（分叉后主干新建），主干非占位正文行必须全部保留在分支正文中。
+    """
     matched_name = next(
         (name for name in names if path.startswith(f"docs/tasks/{name}/")),
         None,
@@ -630,23 +662,82 @@ def _is_pure_backlog_to_done_member_conflict(
         return False
     progress_path = f"docs/tasks/{matched_name}/{ctx.PROGRESS_FILE}"
     try:
-        head_fm, _ = parse_front_matter_text(
+        head_fm, head_body = parse_front_matter_text(
             git_text_at_ref("HEAD", progress_path), source=f"HEAD:{progress_path}"
         )
-        branch_fm, _ = parse_front_matter_text(
+        branch_fm, branch_body = parse_front_matter_text(
             git_text_at_ref(branch, progress_path), source=f"{branch}:{progress_path}"
         )
     except ctx.TaskDataError:
         return False
     if head_fm.get("status") != "backlog" or branch_fm.get("status") not in ctx.ARCHIVED_STATUSES:
         return False
+    if (set(head_fm.keys()) | set(branch_fm.keys())) - set(ctx.FRONT_MATTER_KEYS):
+        return False
+    if any(head_fm.get(key, "") != "" for key in ("branch", "worktree", "diff_anchor")):
+        return False
     if any(
         head_fm.get(key, "") != branch_fm.get(key, "")
-        for key in ("tid", "slug", "depends_on", "conflicts_with")
+        for key in ("tid", "slug", "title", "depends_on", "conflicts_with")
     ):
         return False
+
+    base_fm = None
+    base_body = None
+    mb = _git(["merge-base", "HEAD", branch])
+    if mb.returncode == 0 and mb.stdout.strip():
+        mb_sha = mb.stdout.strip()
+        try:
+            base_fm, base_body = parse_front_matter_text(
+                git_text_at_ref(mb_sha, progress_path), source=f"{mb_sha}:{progress_path}"
+            )
+        except ctx.TaskDataError:
+            base_fm, base_body = None, None
+
+    branch_note = branch_fm.get("note", "")
+    head_level = head_fm.get("review_level", "full")
+    branch_level = branch_fm.get("review_level", "full")
+    if branch_level != head_level:
+        if not (
+            head_level == "single"
+            and branch_level == "full"
+            and "review single -> full:" in branch_note
+            and (base_fm is None or head_level == base_fm.get("review_level", "full"))
+        ):
+            return False
+
+    for limit_field in ("review_limit", "verify_limit"):
+        head_lim = str(head_fm.get(limit_field, "5"))
+        branch_lim = str(branch_fm.get(limit_field, "5"))
+        if branch_lim != head_lim:
+            if not (head_lim.isdigit() and branch_lim.isdigit()):
+                return False
+            if not (
+                int(branch_lim) > int(head_lim)
+                and f"{limit_field}: {head_lim}->{branch_lim}" in branch_note
+                and (base_fm is None or head_lim == str(base_fm.get(limit_field, "5")))
+            ):
+                return False
+
+    head_note = head_fm.get("note", "")
+    if head_note and not (branch_note == head_note or branch_note.startswith(head_note + "; ")):
+        return False
+    if base_fm is not None and head_note != base_fm.get("note", ""):
+        if not (branch_note == head_note or branch_note.startswith(head_note + "; ")):
+            return False
+
     if rel == ctx.PROGRESS_FILE:
+        if base_body is not None:
+            return head_body == base_body or head_body == branch_body
+        branch_lines = {line.strip() for line in branch_body.splitlines() if line.strip()}
+        for raw_line in head_body.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped == "无" or "待执行时填写" in stripped:
+                continue
+            if stripped not in branch_lines:
+                return False
         return True
+
     try:
         head_spec = git_text_at_ref("HEAD", path)
         branch_spec = git_text_at_ref(branch, path)
@@ -655,17 +746,41 @@ def _is_pure_backlog_to_done_member_conflict(
     return _normalize_spec_checkboxes(head_spec) == _normalize_spec_checkboxes(branch_spec)
 
 
+def _main_touched_member_paths(branch: str, names: list[str]) -> list[str]:
+    """返回主干 HEAD 相对 merge-base(HEAD, branch) 在待归档成员目录下新增或修改的路径。"""
+    mb = _git(["merge-base", "HEAD", branch])
+    if mb.returncode != 0 or not mb.stdout.strip():
+        return []
+    prefixes = [f"docs/tasks/{name}" for name in names]
+    diff = _git(["diff", "--name-only", "-z", mb.stdout.strip(), "HEAD", "--", *prefixes])
+    if diff.returncode != 0:
+        return []
+    return [p for p in diff.stdout.split("\0") if p]
+
+
 def _resolve_backlog_member_conflicts(
     branch: str, names: list[str], conflicts: list[str],
 ) -> list[str]:
-    """对待归档成员目录内纯属 backlog -> done 状态迁移的伪冲突收敛为分支终态。"""
+    """对待归档成员目录内纯属 backlog -> done 状态迁移的伪冲突收敛为分支终态；
+    若主干对成员目录有未报 Git 行级冲突但违反三方保护规则的独立修改，同样标记为冲突阻断（A06）。
+    """
     for path in conflicts:
         if not _is_pure_backlog_to_done_member_conflict(branch, names, path):
             continue
         checkout = _git(["checkout", "--theirs", "--", path])
         if checkout.returncode == 0:
             _git(["add", "--", path])
-    return _conflicted_paths()
+    remaining = set(_conflicted_paths())
+    for path in _main_touched_member_paths(branch, names):
+        if path in remaining:
+            continue
+        if _is_pure_backlog_to_done_member_conflict(branch, names, path):
+            checkout = _git(["checkout", "--theirs", "--", path])
+            if checkout.returncode == 0:
+                _git(["add", "--", path])
+        else:
+            remaining.add(path)
+    return sorted(remaining)
 
 
 def _prepare_native_merge(branch: str, message: str, names: list[str]) -> None:
@@ -674,18 +789,17 @@ def _prepare_native_merge(branch: str, message: str, names: list[str]) -> None:
     except ctx.TaskDataError as error:
         sys.exit(f"merge 尚未开始：{error}")
     result = _git(["merge", "--no-ff", "--no-commit", "-m", message, branch], timeout=120)
-    if result.returncode != 0:
-        initial_conflicts = _conflicted_paths()
-        if not initial_conflicts:
-            if _merge_in_progress():
-                sys.exit(f"merge 未完成：{result.stderr.strip()}；修复后 --continue，或 git merge --abort")
-            sys.exit(f"merge 失败：{result.stderr.strip()}")
-        conflicts = _resolve_backlog_member_conflicts(branch, names, initial_conflicts)
-        if conflicts:
-            print(f"merge 冲突，共 {len(conflicts)} 个文件：", file=sys.stderr)
-            for path in conflicts:
-                print(f"  {path}", file=sys.stderr)
-            sys.exit("解决并 git add 后运行项目验证；通过后重跑 --continue，或 git merge --abort")
+    initial_conflicts = _conflicted_paths()
+    if result.returncode != 0 and not initial_conflicts:
+        if _merge_in_progress():
+            sys.exit(f"merge 未完成：{result.stderr.strip()}；修复后 --continue，或 git merge --abort")
+        sys.exit(f"merge 失败：{result.stderr.strip()}")
+    conflicts = _resolve_backlog_member_conflicts(branch, names, initial_conflicts)
+    if conflicts:
+        print(f"merge 冲突，共 {len(conflicts)} 个文件：", file=sys.stderr)
+        for path in conflicts:
+            print(f"  {path}", file=sys.stderr)
+        sys.exit("解决并 git add 后运行项目验证；通过后重跑 --continue，或 git merge --abort")
     try:
         _stage_archive_moves(names)
         _stage_indexes()
