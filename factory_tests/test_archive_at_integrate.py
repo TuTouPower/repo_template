@@ -12,6 +12,7 @@ import pytest
 from test_dispatch_integration import (
     _cleanup, _git, _identity_args, _prepare_done, _read_ledger, _task_cli, _worktree, git_repo,
 )
+from repo_task.context import RepoContext
 from test_finish_atomic import OWNER, _begin
 from review_support import valid_spec
 from task_flow_support import finish_cli, prepare_finish
@@ -339,7 +340,9 @@ def test_dependency_implementation_found_for_handoff_added_under_active_dir(git_
     added = _git(git_repo, "show", "--name-status", "--format=", implementation).stdout
     assert f"A\t{ACTIVE}/handoff.json" in added
 
-    assert integration._dependency_implementations("t001") == [implementation]
+    assert integration._dependency_implementations(
+        "t001", repo=RepoContext.for_root(git_repo)
+    ) == [implementation]
 
 
 def test_dependency_implementation_found_for_legacy_history_added_under_archive(git_repo):
@@ -347,7 +350,9 @@ def test_dependency_implementation_found_for_legacy_history_added_under_archive(
 
     _, implementation = _legacy_archived_history(git_repo)
 
-    assert integration._dependency_implementations("t001") == [implementation]
+    assert integration._dependency_implementations(
+        "t001", repo=RepoContext.for_root(git_repo)
+    ) == [implementation]
 
 
 def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(git_repo):
@@ -364,7 +369,7 @@ def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(gi
     _git(git_repo, "commit", "-q", "-m", "tamper handoff base_sha")
 
     with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
-        integration._dependency_implementations("t001")
+        integration._dependency_implementations("t001", repo=RepoContext.for_root(git_repo))
 
 # --------------------------------------------------------------------------
 # M03：链连续性回归与单 task base 已在主干
@@ -517,7 +522,8 @@ def test_auto_conflict_resolution_accepts_authorized_review_upgrade_and_limits(g
     ).returncode == 0
 
     assert _is_pure_backlog_to_done_member_conflict(
-        "t004_delta", ["t001_alpha", "t004_delta"], "docs/tasks/t004_delta/progress.md"
+        "t004_delta", ["t001_alpha", "t004_delta"], "docs/tasks/t004_delta/progress.md",
+        repo=RepoContext.for_root(git_repo),
     )
 
 

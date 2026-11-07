@@ -28,13 +28,13 @@ def _ignored_others(*exclude_args: str) -> list[str]:
     return [entry for entry in r.stdout.split("\0") if entry]
 
 
-def _include_sources() -> list[Path]:
+def _include_sources(repo: "ctx.RepoContext") -> list[Path]:
     """主仓 .worktreeinclude（gitignore 语法）命中且确被 gitignore 的路径。
 
     命中目录时整目录软链；未被 gitignore 的未跟踪路径（用户在途工作）与
     INCLUDE_DENY 一律跳过，已入库路径不在 --others 结果中，天然排除。
     """
-    include = ctx.REPO_ROOT / WORKTREE_INCLUDE
+    include = repo.root / WORKTREE_INCLUDE
     if not include.is_file():
         return []
     ignored = set(_ignored_others("--exclude-standard"))
@@ -46,7 +46,7 @@ def _include_sources() -> list[Path]:
             continue
         ancestors = {"/".join(parts[:i]) + "/" for i in range(1, len(parts))}
         if entry in ignored or ancestors & ignored:
-            sources.append(ctx.REPO_ROOT / rel)
+            sources.append(repo.root / rel)
     return sources
 
 
@@ -57,7 +57,9 @@ def _untracked_in(worktree: Path, paths: list[str]) -> list[str]:
     return [entry.rstrip("/") for entry in r.stdout.split("\0") if entry]
 
 
-def _ensure_links_ignored(worktree: Path, linked: list[str]) -> None:
+def _ensure_links_ignored(
+    worktree: Path, linked: list[str], *, repo: "ctx.RepoContext",
+) -> None:
     """以 / 结尾的 gitignore 规则只匹配目录，不匹配同名软链，链接会在 worktree
     显示为未跟踪而被误暂存。对这类链接在共享 info/exclude 托管块追加锚定规则；
     这些路径在主仓本已被忽略，规则对主仓与其它 worktree 语义不变。"""
@@ -66,7 +68,7 @@ def _ensure_links_ignored(worktree: Path, linked: list[str]) -> None:
     missing = _untracked_in(worktree, linked)
     if not missing:
         return
-    exclude = git_common_dir(ctx.REPO_ROOT) / "info" / "exclude"
+    exclude = git_common_dir(repo.primary_root) / "info" / "exclude"
     lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.is_file() else []
     if EXCLUDE_BLOCK_START in lines and EXCLUDE_BLOCK_END in lines:
         start, end = lines.index(EXCLUDE_BLOCK_START), lines.index(EXCLUDE_BLOCK_END)
@@ -84,7 +86,7 @@ def _ensure_links_ignored(worktree: Path, linked: list[str]) -> None:
         raise ctx.TaskDataError(f"软链在 worktree 中未被忽略：{', '.join(still)}")
 
 
-def link_local_files(worktree: Path) -> list[str]:
+def link_local_files(worktree: Path, *, repo: "ctx.RepoContext | None" = None) -> list[str]:
     """把主仓未入库的本地文件软链进 worktree（同相对路径）。
 
     默认链接任意层级的 .env；主仓有 .worktreeinclude 时另链其命中的
@@ -92,6 +94,7 @@ def link_local_files(worktree: Path) -> list[str]:
     .scratch 等噪声目录；先物化源列表再建链，并跳过落在目标 worktree
     之内的源，防止把 worktree 内部文件当成主仓源造成级联嵌套。
     """
+    repo = repo or ctx.current_context()
     linked = []
     skip_dirs = {
         ".git", "node_modules", ".scratch", "__pycache__", "venv", ".venv",
@@ -103,19 +106,19 @@ def link_local_files(worktree: Path) -> list[str]:
         worktree_resolved = None
 
     sources = []
-    for root, dirs, files in os.walk(ctx.REPO_ROOT, followlinks=False):
+    for root, dirs, files in os.walk(repo.root, followlinks=False):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         if ".env" in files:
             src = Path(root) / ".env"
-            rel = src.relative_to(ctx.REPO_ROOT)
+            rel = src.relative_to(repo.root)
             if not any(part in skip_dirs for part in rel.parts[:-1]):
                 sources.append(src)
     env_count = len(sources)
-    sources.extend(_include_sources())
+    sources.extend(_include_sources(repo))
     included = []
     for index, src in enumerate(sources):
         try:
-            rel = src.relative_to(ctx.REPO_ROOT)
+            rel = src.relative_to(repo.root)
         except ValueError:
             continue
         try:
@@ -136,18 +139,21 @@ def link_local_files(worktree: Path) -> list[str]:
         linked.append(rel.as_posix())
         if index >= env_count:
             included.append(rel.as_posix())
-    _ensure_links_ignored(worktree, included)
+    _ensure_links_ignored(worktree, included, repo=repo)
     return linked
 
-def is_managed_link(worktree: Path, link: Path) -> bool:
+def is_managed_link(
+    worktree: Path, link: Path, *, repo: "ctx.RepoContext | None" = None,
+) -> bool:
     """仅识别 link_local_files() 为主仓同相对路径创建的软链。"""
     if not link.is_symlink():
         return False
+    repo = repo or ctx.current_context()
     try:
         rel = link.relative_to(worktree)
     except ValueError:
         return False
-    source = ctx.REPO_ROOT / rel
+    source = repo.root / rel
     expected = os.path.relpath(source, link.parent)
     try:
         target = os.readlink(link)
@@ -158,27 +164,32 @@ def is_managed_link(worktree: Path, link: Path) -> bool:
         and link.resolve(strict=False) == source.resolve(strict=False)
     )
 
-def unlink_managed_links(worktree: Path) -> None:
+def unlink_managed_links(
+    worktree: Path, *, repo: "ctx.RepoContext | None" = None,
+) -> None:
     # 用 os.walk 而非 Path.rglob：rglob 在 Python 3.10+ 会跳过 dangling
     # symlink（源已删的链接），清理时恰恰需要删除这类残留。目录软链出现在
     # dirs 中且 followlinks=False 不会进入，只删链接本身，不触及主仓目标。
     for root, dirs, files in os.walk(worktree, followlinks=False):
         for name in (*dirs, *files):
             link = Path(root) / name
-            if is_managed_link(worktree, link):
+            if is_managed_link(worktree, link, repo=repo):
                 link.unlink()
 
-def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
+def resolve_start_base(
+    base_arg: str | None, *, repo: "ctx.RepoContext | None" = None,
+) -> tuple[str, str]:
     """解析 start base。
 
     `task-run` 链式：后一个 task 从上一个已完成 task 分支创建，传 `--base`。
     多会话手动并发：用户未传 `--base` 且最新前置未合并主干时，由 `cmd_start`
     自动落到前置分支 tip（见 integration.py）；否则从主干 HEAD 创建。
     """
-    primary = default_branch()
-    base_branch, base_sha = resolve_local_branch(base_arg or primary)
+    repo = repo or ctx.current_context()
+    primary = default_branch(repo=repo)
+    base_branch, base_sha = resolve_local_branch(base_arg or primary, repo=repo)
     if base_branch == primary:
-        if current_branch() != primary or _get_head() != base_sha:
+        if current_branch(repo=repo) != primary or _get_head(repo=repo) != base_sha:
             raise ctx.TaskDataError(f"主工作区 HEAD 与本地 {primary!r} 不一致")
         return base_branch, base_sha
 
@@ -188,7 +199,7 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
             f"--base 只接受默认分支或本地 task 分支（收到 {base_branch!r}）"
         )
     previous_tid = match.group(1)
-    _, previous_fm, _ = load_task_at_ref(previous_tid, base_sha)
+    _, previous_fm, _ = load_task_at_ref(previous_tid, base_sha, repo=repo)
     expected_branch = f"{previous_tid}_{previous_fm.get('slug', '')}"
     if base_branch != expected_branch:
         raise ctx.TaskDataError(
@@ -212,7 +223,7 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
             f"--base {base_branch!r} 对应 {previous_tid} status="
             f"{previous_fm.get('status')!r}，须先完成或 drop{hint}"
         )
-    registered = [path for path, branch in worktree_paths().items() if branch == base_branch]
+    registered = [path for path, branch in worktree_paths(repo=repo).items() if branch == base_branch]
     if registered:
         raise ctx.TaskDataError(
             f"--base {base_branch!r} 仍登记 worktree：{', '.join(registered)}；"
@@ -220,15 +231,18 @@ def resolve_start_base(base_arg: str | None) -> tuple[str, str]:
         )
     return base_branch, base_sha
 
-def create_worktree(tid: str, branch: str, base_sha: str) -> str:
+def create_worktree(
+    tid: str, branch: str, base_sha: str, *, repo: "ctx.RepoContext | None" = None,
+) -> str:
     """从固定 base SHA 创建全新的 task branch/worktree；调用方负责补偿失败。"""
-    rel = ctx.worktree_rel_path(tid)
-    path = (ctx.REPO_ROOT / rel).resolve()
-    if path.exists() or str(path) in worktree_paths():
+    repo = repo or ctx.current_context()
+    rel = repo.worktree_rel(tid)
+    path = (repo.primary_root / rel).resolve()
+    if path.exists() or str(path) in worktree_paths(repo=repo):
         raise ctx.TaskDataError(f"{rel} 已存在；请先清理后再 start")
-    if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
+    if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo=repo).returncode == 0:
         raise ctx.TaskDataError(f"分支 {branch!r} 已存在；请先处理后再 start")
-    r = _git(["worktree", "add", "-b", branch, str(path), base_sha])
+    r = _git(["worktree", "add", "-b", branch, str(path), base_sha], repo=repo)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"git worktree add 失败：{r.stderr.strip()}")
     return rel
@@ -238,6 +252,7 @@ def rollback_start(
     base_sha: str,
     branch: str,
     worktree_rel: str,
+    repo: "ctx.RepoContext | None" = None,
 ) -> str | None:
     """补偿尚未成功返回的 start；不修改主仓 HEAD 或工作区。
 
@@ -245,13 +260,14 @@ def rollback_start(
     分支 HEAD 须仍等于 base_sha。并发 start 撞车时，他方创建的资源不满足
     上述条件，原样保留并报告，由用户裁决。
     """
+    repo = repo or ctx.current_context()
     failures = []
-    worktree = (ctx.REPO_ROOT / worktree_rel).resolve()
-    registered_branch = worktree_paths().get(str(worktree))
+    worktree = (repo.primary_root / worktree_rel).resolve()
+    registered_branch = worktree_paths(repo=repo).get(str(worktree))
     if registered_branch == branch:
         if worktree.exists():
-            unlink_managed_links(worktree)
-        r = _git(["worktree", "remove", "--force", str(worktree)])
+            unlink_managed_links(worktree, repo=repo)
+        r = _git(["worktree", "remove", "--force", str(worktree)], repo=repo)
         if r.returncode != 0:
             failures.append(
                 f"强制移除 worktree {worktree_rel} 失败：{r.stderr.strip()}"
@@ -263,18 +279,18 @@ def rollback_start(
         )
     elif worktree.exists():
         failures.append(f"路径 {worktree_rel} 存在但未登记本次分支，未自动删除未知内容")
-    _git(["worktree", "prune"])
+    _git(["worktree", "prune"], repo=repo)
 
     branch_ref = f"refs/heads/{branch}"
-    if _git(["rev-parse", "--verify", "--quiet", branch_ref]).returncode == 0:
-        r = _git(["rev-parse", branch_ref])
+    if _git(["rev-parse", "--verify", "--quiet", branch_ref], repo=repo).returncode == 0:
+        r = _git(["rev-parse", branch_ref], repo=repo)
         branch_head = r.stdout.strip() if r.returncode == 0 else ""
         if branch_head != base_sha:
             failures.append(
                 f"分支 {branch!r} 已从 base 前进到 {branch_head or 'unknown'}，未自动删除"
             )
         else:
-            r = _git(["branch", "-D", branch])
+            r = _git(["branch", "-D", branch], repo=repo)
             if r.returncode != 0:
                 failures.append(f"删除分支 {branch!r} 失败：{r.stderr.strip()}")
 
@@ -282,11 +298,14 @@ def rollback_start(
         failures.append(f"路径 {worktree_rel} 仍存在，未自动删除未知内容")
     return "; ".join(failures) or None
 
-def discard_worktree(rel: str) -> tuple[bool, str]:
+def discard_worktree(
+    rel: str, *, repo: "ctx.RepoContext | None" = None,
+) -> tuple[bool, str]:
     """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。"""
-    path = (ctx.REPO_ROOT / rel).resolve()
-    if str(path) not in worktree_paths():
-        prune = _git(["worktree", "prune"])
+    repo = repo or ctx.current_context()
+    path = (repo.primary_root / rel).resolve()
+    if str(path) not in worktree_paths(repo=repo):
+        prune = _git(["worktree", "prune"], repo=repo)
         if prune.returncode != 0:
             return (
                 False,
@@ -296,11 +315,11 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
         return True, f"worktree 不在登记表，已 prune：{rel}"
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 回主仓"
-    unlink_managed_links(path)
-    r = _git(["worktree", "remove", "--force", str(path)])
+    unlink_managed_links(path, repo=repo)
+    r = _git(["worktree", "remove", "--force", str(path)], repo=repo)
     if r.returncode != 0:
         return False, f"git worktree remove --force 失败（{r.stderr.strip()}）"
-    prune = _git(["worktree", "prune"])
+    prune = _git(["worktree", "prune"], repo=repo)
     if prune.returncode != 0:
         return (
             False,
@@ -308,7 +327,10 @@ def discard_worktree(rel: str) -> tuple[bool, str]:
         )
     return True, f"worktree 已强制移除：{rel}"
 
-def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bool, str]:
+def remove_worktree(
+    rel: str, *, expected_branch: str | None = None,
+    repo: "ctx.RepoContext | None" = None,
+) -> tuple[bool, str]:
     """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。
 
     expected_branch 非空时校验登记分支归属，防止 front matter 损坏/冲突解决
@@ -316,10 +338,11 @@ def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bo
     """
     if not rel:
         return True, "无 worktree"
-    path = (ctx.REPO_ROOT / rel).resolve()
-    registered_branch = worktree_paths().get(str(path))
+    repo = repo or ctx.current_context()
+    path = (repo.primary_root / rel).resolve()
+    registered_branch = worktree_paths(repo=repo).get(str(path))
     if registered_branch is None:
-        prune = _git(["worktree", "prune"])
+        prune = _git(["worktree", "prune"], repo=repo)
         if prune.returncode != 0:
             return (
                 False,
@@ -334,11 +357,11 @@ def remove_worktree(rel: str, *, expected_branch: str | None = None) -> tuple[bo
         )
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 出去后执行 git worktree remove {rel}"
-    unlink_managed_links(path)
-    r = _git(["worktree", "remove", str(path)])
+    unlink_managed_links(path, repo=repo)
+    r = _git(["worktree", "remove", str(path)], repo=repo)
     if r.returncode != 0:
         return False, f"git worktree remove 失败（{r.stderr.strip()}）；请手动处理 {rel}"
-    prune = _git(["worktree", "prune"])
+    prune = _git(["worktree", "prune"], repo=repo)
     if prune.returncode != 0:
         return (
             False,

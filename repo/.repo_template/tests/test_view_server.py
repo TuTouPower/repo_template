@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import repo_task.context as ctx
+from repo_task.context import RepoContext
 from repo_task import view_server
 
 pytestmark = pytest.mark.contract
@@ -289,7 +291,7 @@ def test_serve_warns_non_loopback(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8765)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
     # RT-013 后非 loopback 须显式 allow_non_loopback 才绑定；绑定后仍打 WARNING
-    view_server.serve(host="0.0.0.0", port=8765, allow_non_loopback=True)
+    view_server.serve(repo=ctx.current_context(), host="0.0.0.0", port=8765, allow_non_loopback=True)
     err = capsys.readouterr().err
     assert "WARNING" in err
     assert "0.0.0.0" in err
@@ -311,7 +313,7 @@ def test_serve_rejects_non_loopback_without_allow(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8766)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
     with pytest.raises(SystemExit, match="拒绝绑定非 loopback"):
-        view_server.serve(host="0.0.0.0", port=8766)
+        view_server.serve(repo=ctx.current_context(), host="0.0.0.0", port=8766)
 
 
 def test_build_model_has_no_schedule_status(monkeypatch):
@@ -327,8 +329,8 @@ def test_build_model_has_no_schedule_status(monkeypatch):
         'dropped_set': set(), 'active_list': [], 'active_set': set(),
         'backlog_tasks': {}, 'ready': ['t001', 't002'],
     }
-    monkeypatch.setattr(view_server, 'compute_schedule', lambda: schedule)
-    model = view_server._build_model()
+    monkeypatch.setattr(view_server, 'compute_schedule', lambda **kwargs: schedule)
+    model = view_server._build_model(ctx.current_context())
     assert {node['id'] for node in model['nodes']} == {'t001', 't002'}
     assert all('schedule_status' not in node for node in model['nodes'])
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
@@ -376,9 +378,9 @@ def schedule_task(tid):
 def test_serve_rejects_out_of_range_port():
     """验证非法端口在启动前明确拒绝，避免原始 OverflowError 崩溃（Issue #63）。"""
     with pytest.raises(SystemExit, match="看板端口非法：-1；端口必须在 0 到 65535 之间"):
-        view_server.serve(port=-1)
+        view_server.serve(repo=ctx.current_context(), port=-1)
     with pytest.raises(SystemExit, match="看板端口非法：70000；端口必须在 0 到 65535 之间"):
-        view_server.serve(port=70000)
+        view_server.serve(repo=ctx.current_context(), port=70000)
 
 
 def test_render_html_escapes_html_comments_and_separators():
@@ -417,7 +419,7 @@ def test_rendered_html_cache_debounce(monkeypatch):
     """验证高频并发请求复用短缓存，避免重复跑全量拓扑计算（Issue #48）。"""
     build_count = {"n": 0}
 
-    def fake_build():
+    def fake_build(_repo=None):
         build_count["n"] += 1
         return {"project": "demo", "nodes": [], "edges": [], "summary": {}}
 
@@ -427,7 +429,7 @@ def test_rendered_html_cache_debounce(monkeypatch):
 
     # 1. 连续 5 次快速请求
     for _ in range(5):
-        html = view_server._get_rendered_html()
+        html = view_server._get_rendered_html(ctx.current_context())
         assert "window.__BOARD__ =" in html
 
     # 只调用了一次全量构建
@@ -439,17 +441,18 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
     tasks_dir, _ = repo_layout
     monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
     tasks = {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}}
-    monkeypatch.setattr(view_server, "compute_schedule", lambda tasks=None: {
+    monkeypatch.setattr(view_server, "compute_schedule", lambda tasks=None, **kwargs: {
         "tasks": tasks,
         "selected": ["t001"],
     })
-    monkeypatch.setattr(view_server, "discover_effective_bundle", lambda: (tasks, {}))
+    monkeypatch.setattr(view_server, "discover_effective_bundle", lambda **kwargs: (tasks, {}))
 
     responses = []
 
     class MockHandler:
         def __init__(self, path):
             self.path = path
+            self.server = SimpleNamespace(repo=ctx.current_context())
         def _send_error_text(self, status, message):
             responses.append((status, message))
         def _send_bytes(self, status, body, ct):
@@ -475,13 +478,14 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
 
 def test_root_requires_session_token_and_does_not_leak_it(repo_layout, monkeypatch):
     """首页也必须校验 token，未持有者无法从 403 响应取得 token（Issue #73）。"""
-    monkeypatch.setattr(view_server, "_get_rendered_html", lambda: "<html>board</html>")
+    monkeypatch.setattr(view_server, "_get_rendered_html", lambda _repo: "<html>board</html>")
     monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
     responses = []
 
     class MockHandler:
         def __init__(self, path):
             self.path = path
+            self.server = SimpleNamespace(repo=ctx.current_context())
         def _send_error_text(self, status, message):
             responses.append((status, message))
         def _send_bytes(self, status, body, ct):
@@ -519,7 +523,7 @@ def test_find_free_port_and_serve_ipv6_loopback(monkeypatch):
     monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
 
-    view_server.serve(host="::1", port=port)
+    view_server.serve(repo=ctx.current_context(), host="::1", port=port)
     assert len(started) == 1
     assert started[0][0] == ("::1", port)
 

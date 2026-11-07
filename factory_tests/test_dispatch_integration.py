@@ -879,13 +879,16 @@ def test_ledger_unreadable_fails_closed_instead_of_reusing_attempt(tmp_path, mon
     from repo_task import context as ctx
     from repo_task.ledger import ledger_allocate_attempt, ledger_read
 
-    ledger_path = tmp_path / "dispatch_ledger.jsonl"
+    repo_root = tmp_path / "repo"
+    runtime = repo_root / "docs" / "runtime"
+    runtime.mkdir(parents=True)
+    ledger_path = runtime / "dispatch_ledger.jsonl"
     ledger_path.write_text(
         json.dumps({"tid": "t001", "attempt": 1, "event": "start"}) + "\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(ctx, "LEDGER_PATH", ledger_path)
-    monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(ctx, "REPO_ROOT", repo_root)
 
     real_open = Path.open
 

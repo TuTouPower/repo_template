@@ -594,7 +594,7 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
 def test_prepare_merge_checks_merge_tree_capability_before_git_merge(monkeypatch):
     calls = []
 
-    def unsupported(_branch):
+    def unsupported(_branch, **_kwargs):
         raise ctx.TaskDataError('内容门禁需要 Git >= 2.38')
 
     def record_git(args, **_kwargs):
@@ -604,7 +604,10 @@ def test_prepare_merge_checks_merge_tree_capability_before_git_merge(monkeypatch
     monkeypatch.setattr(integration, '_expected_auto_merge', unsupported)
     monkeypatch.setattr(integration, '_git', record_git)
     with pytest.raises(SystemExit, match='merge 尚未开始.*Git >= 2.38'):
-        integration._prepare_native_merge('t001_alpha', 'merge(t001): t001_alpha', ['t001_alpha'])
+        integration._prepare_native_merge(
+            't001_alpha', 'merge(t001): t001_alpha', ['t001_alpha'],
+            repo=ctx.current_context(),
+        )
     assert calls == []
 
 
@@ -2246,7 +2249,10 @@ def test_find_merge_commit_handles_deep_merge_history(git_repo):
         _git(git_repo, "merge", "--no-ff", branch, "-m", f"merge {i}")
 
     # 4. _find_merge_commit 应当跨越这 55 个无关 merge 找到原 merge commit
-    found = _find_merge_commit(second_parent, "task: integrate t001")
+    from repo_task.context import RepoContext
+    found = _find_merge_commit(
+        second_parent, "task: integrate t001", repo=RepoContext.for_root(git_repo)
+    )
     assert found == merge_sha
 
 

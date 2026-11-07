@@ -48,12 +48,12 @@ def _find_free_port(host: str) -> int:
         return s.getsockname()[1]
 
 
-def _build_model():
+def _build_model(repo):
     """调度图 → 前端模型：节点、边、统计 + 后端权威 plan。
 
     使用本模块 ``compute_schedule`` 引用，便于测试 monkeypatch。
     """
-    model = build_board_model(compute_schedule())
+    model = build_board_model(compute_schedule(repo=repo), repo=repo)
     model["plan"] = compute_batch_plan(model)
     model["token"] = _SESSION_TOKEN
     return model
@@ -78,7 +78,7 @@ _LAST_RENDER_TIME: float = 0.0
 _RENDER_CACHE_TTL = 0.5  # 500ms 内的并发请求复用渲染结果，平抑高并发资源冲击（Issue #48）
 
 
-def _get_rendered_html() -> str:
+def _get_rendered_html(repo) -> str:
     global _CACHED_HTML, _LAST_RENDER_TIME
     now = time.monotonic()
     if _CACHED_HTML and (now - _LAST_RENDER_TIME < _RENDER_CACHE_TTL):
@@ -87,7 +87,7 @@ def _get_rendered_html() -> str:
         now = time.monotonic()
         if _CACHED_HTML and (now - _LAST_RENDER_TIME < _RENDER_CACHE_TTL):
             return _CACHED_HTML
-        _CACHED_HTML = _render_html(_build_model())
+        _CACHED_HTML = _render_html(_build_model(repo))
         _LAST_RENDER_TIME = now
         return _CACHED_HTML
 
@@ -275,7 +275,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error_text(403, "禁止访问：缺少或无效的看板会话令牌")
                 return
             try:
-                html = _get_rendered_html()
+                html = _get_rendered_html(self.server.repo)
             except Exception as e:
                 self._send_error_text(500, f"渲染失败：{e}")
                 return
@@ -305,8 +305,11 @@ class _Handler(BaseHTTPRequestHandler):
             tid = (query.get("tid") or [""])[0]
             doc = (query.get("doc") or [""])[0]
             try:
-                tasks, sources = discover_effective_bundle()
-                body = _read_task_doc(compute_schedule(tasks), sources, tid, doc)
+                repo_ctx = self.server.repo
+                tasks, sources = discover_effective_bundle(repo=repo_ctx)
+                body = _read_task_doc(
+                    compute_schedule(tasks, repo=repo_ctx), sources, tid, doc
+                )
             except ctx.TaskDataError as e:
                 self._send_error_text(404, str(e))
                 return
@@ -327,7 +330,7 @@ def _is_loopback_host(host: str) -> bool:
     return normalized in {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
 
 
-def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
+def serve(host="127.0.0.1", port=0, *, repo, allow_non_loopback=False):
     if not isinstance(port, int) or port < 0 or port > 65535:
         sys.exit(f"看板端口非法：{port!r}；端口必须在 0 到 65535 之间（0 为自动选空闲端口）")
     port = port or _find_free_port(host)
@@ -360,6 +363,7 @@ def serve(host="127.0.0.1", port=0, *, allow_non_loopback=False):
 
     try:
         httpd = server_cls((host, port), _Handler)
+        httpd.repo = repo
     except OSError as error:
         sys.exit(f"看板端口 {port} 绑定失败（{error}）；改用 --port 0 自动选空闲端口")
     print(f"task 看板已启动：{url}")

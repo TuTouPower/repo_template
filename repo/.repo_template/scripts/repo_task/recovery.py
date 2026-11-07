@@ -11,19 +11,20 @@ from .monitoring import implementation_commit, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
-def recovery_state(tid: str) -> dict:
-    require_primary_worktree()
+def recovery_state(tid: str, *, repo=None) -> dict:
+    repo = repo or ctx.current_context()
+    require_primary_worktree(repo=repo)
     corrupt_detail = ""
     try:
-        tasks = discover_effective_tasks()
+        tasks = discover_effective_tasks(repo=repo)
     except ctx.TaskDataError as error:
         # 现场损坏时仍允许 recovery 依据持久 journal 给出诊断，不伪装为正常状态（A05）。
-        tasks = discover_effective_tasks(allow_corrupt=True)
+        tasks = discover_effective_tasks(allow_corrupt=True, repo=repo)
         corrupt_detail = str(error)
     task = tasks.get(tid)
     if task is None:
         raise ctx.TaskDataError(f"{tid} 不存在")
-    events = ledger_read()
+    events = ledger_read(repo=repo)
     record = current_attempt_record(tid, events)
     state = {"tid": tid, "phase": "needs_attention", "action": "停止并报告状态冲突"}
     if record:
@@ -32,8 +33,8 @@ def recovery_state(tid: str) -> dict:
     if overlapping_attempts(tid, events):
         state["action"] = "停止：存在 overlapping attempt，不猜 identity"
         return state
-    worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(tid)).resolve()
-    registered_branch = worktree_paths().get(str(worktree))
+    worktree = (repo.primary_root / repo.worktree_rel(tid)).resolve()
+    registered_branch = worktree_paths(repo=repo).get(str(worktree))
     branch = task.get("branch") or f"{tid}_{task['slug']}"
     state.update(branch=branch, worktree=str(worktree))
 
@@ -63,7 +64,9 @@ def recovery_state(tid: str) -> dict:
         if task["status"] in ctx.ARCHIVED_STATUSES and (not record or record["state"] == "integrated"):
             return phase("integrated_or_archived", "检查 Git merge 状态和 integrated 记录；不重复执行")
         if record:
-            verdict, _kind, detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+            verdict, _kind, detail = verify_integrate_ready(
+            tid, record["attempt"], record["execution_id"], repo=repo
+        )
             report = record.get("report") or {}
             if verdict == "ready" and record.get("terminal_status") == "completed" and report.get("status") == "done":
                 return phase("closed", "保留分支作下一 --base；整链完成后询问合并授权")
@@ -99,7 +102,7 @@ def recovery_state(tid: str) -> dict:
     if fm["status"] != "done" or record is None:
         return state
     if not (task_dir / "handoff.json").exists():
-        head = _git(["rev-parse", "HEAD"], root=worktree)
+        head = _git(["rev-parse", "HEAD"], root=worktree, repo=repo)
         if head.returncode == 0 and head.stdout.strip() == fm.get("diff_anchor") and record["state"] == "running":
             return phase(
                 "finish_interrupted",
@@ -120,9 +123,11 @@ def recovery_state(tid: str) -> dict:
             if record["state"] == "running":
                 return phase("finished_uncommitted", "finish 在提交前被中断：核验 handoff、review 和全部 diff 后暂存并提交实现 commit（沿用原 message）；不重复 finish、不 reserve")
             raise ValueError("未提交实现 commit 却已关闭 attempt")
-        implementation_commit(head.stdout.strip(), fm["diff_anchor"])
-        _, committed_fm, _ = load_task_at_ref(tid, head.stdout.strip())
-        committed = json.loads(git_text_at_ref(head.stdout.strip(), f"{task['dir']}/handoff.json"))
+        implementation_commit(head.stdout.strip(), fm["diff_anchor"], repo=repo)
+        _, committed_fm, _ = load_task_at_ref(tid, head.stdout.strip(), repo=repo)
+        committed = json.loads(
+            git_text_at_ref(head.stdout.strip(), f"{task['dir']}/handoff.json", repo=repo)
+        )
         if committed_fm.get("status") != "done" or committed != handoff:
             raise ValueError("分支 tip 未包含当前 handoff")
     except (OSError, ValueError, KeyError, TypeError, AttributeError, ctx.TaskDataError) as error:
@@ -136,7 +141,9 @@ def recovery_state(tid: str) -> dict:
         record["state"] == "terminal" and record.get("terminal_status") == "completed"
     )
     if gate_check or report_done:
-        verdict, kind, gate_detail = verify_integrate_ready(tid, record["attempt"], record["execution_id"])
+        verdict, kind, gate_detail = verify_integrate_ready(
+            tid, record["attempt"], record["execution_id"], repo=repo
+        )
         if verdict != "ready" and kind == "review_scope_mismatch":
             if report_done:
                 state["action"] = (
@@ -217,31 +224,33 @@ def _review_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: st
 
 
 def cmd_recovery(args) -> None:
-    print(json.dumps(recovery_state(args.tid), ensure_ascii=False, indent=2))
+    repo = getattr(args, "repo", None) or ctx.current_context()
+    print(json.dumps(recovery_state(args.tid, repo=repo), ensure_ascii=False, indent=2))
 
 
 @control_locked
 def cmd_ledger_import(args):
     """Recover only a proven completed execution; never invent a running owner."""
-    require_primary_worktree()
+    repo = getattr(args, "repo", None) or ctx.current_context()
+    require_primary_worktree(repo=repo)
     if not args.confirm_stopped:
         raise ctx.TaskDataError("导入前须确认原执行会话已停止：--confirm-stopped")
-    task = discover_effective_tasks().get(args.tid)
+    task = discover_effective_tasks(repo=repo).get(args.tid)
     if not task or task["status"] != "done" or not task.get("branch"):
         raise ctx.TaskDataError("仅可从现存 done task 分支及 committed handoff 重建；active 或缺证据须恢复 runtime 备份")
     branch = task["branch"]
     try:
-        handoff = json.loads(git_text_at_ref(branch, f"{task['dir']}/handoff.json"))
+        handoff = json.loads(git_text_at_ref(branch, f"{task['dir']}/handoff.json", repo=repo))
     except (ValueError, ctx.TaskDataError) as error:
         raise ctx.TaskDataError(f"拒绝导入：handoff 无法读取（{error}）") from error
     if not isinstance(handoff, dict):
         raise ctx.TaskDataError("拒绝导入：handoff 非 JSON 对象")
     attempt, execution_id = handoff.get("attempt"), handoff.get("execution_id")
-    verdict, _kind, detail = verify_integrate_ready(args.tid, attempt, execution_id)
+    verdict, _kind, detail = verify_integrate_ready(args.tid, attempt, execution_id, repo=repo)
     if verdict != "ready":
         raise ctx.TaskDataError(f"拒绝导入：{detail}")
-    worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(args.tid)).resolve()
-    if str(worktree) in worktree_paths():
+    worktree = (repo.primary_root / repo.worktree_rel(args.tid)).resolve()
+    if str(worktree) in worktree_paths(repo=repo):
         from .git_ops import porcelain_entries
         if porcelain_entries(root=worktree):
             raise ctx.TaskDataError("worktree 有未提交改动；先恢复或保存，不据 Git tip 猜测现场")

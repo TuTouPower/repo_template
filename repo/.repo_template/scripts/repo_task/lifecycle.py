@@ -23,17 +23,18 @@ from .worktrees import discard_worktree, remove_worktree
 
 @control_locked
 def cmd_add(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     require_primary_worktree()
     if not ctx.SLUG_RE.match(args.slug):
         sys.exit(f"slug 须匹配 {ctx.SLUG_RE.pattern}（收到 {args.slug!r}）")
     if not args.title.strip():
         sys.exit("title 不能为空")
-    if not ctx.TEMPLATE_DIR.is_dir():
-        sys.exit(f"缺模板目录 {ctx._rel(ctx.TEMPLATE_DIR)}")
-    template_task = ctx.TEMPLATE_DIR / "task.md"
-    template_note = ctx.TEMPLATE_DIR / ctx.PROGRESS_FILE
+    if not repo.template_dir.is_dir():
+        sys.exit(f"缺模板目录 {repo.rel(repo.template_dir)}")
+    template_task = repo.template_dir / "task.md"
+    template_note = repo.template_dir / ctx.PROGRESS_FILE
     if not template_task.is_file() or not template_note.is_file():
-        sys.exit(f"模板目录 {ctx._rel(ctx.TEMPLATE_DIR)} 缺 task.md 或 {ctx.PROGRESS_FILE}")
+        sys.exit(f"模板目录 {repo.rel(repo.template_dir)} 缺 task.md 或 {ctx.PROGRESS_FILE}")
     _, template_note_body = parse_front_matter(template_note)
     template_problems, _ = validate_task_documents(
         template_task.read_text(encoding="utf-8"),
@@ -44,17 +45,17 @@ def cmd_add(args):
         sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
     # 取号 + 建目录持 git 公共锁，与 pending/findings 取号互斥，防并发撞号（RT-009）
-    with git_common_lock(ctx.REPO_ROOT, TASK_ID_LOCK_NAME):
+    with git_common_lock(repo.root, TASK_ID_LOCK_NAME):
         tasks = scan_tasks()
         for t in tasks:
             if t["slug"] == args.slug:
                 sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
         n = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0) + 1
         tid = f"t{n:03d}"
-        task_dir = ctx.TASKS_DIR / f"{tid}_{args.slug}"
+        task_dir = repo.tasks_dir / f"{tid}_{args.slug}"
         if task_dir.exists():
-            sys.exit(f"{ctx._rel(task_dir)} 已存在；请提示用户处理")
-        shutil.copytree(ctx.TEMPLATE_DIR, task_dir)
+            sys.exit(f"{repo.rel(task_dir)} 已存在；请提示用户处理")
+        shutil.copytree(repo.template_dir, task_dir)
         note_md = task_dir / ctx.PROGRESS_FILE
         fm, body = parse_front_matter(note_md)
         fm.update({
@@ -79,10 +80,11 @@ def cmd_add(args):
             )
         write_front_matter(note_md, fm, body)
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
-    print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 task.md / {ctx.PROGRESS_FILE}）")
+    print(f"工作区：{repo.rel(task_dir)}（已从模板复制 task.md / {ctx.PROGRESS_FILE}）")
 
 @control_locked
 def cmd_edit(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     require_primary_worktree()
     field_names = (
         "title", "note", "note_append", "review_level", "depends_on",
@@ -322,6 +324,7 @@ def _missing_testing_sections(text: str) -> list[str]:
 
 
 def cmd_preflight(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     ref_arg = args.ref
     source_ref = ""
     if ref_arg:
@@ -330,7 +333,7 @@ def cmd_preflight(args):
         task_dir = None
     else:
         task, _, fm, task_body = load_task(args.tid)
-        task_dir = ctx.REPO_ROOT / task["dir"]
+        task_dir = repo.root / task["dir"]
     problems, warnings = [], []
 
     # 1. 状态
@@ -399,7 +402,7 @@ def cmd_preflight(args):
                 )
         if fm["status"] == "active" and not in_own_task_worktree(fm):
             problems.append(
-                f"当前不在 task worktree {ctx.effective_worktree(fm)} 的分支 {fm['branch']!r}"
+                f"当前不在 task worktree {repo.effective_worktree(fm)} 的分支 {fm['branch']!r}"
             )
 
         dirty = porcelain_entries()
@@ -425,7 +428,7 @@ def cmd_preflight(args):
                 )
 
     # 5. testing.md 占位符 warn（不阻塞）
-    testing_md = ctx.REPO_ROOT / "docs" / "blueprint" / "testing.md"
+    testing_md = repo.root / "docs" / "blueprint" / "testing.md"
     if testing_md.is_file():
         testing_text = testing_md.read_text(encoding="utf-8")
         missing = _missing_testing_sections(testing_text)
@@ -441,7 +444,7 @@ def cmd_preflight(args):
         if source_ref:
             parse_policy(git_text_at_ref(ref_sha, "docs/blueprint/testing.md"))
         else:
-            load_policy(ctx.REPO_ROOT)
+            load_policy(repo.root)
     except (ValidationError, ctx.TaskDataError) as error:
         (warnings if creation else problems).append(str(error))
 
@@ -468,6 +471,7 @@ def cmd_preflight(args):
     print(f"\npreflight=PASS{f'（{len(warnings)} 条警告）' if warnings else ''}")
 
 def cmd_limits(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     """Increase persisted execution budgets without changing task status."""
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "active")
@@ -495,6 +499,7 @@ def cmd_limits(args):
 
 
 def cmd_review_upgrade(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     _, path, fm, body = load_task(args.tid)
     require_status(fm, "active")
     require_own_task_worktree(fm)
@@ -508,40 +513,44 @@ def cmd_review_upgrade(args):
     print(f"{args.tid} review_level=full；旧 general review 不再满足门禁，须重审 code/test")
 
 
-def _require_acs_checked(task_md_path: Path) -> None:
+def _require_acs_checked(task_md_path: Path, *, repo=None) -> None:
+    repo = repo or ctx.current_context()
     if not task_md_path.is_file():
         return
     from .documents import extract_ac_statuses
     ac_statuses = extract_ac_statuses(task_md_path.read_text(encoding="utf-8"))
     if not ac_statuses:
-        sys.exit(f"finish=FAIL：{ctx._rel(task_md_path)} 验收标准未定义任何 AC")
+        sys.exit(f"finish=FAIL：{repo.rel(task_md_path)} 验收标准未定义任何 AC")
     uncompleted = [ac_id for ac_id, checked in ac_statuses if not checked]
     if uncompleted:
         sys.exit(
-            f"finish=FAIL：{ctx._rel(task_md_path)} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
+            f"finish=FAIL：{repo.rel(task_md_path)} 存在未完成 AC（未打勾）：{', '.join(uncompleted)}"
         )
 
 
-def _check_done_ready(tid: str, task_dir: Path) -> None:
+def _check_done_ready(tid: str, task_dir: Path, *, repo=None) -> None:
+    repo = repo or ctx.current_context()
     """done 的写前检查：AC 全勾、finalization 闭环。"""
-    _require_acs_checked(task_dir / "task.md")
+    _require_acs_checked(task_dir / "task.md", repo=repo)
     from .finalization import check_finalization
     try:
         from .validation import load_policy
-        load_policy(ctx.REPO_ROOT)
-        check_finalization(ctx.REPO_ROOT, tid, task_dir)
+        load_policy(repo.root)
+        check_finalization(repo.root, tid, task_dir)
     except ValueError as error:
         sys.exit(f"finish=FAIL：{error}")
 
 
-def _require_archive_target_free(fm: dict) -> Path:
-    dst = ctx.ARCHIVE_TASKS_DIR / f"{fm['tid']}_{fm['slug']}"
+def _require_archive_target_free(fm: dict, *, repo=None) -> Path:
+    repo = repo or ctx.current_context()
+    dst = repo.archive_tasks_dir / f"{fm['tid']}_{fm['slug']}"
     if dst.exists():
-        sys.exit(f"归档目录已存在：{ctx._rel(dst)}（数据冲突，请提示用户）")
+        sys.exit(f"归档目录已存在：{repo.rel(dst)}（数据冲突，请提示用户）")
     return dst
 
 
-def _close_task(args, status: str, note: str | None, *, prechecked: bool = False) -> None:
+def _close_task(args, status: str, note: str | None, *, prechecked: bool = False, repo=None) -> None:
+    repo = repo or ctx.current_context()
     """done / dropped 收尾：先做 git 侧动作，再单次写盘；dropped 最后归档目录。
 
     done 只在原位写 `status: done`，目录留在 `docs/tasks/`，由 integrate 的 merge commit
@@ -572,8 +581,8 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
                     "主干副本已滞后。请到对应 worktree 执行 drop，或先合并该 task 分支"
                 )
 
-    src = ctx.REPO_ROOT / task["dir"]
-    dst = _require_archive_target_free(fm) if archive else None
+    src = repo.root / task["dir"]
+    dst = _require_archive_target_free(fm, repo=repo) if archive else None
 
     in_own_worktree = in_own_task_worktree(fm)
     if in_own_worktree:
@@ -582,7 +591,7 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
         )
     else:
         removed, wt_msg = remove_worktree(
-            ctx.effective_worktree(fm), expected_branch=fm.get("branch")
+            repo.effective_worktree(fm), expected_branch=fm.get("branch")
         )
 
     orig_fm = dict(fm)
@@ -593,13 +602,13 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     if in_own_worktree or removed:
         fm["worktree"] = ""
     else:
-        append_note(fm, f"worktree 未移除：{ctx.effective_worktree(fm)}")
+        append_note(fm, f"worktree 未移除：{repo.effective_worktree(fm)}")
     write_front_matter(path, fm, body)
     if not archive:
         print(f"{args.tid} status={status}; 目录留在 {task['dir']}（integrate 时归档）; {wt_msg}")
         return
 
-    ctx.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    repo.archive_tasks_dir.mkdir(parents=True, exist_ok=True)
     try:
         shutil.move(str(src), str(dst))
     except (OSError, shutil.Error) as e:
@@ -615,13 +624,14 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
             rollback_note = "；源目录不存在，无法回滚 front matter"
         sys.exit(
             f"归档移动失败（{e}）{rollback_note}；"
-            f"目录在 {ctx._rel(src) if src.exists() else ctx._rel(dst)}。排除原因后重试"
+            f"目录在 {repo.rel(src) if src.exists() else repo.rel(dst)}。排除原因后重试"
         )
-    print(f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}")
+    print(f"{args.tid} status={status}; 目录已归档 -> {repo.rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
 
-def _unstaged_outside(task_dirs: tuple[str, ...]) -> list[str]:
+def _unstaged_outside(task_dirs: tuple[str, ...], *, repo=None) -> list[str]:
+    repo = repo or ctx.current_context()
     """task 目录之外未暂存或未跟踪的非忽略路径；git 失败时 fail-closed。"""
     result = _git(["status", "--porcelain", "-z", "--untracked-files=all"])
     if result.returncode != 0:
@@ -650,7 +660,8 @@ def _load_md_format():
     return md_format
 
 
-def _markdown_paths_to_check(md_format, task_dir: Path) -> list[str]:
+def _markdown_paths_to_check(md_format, task_dir: Path, *, repo=None) -> list[str]:
+    repo = repo or ctx.current_context()
     result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"])
     if result.returncode != 0:
         sys.exit(f"finish=FAIL：无法列出已暂存 .md：{result.stderr.strip()}；零写入退出")
@@ -659,17 +670,18 @@ def _markdown_paths_to_check(md_format, task_dir: Path) -> list[str]:
         if path and not path.startswith(md_format.BLACKLIST_PREFIXES)
     }
     for path in task_dir.rglob("*.md"):
-        rel = path.relative_to(ctx.REPO_ROOT).as_posix()
+        rel = path.relative_to(repo.root).as_posix()
         if not rel.startswith(md_format.BLACKLIST_PREFIXES):
             rels.add(rel)
     return sorted(rels)
 
 
-def _check_markdown_format(task_dir: Path) -> None:
+def _check_markdown_format(task_dir: Path, *, repo=None) -> None:
+    repo = repo or ctx.current_context()
     md_format = _load_md_format()
     if md_format is None:
         sys.exit("finish=FAIL：缺 md_format.py，无法执行 Markdown 格式检查；零写入退出")
-    rels = _markdown_paths_to_check(md_format, task_dir)
+    rels = _markdown_paths_to_check(md_format, task_dir, repo=repo)
     if not rels:
         return
     try:
@@ -685,22 +697,24 @@ def _check_markdown_format(task_dir: Path) -> None:
         )
 
 
-def _task_dir_worktree_paths(task_dir: Path) -> list[str]:
+def _task_dir_worktree_paths(task_dir: Path, *, repo=None) -> list[str]:
+    repo = repo or ctx.current_context()
     """当前 task 目录内尚未暂存、但会被 finish 一并纳入提交的文件。"""
     return [
-        path.relative_to(ctx.REPO_ROOT).as_posix()
+        path.relative_to(repo.root).as_posix()
         for path in task_dir.rglob("*")
         if path.is_file()
     ]
 
 
-def _check_privacy_leaks(task_dir: Path) -> None:
+def _check_privacy_leaks(task_dir: Path, *, repo=None) -> None:
+    repo = repo or ctx.current_context()
     """扫描预期提交快照（index 全量 + 当前 task 目录未暂存文件），fail-closed（A07）。"""
     from .privacy import PrivacyScanError, scan_git_index_privacy
 
     try:
         leaks = scan_git_index_privacy(
-            ctx.REPO_ROOT, extra_worktree_paths=_task_dir_worktree_paths(task_dir)
+            repo.root, extra_worktree_paths=_task_dir_worktree_paths(task_dir, repo=repo)
         )
     except PrivacyScanError as error:
         sys.exit(f"finish=FAIL：隐私扫描失败（fail-closed）：{error}；零写入退出")
@@ -712,12 +726,13 @@ def _check_privacy_leaks(task_dir: Path) -> None:
         )
 
 
-def _verify_committed_privacy() -> None:
+def _verify_committed_privacy(*, repo=None) -> None:
+    repo = repo or ctx.current_context()
     """提交后核对实际快照（HEAD 全量非归档文本），防止 hook 或外部改写引入泄漏（A07）。"""
     from .privacy import PrivacyScanError, scan_git_tree_privacy
 
     try:
-        leaks = scan_git_tree_privacy(ctx.REPO_ROOT, "HEAD")
+        leaks = scan_git_tree_privacy(repo.root, "HEAD")
     except PrivacyScanError as error:
         sys.exit(f"finish=FAIL：提交后隐私核对失败（fail-closed）：{error}")
     if leaks:
@@ -730,6 +745,7 @@ def _verify_committed_privacy() -> None:
 
 def _finish_prechecks(args) -> dict:
     """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
+    repo = getattr(args, "repo", None) or ctx.current_context()
     from .attempts import current_attempt_record, resolve_identity
     from .git_ops import primary_worktree_path
     from .ledger import ledger_read
@@ -766,14 +782,14 @@ def _finish_prechecks(args) -> dict:
         raise
 
     # 2. AC 全部打勾 + finalization 闭环；done 归档目标只读占用检查
-    _check_done_ready(tid, task_dir)
+    _check_done_ready(tid, task_dir, repo=repo)
     _require_archive_target_free(fm)
 
     # 3. Markdown 零写入格式检查（含已暂存 .md 与当前 task 目录）
-    _check_markdown_format(task_dir)
+    _check_markdown_format(task_dir, repo=repo)
 
     # 4. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
-    loose = _unstaged_outside((task["dir"],))
+    loose = _unstaged_outside((task["dir"],), repo=repo)
     if loose:
         shown = ", ".join(loose[:8]) + (f" 等共 {len(loose)} 项" if len(loose) > 8 else "")
         sys.exit(
@@ -809,7 +825,7 @@ def _finish_prechecks(args) -> dict:
             f"{privacy_info} "
             f"next_action={review['next_action']}；零写入退出"
         )
-    _check_privacy_leaks(task_dir)
+    _check_privacy_leaks(task_dir, repo=repo)
 
     # 6. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
@@ -828,7 +844,7 @@ def _finish_prechecks(args) -> dict:
     try:
         handoff = build_handoff(
             tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],
-            base_sha=head, review_scope=scope, note_body=body, root=ctx.REPO_ROOT,
+            base_sha=head, review_scope=scope, note_body=body, root=repo.root,
         )
     except ctx.TaskDataError as error:
         sys.exit(f"finish=FAIL：{error}；零写入退出")
@@ -839,12 +855,13 @@ def _finish_prechecks(args) -> dict:
     }
 
 
-def _settle_stale_finish_txn(tid: str) -> None:
+def _settle_stale_finish_txn(tid: str, *, repo=None) -> None:
+    repo = repo or ctx.current_context()
     """start/finish 前置：处理遗留提交事务，幂等判定并恢复或阻断（A01）。"""
     from .commit_txn import judge, load, rollback
     from .git_ops import worktree_paths
 
-    worktree = ctx.REPO_ROOT.resolve()
+    worktree = repo.root.resolve()
     if str(worktree) not in worktree_paths():
         return
     try:
@@ -881,16 +898,17 @@ def _settle_stale_finish_txn(tid: str) -> None:
 
 def cmd_finish(args):
     """active -> done 原子收尾：前置检查零写入，持久提交事务提交；失败按 HEAD 实际状态恢复。"""
+    repo = getattr(args, "repo", None) or ctx.current_context()
     from .commit_txn import (
         begin, finalize, judge, load, mark_phase, mark_staged, rollback, run_git_commit,
     )
 
     tid = args.tid
     # 遗留提交事务必须先于任何前置检查处理：现场可能处于半写状态。
-    _settle_stale_finish_txn(tid)
+    _settle_stale_finish_txn(tid, repo=repo)
     plan = _finish_prechecks(args)
     message_path = plan["message_path"]
-    worktree = ctx.REPO_ROOT.resolve()
+    worktree = repo.root.resolve()
 
     attempt, execution_id = plan["handoff"]["attempt"], plan["handoff"]["execution_id"]
     txn = begin(
@@ -930,7 +948,7 @@ def cmd_finish(args):
     try:
         from .documents import atomic_write_text
         atomic_write_text(
-            ctx.REPO_ROOT / plan["task_rel"] / "handoff.json",
+            repo.root / plan["task_rel"] / "handoff.json",
             json.dumps(plan["handoff"], ensure_ascii=False, indent=2) + "\n",
         )
         staged = _git(["add", "-A", "--", plan["task_rel"]])
@@ -953,11 +971,12 @@ def cmd_finish(args):
             f"HEAD 重算={actual_scope!r}）；HEAD 已前移不回滚，"
             f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`：判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
         )
-    _verify_committed_privacy()
+    _verify_committed_privacy(repo=repo)
     print(f"finish=OK {tid} commit={_get_head()}")
 
 @control_locked
 def cmd_drop(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     references = task_schedule_references(args.tid)
     if references:
         sys.exit(
@@ -968,11 +987,12 @@ def cmd_drop(args):
 
 @control_locked
 def cmd_rewind(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     task, path, fm, body = load_task(args.tid)
     primary_fm = dict(fm)
     primary_body = body
-    worktree_rel = ctx.effective_worktree(fm)
-    worktree = (ctx.REPO_ROOT / worktree_rel).resolve()
+    worktree_rel = repo.effective_worktree(fm)
+    worktree = (repo.root / worktree_rel).resolve()
 
     # 新 start 不回写 main；从主仓 rewind 时读取登记 worktree 中的 active 状态。
     if fm["status"] == "backlog" and str(worktree) in worktree_paths():
@@ -1099,6 +1119,7 @@ def cmd_rewind(args):
 
 @control_locked
 def cmd_finish_unwind(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     """撤销与 review 内容不一致的实现 commit：分支退回 diff_anchor，progress 还原 active。
 
     只处理 recovery `review_mismatch` 现场：attempt 为 running、恰好一个实现 commit、
@@ -1129,7 +1150,7 @@ def cmd_finish_unwind(args):
     if effective is None:
         sys.exit(f"{tid} 不存在")
     branch = effective.get("branch") or f"{tid}_{effective['slug']}"
-    worktree = (ctx.REPO_ROOT / ctx.worktree_rel_path(tid)).resolve()
+    worktree = (repo.root / repo.worktree_rel(tid)).resolve()
     registered = worktree_paths().get(str(worktree))
     if registered is None:
         sys.exit(f"{tid} 无登记 worktree；按 recovery 判定处理，不撤销")
@@ -1189,7 +1210,7 @@ def cmd_finish_unwind(args):
     wt_fm["status"] = "active"
     # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
     # 否则后续 finish 的 require_own_task_worktree 认不出自身 worktree。
-    wt_fm["worktree"] = ctx.worktree_rel_path(tid)
+    wt_fm["worktree"] = repo.worktree_rel(tid)
     append_note(wt_fm, f"finish-unwind: 撤销与 review 不一致的实现 commit {tip_sha[:12]}，回到 active 重做（{args.reason}）")
     try:
         write_front_matter(task_dir / ctx.PROGRESS_FILE, wt_fm, wt_body)
@@ -1213,6 +1234,7 @@ def cmd_finish_unwind(args):
 
 @control_locked
 def cmd_purge(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     require_primary_worktree()
     references = task_schedule_references(args.tid)
     if references:
@@ -1222,7 +1244,7 @@ def cmd_purge(args):
         )
     task, path, fm, body = load_task(args.tid)
     require_status(fm, "backlog")
-    task_dir = ctx.REPO_ROOT / task["dir"]
+    task_dir = repo.root / task["dir"]
     if tracked_anywhere(task["dir"]):
         sys.exit(
             f"{args.tid} 的 task 目录已被任一分支跟踪；"
@@ -1237,7 +1259,7 @@ def cmd_purge(args):
         sys.exit(f"{wt_msg}\npurge 中止：worktree 未清理时删除 task 目录会留下无主工作区")
     # 先原子移动到可恢复 tombstone，完成 index/审计后再最终删除；
     # 避免 rmtree 成功但收尾失败 → 已删却无审计、index 残留旧项。
-    tomb = ctx.REPO_ROOT / ".scratch" / f"purge_{fm['tid']}_{fm['slug']}"
+    tomb = repo.root / ".scratch" / f"purge_{fm['tid']}_{fm['slug']}"
     tomb.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.replace(task_dir, tomb)
@@ -1258,18 +1280,19 @@ def cmd_purge(args):
         if restored:
             sys.exit(f"purge 收尾失败（{error}）；任务目录已完整恢复")
         else:
-            sys.exit(f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理")
+            sys.exit(f"purge 收尾失败（{error}）；目录保留于 {repo.rel(tomb)}，请人工处理")
     try:
         shutil.rmtree(tomb)
     except OSError as error:
         print(
-            f"{args.tid} purged（tid 已释放；审计见 {ctx._rel(ctx.AUDIT_PATH)}）；"
-            f"警告：临时文件清理失败（{error}），残留于 {ctx._rel(tomb)}，请人工删除"
+            f"{args.tid} purged（tid 已释放；审计见 {repo.rel(repo.audit_path)}）；"
+            f"警告：临时文件清理失败（{error}），残留于 {repo.rel(tomb)}，请人工删除"
         )
         return
-    print(f"{args.tid} purged（tid 已释放；审计见 {ctx._rel(ctx.AUDIT_PATH)}）")
+    print(f"{args.tid} purged（tid 已释放；审计见 {repo.rel(repo.audit_path)}）")
 
 def cmd_list(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     if args.status and args.status not in ctx.VALID_STATUSES:
         sys.exit(f"status {args.status!r} 非法；可选 {ctx.VALID_STATUSES}")
     ref_arg = args.ref
@@ -1298,6 +1321,7 @@ def cmd_list(args):
         )
 
 def cmd_show(args):
+    repo = getattr(args, "repo", None) or ctx.current_context()
     ref_arg = args.ref
     if ref_arg:
         ref_name, ref_sha = resolve_local_branch(ref_arg)
@@ -1311,10 +1335,10 @@ def cmd_show(args):
         task, path, fm, body = load_task(args.tid)
         fields = dict(fm)
         fields["dir"] = task["dir"]
-        fields["progress_md"] = ctx._rel(path)
+        fields["progress_md"] = repo.rel(path)
         task_md = path.parent / "task.md"
         fields["task_md"] = (
-            ctx._rel(task_md) if task_md.is_file() else f"{ctx._rel(task_md)}（缺失）"
+            repo.rel(task_md) if task_md.is_file() else f"{repo.rel(task_md)}（缺失）"
         )
     width = max(len(k) for k in fields)
     for k, v in fields.items():

@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 import repo_task.context as ctx
 
@@ -323,6 +324,8 @@ def main():
     restore.set_defaults(func=cmd_ledger_import)
 
     args = parser.parse_args()
+    # 入口构造不可变仓库身份，所有子命令显式接收；不再依赖模块级路径。
+    args.repo = ctx.RepoContext.from_code_location(Path(__file__))
     try:
         args.func(args)
     except ctx.TaskDataError as error:

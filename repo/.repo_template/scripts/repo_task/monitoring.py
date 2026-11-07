@@ -60,16 +60,16 @@ REVIEW_PROCESS_FILES = (
 ) + tuple(name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names)
 
 
-def implementation_commit(ref: str, base_sha: str) -> str:
+def implementation_commit(ref: str, base_sha: str, *, repo=None) -> str:
     """校验执行分支形状：base_sha..ref 恰好一个非 merge 实现 commit，first parent 等于 base_sha。"""
     resolved = []
     for name, value in (("ref", ref), ("base", base_sha)):
-        result = _git(["rev-parse", "--verify", "--quiet", f"{value}^{{commit}}"])
+        result = _git(["rev-parse", "--verify", "--quiet", f"{value}^{{commit}}"], repo=repo)
         if result.returncode != 0 or not result.stdout.strip():
             raise ctx.TaskDataError(f"{name} {value!r} 无法解析为 commit")
         resolved.append(result.stdout.strip())
     tip, base = resolved
-    listing = _git(["rev-list", "--parents", f"{base}..{tip}"])
+    listing = _git(["rev-list", "--parents", f"{base}..{tip}"], repo=repo)
     if listing.returncode != 0:
         raise ctx.TaskDataError(f"无法列出 {base[:12]}..{tip[:12]} 的提交：{listing.stderr.strip()}")
     commits = [line.split() for line in listing.stdout.splitlines() if line.strip()]
@@ -420,6 +420,7 @@ def verify_integrate_ready(
     tid: str,
     attempt: int,
     execution_id: str,
+    *, repo=None,
 ) -> tuple[str, str, str]:
     """Verify one execution commit and exact handoff provenance.
 
@@ -437,14 +438,15 @@ def verify_integrate_ready(
         or not execution_id
     ):
         return "contract", "identity", "verify 必须提供正整数 attempt 与非空 execution_id"
-    branches = _task_branch_names(tid)
+    repo = repo or ctx.current_context()
+    branches = _task_branch_names(tid, repo=repo)
     if not branches:
         return "incomplete", "incomplete", "无本地 task 分支"
     if len(branches) > 1:
         return "contract", "branch", f"存在多个分支：{', '.join(branches)}"
     branch = branches[0]
     try:
-        task, fm, _ = load_task_at_ref(tid, branch)
+        task, fm, _ = load_task_at_ref(tid, branch, repo=repo)
     except ctx.TaskDataError as error:
         return "incomplete", "incomplete", str(error)
     status = fm.get("status")
@@ -452,7 +454,7 @@ def verify_integrate_ready(
         return "incomplete", "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
     handoff_path = f"{task['dir']}/handoff.json"
     try:
-        handoff = json.loads(git_text_at_ref(branch, handoff_path))
+        handoff = json.loads(git_text_at_ref(branch, handoff_path, repo=repo))
     except ctx.TaskDataError:
         return "contract", "handoff", f"分支 {branch!r} tip 缺 {handoff_path}"
     except json.JSONDecodeError:
@@ -475,7 +477,7 @@ def verify_integrate_ready(
             return "contract", "handoff", f"{handoff_path} {problem}"
     spec_path = f"{task['dir']}/task.md"
     try:
-        spec_text = git_text_at_ref(branch, spec_path)
+        spec_text = git_text_at_ref(branch, spec_path, repo=repo)
     except ctx.TaskDataError:
         return "contract", "spec", f"分支 {branch!r} tip 缺 {spec_path}"
     ac_statuses = extract_ac_statuses(spec_text)
@@ -494,8 +496,8 @@ def verify_integrate_ready(
     for key, expected in expected_values.items():
         if handoff.get(key) != expected:
             return "contract", "handoff", f"{handoff_path} {key}={handoff.get(key)!r} 与当前 {expected!r} 不符"
-    tip_result = _git(["rev-parse", f"refs/heads/{branch}^{{commit}}"])
-    base_result = _git(["rev-parse", f"{handoff['base_sha']}^{{commit}}"])
+    tip_result = _git(["rev-parse", f"refs/heads/{branch}^{{commit}}"], repo=repo)
+    base_result = _git(["rev-parse", f"{handoff['base_sha']}^{{commit}}"], repo=repo)
     if tip_result.returncode != 0:
         return "contract", "branch", f"分支 {branch!r} tip 无法解析 commit"
     if base_result.returncode != 0:
@@ -507,7 +509,7 @@ def verify_integrate_ready(
         return "contract", "provenance", f"分支 {branch!r} task diff_anchor 缺失或非法"
     base_level = "full"
     try:
-        _, base_fm, _, _ = load_task_backlog_baseline(tid, base)
+        _, base_fm, _, _ = load_task_backlog_baseline(tid, base, repo=repo)
         base_level = base_fm.get("review_level", "full")
     except ctx.TaskDataError:
         pass
@@ -523,7 +525,7 @@ def verify_integrate_ready(
         )
     shape = "执行分支必须恰好一个实现 commit"
     try:
-        implementation_commit(tip, base)
+        implementation_commit(tip, base, repo=repo)
     except ctx.TaskDataError as error:
         return "contract", "provenance", (
             f"{handoff_path} base_sha={handoff['base_sha']!r} 与分支 {branch!r} tip 不符：{error}；{shape}"
@@ -549,7 +551,7 @@ def verify_integrate_ready(
                 target = Path(tmp)
                 for name in (ctx.PROGRESS_FILE, "task.md", "review_code.md", "review_test.md", "review_general.md"):
                     try:
-                        text = git_text_at_ref(branch, f"{task['dir']}/{name}")
+                        text = git_text_at_ref(branch, f"{task['dir']}/{name}", repo=repo)
                     except ctx.TaskDataError:
                         if name in (ctx.PROGRESS_FILE, "task.md"):
                             raise

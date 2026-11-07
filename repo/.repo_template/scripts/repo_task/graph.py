@@ -14,17 +14,18 @@ from .file_transaction import FileTransaction
 
 
 def cmd_merge_backlog(args):
-    require_primary_worktree()
+    repo = getattr(args, "repo", None) or ctx.current_context()
+    require_primary_worktree(repo=repo)
     sources = set(parse_tid_list(args.sources, field="--sources", allow_empty=False))
     group = sources | {args.tid}
     if len(group) < 2:
         sys.exit("合并至少需要两个不同 backlog 成员")
-    with git_common_lock(ctx.REPO_ROOT, CONTROL_LOCK_NAME):
-        schedule = compute_schedule()
-        main_tasks = {task["tid"]: task for task in scan_tasks()}
+    with git_common_lock(repo.root, CONTROL_LOCK_NAME):
+        schedule = compute_schedule(repo=repo)
+        main_tasks = {task["tid"]: task for task in scan_tasks(repo=repo)}
         tasks = schedule["tasks"]
         for tid in group:
-            if tid not in main_tasks or tasks[tid]["status"] != "backlog" or task_effective_state(tid, main_tasks[tid]):
+            if tid not in main_tasks or tasks[tid]["status"] != "backlog" or task_effective_state(tid, main_tasks[tid], repo=repo):
                 sys.exit(f"{tid} 必须是尚未执行的 main backlog")
         from .ledger import ledger_read
         if any(event.get("tid") in group and event.get("attempt") for event in ledger_read()):
@@ -58,15 +59,15 @@ def cmd_merge_backlog(args):
                 continue
             if tid not in main_tasks or task["status"] != "backlog" or task_effective_state(tid, main_tasks[tid]):
                 sys.exit(f"合并需要改写不可编辑的 {tid}；未写入")
-            _, path, fm, body = load_task(tid)
+            _, path, fm, body = load_task(tid, repo=repo)
             fm.update(depends_on=deps, conflicts_with=peers)
             updates.append((path, fm, body))
-        transaction = FileTransaction(ctx.REPO_ROOT, ".scratch/task_graph_transaction")
+        transaction = FileTransaction(repo.root, ".scratch/task_graph_transaction")
         retired = sorted(group - {args.tid})
         source_dirs = [main_tasks[tid]["dir"] for tid in retired]
         paths = source_dirs + [(Path("docs/archive/tasks") / Path(directory).name).as_posix() for directory in source_dirs]
-        paths += [str(path.relative_to(ctx.REPO_ROOT)) for path, _, _ in updates
-                  if not any(path.is_relative_to(ctx.REPO_ROOT / directory) for directory in source_dirs)]
+        paths += [str(path.relative_to(repo.root)) for path, _, _ in updates
+                  if not any(path.is_relative_to(repo.root / directory) for directory in source_dirs)]
         try:
             transaction.begin(paths)
         except ValueError as error:
@@ -75,9 +76,11 @@ def cmd_merge_backlog(args):
             write_front_matter_many(updates)
             from .lifecycle import _close_task
             for tid in retired:
-                _close_task(Namespace(tid=tid), "dropped", f"merged into {args.tid}")
+                _close_task(
+                    Namespace(tid=tid), "dropped", f"merged into {args.tid}", repo=repo
+                )
             for path, fm, _body in updates:
-                if any(path.is_relative_to(ctx.REPO_ROOT / d) for d in source_dirs):
+                if any(path.is_relative_to(repo.root / d) for d in source_dirs):
                     continue
                 actual, _ = parse_front_matter(path)
                 if (
@@ -85,13 +88,13 @@ def cmd_merge_backlog(args):
                     or actual.get("conflicts_with", "") != fm["conflicts_with"]
                 ):
                     raise ctx.TaskDataError(
-                        f"合并后校验失败：{ctx._rel(path)} 依赖/冲突与预期不符"
+                        f"合并后校验失败：{repo.rel(path)} 依赖/冲突与预期不符"
                     )
             for directory in source_dirs:
                 name = Path(directory).name
-                if (ctx.TASKS_DIR / name).exists():
+                if (repo.tasks_dir / name).exists():
                     raise ctx.TaskDataError(f"合并后校验失败：docs/tasks/{name} 仍存在")
-                if not (ctx.ARCHIVE_TASKS_DIR / name).is_dir():
+                if not (repo.archive_tasks_dir / name).is_dir():
                     raise ctx.TaskDataError(
                         f"合并后校验失败：docs/archive/tasks/{name} 不存在"
                     )
@@ -104,9 +107,10 @@ def cmd_merge_backlog(args):
 
 
 def cmd_graph_transaction(args):
-    require_primary_worktree()
-    with git_common_lock(ctx.REPO_ROOT, CONTROL_LOCK_NAME):
-        transaction = FileTransaction(ctx.REPO_ROOT, ".scratch/task_graph_transaction")
+    repo = getattr(args, "repo", None) or ctx.current_context()
+    require_primary_worktree(repo=repo)
+    with git_common_lock(repo.root, CONTROL_LOCK_NAME):
+        transaction = FileTransaction(repo.root, ".scratch/task_graph_transaction")
         if args.action == "status":
             import json
             print(json.dumps(transaction.read(), ensure_ascii=False, indent=2))
