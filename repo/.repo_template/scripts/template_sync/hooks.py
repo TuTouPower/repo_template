@@ -68,6 +68,60 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str]) 
     reports.append(f"{ctx._rel(settings)} 已移除退役 merge guard PreToolUse")
 
 
+def _retired_guard_state() -> tuple[Path, bool, bool]:
+    legacy = ctx.CONSUMER / ".claude/hooks/merge_guard.py"
+    retired = ctx.CONSUMER / ".repo_template/hooks/merge_guard.py"
+    managed = (
+        legacy.is_symlink()
+        and legacy.resolve(strict=False) == retired.resolve(strict=False)
+    )
+    return legacy, managed, not legacy.exists() and not legacy.is_symlink()
+
+
+def retired_hooks_status() -> list[str]:
+    """返回仍残留的退役 hook 现场（链接或 settings 中的命令）。"""
+    legacy, managed, missing_link = _retired_guard_state()
+    findings: list[str] = []
+    if managed:
+        findings.append(ctx._rel(legacy))
+    settings = ctx.CONSUMER / ".claude/settings.json"
+    if settings.is_file():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            data = None
+        groups = (data or {}).get("hooks", {}).get("PreToolUse", []) if isinstance(data, dict) else []
+        if isinstance(groups, list):
+            for group in groups:
+                entries = group.get("hooks") if isinstance(group, dict) else None
+                if isinstance(entries, list) and any(
+                    isinstance(entry, dict)
+                    and str(entry.get("command", "")).strip() == _RETIRED_MERGE_GUARD_COMMAND
+                    for entry in entries
+                ):
+                    findings.append(ctx._rel(settings))
+                    break
+    if missing_link and not findings:
+        return []
+    return sorted(set(findings))
+
+
+def migrate_retired_hooks() -> list[str]:
+    """显式移除由模板管理的退役 merge_guard 链接与设置项，保留消费方自定义 hook。"""
+    legacy, managed, missing_link = _retired_guard_state()
+    changed: set[Path] = set()
+    reports: list[str] = []
+    if not retired_hooks_status():
+        return reports
+    if managed or missing_link:
+        _remove_retired_merge_guard_setting(changed, reports)
+    if managed:
+        legacy.unlink()
+        changed.add(legacy)
+        reports.append(f"{ctx._rel(legacy)} 已退役并移除")
+    return reports
+
+
 @consumer_locked
 def cmd_install_hooks(args: argparse.Namespace) -> int:
     """幂等设置 core.hooksPath 指向工具链 hooks。

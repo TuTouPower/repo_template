@@ -468,12 +468,20 @@ def workflow_migration_status(
     return sorted(candidates), worktrees, sorted(errors)
 
 
-def force_migrate_workflow_tasks(changed: set[Path]) -> list[str]:
+def force_migrate_workflow_tasks(
+    changed: set[Path], *, template_template_dir: Path | None = None
+) -> list[str]:
+    """显式迁移消费仓旧 workflow 布局到当前 schema。
+
+    template_template_dir 指向当前目标 schema 的 task_template 目录；缺省读消费仓
+    自身工具链，显式迁移时应传固定来源快照。
+    """
     base, unintegrated = _unintegrated_done_branches()
     if unintegrated:
         raise ctx.SyncError(_unintegrated_done_message(base, unintegrated))
-    task_template_path = ctx.CONSUMER / ".repo_template/docs/task_template/task.md"
-    note_template_path = ctx.CONSUMER / ".repo_template/docs/task_template" / PROGRESS_FILE
+    template_dir = template_template_dir or (ctx.CONSUMER / ".repo_template/docs/task_template")
+    task_template_path = template_dir / "task.md"
+    note_template_path = template_dir / PROGRESS_FILE
     if not task_template_path.is_file() or not note_template_path.is_file():
         return []
     task_template = task_template_path.read_text(encoding="utf-8")

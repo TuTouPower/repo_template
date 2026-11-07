@@ -96,7 +96,7 @@ CLI/reviewer 接口与 skill 调用图分开：创建有效性用 `preflight {ti
 
 review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件、mode 与软链变化），不随暂存、提交改变；`handoff.json` 的 `review_scope` 记录 finish 时的指纹，最终提交必须与之一致。cleanup/integrate 对 done 成员从最终提交读取真实报告及处置表，重算同一指纹；执行回执（`handoff.json`）的 review 摘要不能代替 PASS 证据。升级前的旧指纹不自动迁移为 PASS，须重新审阅。已提交且 review 门禁失败（stale / missing / format_error / FAIL）的修复规程见 `recovery.md`。
 
-workflow schema 强制迁移（`repo-template-sync` 的 `apply`）见 `sync.md`。
+旧布局显式迁移（`repo_sync.py migrate ...`）见 `sync.md`；日常 `apply` 遇到旧 schema 会阻断而不是自动迁移。
 
 Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-only`，最低要求 Git 2.38；工具会在执行 `git merge --no-commit` 前检查，版本不足时不会留下 pending merge。
 

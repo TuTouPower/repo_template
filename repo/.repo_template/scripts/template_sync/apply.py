@@ -20,14 +20,15 @@ from . import context as ctx
 from .agents_merge import _agents_parts, _replace_agents_force
 from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked
-from .conventions_migration import migrate_conventions
 from .gates import _run_tests
 from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
-from .specs_index_migration import migrate_specs_index, specs_index_report
+from .specs_index_migration import specs_index_migration_status, specs_index_report
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import prompt_substrings, read_state, write_state
-from .workflow_migration import force_migrate_workflow_tasks
+from .conventions_migration import conventions_migration_status
+from .hooks import retired_hooks_status
+from .workflow_migration import workflow_migration_status
 
 
 def _assert_distributable_tree(src: Path) -> None:
@@ -56,6 +57,33 @@ def _assert_distributable_tree(src: Path) -> None:
             )
 
 
+def _require_current_schema(src: Path) -> None:
+    """日常 apply 只接受当前 schema；旧布局必须先走显式 migrate（A10）。"""
+    problems: list[str] = []
+    migrations, worktrees, errors = workflow_migration_status(src)
+    if errors:
+        problems.extend(f"workflow schema 现场：{error}" for error in errors)
+    if worktrees:
+        problems.extend(
+            f"workflow schema 现场：已登记 task worktree {branch} @ {root}"
+            for root, branch in worktrees
+        )
+    problems.extend(f"workflow schema 旧布局：{path}" for path in migrations)
+    problems.extend(
+        f"conventions 旧写法：{path}" for path in conventions_migration_status()
+    )
+    problems.extend(
+        f"specs_index 旧布局：{path}" for path in specs_index_migration_status()
+    )
+    problems.extend(f"退役 hook 残留：{path}" for path in retired_hooks_status())
+    if problems:
+        raise ctx.SyncError(
+            "检测到旧布局；apply 不再自动迁移。先运行 "
+            "`python3 .repo_template/scripts/repo_sync.py migrate all`（或按类型单项迁移）：\n- "
+            + "\n- ".join(problems)
+        )
+
+
 def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str]) -> None:
     """apply 的写盘主体；OSError 由调用方回滚（F16）。"""
     for rel in ctx.HARD_SYNC_DIRS:
@@ -68,13 +96,6 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
     for rel in ctx.HARD_SYNC_FILES:
         sync_file(src / rel, ctx.CONSUMER / rel, changed)
 
-    migration_reports = force_migrate_workflow_tasks(changed)
-    for report in migration_reports:
-        print(f"提示: {report}")
-    for report in migrate_conventions(changed):
-        print(f"提示: {report}")
-    for report in migrate_specs_index(changed):
-        print(f"提示: {report}")
     reports = repair_symlinks(changed)
     for r in reports:
         print(f"提示: {r}")
@@ -124,6 +145,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if expected and source_commit != expected:
         raise ctx.SyncError(f"来源版本已变化：预期 {expected}，实际 {source_commit}；重新 plan")
     changed: set[Path] = set()
+    try:
+        _require_current_schema(src)
+    except ctx.SyncError as error:
+        print(f"错误: {error}", file=sys.stderr)
+        return 1
     if (ctx.CONSUMER / "AGENTS.md").is_symlink():
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")

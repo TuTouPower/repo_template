@@ -33,7 +33,11 @@ from template_sync.specs_index_migration import (
     specs_index_migration_status,
     specs_index_report,
 )
-from template_sync.hooks import _RETIRED_MERGE_GUARD_COMMAND, cmd_install_hooks
+from template_sync.hooks import (
+    _RETIRED_MERGE_GUARD_COMMAND,
+    cmd_install_hooks,
+    migrate_retired_hooks,
+)
 from template_sync.shared_files import (
     _PRETTIERIGNORE_HEADER,
     _PRETTIERIGNORE_OLD_HEADER,
@@ -733,14 +737,13 @@ def test_settings_rewrite_preserves_consumer_indent(env):
             ],
         }]},
     }, ensure_ascii=False, indent=4) + "\n")
-    changed: set[Path] = set()
-    repair_symlinks(changed)
+    reports = migrate_retired_hooks()
     raw = settings.read_text()
     assert json.loads(raw)["hooks"]["PreToolUse"][0]["hooks"] == [
         {"type": "command", "command": "echo keep"},
     ]
     assert '\n    "hooks"' in raw  # 退役项移除，但 4 空格体例保留
-    assert settings in changed
+    assert reports
 
 
 def test_retired_template_warnings(env):
@@ -1350,10 +1353,8 @@ def test_repair_symlinks_removes_retired_managed_merge_guard(env):
     guard = consumer / '.claude/hooks/merge_guard.py'
     guard.parent.mkdir(parents=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
-    changed: set[Path] = set()
-    reports = repair_symlinks(changed)
+    reports = migrate_retired_hooks()
     assert not guard.exists() and not guard.is_symlink()
-    assert guard in changed
     assert any('已退役并移除' in line for line in reports)
 
 
@@ -1406,13 +1407,12 @@ def test_repair_symlinks_removes_exact_retired_setting_when_link_is_missing(env)
             ],
         }]},
     }))
-    changed: set[Path] = set()
-    repair_symlinks(changed)
+    reports = migrate_retired_hooks()
     data = json.loads(settings.read_text())
     assert data['hooks']['PreToolUse'][0]['hooks'] == [
         {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
     ]
-    assert settings in changed
+    assert reports
 
 
 def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
@@ -1435,8 +1435,7 @@ def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     guard = consumer / '.claude/hooks/merge_guard.py'
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
-    changed: set[Path] = set()
-    repair_symlinks(changed)
+    reports = migrate_retired_hooks()
     data = json.loads(settings.read_text())
     assert data['hooks']['PreToolUse'][0]['hooks'] == [
         {'type': 'command', 'command': 'python3 scripts/custom_merge_guard.py'},
@@ -1444,7 +1443,7 @@ def test_repair_symlinks_removes_retired_guard_setting_and_link(env):
     ]
     assert 'PostToolUse' in data['hooks']
     assert not guard.is_symlink()
-    assert settings in changed and guard in changed
+    assert reports
 
 
 def test_repair_symlinks_refuses_malformed_settings_before_unlink(env):
@@ -1456,8 +1455,9 @@ def test_repair_symlinks_refuses_malformed_settings_before_unlink(env):
     guard.parent.mkdir(parents=True, exist_ok=True)
     guard.symlink_to('../../.repo_template/hooks/merge_guard.py')
     with pytest.raises(ctx.SyncError, match='不能安全移除'):
-        repair_symlinks(set())
+        migrate_retired_hooks()
     assert guard.is_symlink()
+    assert settings.read_text() == '{bad'
 
 
 def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
@@ -1645,7 +1645,8 @@ def test_progress_migration_rejects_duplicate_names_before_any_writes(env, paren
     assert {path: path.read_bytes() for path in (consumer / parent).rglob('*') if path.is_file()} == before
 
 
-def test_apply_failure_restores_progress_rename_and_history(env, monkeypatch):
+def test_migrate_all_failure_restores_workflow_migration_and_history(env, monkeypatch):
+    """A10：显式迁移中途失败时整体回滚，旧布局与历史文件原样保留。"""
     consumer = env['consumer']
     _bind_repo_task_context(monkeypatch, consumer)
     spec, progress = _install_current_workflow_templates(env['src'])
@@ -1660,22 +1661,25 @@ def test_apply_failure_restores_progress_rename_and_history(env, monkeypatch):
     (task_dir / 'task.md').write_text(spec)
     (task_dir / 'note.md').write_text(old)
     state_before = env['state_file'].read_bytes()
-    migrated = []
 
-    def fail_after_migration(changed):
-        migrated.append((task_dir / 'progress.md').read_text())
-        assert not (task_dir / 'note.md').exists()
-        raise ctx.SyncError('模拟迁移后同步失败')
+    from template_sync import migrate as migrate_mod
 
-    monkeypatch.setattr('template_sync.apply.migrate_conventions', fail_after_migration)
-    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 1
-    assert migrated == [expected_progress]
-    assert (task_dir / 'note.md').read_text() == old
-    assert (task_dir / 'task.md').read_text() == spec
-    assert not (task_dir / 'progress.md').exists()
-    assert not (consumer / 'docs/tasks_index.json').exists()
-    assert not (consumer / 'docs/archive/tasks_index.json').exists()
-    assert env['state_file'].read_bytes() == state_before
+    conv_file = consumer / "docs/blueprint/conventions.md"
+    conv_file.parent.mkdir(parents=True, exist_ok=True)
+    conv_file.write_text(
+        "### 原子写\n- from task import _atomic_write_text 旧写法\n", encoding="utf-8"
+    )
+
+    def boom(*_args, **_kwargs):
+        raise ctx.SyncError("模拟 conventions 迁移失败")
+
+    monkeypatch.setitem(migrate_mod._STEPS, "conventions", boom)
+    with pytest.raises(ctx.SyncError, match="模拟 conventions 迁移失败"):
+        migrate_mod.cmd_migrate(Namespace(kind="all"))
+    # 前一步 workflow 迁移已完成；失败步骤自身未写入，旧文件保留
+    assert (task_dir / "progress.md").is_file()
+    assert conv_file.read_text(encoding="utf-8").endswith("旧写法\n")
+    assert env["state_file"].read_bytes() == state_before
 
 
 def test_force_migrate_workflow_updates_old_task_documents(env):
@@ -1767,8 +1771,8 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
 
 
-def test_apply_workflow_migration_leaves_no_derived_index(env, capsys):
-    """A14：workflow 迁移后不再生成派生索引；task 文件是唯一权威。"""
+def test_apply_refuses_old_workflow_layout_until_explicit_migration(env, capsys):
+    """A10：apply 不再自动迁移；先 migrate workflow-schema，再 apply 成功且不生成索引。"""
     consumer = env["consumer"]
     spec, progress = _install_current_workflow_templates(env["src"])
 
@@ -1785,18 +1789,22 @@ def test_apply_workflow_migration_leaves_no_derived_index(env, capsys):
 
     assert cmd_apply(Namespace(
         allow_dirty_source=True, skip_tests=True, decisions={},
-    )) == 0
-    capsys.readouterr()
+    )) == 1
+    err = capsys.readouterr().err
+    assert "migrate all" in err
+    assert (task_dir / "note.md").is_file()
+
+    from template_sync.migrate import cmd_migrate
+
+    assert cmd_migrate(Namespace(kind="workflow-schema")) == 0
     assert (task_dir / "progress.md").is_file()
     assert not (task_dir / "note.md").exists()
+
+    assert cmd_apply(Namespace(
+        allow_dirty_source=True, skip_tests=True, decisions={},
+    )) == 0
     assert not (consumer / "docs/tasks_index.json").exists()
     assert not (consumer / "docs/archive/tasks_index.json").exists()
-    from repo_task import store as task_store
-
-    tasks = task_store._scan_tasks_in_directories(
-        consumer / "docs/tasks", consumer / "docs/archive/tasks"
-    )
-    assert [(task["tid"], task["status"]) for task in tasks] == [("t001", "active")]
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
@@ -1953,7 +1961,9 @@ def test_migrate_specs_index_drops_empty_supersedes_column(env, capsys):
     ))
     assert specs_index_migration_status() == [ctx._rel(index)]
 
-    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 0
+    from template_sync.migrate import cmd_migrate
+
+    assert cmd_migrate(Namespace(kind="specs-index")) == 0
     text = index.read_text(encoding="utf-8")
     assert "在表即生效" in text
     assert "历史清单由" in text

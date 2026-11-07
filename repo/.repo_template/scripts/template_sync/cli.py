@@ -13,7 +13,8 @@ from .apply import cmd_apply
 from .hooks import cmd_install_hooks
 from .shared_files import SHARED_DISPOSITIONS
 from .skills_links import cmd_link_skills
-from .state import cmd_init, cmd_migrate, cmd_prompt
+from .migrate import KINDS, cmd_migrate
+from .state import cmd_init, cmd_prompt
 from .status_plan import cmd_plan, cmd_status
 from .transaction import cmd_transaction
 
@@ -48,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.set_defaults(func=cmd_init)
 
     migrate = sub.add_parser("migrate", help="显式迁移旧布局数据到当前格式")
-    migrate.add_argument("kind", choices=("legacy-state",), help="迁移目标")
+    migrate.add_argument("kind", choices=(*KINDS, "all"), help="迁移目标")
     migrate.set_defaults(func=cmd_migrate)
 
     status_parser = sub.add_parser("status", help="读取状态与差异摘要")

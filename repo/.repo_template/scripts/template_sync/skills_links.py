@@ -80,19 +80,6 @@ def repair_symlinks(changed: set[Path]) -> list[str]:
                 item.unlink()
                 changed.add(item)
                 reports.append(f"{ctx._rel(item)} 已清理（对应 skill 已删除）")
-    legacy_guard = ctx.CONSUMER / ".claude/hooks/merge_guard.py"
-    retired_target = ctx.CONSUMER / ".repo_template/hooks/merge_guard.py"
-    managed_retired_guard = (
-        legacy_guard.is_symlink()
-        and legacy_guard.resolve(strict=False) == retired_target.resolve(strict=False)
-    )
-    guard_missing = not legacy_guard.exists() and not legacy_guard.is_symlink()
-    if managed_retired_guard or guard_missing:
-        _remove_retired_merge_guard_setting(changed, reports)
-    if managed_retired_guard:
-        legacy_guard.unlink()
-        changed.add(legacy_guard)
-        reports.append(f"{ctx._rel(legacy_guard)} 已退役并移除")
     return reports
 
 

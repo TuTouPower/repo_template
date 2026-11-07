@@ -18,11 +18,13 @@
 
 ## workflow schema 强制迁移
 
-`apply` 将主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。
+日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局或退役 hook 残留时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。迁移不再隐含在同步写盘里。
+
+显式迁移把主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：失败整体回滚，成功后校验目标 schema，不可机械转换的数据列出并中止。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
-存在已登记 task worktree 时拒绝 apply，先完成或 rewind；存在状态为 done 但尚未合入默认分支的 task 分支时同样拒绝，先 integrate。迁移后工具链只接受当前 schema。
+存在已登记 task worktree 时拒绝迁移，先完成或 rewind；存在状态为 done 但尚未合入默认分支的 task 分支时同样拒绝，先 integrate。迁移后工具链只接受当前 schema。
 
 ## testing.md 单块门禁迁移
 
