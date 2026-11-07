@@ -76,13 +76,23 @@ def test_deliverable_distinguishes_change_kinds(repo):
     assert result.returncode == 1 and result.stdout.strip() == "missing"
 
 
-def test_deliverable_baseline_unavailable_degrades_to_existence(repo):
+# 原 test_deliverable_baseline_unavailable_degrades_to_existence 与
+# test_added_lines_baseline_unavailable_only_untracked 固化了已废弃的
+# 「baseline 失效仍退出 0」降级契约；按 A03 整体替换为 fail-closed 行为测试。
+
+
+@pytest.mark.parametrize("bad_baseline", ["no-git", "deadbeef" * 5, "--version", "--output=/tmp/x"])
+def test_invalid_baseline_fails_closed_for_all_subcommands(repo, bad_baseline):
     (repo / "new.txt").write_text("fresh\n", encoding="utf-8")
-    result = _run(repo, "deliverable", "no-git", "new.txt")
-    assert result.returncode == 0 and "baseline unavailable" in result.stdout
-    assert "WARNING" in result.stderr
-    result = _run(repo, "deliverable", "no-git", "nope.txt")
-    assert result.returncode == 1
+    for subcmd in (
+        ("deliverable", "--", bad_baseline, "new.txt"),
+        ("changed-files", "--", bad_baseline),
+        ("added-lines", "--", bad_baseline),
+    ):
+        result = _run(repo, *subcmd)
+        assert result.returncode != 0
+        assert result.stdout == ""
+        assert "不可解析为有效 commit" in result.stderr
 
 
 def test_changed_files_covers_tracked_untracked_deleted_and_exclude(repo):
@@ -120,14 +130,6 @@ def test_added_lines_includes_untracked_bodies_and_honours_exclude(repo):
 
     result = _run(repo, "added-lines", baseline, "--exclude", "docs/*")
     assert "TODO in docs" not in result.stdout.splitlines()
-
-
-def test_added_lines_baseline_unavailable_only_untracked(repo):
-    (repo / "fresh.py").write_text("new line\n", encoding="utf-8")
-    result = _run(repo, "added-lines", "deadbeef" * 5)
-    assert result.returncode == 0
-    assert result.stdout.splitlines() == ["new line"]
-    assert "WARNING" in result.stderr
 
 
 def test_added_lines_exclude_robust_to_diff_prefix_config(repo):
@@ -170,14 +172,20 @@ def test_non_ascii_paths_raw_and_exclude_consistent(repo):
 
 
 def test_non_git_repo_errors(tmp_path):
-    result = _run(tmp_path, "added-lines", "HEAD")
-    assert result.returncode != 0
-    assert "非 git 仓库" in result.stderr
+    for subcmd in (
+        ("deliverable", "HEAD", "a.txt"),
+        ("changed-files", "HEAD"),
+        ("added-lines", "HEAD"),
+    ):
+        result = _run(tmp_path, *subcmd)
+        assert result.returncode != 0
+        assert result.stdout == ""
+        assert "非 git 仓库" in result.stderr
 
 
 def test_baseline_option_like_revision_is_not_interpreted_by_git(repo):
-    assert repo_state._baseline_ok("--version") is False
-    assert repo_state._baseline_ok("--output=/tmp/pwned") is False
+    assert repo_state._resolve_baseline("--version") == ""
+    assert repo_state._resolve_baseline("--output=/tmp/pwned") == ""
 
 
 def test_added_lines_warns_and_fails_on_unreadable_untracked(repo, monkeypatch, capsys):

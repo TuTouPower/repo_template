@@ -14,8 +14,8 @@ missing，清洁度 grep 误报 0。
       = git diff <baseline>          # 单 ref，不是 <baseline>..HEAD
   未跟踪新文件（从未 git add 的 deliverable）
       = git ls-files --others --exclude-standard
-  baseline 不可解析（no-git / 假 sha / 非 git 仓）
-      = 退化为文件系统存在性判断，并在 stderr 声明覆盖降级
+  baseline 不可解析或非 git 仓库
+      = 立即非零退出（fail-closed），不退化为部分结果或存在性判断
 
 本脚本只读，不改仓库与 index。
 
@@ -56,19 +56,25 @@ def _in_git_repo() -> bool:
     return _git(["rev-parse", "--is-inside-work-tree"]).returncode == 0
 
 
-def _baseline_ok(baseline: str) -> bool:
-    if not baseline or baseline == "no-git":
-        return False
-    return _git(
+def _resolve_baseline(baseline: str) -> str:
+    """将 baseline 解析为确定 commit SHA；不可解析时返回空字符串。"""
+    if not baseline or baseline.startswith("-"):
+        return ""
+    result = _git(
         ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{baseline}^{{commit}}"]
-    ).returncode == 0
-
-
-def _warn_degraded(baseline: str) -> None:
-    print(
-        f"WARNING: baseline {baseline!r} 不可解析，退化为存在性/未跟踪判断，覆盖降级",
-        file=sys.stderr,
     )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _require_baseline(baseline: str, cmd_name: str) -> str:
+    if not _in_git_repo():
+        sys.exit(f"非 git 仓库，{cmd_name} 不可用")
+    resolved = _resolve_baseline(baseline)
+    if not resolved:
+        sys.exit(f"baseline {baseline!r} 不可解析为有效 commit，{cmd_name} 拒绝降级执行")
+    return resolved
 
 
 def _untracked_files(excludes: list[str]) -> list[str]:
@@ -90,44 +96,32 @@ def _diff_name_only(baseline: str, excludes: list[str]) -> list[str]:
 
 
 def cmd_deliverable(args) -> int:
+    baseline = _require_baseline(args.baseline, "deliverable")
     path = Path(args.path)
-    if _in_git_repo() and _baseline_ok(args.baseline):
-        if not path.exists():
-            # 含 tracked 文件相对 baseline 被删除的情况
-            print("missing")
-            return 1
-        untracked = _git(
-            ["ls-files", "--others", "--exclude-standard", "--", args.path], check=True
-        ).stdout.splitlines()
-        if any(line for line in untracked):
-            print("present — untracked new file")
-            return 0
-        stat = _git(
-            ["diff", "--stat", "--end-of-options", args.baseline, "--", args.path], check=True
-        ).stdout.strip()
-        if stat:
-            print(f"present — changed vs baseline ({stat.splitlines()[-1].strip()})")
-            return 0
-        print("present — exists unchanged")
+    if not path.exists():
+        # 含 tracked 文件相对 baseline 被删除的情况
+        print("missing")
+        return 1
+    untracked = _git(
+        ["ls-files", "--others", "--exclude-standard", "--", args.path], check=True
+    ).stdout.splitlines()
+    if any(line for line in untracked):
+        print("present — untracked new file")
         return 0
-    _warn_degraded(args.baseline)
-    if path.exists():
-        print("present — exists (baseline unavailable)")
+    stat = _git(
+        ["diff", "--stat", "--end-of-options", baseline, "--", args.path], check=True
+    ).stdout.strip()
+    if stat:
+        print(f"present — changed vs baseline ({stat.splitlines()[-1].strip()})")
         return 0
-    print("missing")
-    return 1
+    print("present — exists unchanged")
+    return 0
 
 
 def cmd_changed_files(args) -> int:
-    if not _in_git_repo():
-        sys.exit("非 git 仓库，changed-files 不可用")
-    if not _baseline_ok(args.baseline):
-        _warn_degraded(args.baseline)
-        for path in _untracked_files(args.exclude):
-            print(path)
-        return 0
+    baseline = _require_baseline(args.baseline, "changed-files")
     seen = set()
-    for path in _diff_name_only(args.baseline, args.exclude) + _untracked_files(args.exclude):
+    for path in _diff_name_only(baseline, args.exclude) + _untracked_files(args.exclude):
         if path not in seen:
             seen.add(path)
             print(path)
@@ -135,31 +129,27 @@ def cmd_changed_files(args) -> int:
 
 
 def cmd_added_lines(args) -> int:
-    if not _in_git_repo():
-        sys.exit("非 git 仓库，added-lines 不可用")
-    if not _baseline_ok(args.baseline):
-        _warn_degraded(args.baseline)
-    else:
-        # 锁定前缀格式：用户 config（diff.noprefix / diff.mnemonicPrefix）会改变
-        # '+++ b/<path>' 头部形态，导致 --exclude 匹配失效。
-        # core.quotePath=false：非 ASCII 路径原样出现在头部，不转义为 C 引号形式。
-        result = _git(
-            ["-c", "core.quotePath=false",
-             "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
-             "diff", "--end-of-options", args.baseline],
-            check=True,
-        )
-        current_path = ""
-        skip_file = False
-        for line in result.stdout.splitlines():
-            if line.startswith("+++ "):
-                current_path = line[4:].removeprefix("b/")
-                skip_file = _excluded(current_path, args.exclude)
-                continue
-            if skip_file:
-                continue
-            if line.startswith("+") and not line.startswith("+++"):
-                print(line[1:])
+    baseline = _require_baseline(args.baseline, "added-lines")
+    # 锁定前缀格式：用户 config（diff.noprefix / diff.mnemonicPrefix）会改变
+    # '+++ b/<path>' 头部形态，导致 --exclude 匹配失效。
+    # core.quotePath=false：非 ASCII 路径原样出现在头部，不转义为 C 引号形式。
+    result = _git(
+        ["-c", "core.quotePath=false",
+         "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+         "diff", "--end-of-options", baseline],
+        check=True,
+    )
+    current_path = ""
+    skip_file = False
+    for line in result.stdout.splitlines():
+        if line.startswith("+++ "):
+            current_path = line[4:].removeprefix("b/")
+            skip_file = _excluded(current_path, args.exclude)
+            continue
+        if skip_file:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            print(line[1:])
     failed = False
     for path in _untracked_files(args.exclude):
         file_path = Path(path)
