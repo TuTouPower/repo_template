@@ -2172,6 +2172,36 @@ def test_effective_status_cli_output(git_repo, capsys):
     assert str(_worktree_path(git_repo, "t001")) in out
 
 
+def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_repo):
+    """A05：未合并分支的 progress.md 损坏时，不得静默回落为 main 的 backlog；
+    状态观察入口展示 corrupt 诊断，调度与写操作直接阻断。
+    """
+    _git(git_repo, "checkout", "-b", "t001_alpha")
+    note = git_repo / "docs/tasks/t001_alpha/progress.md"
+    note.write_text("---\ntid: t001\ntid: t001\n---\nbody\n", encoding="utf-8")
+    _git(git_repo, "add", str(note.relative_to(git_repo)))
+    _git(git_repo, "commit", "-m", "corrupt front matter on branch")
+    _git(git_repo, "checkout", "main")
+
+    # 1. 观察入口：展示 corrupt 与来源 branch，不回落为 main backlog
+    sources = store.discover_effective_sources()
+    assert sources["t001"]["status"] == "corrupt"
+    assert sources["t001"]["source"] == "branch"
+    assert sources["t001"]["read_at"] == "t001_alpha"
+    assert "front matter 重复键" in sources["t001"]["note"]
+
+    ps_res = _task_cli(git_repo, "ps")
+    assert ps_res.returncode == 0, ps_res.stderr
+    assert "t001" in ps_res.stdout and "corrupt" in ps_res.stdout
+
+    # 2. 调度与写操作入口：阻断，不按旧 backlog 放行
+    with pytest.raises(ctx.TaskDataError, match="数据损坏"):
+        store.discover_effective_tasks()
+    assert _task_cli(git_repo, "view").returncode != 0
+    assert _task_cli(git_repo, "plan").returncode != 0
+    assert _task_cli(git_repo, "start", "t002").returncode != 0
+
+
 def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
     from repo_task.graph import cmd_merge_backlog
     from repo_task.ledger import ledger_read

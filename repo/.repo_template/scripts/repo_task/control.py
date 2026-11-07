@@ -365,7 +365,7 @@ def cmd_ledger_tail(args):
 def cmd_ps(args):
     require_primary_worktree()
     events = ledger_read()
-    effective = discover_effective_tasks()
+    effective = discover_effective_tasks(allow_corrupt=True)
     main_statuses = {task["tid"]: task["status"] for task in scan_tasks()}
     rows = compute_ps_rows(events, effective, main_statuses)
     if not args.all:

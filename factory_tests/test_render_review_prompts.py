@@ -25,6 +25,7 @@ def stub_diff_anchor_validation(request, monkeypatch):
     if "stub_anchor" not in request.keywords:
         return
     monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
+    monkeypatch.setattr(rrp, "contract_drift_notice", lambda *_args, **_kwargs: "")
 
 
 # --- parse_front_matter ---
@@ -364,14 +365,101 @@ def test_no_drift_notice_when_only_ac_checkbox_checked(tmp_path, monkeypatch):
         assert "契约区 drift 警告" not in content
 
 
-@pytest.mark.stub_anchor
-def test_drift_check_skipped_outside_git_repo(tmp_path, monkeypatch, capsys):
+# 原 test_drift_check_skipped_outside_git_repo 固化了已废弃的「基线读取失败仍返回空字符串并成功渲染」降级契约；
+# 按 A04 整体替换为基线读取失败阻断、非 main 主干、正文伪造 status: backlog 与无历史契约小节测试。
+
+
+def test_drift_check_fails_closed_outside_git_repo_or_on_git_error(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
+    monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
+    with pytest.raises(SystemExit, match="契约区 drift 基线读取失败"):
+        render_review_prompts(task_dir)
+
+
+@pytest.mark.parametrize("primary_branch", ["master", "trunk"])
+def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
+    tmp_path, monkeypatch, primary_branch
+):
+    """A04：master/自定义主干下旧链分叉且 anchor 缺 task 时，从真实主干 backlog 读取基线；
+    正文伪造 `status: backlog` 不得欺骗解析器；损坏 front matter 直接阻断。
+    """
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _git(tmp_path, "init", "-b", primary_branch)
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "test")
+    _git(tmp_path, "config", "init.defaultBranch", primary_branch)
+    (tmp_path / "base.txt").write_text("m0\n", encoding="utf-8")
+    _git(tmp_path, "add", "base.txt")
+    _git(tmp_path, "commit", "-m", "m0")
+
+    # 从 m0 分叉出链尾分支 t001_chain（其中不含 t002_new）
+    _git(tmp_path, "checkout", "-b", "t001_chain")
+    (tmp_path / "chain.txt").write_text("c1\n", encoding="utf-8")
+    _git(tmp_path, "add", "chain.txt")
+    _git(tmp_path, "commit", "-m", "chain commit")
+    chain_anchor = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    # 回到非 main 主干创建 t002_new（status: backlog）
+    _git(tmp_path, "checkout", primary_branch)
+    task_dir = tmp_path / "docs/tasks/t002_new"
+    task_dir.mkdir(parents=True)
+    (task_dir / "progress.md").write_text(
+        "---\ntid: t002\nslug: new\ntitle: new\nstatus: backlog\nbranch: \"\"\n"
+        "worktree: \"\"\nreview_level: single\ndiff_anchor: \"\"\n"
+        "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (task_dir / "task.md").write_text(
+        "# Spec\n## 契约区\n\n- [ ] AC-001: 初始契约\n\n## 上下文区\n\n策略\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "add t002 on primary")
+
+    # 模拟在链尾 worktree 中激活 t002_new（diff_anchor = chain_anchor）
+    (task_dir / "progress.md").write_text(
+        f"---\ntid: t002\nslug: new\ntitle: new\nstatus: active\nbranch: t002_new\n"
+        f"worktree: ../wt\nreview_level: single\ndiff_anchor: {chain_anchor}\n"
+        "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nbody\n",
+        encoding="utf-8",
+    )
+    # 契约未改（仅勾选 AC）时无 drift
+    (task_dir / "task.md").write_text(
+        "# Spec\n## 契约区\n\n- [x] AC-001: 初始契约\n\n## 上下文区\n\n策略\n",
+        encoding="utf-8",
+    )
     out = render_review_prompts(task_dir)
-    assert "drift" not in out["code_review_prompt.md"]
-    assert "drift 检查跳过" in capsys.readouterr().err
+    assert "契约区 drift 警告" not in out["general_review_prompt.md"]
+
+    # 实施期篡改契约文本时，相对非 main 主干基线检出 drift
+    (task_dir / "task.md").write_text(
+        "# Spec\n## 契约区\n\n- [x] AC-001: 被篡改契约\n\n## 上下文区\n\n策略\n",
+        encoding="utf-8",
+    )
+    out_drifted = render_review_prompts(task_dir)
+    assert "契约区 drift 警告" in out_drifted["general_review_prompt.md"]
+    assert "被篡改契约" in out_drifted["general_review_prompt.md"]
+
+    # 正文伪造 `status: backlog` 而 front matter 为 status: done 时，不得当作 backlog 基线换源
+    (task_dir / "progress.md").write_text(
+        "---\ntid: t002\nslug: new\ntitle: new\nstatus: done\nbranch: \"\"\n"
+        "worktree: \"\"\nreview_level: single\ndiff_anchor: \"\"\n"
+        "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nstatus: backlog\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", str(task_dir / "progress.md"))
+    _git(tmp_path, "commit", "-m", "mark done with spoofed body")
+    (task_dir / "progress.md").write_text(
+        f"---\ntid: t002\nslug: new\ntitle: new\nstatus: active\nbranch: t002_new\n"
+        f"worktree: ../wt\nreview_level: single\ndiff_anchor: {chain_anchor}\n"
+        "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nbody\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="契约区 drift 基线读取失败"):
+        render_review_prompts(task_dir)
 
 
 def test_parse_front_matter_strips_inline_comment(tmp_path):

@@ -82,11 +82,11 @@ def extract_verdicts(path: Path) -> list[str]:
 
 
 def parse_front_matter(path: Path) -> dict:
-    """front matter 解析统一委托 repo_task.documents；缺失或非法返回 {}（宽容语义）。"""
+    """front matter 解析统一委托 repo_task.documents；缺失或非法抛出 ReviewDataError（A05）。"""
     try:
         fm, _ = _parse_front_matter(path)
-    except (OSError, TaskDataError):
-        return {}
+    except (OSError, TaskDataError) as error:
+        raise ReviewDataError(f"{path}: {error}") from error
     return fm
 
 

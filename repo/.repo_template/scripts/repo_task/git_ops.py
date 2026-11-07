@@ -39,7 +39,7 @@ def _git_bytes(
         raise ctx.TaskDataError(f"git {' '.join(args)} 超时（{timeout}s）") from error
 
 def default_branch(root: Path | None = None) -> str:
-    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → main。"""
+    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → 本地唯一非 task 分支。"""
     r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root=root)
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().removeprefix("origin/")
@@ -51,6 +51,14 @@ def default_branch(root: Path | None = None) -> str:
     for name in ("main", "master"):
         if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], root=root).returncode == 0:
             return name
+    branches = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads"], root=root)
+    if branches.returncode == 0:
+        non_task = [
+            b.strip() for b in branches.stdout.splitlines()
+            if b.strip() and not ctx.TASK_BRANCH_RE.fullmatch(b.strip())
+        ]
+        if len(non_task) == 1:
+            return non_task[0]
     return "main"
 
 def resolve_local_branch(name: str) -> tuple[str, str]:

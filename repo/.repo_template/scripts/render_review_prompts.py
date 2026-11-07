@@ -35,6 +35,7 @@ from repo_task.monitoring import (
     REVIEW_PROMPT_OUTPUT_FILES,
     review_scope_fingerprint as monitoring_scope_fingerprint,
 )
+from repo_task.store import resolve_baseline_spec_text
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TOOLKIT_ROOT.parent
@@ -156,59 +157,29 @@ def _normalize_checkboxes(text: str) -> str:
     return re.sub(r"^(\s*-\s*)\[[xX]\]", r"\1[ ]", text, flags=re.MULTILINE)
 
 
-def _resolve_baseline_spec_show(spec_rel: str, diff_anchor: str) -> subprocess.CompletedProcess:
-    """读取 spec 的契约基线：若 diff_anchor 为旧分叉链且 main 上该 task 仍为 backlog，或 diff_anchor 无该文件，则取 main。"""
-    progress_rel = f"{Path(spec_rel).parent.as_posix()}/{PROGRESS_FILE}"
-    anc = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", "main", diff_anchor],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-    )
-    if anc.returncode != 0:
-        main_prog = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "show", f"main:{progress_rel}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-        )
-        if main_prog.returncode == 0 and "status: backlog" in main_prog.stdout:
-            main_spec = subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "show", f"main:{spec_rel}"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-            )
-            if main_spec.returncode == 0:
-                return main_spec
-    r = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "show", f"{diff_anchor}:{spec_rel}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-    )
-    if r.returncode != 0:
-        main_spec = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "show", f"main:{spec_rel}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-        )
-        if main_spec.returncode == 0:
-            return main_spec
-    return r
+def contract_drift_notice(
+    spec_rel: str, diff_anchor: str, current_contract: str, *, tid: str = "",
+) -> str:
+    """契约区相对基线有变更时返回追加给 reviewer 的警告块（A04）。
 
-
-def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str) -> str:
-    """契约区相对 diff_anchor 有变更时返回追加给 reviewer 的警告块。
-
+    基线读取统一委托 repo_task.store.resolve_baseline_spec_text（与 start/monitoring 同源）。
     忽略仅 checkbox 勾选状态（[ ] -> [x]）的变化。
-    无变更返回 ""。anchor 已由调用方校验；历史版本没有该 spec 或 git show
-    暂时失败时打 stderr 警告并返回 ""，不阻断渲染。
+    基线读取或 Git 失败时直接 sys.exit 阻断渲染，不降级为无 drift；
+    基线 spec 真实无「## 契约区」小节时返回明确业务提示块。
     """
     try:
-        r = _resolve_baseline_spec_show(spec_rel, diff_anchor)
-    except (OSError, subprocess.SubprocessError) as e:
-        print(f"WARNING: 契约区 drift 检查跳过（{e}）", file=sys.stderr)
-        return ""
-    if r.returncode != 0:
-        print(
-            f"WARNING: 契约区 drift 检查跳过"
-            f"（git show {diff_anchor}:{spec_rel} 失败：{r.stderr.strip()}）",
-            file=sys.stderr,
+        anchored_text, source_sha = resolve_baseline_spec_text(
+            tid, spec_rel, diff_anchor, root=REPO_ROOT
         )
-        return ""
-    anchored = extract_section(r.stdout, CONTRACT_HEADING)
+    except (OSError, subprocess.SubprocessError, TaskDataError) as e:
+        sys.exit(f"契约区 drift 基线读取失败（{diff_anchor}:{spec_rel}）：{e}")
+    anchored = extract_section(anchored_text, CONTRACT_HEADING)
+    if not anchored:
+        return (
+            "## 契约区 drift 警告\n\n"
+            f"基线（{source_sha[:12]}:{spec_rel}）无「{CONTRACT_HEADING}」小节。"
+            "请核对当前契约区是否为经用户确认的完整 AC 定义。"
+        )
     if _normalize_checkboxes(anchored) == _normalize_checkboxes(current_contract):
         return ""
     diff = "\n".join(
@@ -317,7 +288,7 @@ def render_review_prompts(
             ),
         }
 
-    drift = contract_drift_notice(spec_rel, diff_anchor, contract)
+    drift = contract_drift_notice(spec_rel, diff_anchor, contract, tid=fm["tid"])
     if drift:
         prompts = {
             name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()

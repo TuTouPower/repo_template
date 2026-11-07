@@ -99,22 +99,22 @@ def scan_tasks_in_worktree(root: Path) -> list[dict]:
         root / "docs" / "archive" / "tasks",
     )
 
-def git_text_at_ref(ref: str, path: str) -> str:
-    r = _git(["show", f"{ref}:{path}"])
+def git_text_at_ref(ref: str, path: str, *, root: Path | None = None) -> str:
+    r = _git(["show", f"{ref}:{path}"], root=root)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"{ref}:{path} 不存在或无法读取")
     return r.stdout
 
-def scan_tasks_at_ref(ref: str) -> list[dict]:
+def scan_tasks_at_ref(ref: str, *, root: Path | None = None) -> list[dict]:
     """扫描指定 commit/ref 中的 task，不签出、不写工作区。
 
     与 scan_tasks() 一致：只枚举 docs/tasks 与 docs/archive/tasks 下一级目录，
     每个目录必须存在根 progress.md；嵌套 progress.md 忽略，缺根 progress.md 报数据损坏。
     """
     r = _git([
-        "ls-tree", "-r", "--name-only", ref, "--",
+        "ls-tree", "-r", "--name-only", "--end-of-options", ref, "--",
         "docs/tasks", "docs/archive/tasks",
-    ])
+    ], root=root)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
     discovered_dirs: set[tuple[str, str, bool]] = set()
@@ -139,7 +139,7 @@ def scan_tasks_at_ref(ref: str) -> list[dict]:
         directory = f"{rel_base}/{name}"
         path = f"{directory}/{ctx.PROGRESS_FILE}"
         try:
-            text = git_text_at_ref(ref, path)
+            text = git_text_at_ref(ref, path, root=root)
         except ctx.TaskDataError:
             raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}") from None
         fm, _ = parse_front_matter_text(text, source=f"{ref}:{path}")
@@ -204,12 +204,12 @@ def _task_branch_names(tid: str) -> list[str]:
         return []
     return [b.strip() for b in r.stdout.splitlines() if ctx.TASK_BRANCH_RE.fullmatch(b.strip())]
 
-def load_owner_task_at_ref(tid: str, ref: str) -> dict:
+def load_owner_task_at_ref(tid: str, ref: str, *, root: Path | None = None) -> dict:
     """只读 ref 中该 tid 自身的 task，避免为一条分支扫描全部 task（Issue #77）。"""
     r = _git([
-        "ls-tree", "-r", "--name-only", ref, "--",
+        "ls-tree", "-r", "--name-only", "--end-of-options", ref, "--",
         "docs/tasks", "docs/archive/tasks",
-    ])
+    ], root=root)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
     paths = set(r.stdout.splitlines())
@@ -233,14 +233,14 @@ def load_owner_task_at_ref(tid: str, ref: str) -> dict:
             note_path = f"{directory}/{ctx.PROGRESS_FILE}"
             if note_path not in paths:
                 raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-            text = git_text_at_ref(ref, note_path)
+            text = git_text_at_ref(ref, note_path, root=root)
             fm, _ = parse_front_matter_text(
                 text, source=f"{ref}:{note_path}"
             )
             return _task_record(
                 fm, directory=directory, source=f"{ref}:{note_path}", archived=archived
             )
-    raise ctx.TaskDataError(f"{ref}: 缺自身 task {tid}")
+    raise ctx.TaskNotFoundError(f"{ref}: 缺自身 task {tid}")
 
 
 def task_effective_state(tid: str, primary_fm: dict) -> str | None:
@@ -308,11 +308,17 @@ def _local_task_branches() -> list[str]:
         if ctx.TASK_BRANCH_RE.fullmatch(branch.strip())
     )
 
-def discover_effective_bundle() -> tuple[dict[str, dict], dict[str, dict]]:
-    """一次有效状态发现，同时返回 (tasks, sources)（Issue #77）。"""
+def discover_effective_bundle(*, allow_corrupt: bool = False) -> tuple[dict[str, dict], dict[str, dict]]:
+    """一次有效状态发现，同时返回 (tasks, sources)（Issue #77, A05）。
+
+    allow_corrupt=False（默认）时，遇到任何损坏的分支或 worktree 立即抛出 TaskDataError，
+    阻断调度与写操作；allow_corrupt=True 仅供只读状态观察入口展示 corrupt 诊断记录。
+    """
     tasks: dict[str, dict] = {}
     sources: dict[str, dict] = {}
     for tid, task, source, read_at in _discover_effective_entries():
+        if not allow_corrupt and task.get("status") == "corrupt":
+            raise ctx.TaskDataError(task.get("note") or f"{tid} 状态损坏（来源 {source}）")
         tasks[tid] = task
         sources[tid] = {
             "tid": tid,
@@ -326,12 +332,12 @@ def discover_effective_bundle() -> tuple[dict[str, dict], dict[str, dict]]:
     return tasks, sources
 
 
-def discover_effective_tasks() -> dict[str, dict]:
+def discover_effective_tasks(*, allow_corrupt: bool = False) -> dict[str, dict]:
     """按 worktree → 未合并 task 分支 → main 发现每个 task 的有效状态。"""
-    return discover_effective_bundle()[0]
+    return discover_effective_bundle(allow_corrupt=allow_corrupt)[0]
 
 
-def discover_effective_sources() -> dict[str, dict]:
+def discover_effective_sources(*, allow_corrupt: bool = True) -> dict[str, dict]:
     """每个有效 task 的状态 + 读取来源与位置。
 
     返回 tid -> {tid, slug, title, status, note, source, read_at}：
@@ -340,7 +346,7 @@ def discover_effective_sources() -> dict[str, dict]:
     - source="main"：read_at=None（主干文档即权威）
     只读；供 skill 依「task 状态读取优先级」在正确位置读取 task。
     """
-    return discover_effective_bundle()[1]
+    return discover_effective_bundle(allow_corrupt=allow_corrupt)[1]
 
 
 def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
@@ -355,8 +361,18 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
         owner_tid = ctx.TASK_BRANCH_RE.fullmatch(branch).group(1)
         try:
             branch_task = load_owner_task_at_ref(owner_tid, branch)
-        except ctx.TaskDataError:
+        except ctx.TaskNotFoundError:
             # 从未合并链尾分叉出的新分支在 finish 提交前，其 git tree 尚不含主干新建的 owner_tid。
+            continue
+        except ctx.TaskDataError as error:
+            effective[owner_tid] = {
+                "tid": owner_tid,
+                "slug": "",
+                "title": f"(分支 {branch} {ctx.PROGRESS_FILE} 损坏)",
+                "status": "corrupt",
+                "note": f"未合并分支 {branch} 数据损坏：{error}",
+            }
+            sources[owner_tid] = ("branch", branch)
             continue
         main_task = effective.get(owner_tid)
         # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active 不覆盖。
@@ -379,18 +395,18 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
         if not match:
             continue
         owner_tid = match.group(1)
-        # 单个 worktree 的 progress.md 损坏（agent 写一半崩溃）不得让整个
-        # ps/reconcile/view 失败：标记为脏状态并继续观察其余 task。
+        # 单个 worktree 的 progress.md 损坏（agent 写一半崩溃）标记为显式 corrupt 状态，
+        # 不伪装为正常 active，观察入口可见而调度/写操作阻断（A05）。
         try:
             tasks = scan_tasks_in_worktree(path)
             task = next((item for item in tasks if item["tid"] == owner_tid), None)
-        except (OSError, ctx.TaskDataError):
+        except (OSError, ctx.TaskDataError) as error:
             effective[owner_tid] = {
                 "tid": owner_tid,
                 "slug": "",
                 "title": f"(worktree {ctx.PROGRESS_FILE} 损坏)",
-                "status": "active",
-                "note": f"登记 worktree {path} 的 {ctx.PROGRESS_FILE} 无法解析",
+                "status": "corrupt",
+                "note": f"登记 worktree {path} 的 {ctx.PROGRESS_FILE} 无法解析：{error}",
             }
             sources[owner_tid] = ("worktree", str(path))
             continue
@@ -399,7 +415,7 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
                 "tid": owner_tid,
                 "slug": "",
                 "title": "(worktree 缺自身 task)",
-                "status": "active",
+                "status": "corrupt",
                 "note": f"登记 worktree {path} 缺自身 task {owner_tid}",
             }
             sources[owner_tid] = ("worktree", str(path))
@@ -420,43 +436,133 @@ def load_task(tid: str) -> tuple[dict, Path, dict, str]:
     fm, body = parse_front_matter(path)
     return task, path, fm, body
 
-def load_task_at_ref(tid: str, ref: str) -> tuple[dict, dict, str]:
+def load_task_at_ref(tid: str, ref: str, *, root: Path | None = None) -> tuple[dict, dict, str]:
     """返回指定 ref 中的 (索引记录, front matter, 正文)。"""
-    task = find_task(tid, scan_tasks_at_ref(ref))
+    task = find_task(tid, scan_tasks_at_ref(ref, root=root))
     if not task:
-        raise ctx.TaskDataError(f"{tid} 不存在于 ref {ref!r}")
+        raise ctx.TaskNotFoundError(f"{tid} 不存在于 ref {ref!r}")
     path = f"{task['dir']}/{ctx.PROGRESS_FILE}"
     fm, body = parse_front_matter_text(
-        git_text_at_ref(ref, path),
+        git_text_at_ref(ref, path, root=root),
         source=f"{ref}:{path}",
     )
     return task, fm, body
 
 
-def load_task_backlog_baseline(tid: str, diff_anchor: str) -> tuple[dict, dict, str, str]:
-    """解析 task 启动时的初始 backlog 定义 (task, fm, body, source_ref)。
+def _resolve_commit_sha(ref: str, *, label: str, root: Path | None = None) -> str:
+    if not ref or ref.startswith("-"):
+        raise ctx.TaskDataError(f"无法解析 {label} {ref!r} 为 commit")
+    r = _git(["rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"], root=root)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise ctx.TaskDataError(f"无法解析 {label} {ref!r} 为 commit")
+    return r.stdout.strip()
+
+
+def _resolve_primary_commit(root: Path | None = None) -> tuple[str, str]:
+    primary = default_branch(root=root)
+    sha = _resolve_commit_sha(f"refs/heads/{primary}", label=f"主干分支 {primary!r}", root=root)
+    return primary, sha
+
+
+def _is_commit_ancestor(ancestor_sha: str, descendant_sha: str, *, root: Path | None = None) -> bool:
+    r = _git(["merge-base", "--is-ancestor", ancestor_sha, descendant_sha], root=root)
+    if r.returncode == 0:
+        return True
+    if r.returncode == 1:
+        return False
+    raise ctx.TaskDataError(
+        f"git merge-base --is-ancestor 失败（exit={r.returncode}）：{r.stderr.strip()}"
+    )
+
+
+def _owner_bundle_at_ref(tid: str, ref_sha: str, *, root: Path | None = None) -> tuple[dict, dict, str]:
+    record = load_owner_task_at_ref(tid, ref_sha, root=root)
+    path = f"{record['dir']}/{ctx.PROGRESS_FILE}"
+    fm, body = parse_front_matter_text(
+        git_text_at_ref(ref_sha, path, root=root),
+        source=f"{ref_sha}:{path}",
+    )
+    return record, fm, body
+
+
+def load_task_backlog_baseline(
+    tid: str, diff_anchor: str, *, root: Path | None = None,
+) -> tuple[dict, dict, str, str]:
+    """解析 task 启动时的初始 backlog 定义 (task, fm, body, source_commit_sha)。
 
     主干 default_branch 是所有 backlog task 创建与调度维护的唯一权威；
-    当 diff_anchor 为从旧主干分叉的 task 分支（主干非其祖先且主干上该 task 仍为 backlog），
-    或 diff_anchor 中尚无该 task 时，基线来自主干 default_branch。
+    1. 先将主干与 diff_anchor 解析为确定 commit SHA；
+    2. merge-base --is-ancestor 严格区分 0（祖先）、1（非祖先）、其它错误；
+    3. 仅真实缺失（TaskNotFoundError）允许换源，数据损坏或 Git 故障直接抛错。
     """
-    primary = default_branch()
-    primary_is_ancestor = (
-        _git(["merge-base", "--is-ancestor", primary, diff_anchor]).returncode == 0
-    )
+    anchor_sha = _resolve_commit_sha(diff_anchor, label="diff_anchor", root=root)
+    primary_branch, primary_sha = _resolve_primary_commit(root=root)
+    primary_is_ancestor = _is_commit_ancestor(primary_sha, anchor_sha, root=root)
     if not primary_is_ancestor:
         try:
-            task, fm, body = load_task_at_ref(tid, primary)
+            task, fm, body = _owner_bundle_at_ref(tid, primary_sha, root=root)
             if fm.get("status") == "backlog":
-                return task, fm, body, primary
-        except ctx.TaskDataError:
+                return task, fm, body, primary_sha
+        except ctx.TaskNotFoundError:
             pass
     try:
-        task, fm, body = load_task_at_ref(tid, diff_anchor)
-        return task, fm, body, diff_anchor
-    except ctx.TaskDataError:
-        task, fm, body = load_task_at_ref(tid, primary)
-        return task, fm, body, primary
+        task, fm, body = _owner_bundle_at_ref(tid, anchor_sha, root=root)
+        return task, fm, body, anchor_sha
+    except ctx.TaskNotFoundError:
+        task, fm, body = _owner_bundle_at_ref(tid, primary_sha, root=root)
+        if fm.get("status") != "backlog":
+            raise ctx.TaskDataError(
+                f"{tid} 在 {anchor_sha[:12]} 不存在，且在主干 {primary_branch!r} 中 "
+                f"status={fm.get('status')!r} 非 backlog"
+            )
+        return task, fm, body, primary_sha
+
+
+def _path_exists_in_tree(ref_sha: str, rel_path: str, *, root: Path | None = None) -> bool:
+    r = _git(["ls-tree", "--name-only", "--end-of-options", ref_sha, "--", rel_path], root=root)
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 {ref_sha}:{rel_path}：{r.stderr.strip()}")
+    return bool(r.stdout.strip())
+
+
+def _progress_status_at_ref(
+    ref_sha: str, progress_rel: str, *, root: Path | None = None,
+) -> str | None:
+    if not _path_exists_in_tree(ref_sha, progress_rel, root=root):
+        return None
+    text = git_text_at_ref(ref_sha, progress_rel, root=root)
+    fm, _ = parse_front_matter_text(text, source=f"{ref_sha}:{progress_rel}")
+    return fm.get("status", "")
+
+
+def resolve_baseline_spec_text(
+    tid: str, spec_rel: str, diff_anchor: str, *, root: Path | None = None,
+) -> tuple[str, str]:
+    """解析 spec 的契约基线文本与来源 commit SHA，供 render_review_prompts 与监控共用（A04）。"""
+    anchor_sha = _resolve_commit_sha(diff_anchor, label="diff_anchor", root=root)
+    _, primary_sha = _resolve_primary_commit(root=root)
+    primary_is_ancestor = _is_commit_ancestor(primary_sha, anchor_sha, root=root)
+    progress_rel = f"{Path(spec_rel).parent.as_posix()}/{ctx.PROGRESS_FILE}"
+
+    source_sha = None
+    if not primary_is_ancestor:
+        primary_status = _progress_status_at_ref(primary_sha, progress_rel, root=root)
+        if primary_status == "backlog" and _path_exists_in_tree(primary_sha, spec_rel, root=root):
+            source_sha = primary_sha
+
+    if source_sha is None:
+        # 校验 anchor 处 progress.md（若存在则不允许损坏）
+        _progress_status_at_ref(anchor_sha, progress_rel, root=root)
+        if _path_exists_in_tree(anchor_sha, spec_rel, root=root):
+            source_sha = anchor_sha
+        else:
+            primary_status = _progress_status_at_ref(primary_sha, progress_rel, root=root)
+            if primary_status == "backlog" and _path_exists_in_tree(primary_sha, spec_rel, root=root):
+                source_sha = primary_sha
+            else:
+                raise ctx.TaskNotFoundError(f"{anchor_sha}:{spec_rel} 不存在或无法读取")
+
+    return git_text_at_ref(source_sha, spec_rel, root=root), source_sha
 
 def require_status(fm: dict, *allowed: str) -> None:
     if fm["status"] not in allowed:

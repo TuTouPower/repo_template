@@ -85,6 +85,10 @@ class TaskDataError(Exception):
     """task 数据不一致。"""
 
 
+class TaskNotFoundError(TaskDataError):
+    """指定 ref 或目录中不存在目标 task。"""
+
+
 def _rel(path: Path) -> str:
     try:
         return path.relative_to(REPO_ROOT).as_posix()

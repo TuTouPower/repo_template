@@ -938,3 +938,13 @@ def test_privacy_gate_allows_container_and_system_identities(tmp_path, monkeypat
     assert out["overall"] == "PASS"
     assert out["privacy_review"] == "ok"
     assert out["next_action"] == "finalize"
+
+
+def test_review_parse_front_matter_raises_on_missing_or_corrupt_file(tmp_path):
+    """A05：review.parse_front_matter 不再把缺失或损坏元数据降级为 {}。"""
+    with pytest.raises(ReviewDataError):
+        crs.parse_front_matter(tmp_path / "missing.md")
+    bad = tmp_path / "corrupt.md"
+    bad.write_text("---\ntid: t001\ntid: t001\n---\n", encoding="utf-8")
+    with pytest.raises(ReviewDataError, match="front matter 重复键"):
+        crs.parse_front_matter(bad)

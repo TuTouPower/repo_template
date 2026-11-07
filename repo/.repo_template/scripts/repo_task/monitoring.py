@@ -596,8 +596,12 @@ def compute_ps_rows(
         tid for tid, task in effective.items()
         if task.get("status") == "active"
     }
+    corrupt_tids = {
+        tid for tid, task in effective.items()
+        if task.get("status") == "corrupt"
+    }
     rows = []
-    for tid in sorted(ledger_tids | active_tids, key=_ledger_tid_sort_key):
+    for tid in sorted(ledger_tids | active_tids | corrupt_tids, key=_ledger_tid_sort_key):
         record = current_attempt_record(tid, events)
         effective_status = effective.get(tid, {}).get("status", "")
         base = {
@@ -609,6 +613,11 @@ def compute_ps_rows(
             "last_activity": "-",
             "note": "",
         }
+        if effective_status == "corrupt":
+            base["state"] = "corrupt"
+            base["note"] = effective.get(tid, {}).get("note", "")
+            rows.append(base)
+            continue
         if record is None:
             # frontmatter active 但无 attempt：脏状态，标注无 reserve。
             base["state"] = f"{effective_status}(无 reserve)"
