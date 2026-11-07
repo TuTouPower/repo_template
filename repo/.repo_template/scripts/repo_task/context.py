@@ -1,20 +1,124 @@
-"""Repository paths, shared constants, and data errors."""
+"""Repository paths, shared constants, and data errors.
+
+仓库身份由不可变 ``RepoContext`` 表达：入口解析目标后构造，所有文件/Git 操作显式
+接收该上下文。``root`` 是主工作区（控制面身份），``worktree`` 是当前工作区
+（task 文档所在）；主工作区内两者相同。
+
+路径派生物（tasks 目录、ledger、audit、模板目录）全部由上下文计算，不再依赖
+模块级可变全局。
+"""
+
+from __future__ import annotations
 
 import os
 import re
+import subprocess
+from dataclasses import dataclass
 from datetime import timedelta, timezone
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent.parent
-TOOLKIT_ROOT = SCRIPT_DIR.parent
-REPO_ROOT = TOOLKIT_ROOT.parent
 
-AUDIT_PATH = REPO_ROOT / "docs/archive/tasks_audit.log"
-TASKS_DIR = REPO_ROOT / "docs" / "tasks"
-ARCHIVE_TASKS_DIR = REPO_ROOT / "docs" / "archive" / "tasks"
-TEMPLATE_DIR = TOOLKIT_ROOT / "docs" / "task_template"
-RUNTIME_DIR = REPO_ROOT / "docs" / "runtime"
-LEDGER_PATH = RUNTIME_DIR / "dispatch_ledger.jsonl"
+def _git_common_root(code_root: Path) -> Path:
+    """由当前工作区解析主工作区根；非独立 git 工作区时退回 code_root。"""
+    if not (code_root / ".git").exists():
+        return code_root
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(code_root), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return code_root
+    if result.returncode != 0 or not result.stdout.strip():
+        return code_root
+    common = Path(result.stdout.strip())
+    if not common.is_absolute():
+        common = (code_root / common).resolve()
+    return common.parent if common.name == ".git" else common
+
+
+@dataclass(frozen=True)
+class RepoContext:
+    """不可变仓库身份。
+
+    root：当前工作区根（task 文档所在；主仓内等于 primary_root）。
+    primary_root：主工作区根（ledger、audit、worktree 登记与命名）。
+    """
+
+    root: Path
+    primary_root: Path
+
+    @classmethod
+    def for_root(cls, root: Path, *, primary_root: Path | None = None) -> "RepoContext":
+        current = root.expanduser().resolve()
+        primary = (primary_root or _git_common_root(current)).expanduser().resolve()
+        return cls(root=current, primary_root=primary)
+
+    @classmethod
+    def from_code_location(cls, code_file: Path) -> "RepoContext":
+        """入口脚本/模块所在工作区：自动识别主工作区。"""
+        return cls.for_root(Path(code_file).resolve().parents[3])
+
+    @property
+    def name(self) -> str:
+        return self.primary_root.name
+
+    @property
+    def toolkit_root(self) -> Path:
+        return self.root / ".repo_template"
+
+    @property
+    def tasks_dir(self) -> Path:
+        return self.root / "docs" / "tasks"
+
+    @property
+    def archive_tasks_dir(self) -> Path:
+        return self.root / "docs" / "archive" / "tasks"
+
+    @property
+    def template_dir(self) -> Path:
+        return self.toolkit_root / "docs" / "task_template"
+
+    @property
+    def runtime_dir(self) -> Path:
+        return self.primary_root / "docs" / "runtime"
+
+    @property
+    def ledger_path(self) -> Path:
+        return self.runtime_dir / "dispatch_ledger.jsonl"
+
+    @property
+    def audit_path(self) -> Path:
+        return self.primary_root / "docs" / "archive" / "tasks_audit.log"
+
+    def rel(self, path: Path) -> str:
+        for base in (self.root, self.primary_root):
+            try:
+                return path.relative_to(base).as_posix()
+            except ValueError:
+                continue
+        return path.as_posix()
+
+    def worktree_rel(self, tid: str) -> str:
+        return f"../{self.name}_{tid}"
+
+    def effective_worktree(self, fm: dict) -> str:
+        """front matter 优先；主仓副本按命名约定推导。"""
+        return fm.get("worktree") or self.worktree_rel(fm["tid"])
+
+
+# 过渡期默认上下文：入口（task.py）会构造并显式传递；旧调用点在迁移完成前
+# 仍可省略参数。A15 收尾时删除该默认值与同名模块级路径。
+DEFAULT_CONTEXT = RepoContext.from_code_location(Path(__file__))
+SCRIPT_DIR = DEFAULT_CONTEXT.toolkit_root / "scripts"
+TOOLKIT_ROOT = DEFAULT_CONTEXT.toolkit_root
+REPO_ROOT = DEFAULT_CONTEXT.root
+AUDIT_PATH = DEFAULT_CONTEXT.audit_path
+TASKS_DIR = DEFAULT_CONTEXT.tasks_dir
+ARCHIVE_TASKS_DIR = DEFAULT_CONTEXT.archive_tasks_dir
+TEMPLATE_DIR = DEFAULT_CONTEXT.template_dir
+RUNTIME_DIR = DEFAULT_CONTEXT.runtime_dir
+LEDGER_PATH = DEFAULT_CONTEXT.ledger_path
 
 VALID_STATUSES = ("backlog", "active", "done", "dropped")
 ARCHIVED_STATUSES = ("done", "dropped")
@@ -88,17 +192,12 @@ class TaskNotFoundError(TaskDataError):
 
 
 def _rel(path: Path) -> str:
-    try:
-        return path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return path.as_posix()
-
+    return DEFAULT_CONTEXT.rel(path)
 
 
 def worktree_rel_path(tid: str) -> str:
-    return f"../{REPO_ROOT.name}_{tid}"
+    return DEFAULT_CONTEXT.worktree_rel(tid)
+
 
 def effective_worktree(fm: dict) -> str:
-    """worktree 相对路径：front matter 优先；主仓副本不含该字段（start 后不再回写主仓），
-    此时按命名约定推导。路径不存在或未登记时由 remove_worktree 安全放过。"""
-    return fm.get("worktree") or worktree_rel_path(fm["tid"])
+    return DEFAULT_CONTEXT.effective_worktree(fm)
