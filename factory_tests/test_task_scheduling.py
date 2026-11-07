@@ -51,8 +51,6 @@ def schedule_repo(tmp_path, monkeypatch):
     )
     for name, value in {
         "TASKS_DIR": tasks, "ARCHIVE_TASKS_DIR": archive, "TEMPLATE_DIR": template,
-        "ACTIVE_PATH": repo / "docs/tasks_index.json",
-        "ARCHIVE_PATH": repo / "docs/archive/tasks_index.json",
         "AUDIT_PATH": repo / "docs/archive/tasks_audit.log",
         "REPO_ROOT": repo, "RUNTIME_DIR": repo / "docs/runtime",
         "LEDGER_PATH": repo / "docs/runtime/dispatch_ledger.jsonl",

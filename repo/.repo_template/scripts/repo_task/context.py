@@ -9,8 +9,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 TOOLKIT_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = TOOLKIT_ROOT.parent
 
-ACTIVE_PATH = REPO_ROOT / "docs/tasks_index.json"
-ARCHIVE_PATH = REPO_ROOT / "docs/archive/tasks_index.json"
 AUDIT_PATH = REPO_ROOT / "docs/archive/tasks_audit.log"
 TASKS_DIR = REPO_ROOT / "docs" / "tasks"
 ARCHIVE_TASKS_DIR = REPO_ROOT / "docs" / "archive" / "tasks"

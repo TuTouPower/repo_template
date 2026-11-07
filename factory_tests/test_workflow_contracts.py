@@ -431,14 +431,16 @@ def test_merge_continue_rejects_modified_nonconflict_task_path(git_repo):
     assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
 
 
-def test_native_merge_commit_contains_derived_indexes(git_repo):
+def test_native_merge_commit_contains_no_derived_index(git_repo):
+    """A14：task 文件是唯一权威；merge commit 不再携带派生索引。"""
     identity, _, _ = _prepare_done(git_repo, 't001', 'alpha')
     _cleanup(git_repo, 't001', identity)
     assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
     assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue').returncode == 0
     names = _git(git_repo, 'show', '--format=', '--name-only', 'HEAD').stdout.splitlines()
-    assert 'docs/tasks_index.json' in names
-    assert 'docs/archive/tasks_index.json' in names
+    assert 'docs/tasks_index.json' not in names
+    assert 'docs/archive/tasks_index.json' not in names
+    assert not (git_repo / 'docs/tasks_index.json').exists()
 
 
 def test_two_independent_tasks_integrate_in_completion_order(git_repo):

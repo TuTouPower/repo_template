@@ -13,8 +13,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_template import export_template, is_non_distributable
-from repo_task import context as task_context
-from repo_task import store as task_store
 from repo_task.file_transaction import FileTransaction
 from repo_task.validation import load_policy
 
@@ -73,14 +71,6 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
     migration_reports = force_migrate_workflow_tasks(changed)
     for report in migration_reports:
         print(f"提示: {report}")
-    if migration_reports:
-        try:
-            # 消费仓根显式传入：repo_task.context 指向来源仓时也不能写错地方。
-            task_store.rebuild_index_at(ctx.CONSUMER)
-        except task_context.TaskDataError as error:
-            raise ctx.SyncError(f"workflow 迁移后重建 tasks index 失败：{error}") from error
-        changed.add(ctx.CONSUMER / "docs/tasks_index.json")
-        changed.add(ctx.CONSUMER / "docs/archive/tasks_index.json")
     for report in migrate_conventions(changed):
         print(f"提示: {report}")
     for report in migrate_specs_index(changed):
@@ -139,8 +129,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
     transaction = FileTransaction(ctx.CONSUMER, ".scratch/repo_sync_rollback")
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
-             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/tasks_index.json",
-             "docs/archive/tasks_index.json", "docs/blueprint/conventions.md", "docs/specs_index.md",
+             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/blueprint/conventions.md",
+             "docs/specs_index.md",
              *ctx.MCP_CANDIDATES]
     try:
         transaction.begin(paths)

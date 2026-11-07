@@ -155,7 +155,7 @@ def main():
     listing = sub.add_parser("list", help="列出 task")
     listing.add_argument("--status", choices=ctx.VALID_STATUSES)
     listing.add_argument("--ref")
-    listing.add_argument("--rebuild", action="store_true")
+    listing.add_argument("--json", action="store_true", help="机器可读导出到 stdout（不落盘）")
     listing.set_defaults(func=cmd_list)
 
     eff = sub.add_parser("effective-status", help="有效 task 状态与读取来源（worktree/branch/main，只读）")

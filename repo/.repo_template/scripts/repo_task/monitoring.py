@@ -88,8 +88,7 @@ def implementation_commit(ref: str, base_sha: str) -> str:
 # 仓库级 review 门禁指纹排除（非 task 目录路径）。
 SCOPE_FINGERPRINT_EXCLUDES = (
     ":(exclude)docs/pending", ":(exclude)docs/findings",
-    ":(exclude)docs/archive", ":(exclude)docs/tasks_index.json",
-    ":(exclude)docs/archive/tasks_index.json", ":(exclude)docs/spikes",
+    ":(exclude)docs/archive", ":(exclude)docs/spikes",
     ":(exclude).scratch",
 )
 

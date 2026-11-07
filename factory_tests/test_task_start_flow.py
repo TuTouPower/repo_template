@@ -81,8 +81,6 @@ def git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
     monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
     monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(ctx, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
-    monkeypatch.setattr(ctx, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json")
     monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
@@ -358,12 +356,14 @@ def test_start_rejects_task_worktree(git_repo):
     assert "主工作区" in result.stderr
 
 
-def test_list_rebuild_requires_primary_worktree(git_repo):
+def test_list_from_task_worktree_reads_own_snapshot(git_repo):
+    """A14：list 只读权威文件；在 task worktree 中读取该 worktree 自己的快照。"""
     _start(git_repo)
-    result = _task_cli(_worktree_path(git_repo), "list", "--rebuild")
+    result = _task_cli(_worktree_path(git_repo), "list")
 
-    assert result.returncode != 0
-    assert "主工作区" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "t001" in result.stdout
+    assert not (_worktree_path(git_repo) / "docs/tasks_index.json").exists()
 
 
 def test_finish_rejects_uncompleted_ac(git_repo):
@@ -574,7 +574,6 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
     main_show = _task_cli(git_repo, "show", "t001")
     ref_show = _task_cli(git_repo, "show", "t001", "--ref", branch)
     ref_list = _task_cli(git_repo, "list", "--ref", branch, "--status", "done")
-    invalid = _task_cli(git_repo, "list", "--ref", branch, "--rebuild")
 
     assert "status" in main_show.stdout and "backlog" in main_show.stdout
     assert "progress_md" in main_show.stdout and "task_md" in main_show.stdout
@@ -583,7 +582,6 @@ def test_list_and_show_read_completed_state_from_branch(git_repo):
     assert "source_ref" in ref_show.stdout
     assert "task.md" in ref_show.stdout
     assert ref_list.returncode == 0 and "t001" in ref_list.stdout
-    assert invalid.returncode != 0 and "不能与 --rebuild 同用" in invalid.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1217,7 +1215,7 @@ def test_drop_from_main_rejects_stale_backlog_with_unmerged_done_branch(git_repo
 
 
 def test_drop_allows_genuine_fresh_backlog(git_repo):
-    """未 start 的真 backlog 仍可正常 drop，并同步两个派生索引。"""
+    """未 start 的真 backlog 仍可正常 drop；目录归档是唯一权威变化，不生成派生索引。"""
     result = _task_cli(git_repo, "drop", "t001", "--reason", "不需要了")
 
     assert result.returncode == 0, result.stderr
@@ -1225,30 +1223,8 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
         git_repo / "docs/archive/tasks/t001_alpha/progress.md"
     )
     assert fm["status"] == "dropped"
-    active = json.loads((git_repo / "docs/tasks_index.json").read_text(encoding="utf-8"))
-    archive = json.loads((git_repo / "docs/archive/tasks_index.json").read_text(encoding="utf-8"))
-    assert [task["tid"] for task in active["tasks"]] == ["t002", "t003"]
-    assert [task["tid"] for task in archive["tasks"]] == ["t001"]
-
-
-def test_drop_keeps_archived_state_when_index_rebuild_fails(git_repo, monkeypatch):
-    """归档成功后索引重建失败：经真实 cmd_drop 驱动，保持 dropped 且报索引待修复。"""
-    from repo_task import lifecycle as lifecycle_mod
-
-    monkeypatch.setattr(
-        lifecycle_mod, "rebuild_index",
-        lambda: (_ for _ in ()).throw(OSError("disk full")),
-    )
-    with pytest.raises(SystemExit) as excinfo:
-        lifecycle_mod.cmd_drop(argparse.Namespace(tid="t001", reason="不需要了"))
-    message = str(excinfo.value)
-    assert "派生索引重建失败" in message
-    assert "归档状态已生效" in message
-    archived = git_repo / "docs/archive/tasks/t001_alpha/progress.md"
-    assert archived.is_file()
-    fm, _ = parse_front_matter(archived)
-    assert fm["status"] == "dropped"
-    assert not (git_repo / "docs/tasks/t001_alpha").exists()
+    assert not (git_repo / "docs/tasks_index.json").exists()
+    assert not (git_repo / "docs/archive/tasks_index.json").exists()
 
 
 def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypatch):

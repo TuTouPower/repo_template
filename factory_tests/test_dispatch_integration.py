@@ -60,8 +60,6 @@ def git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
     monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
     monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(ctx, "ACTIVE_PATH", repo / "docs" / "tasks_index.json")
-    monkeypatch.setattr(ctx, "ARCHIVE_PATH", repo / "docs" / "archive" / "tasks_index.json")
     monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
@@ -415,9 +413,8 @@ def test_integrate_skip_merge_also_appends_integrated(git_repo):
     assert integrated[0]["merge_sha"] == preintegrate_head
     assert integrated[0]["attempt"] == identity["attempt"]
     assert integrated[0]["execution_id"] == identity["execution_id"]
-    # Recovery also persists derived indexes; merge_sha remains the actual merge commit.
-    assert (git_repo / "docs/tasks_index.json").is_file()
-    assert (git_repo / "docs/archive/tasks_index.json").is_file()
+    # merge_sha remains the actual merge commit; no derived index is generated.
+    assert not (git_repo / "docs/tasks_index.json").exists()
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() != preintegrate_head
 
 

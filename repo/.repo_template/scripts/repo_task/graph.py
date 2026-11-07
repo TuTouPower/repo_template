@@ -9,7 +9,7 @@ from .documents import dump_tid_list, parse_front_matter, parse_tid_list, write_
 from .git_ops import require_primary_worktree
 from .locks import CONTROL_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle, compute_schedule
-from .store import load_task, rebuild_index, scan_tasks, task_effective_state
+from .store import load_task, scan_tasks, task_effective_state
 from .file_transaction import FileTransaction
 
 
@@ -67,7 +67,6 @@ def cmd_merge_backlog(args):
         paths = source_dirs + [(Path("docs/archive/tasks") / Path(directory).name).as_posix() for directory in source_dirs]
         paths += [str(path.relative_to(ctx.REPO_ROOT)) for path, _, _ in updates
                   if not any(path.is_relative_to(ctx.REPO_ROOT / directory) for directory in source_dirs)]
-        paths += ["docs/tasks_index.json", "docs/archive/tasks_index.json"]
         try:
             transaction.begin(paths)
         except ValueError as error:
@@ -77,7 +76,6 @@ def cmd_merge_backlog(args):
             from .lifecycle import _close_task
             for tid in retired:
                 _close_task(Namespace(tid=tid), "dropped", f"merged into {args.tid}")
-            rebuild_index()
             for path, fm, _body in updates:
                 if any(path.is_relative_to(ctx.REPO_ROOT / d) for d in source_dirs):
                     continue

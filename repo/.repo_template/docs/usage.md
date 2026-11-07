@@ -9,7 +9,6 @@
 |路径|用途|写权归属|
 |---|---|---|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/tasks_index.json` / `docs/archive/tasks_index.json`|活跃/归档 task 派生索引|工作区可由 `add`/`edit`/`drop`/`rewind`/`purge` 重建；入库 commit：维护期随操作提交；集成时由 `integrate` / `integrate-chain` 重建并与 task 目录的归档移动放入同一个 merge commit；`list` 只读，`list --rebuild` 手动重建；不进 task worktree 的实现 commit|
 |`docs/archive/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
 |`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
@@ -48,7 +47,7 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
 - 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。md_kx 来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装（`uv tool install md-kx`）；消费仓不逐仓安装，缺二进制时 `md_format.py` / pre-commit 会在报错里给出来源与安装入口。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，格式化本次 staged 的 `.md` 并重新暂存；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`（已有其它 hooksPath 须 `--force`）；临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
-- 消费仓 `prettier --check .` 豁免模板侧路径：分发静态文件（`.repo_template/scripts/package.json`、`view_static/` 看板 UI——模板自有 `2` 空格/单引号风格）、同步元数据（`.repo_template/sync_state.json`、`sync_manifest.json`、`sync_policy.json`）与 skill 注册表（`.repo_template/skills/registry.json`）、派生索引（`docs/tasks_index.json`、`docs/archive/tasks_index.json`，可重建）、任务产物（执行回执 `docs/**/handoff.json`，逐任务生成），以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认嵌套 `.gitignore`）。模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`；`.prettierignore` 机械追加与缺失项展示规则见 `sync.md`。
+- 消费仓 `prettier --check .` 豁免模板侧路径：分发静态文件（`.repo_template/scripts/package.json`、`view_static/` 看板 UI——模板自有 `2` 空格/单引号风格）、同步元数据（`.repo_template/sync_state.json`、`sync_manifest.json`、`sync_policy.json`）与 skill 注册表（`.repo_template/skills/registry.json`）、任务产物（执行回执 `docs/**/handoff.json`，逐任务生成），以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认嵌套 `.gitignore`）。模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`；`.prettierignore` 机械追加与缺失项展示规则见 `sync.md`。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。
 - 原子写：权威/派生文件与待办维护走原子写（tmp + fsync + os.replace）。公共 helper：`from repo_task.documents import atomic_write_text`。
 

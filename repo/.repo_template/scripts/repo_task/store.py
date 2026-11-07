@@ -151,46 +151,6 @@ def scan_tasks_at_ref(ref: str, *, root: Path | None = None) -> list[dict]:
         ))
     return _validate_task_records(tasks)
 
-def rebuild_index(tasks: list[dict] | None = None) -> list[dict]:
-    """把扫描结果写入两个派生缓存 JSON；按目录归属分组，与各自 authority 一致。"""
-    return rebuild_index_at(ctx.REPO_ROOT, tasks)
-
-
-def rebuild_index_at(root: Path, tasks: list[dict] | None = None) -> list[dict]:
-    """以 root 为消费仓根扫描 task 并重建两个派生索引；不依赖 task.py 模块级全局路径。
-
-    repo_sync apply 从来源脚本加 --consumer 运行时，repo_task.context 指向的是
-    来源仓，不能用模块级 REPO_ROOT/ACTIVE_PATH/ARCHIVE_PATH，必须显式传入消费仓根。
-    """
-    tasks = _scan_tasks_in_directories(
-        root / "docs" / "tasks", root / "docs" / "archive" / "tasks",
-    ) if tasks is None else tasks
-    archived = [t for t in tasks if t["dir"].startswith("docs/archive/tasks/")]
-    groups = (
-        (
-            root / "docs/tasks_index.json",
-            [t for t in tasks if t not in archived],
-            f"docs/tasks/{{tid}}_{{slug}}/{ctx.PROGRESS_FILE} front matter",
-        ),
-        (
-            root / "docs/archive/tasks_index.json",
-            archived,
-            f"docs/archive/tasks/{{tid}}_{{slug}}/{ctx.PROGRESS_FILE} front matter",
-        ),
-    )
-    for path, rows, authority in groups:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "generated_by": ".repo_template/scripts/task.py",
-            "authority": authority,
-            # 历史行为：以仓根为基准相对化，恒为 "."；保持不变，避免已入库索引无意义 churn。
-            "workspace": ".",
-            "tasks": rows,
-        }
-        # 原子写：并发/崩溃下不落盘截断 JSON（RT-007）
-        atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=4) + "\n")
-    return tasks
-
 def find_task(tid: str, tasks: list[dict] | None = None) -> dict | None:
     for t in (scan_tasks() if tasks is None else tasks):
         if t["tid"] == tid:

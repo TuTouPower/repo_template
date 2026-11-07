@@ -674,11 +674,11 @@ def test_prettierignore_new_header_presence_matches_stripped_line(env):
 
 
 def test_prettierignore_covers_generated_artifacts(env):
-    # Issue #3 回访：同步状态、派生索引、任务产物缺一即红门禁
+    # 同步状态与任务产物需豁免；派生索引已退出 Git，不再列出
     rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
     assert ".repo_template/sync_state.json" in rules
-    assert "docs/tasks_index.json" in rules
-    assert "docs/archive/tasks_index.json" in rules
+    assert "docs/tasks_index.json" not in rules
+    assert "docs/archive/tasks_index.json" not in rules
     assert "docs/**/handoff.json" in rules
 
 
@@ -1615,8 +1615,6 @@ def _bind_repo_task_context(monkeypatch: pytest.MonkeyPatch, consumer: Path) -> 
     from repo_task import context as task_ctx
 
     monkeypatch.setattr(task_ctx, "REPO_ROOT", consumer)
-    monkeypatch.setattr(task_ctx, "ACTIVE_PATH", consumer / "docs/tasks_index.json")
-    monkeypatch.setattr(task_ctx, "ARCHIVE_PATH", consumer / "docs/archive/tasks_index.json")
     monkeypatch.setattr(task_ctx, "TASKS_DIR", consumer / "docs/tasks")
     monkeypatch.setattr(task_ctx, "ARCHIVE_TASKS_DIR", consumer / "docs/archive/tasks")
 
@@ -1909,18 +1907,9 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
 
 
-def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, capsys, tmp_path):
+def test_apply_workflow_migration_leaves_no_derived_index(env, capsys):
+    """A14：workflow 迁移后不再生成派生索引；task 文件是唯一权威。"""
     consumer = env["consumer"]
-    # 模拟「来源仓 ≠ 消费仓」：把 repo_task.context 指向一个无关目录，
-    # 证明索引重建只认消费仓根，不读模块级全局路径。
-    decoy = tmp_path / "foreign_toolkit"
-    decoy.mkdir()
-    from repo_task import context as task_ctx
-    monkeypatch.setattr(task_ctx, "REPO_ROOT", decoy)
-    monkeypatch.setattr(task_ctx, "ACTIVE_PATH", decoy / "docs/tasks_index.json")
-    monkeypatch.setattr(task_ctx, "ARCHIVE_PATH", decoy / "docs/archive/tasks_index.json")
-    monkeypatch.setattr(task_ctx, "TASKS_DIR", decoy / "docs/tasks")
-    monkeypatch.setattr(task_ctx, "ARCHIVE_TASKS_DIR", decoy / "docs/archive/tasks")
     spec, progress = _install_current_workflow_templates(env["src"])
 
     task_dir = consumer / "docs/tasks/t001_old"
@@ -1934,33 +1923,20 @@ def test_apply_rebuilds_task_indexes_after_workflow_migration(env, monkeypatch, 
     )
     (task_dir / "note.md").write_text(old_note, encoding="utf-8")
 
-    archive_dir = consumer / "docs/archive/tasks/t002_archived"
-    archive_dir.mkdir(parents=True)
-    archived = (
-        progress.replace("tid: t000", "tid: t002")
-        .replace("slug: example_slug", "slug: archived")
-        .replace("status: backlog", "status: done")
-    )
-    (archive_dir / "progress.md").write_text(archived, encoding="utf-8")
-
-    (consumer / "docs/tasks_index.json").write_text('{"stale": true}\n', encoding="utf-8")
-    (consumer / "docs/archive/tasks_index.json").write_text('{"stale": true}\n', encoding="utf-8")
-
     assert cmd_apply(Namespace(
         allow_dirty_source=True, skip_tests=True, decisions={},
     )) == 0
-    out = capsys.readouterr().out
-    assert "docs/tasks_index.json" in out
-    assert "docs/archive/tasks_index.json" in out
-
+    capsys.readouterr()
     assert (task_dir / "progress.md").is_file()
     assert not (task_dir / "note.md").exists()
-    active = json.loads((consumer / "docs/tasks_index.json").read_text(encoding="utf-8"))
-    assert [(task["tid"], task["status"]) for task in active["tasks"]] == [("t001", "active")]
-    archive = json.loads((consumer / "docs/archive/tasks_index.json").read_text(encoding="utf-8"))
-    assert [(task["tid"], task["status"]) for task in archive["tasks"]] == [("t002", "done")]
-    # 来源仓侧（decoy）不得被写入任何索引。
-    assert not (decoy / "docs").exists()
+    assert not (consumer / "docs/tasks_index.json").exists()
+    assert not (consumer / "docs/archive/tasks_index.json").exists()
+    from repo_task import store as task_store
+
+    tasks = task_store._scan_tasks_in_directories(
+        consumer / "docs/tasks", consumer / "docs/archive/tasks"
+    )
+    assert [(task["tid"], task["status"]) for task in tasks] == [("t001", "active")]
 
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):

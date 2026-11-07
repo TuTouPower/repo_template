@@ -49,7 +49,6 @@ from .store import (
     git_text_at_ref,
     load_task_at_ref,
     load_task_backlog_baseline,
-    rebuild_index,
     require_status,
 )
 from .worktrees import (
@@ -517,15 +516,6 @@ def _conflicted_paths() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _stage_indexes() -> None:
-    """Rebuild derived indexes inside the pending merge; never create a commit."""
-    rebuild_index()
-    paths = [ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)]
-    result = _git(["add", "--", *paths])
-    if result.returncode != 0:
-        raise ctx.TaskDataError(f"index git add 失败：{result.stderr.strip()}")
-
-
 def _stage_archive_moves(names: list[str]) -> list[tuple[str, str]]:
     """把成员 task 目录 git mv 进归档目录，随 merge commit 一并提交；返回本次移动的 (源, 目标)。
 
@@ -802,7 +792,6 @@ def _prepare_native_merge(branch: str, message: str, names: list[str]) -> None:
         sys.exit("解决并 git add 后运行项目验证；通过后重跑 --continue，或 git merge --abort")
     try:
         _stage_archive_moves(names)
-        _stage_indexes()
     except ctx.TaskDataError as error:
         sys.exit(f"合并结果已在工作区但归档移动或 index 重建失败：{error}；修复后重跑 --continue 或 abort")
     print("合并结果已准备但尚未 commit。请运行合并后验证：通过后重跑 --continue；失败则 git merge --abort。")
@@ -892,12 +881,10 @@ def _validate_merge_staged_scope(expected_head: str, names: list[str]) -> None:
     staged_result = _git(["diff", "--no-renames", "--cached", "--name-only", "-z"])
     if expected_result.returncode != 0 or staged_result.returncode != 0:
         raise ctx.TaskDataError("无法校验 merge staged 范围")
-    index_paths = {ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)}
     member_prefixes = tuple(
         f"{base}/{name}/" for name in names for base in ("docs/tasks", "docs/archive/tasks")
     )
     expected = {path for path in expected_result.stdout.split("\0") if path}
-    expected.update(index_paths)
     staged = {path for path in staged_result.stdout.split("\0") if path}
     unexpected = sorted(
         path for path in staged - expected if not path.startswith(member_prefixes)
@@ -922,7 +909,7 @@ def _validate_merge_staged_scope(expected_head: str, names: list[str]) -> None:
         auto_tree, current_tree.stdout.strip(), conflict_paths, names,
     )
     altered_clean_paths = sorted(
-        (changed - conflict_paths - index_paths - archive_exempt) | set(archive_deviations)
+        (changed - conflict_paths - archive_exempt) | set(archive_deviations)
     )
     if altered_clean_paths:
         raise ctx.TaskDataError(
@@ -932,19 +919,14 @@ def _validate_merge_staged_scope(expected_head: str, names: list[str]) -> None:
         )
 
 
-def _sync_indexes_after_existing_merge(names: list[str]) -> None:
-    """Recovery for a merge created outside task.py: archive members and persist indexes."""
+def _sync_archive_after_existing_merge(names: list[str]) -> None:
+    """Recovery for a merge created outside task.py: archive members in one commit."""
     moved = _stage_archive_moves(names)
-    rebuild_index()
-    paths = [ctx._rel(ctx.ACTIVE_PATH), ctx._rel(ctx.ARCHIVE_PATH)]
-    result = _git(["add", "--", *paths])
-    if result.returncode != 0:
-        raise ctx.TaskDataError(f"index git add 失败：{result.stderr.strip()}")
-    paths += [path for pair in moved for path in pair]
-    if _git(["diff", "--cached", "--quiet", "--", *paths]).returncode == 0:
+    paths = [path for pair in moved for path in pair]
+    if not paths or _git(["diff", "--cached", "--quiet", "--", *paths]).returncode == 0:
         return
     result = _git(
-        ["commit", "-m", "chore(task): archive task dirs and rebuild task indexes", "--", *paths],
+        ["commit", "-m", "chore(task): archive completed task dirs", "--", *paths],
         timeout=120,
     )
     if result.returncode != 0:
@@ -959,7 +941,6 @@ def _commit_native_merge(expected_head: str, subject_prefix: str, names: list[st
         if _merge_head() != expected_head:
             raise ctx.TaskDataError("MERGE_HEAD 与目标分支 tip 不符")
         _stage_archive_moves(names)
-        _stage_indexes()
         _validate_merge_staged_scope(expected_head, names)
         result = _git(["commit", "--no-edit"], timeout=120)
         if result.returncode != 0:
@@ -1027,7 +1008,7 @@ def cmd_integrate(args):
                 "拒绝认领无关历史"
             )
         try:
-            _sync_indexes_after_existing_merge([branch])
+            _sync_archive_after_existing_merge([branch])
             append_integrated(args.tid, attempt, execution_id, merge_sha)
             if not args.keep_branch:
                 _delete_branches([branch])

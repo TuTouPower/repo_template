@@ -51,4 +51,4 @@ metadata:
 
 ## 边界
 
-只写修复涉及的代码、测试、文档与当前 pending 条目；不写 task 目录、tasks_index、ledger 与其它 pending。修复中发现的新问题用 `pending.py new` 登记，不混入当前 commit。
+只写修复涉及的代码、测试、文档与当前 pending 条目；不写 task 目录、ledger 与其它 pending。修复中发现的新问题用 `pending.py new` 登记，不混入当前 commit。

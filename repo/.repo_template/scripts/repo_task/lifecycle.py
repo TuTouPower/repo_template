@@ -18,7 +18,7 @@ from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_so
 from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
-from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, rebuild_index, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
+from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
 
 @control_locked
@@ -78,11 +78,6 @@ def cmd_add(args):
                 "请先更新 .repo_template/docs/task_template/，旧字段只能经显式迁移处理"
             )
         write_front_matter(note_md, fm, body)
-        try:
-            rebuild_index()
-        except (OSError, ctx.TaskDataError) as error:
-            shutil.rmtree(task_dir, ignore_errors=True)
-            sys.exit(f"add 失败（{error}）；已回滚新建目录 {ctx._rel(task_dir)}")
     print(f"added {tid} '{fm['title']}' status=backlog review_level={fm['review_level']}")
     print(f"工作区：{ctx._rel(task_dir)}（已从模板复制 task.md / {ctx.PROGRESS_FILE}）")
 
@@ -259,7 +254,6 @@ def cmd_edit(args):
         write_front_matter_many([peer_conflict_update, (path, fm, body)])
     else:
         write_front_matter(path, fm, body)
-    rebuild_index()
     print(f"{args.tid} updated: {', '.join(changed)}")
 
 _TESTING_PENDING_RE = re.compile(
@@ -413,7 +407,6 @@ def cmd_preflight(args):
             uncommitted = [
                 p for p in dirty
                 if not p.startswith(task["dir"])
-                and p not in ("docs/tasks_index.json", "docs/archive/tasks_index.json")
                 and not p.startswith(".scratch/")
             ]
             if uncommitted:
@@ -624,20 +617,6 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
             f"归档移动失败（{e}）{rollback_note}；"
             f"目录在 {ctx._rel(src) if src.exists() else ctx._rel(dst)}。排除原因后重试"
         )
-    # 归档已成功；此后只派生索引重建，失败不反向搬动状态权威（目录/front matter
-    # 保持归档终态），只提示索引待重建。
-    # main 上直接 drop 会改变 task 的目录归属；同步两个派生索引。
-    # active worktree 中的 drop 由后续 task commit/integrate 收尾索引，
-    # 此处不能提前把索引写进执行分支，否则会制造 merge 冲突。
-    if not in_own_worktree:
-        try:
-            rebuild_index()
-        except (OSError, ctx.TaskDataError) as e:
-            sys.exit(
-                f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}\n"
-                f"派生索引重建失败（{e}）；归档状态已生效，"
-                "运行 `task.py list --rebuild` 修复索引后随维护 commit 入库"
-            )
     print(f"{args.tid} status={status}; 目录已归档 -> {ctx._rel(dst)}; {wt_msg}")
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
@@ -1116,8 +1095,6 @@ def cmd_rewind(args):
         sys.exit(
             f"rewind 状态写入失败（{error}）；权威状态仍处 {effective}，审计已记录失败标记，请排查原因后重试"
         )
-    if target == "backlog":
-        rebuild_index()
     print(f"{args.tid} status={target} (rewound from {effective}){'; ' + wt_msg if wt_msg else ''}")
 
 @control_locked
@@ -1267,7 +1244,6 @@ def cmd_purge(args):
     except OSError as error:
         sys.exit(f"purge 中止：无法移动到 tombstone（{error}）")
     try:
-        rebuild_index()
         append_audit(
             "purge", tid=fm["tid"], fr="backlog", to="deleted", reason=args.reason,
             slug=fm.get("slug", ""), title=fm.get("title", ""),
@@ -1277,11 +1253,10 @@ def cmd_purge(args):
         try:
             os.replace(tomb, task_dir)  # 恢复，避免已删但无审计
             restored = True
-            rebuild_index()  # 目录恢复后重建派生索引，保持与权威目录严格一致（Issue #35）
         except OSError:
             pass
         if restored:
-            sys.exit(f"purge 收尾失败（{error}）；任务目录及派生索引已完整恢复")
+            sys.exit(f"purge 收尾失败（{error}）；任务目录已完整恢复")
         else:
             sys.exit(f"purge 收尾失败（{error}）；目录保留于 {ctx._rel(tomb)}，请人工处理")
     try:
@@ -1298,21 +1273,17 @@ def cmd_list(args):
     if args.status and args.status not in ctx.VALID_STATUSES:
         sys.exit(f"status {args.status!r} 非法；可选 {ctx.VALID_STATUSES}")
     ref_arg = args.ref
-    if ref_arg and args.rebuild:
-        sys.exit("--ref 为只读快照，不能与 --rebuild 同用")
     if ref_arg:
         ref_name, ref_sha = resolve_local_branch(ref_arg)
         tasks = scan_tasks_at_ref(ref_sha)
         source = f"ref={ref_name}@{ref_sha[:12]}"
-    elif args.rebuild:
-        require_primary_worktree()
-        tasks = rebuild_index()
-        source = ""
-        print(f"index rebuilt: {ctx._rel(ctx.ACTIVE_PATH)}, {ctx._rel(ctx.ARCHIVE_PATH)}")
     else:
-        tasks = scan_tasks()  # 默认只读：罗列不该有写副作用
+        tasks = scan_tasks()  # 唯一权威 = task 文件；不落盘任何缓存
         source = ""
     rows = [t for t in tasks if not args.status or t["status"] == args.status]
+    if getattr(args, "json", False):
+        print(json.dumps({"source": source or "main", "tasks": rows}, ensure_ascii=False, indent=2))
+        return
     if not rows:
         print(f"(no tasks) {source}" if source else "(no tasks)")
         return

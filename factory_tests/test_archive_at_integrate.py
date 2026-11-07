@@ -119,12 +119,10 @@ def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     assert changes[f"{ACTIVE}/progress.md"] == "D"
     assert changes[f"{ARCHIVE}/progress.md"] == "A"
     assert changes[f"{ARCHIVE}/handoff.json"] == "A"
-    assert changes["docs/tasks_index.json"] != "" and changes["docs/archive/tasks_index.json"] != ""
+    assert "docs/tasks_index.json" not in changes
+    assert "docs/archive/tasks_index.json" not in changes
     assert not (git_repo / ACTIVE).exists()
-    archive_index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
-    assert [item["tid"] for item in archive_index["tasks"]] == ["t001"]
-    active_index = json.loads((git_repo / "docs/tasks_index.json").read_text("utf-8"))
-    assert "t001" not in [item["tid"] for item in active_index["tasks"]]
+    assert (git_repo / ARCHIVE / "progress.md").is_file()
     # 归档是纯移动：内容与分支 tip 一致
     assert (git_repo / ARCHIVE / "progress.md").read_text("utf-8") == tip_note
     assert _git(git_repo, "status", "--porcelain").stdout == ""
@@ -154,8 +152,8 @@ def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
     assert not (git_repo / "docs/tasks/t001_alpha").exists()
     assert not (git_repo / "docs/tasks/t002_beta").exists()
     assert (git_repo / "docs/tasks/t003_gamma/progress.md").is_file()  # 非成员 task 不动
-    archive_index = json.loads((git_repo / "docs/archive/tasks_index.json").read_text("utf-8"))
-    assert [item["tid"] for item in archive_index["tasks"]] == ["t001", "t002"]
+    for name in ("t001_alpha", "t002_beta"):
+        assert (git_repo / "docs/archive/tasks" / name / "handoff.json").is_file()
 
 
 def test_continue_restages_archive_move_that_was_undone_before_commit(git_repo):

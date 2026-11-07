@@ -13,10 +13,10 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import pytest
 from repo_task import context as ctx
-from repo_task import lifecycle, store, worktrees
+from repo_task import lifecycle, worktrees
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter, write_front_matter
-from repo_task.store import rebuild_index, scan_tasks
+from repo_task.store import scan_tasks
 from review_support import configure_project_verification
 
 pytestmark = pytest.mark.contract
@@ -28,8 +28,6 @@ def fake_repo(tmp_path, monkeypatch):
     tasks = tmp_path / "docs" / "tasks"
     archive = tmp_path / "docs" / "archive" / "tasks"
     template = tasks / "task_template"
-    active_json = tmp_path / "docs" / "tasks_index.json"
-    archive_json = tmp_path / "docs" / "archive" / "tasks_index.json"
     tasks.mkdir(parents=True)
     archive.mkdir(parents=True)
     template.mkdir()
@@ -43,8 +41,6 @@ def fake_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
     monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
     monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(ctx, "ACTIVE_PATH", active_json)
-    monkeypatch.setattr(ctx, "ARCHIVE_PATH", archive_json)
     monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
     return tmp_path
 
@@ -134,16 +130,6 @@ def test_scan_rejects_backlog_in_archive_dir(fake_repo):
         scan_tasks()
 
 
-def test_rebuild_index_groups_by_directory_not_status(fake_repo):
-    _make_task(ctx.TASKS_DIR, "t001", "alpha", "done")
-    _make_task(ctx.ARCHIVE_TASKS_DIR, "t002", "beta", "done")
-    rebuild_index()
-    active = json.loads(ctx.ACTIVE_PATH.read_text(encoding="utf-8"))
-    archive = json.loads(ctx.ARCHIVE_PATH.read_text(encoding="utf-8"))
-    assert [t["tid"] for t in active["tasks"]] == ["t001"]
-    assert [t["tid"] for t in archive["tasks"]] == ["t002"]
-
-
 def test_scan_detects_dup_tid(fake_repo):
     _make_task(ctx.TASKS_DIR, "t006", "eps", "backlog")
     _make_task(ctx.ARCHIVE_TASKS_DIR, "t006", "eps", "done")
@@ -158,31 +144,6 @@ def test_scan_orders_by_tid_numerically(fake_repo):
     rows = scan_tasks()
     tids = [r["tid"] for r in rows]
     assert tids == ["t002", "t010", "t100"]
-
-
-def test_rebuild_index_splits_active_archive(fake_repo):
-    _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
-    _make_task(ctx.TASKS_DIR, "t002", "beta", "active")
-    _make_task(ctx.ARCHIVE_TASKS_DIR, "t003", "gamma", "done")
-    rebuild_index()
-    active = json.loads(ctx.ACTIVE_PATH.read_text(encoding="utf-8"))
-    archive = json.loads(ctx.ARCHIVE_PATH.read_text(encoding="utf-8"))
-    assert [t["tid"] for t in active["tasks"]] == ["t001", "t002"]
-    assert [t["tid"] for t in archive["tasks"]] == ["t003"]
-    assert active["authority"] == "docs/tasks/{tid}_{slug}/progress.md front matter"
-    assert archive["authority"] == (
-        "docs/archive/tasks/{tid}_{slug}/progress.md front matter"
-    )
-
-
-def test_rebuild_index_uses_utf8_and_lf(fake_repo):
-    _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
-    rebuild_index()
-    raw = ctx.ACTIVE_PATH.read_bytes()
-    assert b"\r\n" not in raw
-    # ensure_ascii=False：中文不转义
-    text = raw.decode("utf-8")
-    assert '"tasks"' in text
 
 
 def test_unlink_managed_links_only_removes_script_links(fake_repo):
@@ -280,26 +241,26 @@ def test_close_task_rolls_back_when_move_fails(fake_repo, monkeypatch):
     assert d.is_dir()  # 目录仍在活跃区
 
 
-def test_list_is_readonly_by_default(fake_repo, capsys):
-    """list 只罗列，不写派生 index。"""
+def test_list_is_readonly_and_never_writes_index(fake_repo, capsys):
+    """A14：task 文件是唯一权威；list 只读，不生成任何派生索引文件。"""
     import argparse
 
     _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
-    assert not ctx.ACTIVE_PATH.exists()
-    lifecycle.cmd_list(argparse.Namespace(status=None, rebuild=False, ref=None))
+    lifecycle.cmd_list(argparse.Namespace(status=None, ref=None, json=False))
     capsys.readouterr()
-    assert not ctx.ACTIVE_PATH.exists()
+    assert not (fake_repo / "docs" / "tasks_index.json").exists()
+    assert not (fake_repo / "docs" / "archive" / "tasks_index.json").exists()
 
 
-def test_list_rebuild_writes_index(fake_repo, capsys, monkeypatch):
+def test_list_json_exports_to_stdout_without_writing(fake_repo, capsys):
+    """A14：机器可读导出只到 stdout，不落盘。"""
     import argparse
 
     _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
-    monkeypatch.setattr(lifecycle, "require_primary_worktree", lambda: None)
-    lifecycle.cmd_list(argparse.Namespace(status=None, rebuild=True, ref=None))
-    out = capsys.readouterr().out
-    assert ctx.ACTIVE_PATH.exists()
-    assert "index rebuilt" in out
+    lifecycle.cmd_list(argparse.Namespace(status=None, ref=None, json=True))
+    payload = json.loads(capsys.readouterr().out)
+    assert [task["tid"] for task in payload["tasks"]] == ["t001"]
+    assert not (fake_repo / "docs" / "tasks_index.json").exists()
 
 
 def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, capsys, monkeypatch):
@@ -340,8 +301,8 @@ def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, ca
     assert "miscreated" in audit_file.read_text(encoding="utf-8")
 
 
-def test_purge_audit_failure_restores_directory_and_derived_index(fake_repo, monkeypatch):
-    """验证 purge 在审计阶段失败回滚后重新构建派生索引，保持索引与目录严格一致（Issue #35）。"""
+def test_purge_audit_failure_restores_directory(fake_repo, monkeypatch):
+    """验证 purge 在审计阶段失败时恢复目录，不留已删但无审计的现场。"""
     import argparse
     from contextlib import contextmanager
 
@@ -352,8 +313,6 @@ def test_purge_audit_failure_restores_directory_and_derived_index(fake_repo, mon
     monkeypatch.setattr("repo_task.locks.git_common_lock", noop_lock)
 
     d = _make_task(ctx.TASKS_DIR, "t001", "alpha", "backlog")
-    store.rebuild_index()
-    assert any(t["tid"] == "t001" for t in json.loads(ctx.ACTIVE_PATH.read_text())["tasks"])
 
     monkeypatch.setattr(lifecycle, "require_primary_worktree", lambda: None)
     monkeypatch.setattr(lifecycle, "task_schedule_references", lambda tid: [])
@@ -369,11 +328,9 @@ def test_purge_audit_failure_restores_directory_and_derived_index(fake_repo, mon
     with pytest.raises(SystemExit, match="purge 收尾失败.*已完整恢复"):
         lifecycle.cmd_purge(argparse.Namespace(tid="t001", reason="miscreated"))
 
-    # 目录恢复
+    # 目录恢复，权威数据仍在 task 文件
     assert d.exists()
-    # 派生索引也完整恢复包含 t001
-    active_data = json.loads(ctx.ACTIVE_PATH.read_text(encoding="utf-8"))
-    assert any(t["tid"] == "t001" for t in active_data["tasks"])
+    assert [row["tid"] for row in scan_tasks()] == ["t001"]
 
 
 def test_drop_move_failure_retry_leaves_no_duplicate_note(fake_repo, monkeypatch):

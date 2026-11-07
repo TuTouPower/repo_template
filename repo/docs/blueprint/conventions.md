@@ -25,7 +25,7 @@
 
 ## 原子写
 
-- 写权威/派生状态数据（`progress.md` front matter、`docs/tasks_index.json` / `docs/archive/tasks_index.json`、`docs/pending/` / `docs/archive/pending/`、review prompt 文件等）必须走 tmp 文件 + fsync + `os.replace` 原子写，防中断/掉电产生半写状态。
+- 写权威状态数据（`progress.md` front matter、`docs/pending/` / `docs/archive/pending/`、review prompt 文件等）必须走 tmp 文件 + fsync + `os.replace` 原子写，防中断/掉电产生半写状态。派生 task 索引默认不落盘；需要机器可读导出时用 `task.py list --json` 输出到 stdout。
 - 公共 helper：`from repo_task.documents import atomic_write_text`。
 
 ## 路径隐私
