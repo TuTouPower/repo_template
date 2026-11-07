@@ -663,13 +663,6 @@ def _unstaged_outside(task_dirs: tuple[str, ...]) -> list[str]:
     return sorted(found)
 
 
-def _git_index_path() -> Path:
-    result = _git(["rev-parse", "--absolute-git-dir"])
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ctx.TaskDataError("无法解析 git 目录，无法保存暂存区快照")
-    return Path(result.stdout.strip()) / "index"
-
-
 def _hooks_mirror_template() -> bool:
     result = _git(["config", "--get", "core.hooksPath"])
     configured = result.stdout.strip() if result.returncode == 0 else ""
@@ -887,38 +880,81 @@ def _finish_prechecks(args) -> dict:
     }
 
 
-def _rollback_finish(plan: dict, note_text: str, index_bytes: bytes) -> list[str]:
-    """撤销 finish 自身的写入：handoff.json、front matter、暂存。返回失败项。"""
-    from .documents import atomic_write_text
+def _settle_stale_finish_txn(tid: str) -> None:
+    """start/finish 前置：处理遗留提交事务，幂等判定并恢复或阻断（A01）。"""
+    from .commit_txn import judge, load, rollback
+    from .git_ops import worktree_paths
 
-    problems = []
+    worktree = ctx.REPO_ROOT.resolve()
+    if str(worktree) not in worktree_paths():
+        return
     try:
-        (ctx.REPO_ROOT / plan["task_rel"] / "handoff.json").unlink(missing_ok=True)
-    except OSError as error:
-        problems.append(f"handoff.json 删除失败（{error}）")
-    try:
-        atomic_write_text(plan["note_path"], note_text)
-    except (OSError, ctx.TaskDataError) as error:
-        problems.append(f"{ctx.PROGRESS_FILE} front matter 还原失败（{error}）")
-    try:
-        index_path = _git_index_path()
-        temporary = index_path.with_name("index.finish_rollback")
-        temporary.write_bytes(index_bytes)
-        os.replace(temporary, index_path)
-    except (OSError, ctx.TaskDataError) as error:
-        problems.append(f"暂存区还原失败（{error}）")
-    return problems
+        existing = load(worktree)
+    except ctx.TaskDataError as error:
+        sys.exit(f"finish=FAIL：{error}；运行 `python3 .repo_template/scripts/task.py recovery {tid}`")
+    if existing is None:
+        return
+    if existing.get("tid") != tid:
+        sys.exit(
+            f"finish=FAIL：当前 worktree 存在 {existing.get('tid')} 的提交事务残留；"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {existing.get('tid')}`"
+        )
+    verdict, detail = judge(worktree, existing)
+    if verdict == "committed":
+        sys.exit(
+            f"finish=FAIL：上次提交已产生（{detail}）；不重复提交，"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 继续收尾"
+        )
+    if verdict == "rollback_safe":
+        problems = rollback(worktree, existing)
+        if problems:
+            sys.exit(
+                f"finish=FAIL：恢复上次提交事务失败：{'；'.join(problems)}；"
+                f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`"
+            )
+        print("提示：已幂等回滚上次中断的提交事务，继续本次 finish", file=sys.stderr)
+        return
+    sys.exit(
+        f"finish=FAIL：上次提交事务结果未知（{detail}）；保留现场，"
+        f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，禁止盲目重试"
+    )
 
 
 def cmd_finish(args):
-    """active -> done 原子收尾：前置检查零写入，写入后提交；提交失败整体回滚。"""
-    plan = _finish_prechecks(args)
-    message_path, tid = plan["message_path"], args.tid
-    note_text = plan["note_path"].read_text(encoding="utf-8")
-    index_bytes = _git_index_path().read_bytes()
+    """active -> done 原子收尾：前置检查零写入，持久提交事务提交；失败按 HEAD 实际状态恢复。"""
+    from .commit_txn import (
+        begin, finalize, judge, load, mark_phase, mark_staged, rollback, run_git_commit,
+    )
 
-    def fail(reason: str) -> None:
-        problems = _rollback_finish(plan, note_text, index_bytes)
+    tid = args.tid
+    # 遗留提交事务必须先于任何前置检查处理：现场可能处于半写状态。
+    _settle_stale_finish_txn(tid)
+    plan = _finish_prechecks(args)
+    message_path = plan["message_path"]
+    worktree = ctx.REPO_ROOT.resolve()
+
+    attempt, execution_id = plan["handoff"]["attempt"], plan["handoff"]["execution_id"]
+    txn = begin(
+        worktree, tid=tid, attempt=attempt, execution_id=execution_id,
+        branch=plan["handoff"]["branch"], diff_anchor=plan["diff_anchor"],
+        review_scope=plan["review_scope"], task_rel=plan["task_rel"],
+        message_file=str(message_path),
+    )
+
+    def settle_failure(reason: str) -> None:
+        """依据 Git 实际状态决定恢复或保留现场；禁止在结果未知时自动回滚。"""
+        verdict, detail = judge(worktree, txn)
+        if verdict == "committed":
+            sys.exit(
+                f"finish=FAIL：{reason}\n提交已产生（{detail}）；不回滚，"
+                f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾"
+            )
+        if verdict == "unknown":
+            sys.exit(
+                f"finish=FAIL：{reason}\n提交结果未知（{detail}）；已保留 journal 与现场，"
+                f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，禁止盲目重试"
+            )
+        problems = rollback(worktree, txn)
         if problems:
             sys.exit(
                 f"finish=FAIL：{reason}\n回滚未完成：{'；'.join(problems)}。"
@@ -928,9 +964,10 @@ def cmd_finish(args):
         sys.exit(f"finish=FAIL：{reason}\nfinish 自身写入已全部回滚（front matter、handoff.json、暂存）")
 
     try:
+        mark_phase(worktree, txn, "writing")
         _close_task(args, "done", None, prechecked=True)
     except SystemExit as stop:
-        fail(f"done 写入失败：{stop.code}")
+        settle_failure(f"done 写入失败：{stop.code}")
     try:
         from .documents import atomic_write_text
         atomic_write_text(
@@ -940,17 +977,15 @@ def cmd_finish(args):
         staged = _git(["add", "-A", "--", plan["task_rel"]])
         if staged.returncode != 0:
             raise ctx.TaskDataError(f"git add 失败：{staged.stderr.strip()}")
-        committed = _git(["commit", "-F", str(message_path)], timeout=600)
+        mark_staged(worktree, txn)
     except (OSError, ctx.TaskDataError) as error:
-        fail(str(error))
+        settle_failure(str(error))
+    committed = run_git_commit(worktree, str(message_path))
     if committed.returncode != 0:
-        if _get_head() != plan["diff_anchor"]:
-            sys.exit(
-                "finish=FAIL：git commit 返回非零但 HEAD 已前进；不回滚。"
-                f"核对 `git log` 后运行 `python3 .repo_template/scripts/task.py recovery {tid}`"
-            )
         detail = (committed.stderr.strip() or committed.stdout.strip())[-1500:]
-        fail(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
+        settle_failure(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
+    mark_phase(worktree, txn, "committed")
+    finalize(worktree)
     from .monitoring import review_scope_fingerprint
     actual_scope = review_scope_fingerprint(plan["diff_anchor"], plan["task_rel"], ref="HEAD")
     if actual_scope != plan["review_scope"]:

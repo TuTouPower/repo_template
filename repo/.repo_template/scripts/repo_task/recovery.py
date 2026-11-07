@@ -13,7 +13,14 @@ from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 def recovery_state(tid: str) -> dict:
     require_primary_worktree()
-    task = discover_effective_tasks().get(tid)
+    corrupt_detail = ""
+    try:
+        tasks = discover_effective_tasks()
+    except ctx.TaskDataError as error:
+        # 现场损坏时仍允许 recovery 依据持久 journal 给出诊断，不伪装为正常状态（A05）。
+        tasks = discover_effective_tasks(allow_corrupt=True)
+        corrupt_detail = str(error)
+    task = tasks.get(tid)
     if task is None:
         raise ctx.TaskDataError(f"{tid} 不存在")
     events = ledger_read()
@@ -33,6 +40,24 @@ def recovery_state(tid: str) -> dict:
     def phase(value: str, action: str) -> dict:
         state.update(phase=value, action=action)
         return state
+
+    if registered_branch and worktree.is_dir():
+        from .commit_txn import judge as judge_txn, load as load_txn
+
+        try:
+            txn = load_txn(worktree)
+        except ctx.TaskDataError as error:
+            return phase("finish_txn_corrupt", f"提交事务 journal 损坏：{error}；人工核查后清理")
+        if txn is not None:
+            verdict, detail = judge_txn(worktree, txn)
+            actions = {
+                "committed": "实现 commit 已产生；核对 review/handoff 后按 run-close 收尾，不重复提交",
+                "rollback_safe": "HEAD 未前进且现场未变；重跑 finish 会先幂等回滚该事务再继续",
+                "unknown": "提交结果未知或现场被外部修改；保留 journal，人工核查 HEAD、git log 与工作区后决定",
+            }
+            return phase(f"finish_txn_{verdict}", f"{detail}；{actions[verdict]}")
+    if task.get("status") == "corrupt":
+        return phase("corrupt", corrupt_detail or task.get("note") or "现场数据损坏；人工核查后处理")
 
     if not registered_branch:
         if task["status"] in ctx.ARCHIVED_STATUSES and (not record or record["state"] == "integrated"):

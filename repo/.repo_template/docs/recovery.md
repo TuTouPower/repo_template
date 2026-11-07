@@ -19,9 +19,18 @@
 
 ## finish 回滚语义
 
-`finish` 先做全部前置检查，任一项失败零写入退出。写入阶段依次为原位写 done、生成 `handoff.json`、暂存、`git commit -F`。提交失败（含 pre-commit / commit-msg hook 拒绝）时脚本回滚 finish 自身的写入：front matter、`handoff.json` 与暂存区恢复到 finish 前，调用方已暂存的交付文件保持暂存，修复原因后可直接重跑 `finish`。回滚失败时脚本如实报错并提示运行 `task.py recovery`，此时现场不一致，不重复 finish。
+`finish` 先做全部前置检查，任一项失败零写入退出。写入阶段依次为持久化提交事务 journal 与快照（worktree 私有 Git 目录）、原位写 done、生成 `handoff.json`、暂存、`git commit -F`。只有 journal、原 index 与 task 目录快照全部落盘后才会写业务文件。
 
-进程被杀等中断不在脚本回滚范围，由 recovery 阶段检测兜底：`finish_interrupted`（已 done、无 `handoff.json`、无实现 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无实现 commit）核验后暂存并提交实现 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（重入安全；owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。已提交但 review 门禁失败时，recovery 判 `review_repair`，按「review 门禁失败后的修复」补审后重跑同一 `run-close`，不要按 `committed_unreported` 只补 terminal/report。
+提交结果统一按 Git 实际状态判定，不再以进程退出码代替事实：
+
+- **HEAD 已前进**：判定实现 commit 已产生，不回滚、不重复提交；核对 `review` 与 `handoff` 后按 recovery 继续收尾。
+- **HEAD 未前进且现场与事务期望一致**：精确回滚 finish 自身写入（front matter、`handoff.json`、index），调用方原有暂存与未暂存内容保持；修复原因后可直接重跑 `finish`。
+- **结果未知**（存在 `index.lock` / `HEAD.lock` 等 Git 锁、HEAD 不可读、暂存区或 task 目录已被外部修改）：保留 journal 与现场，输出「提交结果未知」，禁止自动回滚与盲目重试。
+
+遗留 journal 由 `task.py recovery {tid}` 以同一判定逻辑报告 `finish_txn_committed` / `finish_txn_rollback_safe` / `finish_txn_unknown`。重跑 `finish` 会先幂等处理遗留事务：`committed` 拒绝重复提交，`rollback_safe` 先回滚再继续，`unknown` 阻断并要求人工核查。进程被杀等中断同样由该 journal 与 recovery 兜底，不再依赖内存补偿。
+
+无 journal 的历史现场仍按既有阶段检测：`finish_interrupted`（已 done、无 `handoff.json`、无实现 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无实现 commit）核验后暂存并提交实现 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（重入安全；owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。已提交但 review 门禁失败时，recovery 判 `review_repair`，按「review 门禁失败后的修复」补审后重跑同一 `run-close`，不要按 `committed_unreported` 只补 terminal/report。
+
 
 ## 轮次上限
 

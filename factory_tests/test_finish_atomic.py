@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from pathlib import Path
 
 import pytest
 
@@ -460,9 +461,10 @@ def test_finish_commit_msg_hook_rejection_also_rolls_back(git_repo):
     assert _snapshot(git_repo, worktree) == before
 
 
-def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
+def test_finish_destructive_hook_reports_unknown_and_keeps_journal(git_repo):
+    """A01：hook 破坏现场后 HEAD 未前进但现场偏离事务期望 → 结果未知，保留 journal，不自动回滚。"""
     _, worktree, message = _ready(git_repo)
-    # hook 失败的同时把 progress.md 换成目录，使 front matter 无法还原
+    # hook 失败的同时把 progress.md 换成目录，使现场偏离事务期望且无法确定归属
     _install_hook(
         git_repo,
         'rm docs/tasks/t001_alpha/progress.md && mkdir docs/tasks/t001_alpha/progress.md\n'
@@ -472,9 +474,68 @@ def test_finish_reports_incomplete_rollback_with_recovery_hint(git_repo):
     result = finish_cli(worktree, "t001", OWNER, message)
 
     assert result.returncode != 0
-    assert "回滚未完成" in result.stderr
-    assert "progress.md front matter 还原失败" in result.stderr
-    assert "task.py recovery t001" in result.stderr
+    assert "提交结果未知" in result.stderr
+    assert "已保留 journal 与现场" in result.stderr
+    assert (worktree / "docs/tasks/t001_alpha/progress.md").is_dir()
+    state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
+    assert state["phase"] == "finish_txn_unknown"
+    assert "不重复提交" in state["action"] or "人工核查" in state["action"]
+
+
+def test_transaction_judge_reports_committed_when_head_advanced(git_repo):
+    """A01：HEAD 已前进时 judge 判 committed，恢复路径不得回滚。"""
+    from repo_task import commit_txn
+
+    _, worktree, message = _ready(git_repo)
+    assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
+    head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    parent = _git(worktree, "rev-parse", "HEAD^1").stdout.strip()
+    journal = {
+        "version": commit_txn.JOURNAL_VERSION,
+        "tid": "t001", "attempt": 1, "execution_id": "x", "branch": "t001_alpha",
+        "diff_anchor": parent, "review_scope": "x", "task_rel": "docs/tasks/t001_alpha",
+        "message_file": str(message), "original_head": parent,
+        "index_existed": True, "files": {}, "phase": "committing",
+        "expected_tree": "", "expected_files": {},
+    }
+    verdict, detail = commit_txn.judge(worktree, journal)
+    assert verdict == "committed"
+    assert head[:12] in detail
+
+
+def test_leftover_transaction_with_git_lock_reports_unknown_without_rollback(git_repo):
+    """A01：Git 锁仍在表示子进程可能未结束 → 结果未知，保留现场；recovery 如实报告。"""
+    from repo_task import commit_txn
+
+    _, worktree, message = _ready(git_repo)
+    git_dir = Path(_git(worktree, "rev-parse", "--absolute-git-dir").stdout.strip())
+    txn = commit_txn.begin(
+        worktree, tid="t001", attempt=1, execution_id="x", branch="t001_alpha",
+        diff_anchor=_git(worktree, "rev-parse", "HEAD").stdout.strip(),
+        review_scope="x", task_rel="docs/tasks/t001_alpha", message_file=str(message),
+    )
+    (git_dir / "index.lock").write_text("", encoding="utf-8")
+
+    verdict, detail = commit_txn.judge(worktree, txn)
+    assert verdict == "unknown"
+    assert "index.lock" in detail
+
+    state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
+    assert state["phase"] == "finish_txn_unknown"
+    assert "人工核查" in state["action"]
+
+
+def test_finish_retry_idempotently_rolls_back_leftover_safe_transaction(git_repo):
+    """A01：HEAD 未前进且现场未改的中断事务，重跑 finish 先幂等回滚再继续。"""
+    _, worktree, message = _ready(git_repo)
+    hook = _install_hook(git_repo, 'echo "hook-says-no" >&2\nexit 1')
+    assert finish_cli(worktree, "t001", OWNER, message).returncode != 0
+    # 上次失败已安全回滚并清理 journal
+    assert json.loads(_task_cli(git_repo, "recovery", "t001").stdout)["phase"] != "finish_txn_unknown"
+    hook.unlink()
+    retry = finish_cli(worktree, "t001", OWNER, message)
+    assert retry.returncode == 0, retry.stdout + retry.stderr
+    assert _git(worktree, "status", "--porcelain").stdout == ""
 
 
 # --------------------------------------------------------------------------
