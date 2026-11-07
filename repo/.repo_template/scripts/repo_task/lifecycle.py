@@ -663,17 +663,6 @@ def _unstaged_outside(task_dirs: tuple[str, ...]) -> list[str]:
     return sorted(found)
 
 
-def _hooks_mirror_template() -> bool:
-    result = _git(["config", "--get", "core.hooksPath"])
-    configured = result.stdout.strip() if result.returncode == 0 else ""
-    if not configured:
-        return False
-    path = Path(configured).expanduser()
-    if not path.is_absolute():
-        path = ctx.REPO_ROOT / path
-    return path.resolve() == (ctx.REPO_ROOT / ".repo_template" / "hooks").resolve()
-
-
 def _load_md_format():
     try:
         import md_format
@@ -700,18 +689,9 @@ def _markdown_paths_to_check(md_format, task_dir: Path) -> list[str]:
 def _check_markdown_format(task_dir: Path) -> None:
     md_format = _load_md_format()
     if md_format is None:
-        print("WARN: 缺 md_format.py，跳过 Markdown 格式检查", file=sys.stderr)
-        return
+        sys.exit("finish=FAIL：缺 md_format.py，无法执行 Markdown 格式检查；零写入退出")
     rels = _markdown_paths_to_check(md_format, task_dir)
     if not rels:
-        return
-    if md_format.find_md_kx() is None:
-        if _hooks_mirror_template():
-            sys.exit(
-                "finish=FAIL：已启用 .repo_template/hooks 的 pre-commit，但找不到 md_kx；"
-                "安装后重跑 finish。零写入退出"
-            )
-        print("WARN: 未安装 md_kx，跳过 Markdown 格式检查", file=sys.stderr)
         return
     try:
         drifted = md_format.format_paths(rels, check=True)

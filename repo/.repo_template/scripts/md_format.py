@@ -163,21 +163,28 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     return changed
 
 
-def format_new_file(rel: str) -> bool:
-    """供 pending/findings/spikes new：格式化刚写的条目文件（方案 C）。
+def format_file(path: Path) -> None:
+    """格式化单个文件（含尚未入库的临时文件）；缺失或失败抛 MdFormatError。
 
-    缺 md_kx 时跳过并打警告，不阻断（CI 无二进制时现有测试不红）。
+    用于条目创建事务：调用方在临时路径上格式化成功后才原子发布正式条目。
+    生产路径不因测试环境缺依赖而降级。
     """
     executable = find_md_kx()
     if not executable:
-        print("WARNING: 未安装 md_kx，跳过 Markdown 格式化", file=sys.stderr)
-        return False
+        raise MdFormatError(
+            "找不到 md_kx（项目约定的 Markdown 格式化器，来源 "
+            "https://github.com/TuTouPower/md_kx，PyPI 发行名 md-kx；"
+            "一般已全局安装：uv tool install md-kx）"
+        )
     try:
-        format_paths([rel])
-    except MdFormatError as error:
-        print(f"WARNING: md_kx 格式化失败（{rel}）：{error}", file=sys.stderr)
-        return False
-    return True
+        result = subprocess.run(
+            [executable, str(path)], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise MdFormatError(f"md_kx 执行失败（{path.name}）：{error}") from error
+    if result.returncode != 0:
+        raise MdFormatError(f"md_kx 失败（{path.name}）：{result.stderr.strip()}")
 
 
 def main(argv: list[str] | None = None) -> None:

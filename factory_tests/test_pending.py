@@ -706,15 +706,54 @@ def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
     assert report.read_text(encoding="utf-8") == "# s001 spike 报告\n"
 
 
+def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
+    """A18：格式化失败不得发布正式条目，也不输出创建成功。"""
+    from md_format import MdFormatError
+
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    monkeypatch.setattr(
+        pending_mod, "format_file",
+        lambda path: (_ for _ in ()).throw(MdFormatError("formatter boom")),
+    )
+    with pytest.raises(SystemExit) as exc:
+        pending_mod.main(["new", "--slug", "atomic_check"])
+    assert exc.value.code and "错误" in str(exc.value)
+    assert capsys.readouterr().out == ""
+    todo = repo / "docs/pending/todo"
+    assert not list(todo.glob("p*_atomic_check.md"))
+    assert not list(todo.glob(".tmp_*"))
+
+
+def test_spikes_new_format_failure_publishes_no_directory(tmp_path, monkeypatch, capsys):
+    """A18：目录条目在临时目录准备并格式化，失败不发布、不残留临时目录。"""
+    from md_format import MdFormatError
+
+    repo = _init_repo(tmp_path)
+    _init_spikes(repo)
+    _bind(monkeypatch, repo)
+    monkeypatch.setattr(
+        spikes_mod, "format_file",
+        lambda path: (_ for _ in ()).throw(MdFormatError("formatter boom")),
+    )
+    with pytest.raises(SystemExit) as exc:
+        spikes_mod.main(["new", "--slug", "atomic_spike"])
+    assert exc.value.code and "错误" in str(exc.value)
+    assert capsys.readouterr().out == ""
+    spikes_dir = repo / "docs/spikes"
+    assert not list(spikes_dir.glob("s*_atomic_spike"))
+    assert not list(spikes_dir.glob(".tmp_*"))
+
+
 def test_spikes_new_formats_report_file(tmp_path, monkeypatch):
     """验证 spikes new 传入的具体格式化目标为 report.md 文件而非目录（Issue #58）。"""
     repo = _init_repo(tmp_path)
     _init_spikes(repo)
     _bind(monkeypatch, repo)
     formatted = []
-    monkeypatch.setattr(spikes_mod, "format_new_file", lambda rel: formatted.append(rel) or True)
+    monkeypatch.setattr(spikes_mod, "format_file", lambda path: formatted.append(Path(path).name))
     spikes_mod.main(["new", "--slug", "verify_format"])
-    assert formatted == ["docs/spikes/s001_verify_format/report.md"]
+    assert formatted == ["report.md"]
 
 
 def test_allocate_atomicity_and_cleanup_on_failure(tmp_path, monkeypatch):

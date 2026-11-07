@@ -592,8 +592,8 @@ def _fake_md_kx(tmp_path):
         "    sys.exit(0 if out == text else 1)\n"
         "path.write_text(out, encoding='utf-8')\n"
     )
-    bin_dir = tmp_path / "bin_md"
-    bin_dir.mkdir()
+    bin_dir = tmp_path / "bin_real_md"
+    bin_dir.mkdir(exist_ok=True)
     exe = bin_dir / "md_kx"
     exe.write_text(script, encoding="utf-8")
     exe.chmod(0o755)
@@ -626,8 +626,12 @@ def test_finish_rejects_unformatted_markdown_when_template_hooks_enabled(
     assert _snapshot(git_repo, worktree) == before
 
 
-def test_finish_rejects_missing_md_kx_when_template_hooks_enabled(git_repo):
+def test_finish_rejects_missing_md_kx_when_template_hooks_enabled(git_repo, monkeypatch):
     _, worktree, message = _ready(git_repo)
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        path for path in os.environ.get("PATH", "").split(os.pathsep)
+        if path and not (Path(path) / "md_kx").exists()
+    ))
     _git(git_repo, "config", "core.hooksPath", ".repo_template/hooks")
     before = _snapshot(git_repo, worktree)
 

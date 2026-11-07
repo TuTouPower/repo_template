@@ -214,8 +214,12 @@ def allocate(
     target_dir: Path,
     slug: str,
     body: str,
+    formatter=None,
 ) -> Path:
-    """锁内分配编号并落盘条目文件，返回新文件路径。"""
+    """锁内完成「取号 → 生成最终内容 → 格式化 → 原子发布」，返回新文件路径。
+
+    formatter 接收临时文件路径；抛错时不发布正式条目并清理临时文件。
+    """
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     with id_lock(repo_root):
@@ -228,6 +232,10 @@ def allocate(
         tmp_path = target_dir / f".tmp_{entry_id}_{slug}.md"
         try:
             tmp_path.write_bytes(body.replace("{id}", entry_id).encode("utf-8"))
+            if formatter is not None:
+                formatter(tmp_path)
+            if not tmp_path.read_text(encoding="utf-8").strip():
+                raise IdScanError("生成条目内容为空；拒绝发布")
             os.replace(tmp_path, path)
         except BaseException:
             tmp_path.unlink(missing_ok=True)
@@ -261,10 +269,12 @@ def allocate_dir(
     target_dir: Path,
     slug: str,
     files: dict[str, str],
+    formatter=None,
 ) -> Path:
-    """锁内分配编号并建目录型条目，返回新目录路径。
+    """锁内分配编号、在临时目录准备完整内容并格式化，随后原子发布目录条目。
 
     files 为 {相对文件名: 内容}；内容中的 `{id}` 替换为分配到的编号。
+    formatter 接收临时文件路径；抛错时不发布正式目录。
     """
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
@@ -285,6 +295,10 @@ def allocate_dir(
                 dest_file = tmp_dir / name
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
                 dest_file.write_bytes(content.replace("{id}", entry_id).encode("utf-8"))
+                if formatter is not None:
+                    formatter(dest_file)
+                if not dest_file.read_text(encoding="utf-8").strip():
+                    raise IdScanError(f"生成条目文件内容为空：{name}；拒绝发布")
             os.replace(tmp_dir, path)
         except BaseException:
             shutil.rmtree(tmp_dir, ignore_errors=True)

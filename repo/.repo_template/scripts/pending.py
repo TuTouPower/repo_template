@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate, id_lock
-from md_format import format_new_file
+from md_format import MdFormatError, format_file
 from repo_task.documents import atomic_write_text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -134,15 +134,18 @@ def set_field(path: Path, pattern: re.Pattern, line: str) -> None:
 
 def cmd_new(args: argparse.Namespace) -> None:
     body = BUG_TEMPLATE if args.kind == "bug" else ENTRY_TEMPLATE
-    path = allocate(
-        REPO_ROOT,
-        prefix=PREFIX,
-        dirs=SCAN_DIRS,
-        target_dir=TODO_DIR,
-        slug=args.slug,
-        body=body,
-    )
-    format_new_file(path.relative_to(REPO_ROOT).as_posix())
+    try:
+        path = allocate(
+            REPO_ROOT,
+            prefix=PREFIX,
+            dirs=SCAN_DIRS,
+            target_dir=TODO_DIR,
+            slug=args.slug,
+            body=body,
+            formatter=format_file,
+        )
+    except (IdScanError, MdFormatError) as error:
+        sys.exit(f"错误: {error}")
     print(_rel(path))
 
 

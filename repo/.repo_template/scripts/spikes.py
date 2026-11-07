@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate_dir
-from md_format import format_new_file
+from md_format import MdFormatError, format_file
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TOOLKIT_ROOT.parent
@@ -35,15 +35,18 @@ ENTRY_DIR_RE = re.compile(r"^s([0-9]{3,})_[a-z0-9_]+$")
 def cmd_new(args: argparse.Namespace) -> None:
     if not TEMPLATE_PATH.is_file():
         raise IdScanError(f"缺模板 {TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}")
-    path = allocate_dir(
-        REPO_ROOT,
-        prefix=PREFIX,
-        dirs=SCAN_DIRS,
-        target_dir=SPIKES_DIR,
-        slug=args.slug,
-        files={"report.md": TEMPLATE_PATH.read_text(encoding="utf-8")},
-    )
-    format_new_file((path / "report.md").relative_to(REPO_ROOT).as_posix())
+    try:
+        path = allocate_dir(
+            REPO_ROOT,
+            prefix=PREFIX,
+            dirs=SCAN_DIRS,
+            target_dir=SPIKES_DIR,
+            slug=args.slug,
+            files={"report.md": TEMPLATE_PATH.read_text(encoding="utf-8")},
+            formatter=format_file,
+        )
+    except (IdScanError, MdFormatError) as error:
+        sys.exit(f"错误: {error}")
     print(path.relative_to(REPO_ROOT).as_posix())
 
 

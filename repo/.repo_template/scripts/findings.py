@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate
-from md_format import format_new_file
+from md_format import MdFormatError, format_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "d"
@@ -45,15 +45,18 @@ TEMPLATE = """# {id} {一句话简述}
 
 
 def cmd_new(args: argparse.Namespace) -> None:
-    path = allocate(
-        REPO_ROOT,
-        prefix=PREFIX,
-        dirs=SCAN_DIRS,
-        target_dir=FINDINGS_DIR,
-        slug=args.slug,
-        body=TEMPLATE,
-    )
-    format_new_file(path.relative_to(REPO_ROOT).as_posix())
+    try:
+        path = allocate(
+            REPO_ROOT,
+            prefix=PREFIX,
+            dirs=SCAN_DIRS,
+            target_dir=FINDINGS_DIR,
+            slug=args.slug,
+            body=TEMPLATE,
+            formatter=format_file,
+        )
+    except (IdScanError, MdFormatError) as error:
+        sys.exit(f"错误: {error}")
     print(path.relative_to(REPO_ROOT).as_posix())
 
 

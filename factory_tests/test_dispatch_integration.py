@@ -66,11 +66,13 @@ def git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(ctx, "REPO_ROOT", repo)
     monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
     monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
-    # 隔离宿主机 md_kx：夹具仓库未配置 hooks，finish 的格式检查应走缺二进制跳过分支。
-    monkeypatch.setenv("PATH", os.pathsep.join(
-        path for path in os.environ.get("PATH", "").split(os.pathsep)
-        if path and not (Path(path) / "md_kx").exists()
-    ))
+    # 测试边界注入恒等 md_kx 替身：格式检查契约不依赖宿主机是否安装。
+    fake_bin = tmp_path / "bin_md"
+    fake_bin.mkdir(exist_ok=True)
+    fake_md = fake_bin / "md_kx"
+    fake_md.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8")
+    fake_md.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", ""))
     (repo / ".gitignore").write_text(
         "__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8"
     )
