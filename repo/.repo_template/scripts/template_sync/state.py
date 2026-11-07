@@ -11,8 +11,13 @@ from .common import _load_json_object, _now_iso, consumer_locked
 from .source import source_identity
 
 
+def legacy_state_path():
+    return ctx.CONSUMER / ".agents/skills/repo-template-sync/sync_state.json"
+
+
 def read_state() -> dict | None:
-    path = ctx.STATE_PATH if ctx.STATE_PATH.exists() else ctx.LEGACY_STATE_PATH
+    """只读当前本地 state；旧布局 state 必须经 `migrate legacy-state` 显式迁移。"""
+    path = ctx.STATE_PATH
     data = _load_json_object(path, f"状态文件 {ctx._rel(path)}") if path.exists() else None
     manifest = ctx.CONSUMER / ".repo_template/sync_manifest.json"
     if data is None and manifest.exists():
@@ -104,46 +109,60 @@ def _merge_legacy_state(data: dict, legacy: dict) -> list[str]:
 def cmd_init(args: argparse.Namespace) -> int:
     if not args.source:
         raise ctx.SyncError("init 需要 --source <path|url>")
+    legacy = legacy_state_path()
+    if not ctx.STATE_PATH.exists() and legacy.exists():
+        raise ctx.SyncError(
+            f"检测到旧布局 state：{ctx._rel(legacy)}；普通 init 不再隐式合并。"
+            "先运行 `python3 .repo_template/scripts/repo_sync.py migrate legacy-state`"
+        )
     identity = source_identity(args.source)
-    legacy = None
-    legacy_readable = True
-    if ctx.LEGACY_STATE_PATH.exists():
-        try:
-            legacy = json.loads(ctx.LEGACY_STATE_PATH.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            legacy = None
-            legacy_readable = False
-            print(
-                f"WARNING: 旧布局 state 无法解析，保留原文件不删除："
-                f"{ctx.LEGACY_STATE_PATH.relative_to(ctx.CONSUMER).as_posix()}",
-                file=sys.stderr,
-            )
-    if not ctx.STATE_PATH.exists():
-        base = legacy if isinstance(legacy, dict) else read_state() or {
-            "template_source": None,
-            "last_synced_commit": None,
-            "last_synced_at": None,
-            "user_prompts": [],
-        }
-        write_state(base)
-        if isinstance(legacy, dict):
-            print(f"已迁移旧布局 state：{ctx.LEGACY_STATE_PATH.relative_to(ctx.CONSUMER).as_posix()} → {ctx.STATE_PATH.relative_to(ctx.CONSUMER).as_posix()}")
-        legacy = None
-    data = read_state()
+    data = read_state() or {
+        "template_source": None,
+        "last_synced_commit": None,
+        "last_synced_at": None,
+        "user_prompts": [],
+    }
     data["template_source"] = identity
-    if isinstance(legacy, dict):
-        merged = _merge_legacy_state(data, legacy)
-        if merged:
-            print("旧布局 state 已合并字段：" + ", ".join(sorted(set(merged))))
     kind = data["template_source"]["kind"]
     write_state(data)
-    if ctx.LEGACY_STATE_PATH.exists() and legacy_readable:
-        try:
-            ctx.LEGACY_STATE_PATH.unlink()
-            print(f"旧布局 state 已移除：{ctx.LEGACY_STATE_PATH.relative_to(ctx.CONSUMER).as_posix()}")
-        except OSError:
-            pass
     print(f"template_source 已写：kind={kind}, value={data['template_source']['value']}")
+    return 0
+
+
+@consumer_locked
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """显式迁移入口：把旧布局数据一次性收敛到当前格式。"""
+    if args.kind != "legacy-state":
+        raise ctx.SyncError(f"未知迁移目标：{args.kind}")
+    legacy = legacy_state_path()
+    if not legacy.exists():
+        raise ctx.SyncError(f"未找到旧布局 state：{ctx._rel(legacy)}")
+    try:
+        legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ctx.SyncError(
+            f"旧布局 state 无法解析，保留原文件不删除：{ctx._rel(legacy)}（{error}）"
+        ) from error
+    if not isinstance(legacy_data, dict):
+        raise ctx.SyncError(f"旧布局 state 顶层不是对象，保留原文件：{ctx._rel(legacy)}")
+    data = read_state() or {
+        "template_source": None,
+        "last_synced_commit": None,
+        "last_synced_at": None,
+        "user_prompts": [],
+    }
+    merged = _merge_legacy_state(data, legacy_data)
+    write_state(data)
+    try:
+        legacy.unlink()
+    except OSError as error:
+        raise ctx.SyncError(
+            f"state 已迁移，但旧文件删除失败：{ctx._rel(legacy)}（{error}）；请人工删除"
+        ) from error
+    print(
+        f"已迁移旧布局 state：{ctx._rel(legacy)} → {ctx._rel(ctx.STATE_PATH)}"
+        + (f"；并入字段 {', '.join(sorted(set(merged)))}" if merged else "")
+    )
     return 0
 
 

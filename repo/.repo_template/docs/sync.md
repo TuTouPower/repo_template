@@ -44,6 +44,8 @@
 
 同步版本的可移植基线为 `.repo_template/sync_manifest.json`（随同步 commit 入库），只保存 resolved commit 和可共享 URL；共享保护决策通过 `prompt add --scope shared` 写入可入库的 `.repo_template/sync_policy.json`；本机来源路径、缓存与私人 user_prompts 留在忽略的 sync_state 中，迁机须备份。新 clone 无 state 时读取 manifest，路径源用 `init --source <新机器路径>` 重新接入，保留版本基线；私人保护策略从备份恢复后再同步。不要把含凭据 URL 或本机路径写进 manifest。
 
+旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` 明确拒绝并指向 `repo_sync.py migrate legacy-state`。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 总账同理，用 `pending.py migrate-legacy` / `findings.py migrate-legacy` 显式拆分，迁移结果提交后编号分配才恢复。
+
 ## 正式同步
 
 正式同步要求 clean 来源，先记录来源 SHA，再从固定 commit 的本地 checkout 运行来源脚本；工厂根与产物根均可。URL 先 clone/fetch 到 `.scratch/`，解析并固定 commit；离线使用已有固定 `--checkout`，同时保留原始 URL 的 `--source` 身份，不执行 pull。dirty 来源仅显式开发验证，不推进 resolved commit，不可冒充正式升级。

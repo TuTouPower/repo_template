@@ -25,8 +25,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _id_scan import IdScanError, allocate
+from _id_scan import (
+    IdScanError,
+    allocate,
+    id_lock,
+    legacy_ledger_entries,
+    slug_from_title,
+)
 from md_format import MdFormatError, format_file
+from repo_task.documents import atomic_write_text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "d"
@@ -54,10 +61,55 @@ def cmd_new(args: argparse.Namespace) -> None:
             slug=args.slug,
             body=TEMPLATE,
             formatter=format_file,
+            migration="python3 .repo_template/scripts/findings.py migrate-legacy",
         )
     except (IdScanError, MdFormatError) as error:
         sys.exit(f"错误: {error}")
     print(path.relative_to(REPO_ROOT).as_posix())
+
+
+def cmd_migrate_legacy(args: argparse.Namespace) -> None:
+    """把当前工作区旧 docs/findings.md 拆成一条目一文件；默认 dry-run。"""
+    legacy_path = REPO_ROOT / "docs" / "findings.md"
+    if not legacy_path.is_file():
+        sys.exit(f"未找到旧单文件总账：{legacy_path.relative_to(REPO_ROOT).as_posix()}")
+    entries = legacy_ledger_entries(legacy_path.read_text(encoding="utf-8"), PREFIX)
+    if not entries:
+        sys.exit("docs/findings.md 未解析出任何 dNNN 条目")
+    plan = []
+    for number, title, body in entries:
+        entry_id = f"d{number:03d}"
+        target = FINDINGS_DIR / f"{entry_id}_{slug_from_title(title)}.md"
+        plan.append((entry_id, target, title, body))
+    if not args.write:
+        sys.stderr.write("dry-run；以下为拟定迁移，加 --write 落盘。\n")
+        for entry_id, target, title, _body in plan:
+            sys.stderr.write(
+                f"  {entry_id} {title} -> {target.relative_to(REPO_ROOT).as_posix()}\n"
+            )
+        return
+
+    created: list[Path] = []
+    try:
+        with id_lock(REPO_ROOT):
+            FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            for entry_id, target, title, body in plan:
+                if target.exists():
+                    raise IdScanError(f"{target.relative_to(REPO_ROOT).as_posix()} 已存在；迁移中止")
+                atomic_write_text(target, f"# {entry_id} {title or entry_id}\n\n{body}\n")
+                format_file(target)
+                created.append(target)
+            if _run_git(["ls-files", "--error-unmatch", legacy_path.relative_to(REPO_ROOT).as_posix()]).returncode == 0:
+                result = _run_git(["rm", "-f", legacy_path.relative_to(REPO_ROOT).as_posix()])
+                if result.returncode != 0:
+                    raise IdScanError(f"git rm 旧总账失败：{result.stderr.strip()}")
+            else:
+                legacy_path.unlink()
+    except BaseException:
+        for path in created:
+            path.unlink(missing_ok=True)
+        raise
+    print(f"已迁移 {len(created)} 条 -> docs/findings/；来源 docs/findings.md 已移除")
 
 
 def _run_git(args: list[str]) -> subprocess.CompletedProcess:
@@ -127,6 +179,10 @@ def main(argv: list[str] | None = None) -> None:
     new_parser = sub.add_parser("new", help="锁内取号并按模板建条目文件")
     new_parser.add_argument("--slug", required=True, help="snake_case 主题标识")
     new_parser.set_defaults(func=cmd_new)
+
+    migrate_parser = sub.add_parser("migrate-legacy", help="把旧单文件总账拆成一条目一文件")
+    migrate_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
+    migrate_parser.set_defaults(func=cmd_migrate_legacy)
 
     list_parser = sub.add_parser("list", help="列举全部发现")
     list_parser.set_defaults(func=cmd_list)

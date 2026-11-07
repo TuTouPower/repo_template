@@ -864,80 +864,87 @@ def test_move_refuses_to_overwrite_existing_destination(tmp_path, monkeypatch):
         pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
-# ---------- legacy 单文件正文编号（旧格式分支） ----------
+# ---------- A11：旧单文件总账必须显式迁移，运行期不再解析正文 ----------
 
 
-def test_branch_legacy_pending_body_numbers_counted(tmp_path):
-    """未合并旧分支的 docs/pending.md 小节标题编号计入最大值；正文引用不计。"""
-    repo = _init_repo(tmp_path)
-    _git(repo, "checkout", "-b", "legacy")
-    _commit_entry(
-        repo,
-        "docs/pending.md",
-        text=(
-            "# 待办与不办总账\n\n## 待办\n\n"
-            "### p047 cli 退出码（2026-07-01 发现）\n\n"
-            "- 现象：退出码恒为 0\n"
-            "- 线索：关联 p099 一并处理\n"
-            "- 处理：未开\n"
-        ),
-    )
-    _git(repo, "checkout", "main")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 47
-
-
-def test_branch_legacy_findings_body_numbers_counted(tmp_path):
-    """未合并旧分支的 docs/findings.md 小节标题编号计入最大值。"""
-    repo = _init_repo(tmp_path)
-    _git(repo, "checkout", "-b", "legacy")
-    _commit_entry(
-        repo,
-        "docs/findings.md",
-        text="# 发现总账\n\n## d012 uv lock 平台标记（2026-07-01）\n\n- 现状：有效\n",
-    )
-    _git(repo, "checkout", "main")
-    assert scan_max_id(repo, "d", FINDING_DIRS) == 12
-
-
-def test_branch_legacy_archive_ledger_body_numbers_counted(tmp_path):
-    """旧格式归档总账 docs/archive/pending.md 的正文编号同样计入。"""
-    repo = _init_repo(tmp_path)
-    _git(repo, "checkout", "-b", "legacy")
-    _commit_entry(
-        repo,
-        "docs/archive/pending.md",
-        text="# 已闭环待办\n\n### p051 旧事（2026-06-01 闭环）\n\n- 处理：t001\n",
-    )
-    _git(repo, "checkout", "main")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 51
-
-
-def test_allocate_skips_legacy_body_numbers(tmp_path, monkeypatch):
-    """旧分支单文件里的编号不会被 new 重复分配。"""
+def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkeypatch):
+    """A11：存在旧总账时拒绝分配编号；提示显式迁移，不静默跳号。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    _git(repo, "checkout", "-b", "legacy")
     _commit_entry(
         repo,
         "docs/pending.md",
         text="# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
     )
-    _git(repo, "checkout", "main")
-    pending_mod.main(["new", "--slug", "demo"])
-    assert (repo / "docs/pending/todo/p048_demo.md").is_file()
+
+    with pytest.raises(IdScanError, match="migrate-legacy"):
+        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending/todo",
+                 slug="demo", body="# pNNN demo\n")
+    with pytest.raises(SystemExit, match="migrate-legacy"):
+        pending_mod.main(["new", "--slug", "demo"])
+    # 扫描本身也不再解析旧正文
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
 
-def test_branch_legacy_body_number_conflicts_with_entry_file(tmp_path):
-    """legacy 正文编号与同分支条目文件同号时报重复（迁移残留）。"""
+def test_migrate_legacy_pending_splits_entries_and_unblocks(tmp_path, monkeypatch, capsys):
+    """A11：显式迁移把旧总账拆成一条目一文件并移除来源，随后可正常分配。"""
     repo = _init_repo(tmp_path)
-    _commit_entry(
-        repo,
-        "docs/pending.md",
-        text="# 待办\n\n### p010 旧事（2026-06-01 发现）\n\n- 处理：未开\n",
+    _bind(monkeypatch, repo)
+    legacy = (
+        "# 待办与不办总账\n\n## 待办\n\n"
+        "### p047 cli 退出码（2026-07-01 发现）\n\n"
+        "- 现象：退出码恒为 0\n- 处理：未开\n\n"
+        "### p051 旧事\n\n- 处理：未开\n"
     )
-    _commit_entry(repo, "docs/pending/todo/p010_open.md")
-    with pytest.raises(IdScanError, match="p010"):
-        scan_max_id(repo, "p", PENDING_DIRS)
+    (repo / "docs/pending.md").write_text(legacy, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "legacy ledger")
+
+    pending_mod.main(["migrate-legacy"])
+    assert (repo / "docs/pending.md").is_file()  # dry-run 不动
+    pending_mod.main(["migrate-legacy", "--write"])
+    assert not (repo / "docs/pending.md").exists()
+    todo = repo / "docs/pending/todo"
+    assert (todo / "p047_cli.md").is_file()
+    assert (todo / "p051_entry.md").is_file()
+    capsys.readouterr()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "migrate legacy ledger")
+
+    pending_mod.main(["new", "--slug", "fresh"])
+    assert (todo / "p052_fresh.md").is_file()
+
+
+def test_migrate_legacy_findings_splits_entries(tmp_path, monkeypatch):
+    """A11：findings 旧总账同样显式迁移。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/findings.md").write_text(
+        "# 发现总账\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "legacy findings")
+
+    findings_mod.main(["migrate-legacy", "--write"])
+    assert not (repo / "docs/findings.md").exists()
+    assert (repo / "docs/findings/d012_uv_lock.md").is_file()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "migrate legacy findings")
+
+    findings_mod.main(["new", "--slug", "next_fact"])
+    assert (repo / "docs/findings/d013_next_fact.md").is_file()
+
+
+def test_migrate_legacy_reports_other_sources_blocking(tmp_path, monkeypatch):
+    """A11：其它分支仍有旧总账时，迁移后分配继续阻断并列出阻塞来源。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    _git(repo, "checkout", "-b", "legacy")
+    _commit_entry(repo, "docs/pending.md", text="# 待办\n\n### p010 旧事\n")
+    _git(repo, "checkout", "main")
+
+    with pytest.raises(SystemExit, match="分支 legacy"):
+        pending_mod.main(["new", "--slug", "demo"])
 
 
 # ---------- 分支内 active/archive 同号迁移残留 ----------

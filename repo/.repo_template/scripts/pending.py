@@ -33,7 +33,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _id_scan import IdScanError, allocate, id_lock
+from _id_scan import (
+    IdScanError,
+    allocate,
+    id_lock,
+    legacy_ledger_entries,
+    slug_from_title,
+)
 from md_format import MdFormatError, format_file
 from repo_task.documents import atomic_write_text
 
@@ -143,10 +149,69 @@ def cmd_new(args: argparse.Namespace) -> None:
             slug=args.slug,
             body=body,
             formatter=format_file,
+            migration="python3 .repo_template/scripts/pending.py migrate-legacy",
         )
     except (IdScanError, MdFormatError) as error:
         sys.exit(f"错误: {error}")
     print(_rel(path))
+
+
+def cmd_migrate_legacy(args: argparse.Namespace) -> None:
+    """把当前工作区旧单文件总账拆成一条目一文件；默认 dry-run。
+
+    同时处理 docs/pending.md（todo）与 docs/archive/pending.md（archived）。
+    其它分支/worktree 仍有旧总账时，编号分配继续拒绝（见 _id_scan）。
+    """
+    sources = [
+        (REPO_ROOT / "docs" / "pending.md", TODO_DIR),
+        (REPO_ROOT / "docs" / "archive" / "pending.md", ARCHIVE_DIR),
+    ]
+    plan = []
+    for legacy_path, target_dir in sources:
+        if not legacy_path.is_file():
+            continue
+        entries = legacy_ledger_entries(legacy_path.read_text(encoding="utf-8"), PREFIX)
+        if not entries:
+            sys.exit(f"{_rel(legacy_path)} 未解析出任何 pNNN 条目")
+        for number, title, body in entries:
+            entry_id = f"p{number:03d}"
+            plan.append((legacy_path, target_dir / f"{entry_id}_{slug_from_title(title)}.md",
+                         entry_id, title, body))
+    if not plan:
+        sys.exit("未找到旧单文件总账（docs/pending.md 或 docs/archive/pending.md）")
+    if not args.write:
+        sys.stderr.write("dry-run；以下为拟定迁移，加 --write 落盘。\n")
+        for _legacy, target, entry_id, title, _body in plan:
+            sys.stderr.write(f"  {entry_id} {title} -> {_rel(target)}\n")
+        return
+
+    created: list[Path] = []
+    removed: list[Path] = []
+    try:
+        with id_lock(REPO_ROOT):
+            for legacy_path, target, entry_id, title, body in plan:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    raise IdScanError(f"{_rel(target)} 已存在；迁移中止")
+                content = f"# {entry_id} {title or entry_id}\n\n{body}\n".rstrip() + "\n"
+                atomic_write_text(target, content)
+                format_file(target)
+                created.append(target)
+            for legacy_path, _target_dir in sources:
+                if not legacy_path.is_file():
+                    continue
+                if _git(["ls-files", "--error-unmatch", _rel(legacy_path)]).returncode == 0:
+                    result = _git(["rm", "-f", _rel(legacy_path)])
+                    if result.returncode != 0:
+                        raise IdScanError(f"git rm 旧总账失败：{result.stderr.strip()}")
+                else:
+                    legacy_path.unlink()
+                removed.append(legacy_path)
+    except BaseException:
+        for path in created:
+            path.unlink(missing_ok=True)
+        raise
+    print(f"已迁移 {len(created)} 条；移除 {', '.join(_rel(p) for p in removed)}")
 
 
 def cmd_list(args: argparse.Namespace) -> None:
@@ -350,6 +415,10 @@ def main(argv: list[str] | None = None) -> None:
         "--kind", choices=("entry", "bug"), default="entry", help="条目模板类型"
     )
     new_parser.set_defaults(func=cmd_new)
+
+    migrate_parser = sub.add_parser("migrate-legacy", help="把旧单文件总账拆成一条目一文件")
+    migrate_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
+    migrate_parser.set_defaults(func=cmd_migrate_legacy)
 
     list_parser = sub.add_parser("list", help="列举条目")
     list_parser.add_argument(

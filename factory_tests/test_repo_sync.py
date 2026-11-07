@@ -135,7 +135,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setattr(ctx, "CHECKOUT_OVERRIDE", None)
     monkeypatch.setattr(ctx, "CONSUMER", consumer)
     monkeypatch.setattr(ctx, "STATE_PATH", state_file)
-    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
     monkeypatch.setattr(ctx, "SKILLS_SRC", consumer / ".repo_template/skills")
     monkeypatch.setattr(ctx, "SKILLS_AGENTS", consumer / ".agents/skills")
     monkeypatch.setattr(ctx, "SKILLS_CLAUDE", consumer / ".claude/skills")
@@ -1133,33 +1132,51 @@ def test_init_writes_template_source(env, monkeypatch):
     consumer, state_file = env["consumer"], env["state_file"]
     monkeypatch.setattr(ctx, "CONSUMER", consumer)
     monkeypatch.setattr(ctx, "STATE_PATH", state_file)
-    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", consumer / ".agents/skills/repo-template-sync/sync_state.json")
     cmd_init(Namespace(source=str(env["src"])))
     state = read_state()
     assert state["template_source"]["kind"] == "path"
     assert state["template_source"]["value"] == str(env["src"])
 
 
-def test_init_migrates_legacy_state_and_prompts(env, monkeypatch):
-    consumer, state_file = env["consumer"], env["state_file"]
-    state_file.unlink()
+def test_init_refuses_legacy_state_and_requires_explicit_migration(env, monkeypatch):
+    """A11：只有旧布局 state 时普通 init 拒绝，并指向显式迁移入口。"""
+    consumer = env["consumer"]
     legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(json.dumps({
-        "template_source": {"kind": "path", "value": "/old/path"},
-        "last_synced_commit": "deadbeef",
+        "template_source": {"kind": "path", "value": str(env["src"])},
+        "last_synced_commit": "abc123",
+        "user_prompts": [{"at": "2026-01-01T00:00:00+08:00", "text": "旧规则", "tags": []}],
+    }), encoding="utf-8")
+    env["state_file"].unlink()
+
+    with pytest.raises(ctx.SyncError, match="migrate legacy-state"):
+        cmd_init(Namespace(source=str(env["src"])))
+    assert legacy.is_file()
+    assert not env["state_file"].exists()
+
+
+def test_migrate_legacy_state_preserves_provenance_and_prompts(env):
+    """A11：显式 migrate legacy-state 保留来源、同步记录与 prompts，并删除旧文件。"""
+    consumer = env["consumer"]
+    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({
+        "template_source": {"kind": "path", "value": str(env["src"])},
+        "last_synced_commit": "abc123",
         "last_synced_at": "2026-01-01T00:00:00+08:00",
-        "user_prompts": [{"text": "保留我", "tags": ["x"], "revoked": False}],
-    }))
-    monkeypatch.setattr(ctx, "STATE_PATH", state_file)
-    monkeypatch.setattr(ctx, "LEGACY_STATE_PATH", legacy)
-    cmd_init(Namespace(source=str(env["src"])))
-    state = read_state()
-    # prompt 与审计字段随迁移保留；template_source 以本次 --source 为准
-    assert state["user_prompts"][0]["text"] == "保留我"
-    assert state["last_synced_commit"] == "deadbeef"
-    assert state["template_source"]["value"] == str(env["src"])
+        "user_prompts": [{"at": "2026-01-01T00:00:00+08:00", "text": "旧规则", "tags": []}],
+    }), encoding="utf-8")
+    env["state_file"].unlink()
+
+    from template_sync.state import cmd_migrate
+
+    assert cmd_migrate(Namespace(kind="legacy-state")) == 0
     assert not legacy.exists()
+    data = json.loads(env["state_file"].read_text(encoding="utf-8"))
+    assert data["last_synced_commit"] == "abc123"
+    assert data["template_source"]["value"] == str(env["src"])
+    assert any(p["text"] == "旧规则" for p in data["user_prompts"])
 
 
 def test_resolve_src_rejects_invalid(env):
@@ -2133,22 +2150,6 @@ def test_registry_missing_skill_fails_closed_in_status_and_apply(env):
         opencode_commands_status()
     with pytest.raises(ctx.SyncError, match="未登记 skill"):
         sync_opencode_commands(set())
-
-
-def test_init_merges_legacy_state_before_removing_it(env):
-    legacy = ctx.LEGACY_STATE_PATH
-    legacy.parent.mkdir(parents=True, exist_ok=True)
-    legacy.write_text(json.dumps({
-        "last_synced_commit": "legacy-sha",
-        "last_synced_at": "2020-01-01T00:00:00+08:00",
-        "user_prompts": [{"at": "2020-01-01", "text": "legacy prompt", "tags": []}],
-    }), encoding="utf-8")
-    cmd_init(Namespace(source=str(env["src"])))
-    state = json.loads(env["state_file"].read_text())
-    assert state["last_synced_commit"] == "legacy-sha"
-    assert state["last_synced_at"] == "2020-01-01T00:00:00+08:00"
-    assert any(p.get("text") == "legacy prompt" for p in state["user_prompts"])
-    assert not legacy.exists()
 
 
 def test_url_status_plan_use_cache_without_pull(env, monkeypatch):

@@ -125,35 +125,41 @@ def _numbers_from_branch(
                 if identity not in paths:
                     paths.append(identity)
                 break
-    if kind == "file":
-        _merge_legacy_body_numbers(repo_root, branch, prefix, dirs, found)
     return found
 
 
-def _merge_legacy_body_numbers(
-    repo_root: Path,
-    branch: str,
-    prefix: str,
-    dirs: tuple[str, ...],
-    found: dict[int, list[str]],
-) -> None:
-    """把 legacy 单文件正文小节标题中的编号并入扫描结果。
+def legacy_ledger_sources(
+    repo_root: Path, prefix: str, dirs: tuple[str, ...]
+) -> list[str]:
+    """返回仍含旧单文件总账（`{dir}.md`）的来源：分支名或 worktree 路径。
 
-    旧格式一个目录对应一个总账文件（`docs/pending.md`、`docs/findings.md`），
-    条目是 `### pNNN …` / `## dNNN …` 小节；文件不存在时零成本跳过。
+    编号分配不再解析旧正文；存在旧总账时必须先显式迁移或把旧分支/工作区
+    隔离出当前操作集合，避免漏号撞号。
     """
-    heading_re = re.compile(rf"^#+[ \t]+{prefix}([0-9]{{3,}})(?![0-9])", re.MULTILINE)
-    for directory in dirs:
-        legacy = f"{directory}.md"
-        listed = _run_git(repo_root, ["ls-tree", "--name-only", branch, "--", legacy])
-        if not listed.strip():
-            continue
-        body = _run_git(repo_root, ["show", f"{branch}:{legacy}"])
-        for match in heading_re.finditer(body):
-            number = int(match.group(1))
-            paths = found.setdefault(number, [])
-            if legacy not in paths:
-                paths.append(legacy)
+    legacy_names = {f"{directory}.md" for directory in dirs}
+    sources: list[str] = []
+    for branch in local_branches(repo_root):
+        listed = _run_git(
+            repo_root, ["ls-tree", "--name-only", branch, "--", *sorted(legacy_names)]
+        )
+        if listed.strip():
+            sources.append(f"分支 {branch}")
+    for root in worktree_roots(repo_root):
+        if any((root / name).is_file() for name in legacy_names):
+            sources.append(f"worktree {root}")
+    return sorted(set(sources))
+
+
+def require_no_legacy_ledgers(
+    repo_root: Path, prefix: str, dirs: tuple[str, ...], *, migration: str
+) -> None:
+    sources = legacy_ledger_sources(repo_root, prefix, dirs)
+    if sources:
+        hint = migration or "pending.py / findings.py migrate-legacy"
+        raise IdScanError(
+            "存在旧单文件总账（" + "；".join(sources) + "）；编号分配已不解析旧正文。"
+            f"先执行显式迁移：{hint}，并提交迁移结果后再分配；或把上述来源合并/删除"
+        )
 
 
 def _numbers_from_worktree(
@@ -215,14 +221,17 @@ def allocate(
     slug: str,
     body: str,
     formatter=None,
+    migration: str = "",
 ) -> Path:
     """锁内完成「取号 → 生成最终内容 → 格式化 → 原子发布」，返回新文件路径。
 
     formatter 接收临时文件路径；抛错时不发布正式条目并清理临时文件。
+    存在旧单文件总账时拒绝分配，要求先显式迁移（migration 为提示命令）。
     """
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     with id_lock(repo_root):
+        require_no_legacy_ledgers(repo_root, prefix, dirs, migration=migration)
         number = scan_max_id(repo_root, prefix, dirs) + 1
         entry_id = f"{prefix}{number:03d}"
         path = target_dir / f"{entry_id}_{slug}.md"
@@ -270,16 +279,19 @@ def allocate_dir(
     slug: str,
     files: dict[str, str],
     formatter=None,
+    migration: str = "",
 ) -> Path:
     """锁内分配编号、在临时目录准备完整内容并格式化，随后原子发布目录条目。
 
     files 为 {相对文件名: 内容}；内容中的 `{id}` 替换为分配到的编号。
     formatter 接收临时文件路径；抛错时不发布正式目录。
+    存在旧单文件总账时拒绝分配，要求先显式迁移。
     """
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     safe_files = {_safe_file_name(name): content for name, content in files.items()}
     with id_lock(repo_root):
+        require_no_legacy_ledgers(repo_root, prefix, dirs, migration=migration)
         number = scan_max_id(repo_root, prefix, dirs, kind="dir") + 1
         entry_id = f"{prefix}{number:03d}"
         path = target_dir / f"{entry_id}_{slug}"
@@ -304,3 +316,45 @@ def allocate_dir(
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
     return path
+
+
+_LEGACY_HEADING_RE = re.compile(
+    r"^(?P<hashes>#{2,3})[ \t]+(?P<prefix>[pd])(?P<num>[0-9]{3,})(?![0-9])[ \t]*(?P<title>.*)$"
+)
+
+
+def legacy_ledger_entries(text: str, prefix: str) -> list[tuple[int, str, str]]:
+    """解析旧单文件总账正文，返回 [(编号, 标题, 正文)]；正文不含标题行。"""
+    entries: list[tuple[int, str, str]] = []
+    current: tuple[int, str, int] | None = None  # (number, title, level)
+    body: list[str] = []
+
+    def flush() -> None:
+        if current is not None:
+            entries.append((current[0], current[1], "\n".join(body).strip()))
+
+    for line in text.splitlines():
+        match = _LEGACY_HEADING_RE.match(line)
+        if match and match.group("prefix") == prefix:
+            flush()
+            current = (int(match.group("num")), match.group("title").strip(), len(match.group("hashes")))
+            body = []
+            continue
+        if current is not None:
+            heading = re.match(r"^(#{1,6})[ \t]+", line)
+            if heading and len(heading.group(1)) <= current[2]:
+                flush()
+                current = None
+                body = []
+                continue
+            body.append(line)
+    flush()
+    return entries
+
+
+def slug_from_title(title: str) -> str:
+    # 去掉标题末尾的括号说明（如「（2026-07-01 发现）」）再取 slug。
+    title = re.sub(r"[（(][^）)]*[）)]\s*$", "", title.strip())
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    slug = re.sub(r"_+", "_", slug)
+    return slug or "entry"

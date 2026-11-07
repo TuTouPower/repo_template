@@ -9,9 +9,6 @@ from pathlib import Path
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONSUMER = TOOLKIT_ROOT.parent
 STATE_PATH = CONSUMER / ".repo_template/sync_state.json"
-# 旧布局 state（2026-08-15 a9453b1 前）：宿主 skill 目录下的真实目录。
-# 首次在新路径 init 时读一次并迁移，避免 user_prompts / last_synced_* 丢失。
-LEGACY_STATE_PATH = CONSUMER / ".agents/skills/repo-template-sync/sync_state.json"
 SKILLS_SRC = CONSUMER / ".repo_template/skills"
 SKILLS_AGENTS = CONSUMER / ".agents/skills"
 SKILLS_CLAUDE = CONSUMER / ".claude/skills"
@@ -74,10 +71,9 @@ def _rel(path: Path) -> str:
 
 
 def configure_consumer(path: Path) -> None:
-    global CONSUMER, STATE_PATH, LEGACY_STATE_PATH, SKILLS_SRC, SKILLS_AGENTS, SKILLS_CLAUDE, COMMANDS_OPENCODE, CONVENTIONS_PATH
+    global CONSUMER, STATE_PATH, SKILLS_SRC, SKILLS_AGENTS, SKILLS_CLAUDE, COMMANDS_OPENCODE, CONVENTIONS_PATH
     CONSUMER = path.expanduser().resolve()
     STATE_PATH = CONSUMER / ".repo_template/sync_state.json"
-    LEGACY_STATE_PATH = CONSUMER / ".agents/skills/repo-template-sync/sync_state.json"
     SKILLS_SRC = CONSUMER / ".repo_template/skills"
     SKILLS_AGENTS = CONSUMER / ".agents/skills"
     SKILLS_CLAUDE = CONSUMER / ".claude/skills"
