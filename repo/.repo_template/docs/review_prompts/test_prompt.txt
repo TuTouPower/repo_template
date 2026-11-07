@@ -76,7 +76,7 @@ diff 无测试文件时：0 finding 合法，结论注明「本 task 无测试�
 - task：`{tid}_{slug}`
 - spec：`{spec_path}`
 - diff_anchor：`{diff_anchor}`
-- target：`git -C '{repo_root}' diff {diff_anchor}`
+- target：`git diff {diff_anchor}`
 - round：本轮编号
 - reviewed_at：YYYY-MM-DDThh:mm:ss+08:00
 
@@ -122,3 +122,4 @@ verdict: FAIL
 - 仅因合法 `.fill()` 文本输入出 finding
 - 把上下文区已声明「有意不测」的场景当覆盖缺口出 finding
 - 把「可以再加 case」标成 blocking
+- 在报告中写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）；`target`、`位置` 与证据一律使用仓库相对路径

@@ -211,3 +211,14 @@ def test_precommit_hook_python39_compatibility(repo, tmp_path):
     )
     assert "TypeError: unsupported operand type(s) for |" not in result.stderr
     assert result.returncode == 0
+
+
+def test_staged_md_with_developer_home_path_blocked(repo, tmp_path):
+    """Issue #89：staged .md 含开发者家目录绝对路径时，pre-commit 拒绝提交并指出文件与行号。"""
+    leak = "/".join(("", "Users", "devuser", "worktree"))
+    (repo / "a.md").write_text(f"# Review\n\n- target: `git -C '{leak}' diff abc`\n", encoding="utf-8")
+    _git(repo, "add", "a.md")
+    result = _run_hook(repo, tmp_path)
+    assert result.returncode == 1
+    assert "开发者家目录绝对路径" in result.stderr
+    assert "a.md:3:" in result.stderr

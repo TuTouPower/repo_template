@@ -16,6 +16,7 @@ TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
 
 import md_format  # noqa: E402
+from repo_task.privacy import scan_path_privacy  # noqa: E402
 
 # git pre-commit 保证 cwd 为仓库根；用 cwd 而非 __file__ 推导，消费仓/测试仓也正确。
 md_format.REPO_ROOT = Path.cwd()
@@ -66,6 +67,14 @@ def main() -> int:
             file=sys.stderr,
         )
         print("提示：先 git add 这些文件，或 stash 未暂存改动后再提交。", file=sys.stderr)
+        return 1
+    leaks = scan_path_privacy(md_format.REPO_ROOT, rels)
+    if leaks:
+        print(
+            "pre-commit: 以下 .md 含开发者家目录绝对路径（请改为仓库相对路径或 <worktree> 占位符）：\n"
+            + "\n".join(leaks),
+            file=sys.stderr,
+        )
         return 1
     try:
         changed = md_format.format_paths(rels)

@@ -644,3 +644,40 @@ def test_finish_rejects_message_file_inside_task_directory(git_repo):
     assert "位于当前 task 目录内" in result.stderr
     assert _snapshot(git_repo, worktree) == before
 
+
+def test_finish_rejects_developer_home_path_in_review_report_and_task_docs(git_repo):
+    """Issue #89：review_*.md 或 task/docs 文档含开发者家目录绝对路径时，finish 零写入阻断。"""
+    _, worktree, message = _ready(git_repo)
+    task_dir = _task_dir(worktree)
+    leak = "/".join(("", "Users", "devuser", "project_t001"))
+    report = task_dir / "review_code.md"
+    clean_report = report.read_text(encoding="utf-8")
+    report.write_text(f"- target：`git -C '{leak}' diff abc`\n\n" + clean_report, encoding="utf-8")
+    before = _snapshot(git_repo, worktree)
+
+    first = finish_cli(worktree, "t001", OWNER, message)
+
+    assert first.returncode != 0
+    assert "privacy_review=leak" in first.stderr
+    assert "review_code.md:1:" in first.stderr
+    assert "next_action=sanitize_review_paths" in first.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+    # 修复 review_code.md 后，若 progress.md 仍含家目录绝对路径，同样被 _check_privacy_leaks 拦截
+    report.write_text(clean_report, encoding="utf-8")
+    note_path = task_dir / "progress.md"
+    clean_note = note_path.read_text(encoding="utf-8")
+    note_path.write_text(clean_note + f"\n临时路径：{leak}/out\n", encoding="utf-8")
+    before_note = _snapshot(git_repo, worktree)
+
+    second = finish_cli(worktree, "t001", OWNER, message)
+
+    assert second.returncode != 0
+    assert "检测到开发者家目录绝对路径泄漏" in second.stderr
+    assert "docs/tasks/t001_alpha/progress.md" in second.stderr
+    assert _snapshot(git_repo, worktree) == before_note
+
+    # 清理绝对路径后，finish 正常成功
+    note_path.write_text(clean_note, encoding="utf-8")
+    third = finish_cli(worktree, "t001", OWNER, message)
+    assert third.returncode == 0, third.stdout + third.stderr

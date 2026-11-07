@@ -43,7 +43,7 @@ spec 正文已随本 prompt 注入（见「spec 契约区」「spec 上下文区
 - task：`{tid}_{slug}`
 - spec：`{spec_path}`
 - diff_anchor：`{diff_anchor}`
-- target：`git -C '{repo_root}' diff {diff_anchor}`
+- target：`git diff {diff_anchor}`
 - round：本轮编号
 - reviewed_at：YYYY-MM-DDThh:mm:ss+08:00
 
@@ -84,4 +84,5 @@ verdict: FAIL
 - 信任 implementer 自述作为 finding 降级依据
 - 把上下文区已声明「有意不测」的场景当覆盖缺口出 finding
 - 把「可以再加 case」标成 blocking
+- 在报告中写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）；`target`、`位置` 与证据一律使用仓库相对路径
 - 为凑数制造 finding

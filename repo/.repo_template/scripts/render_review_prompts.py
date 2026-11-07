@@ -140,9 +140,53 @@ def apply_placeholders(template: str, values: dict) -> str:
     return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
+def validate_output_format_template(template: str, *, source: Path) -> None:
+    """锁死模板 `## 输出格式` 章节：禁止包含本机绝对路径占位符 `{repo_root}` 或 `{task_dir}`。"""
+    section = extract_section(template, "## 输出格式")
+    for forbidden in ("{repo_root}", "{task_dir}"):
+        if forbidden in section:
+            sys.exit(
+                f"{source}: `## 输出格式` 不得引用本机绝对路径占位符 {forbidden}；"
+                "请改用仓库相对路径（如 `git diff {diff_anchor}`、`{task_dir_rel}`）"
+            )
+
+
 def _normalize_checkboxes(text: str) -> str:
     """归一化 markdown checkbox，将 - [x] / - [X] 替换为 - [ ]，以便仅对比契约语义漂移。"""
     return re.sub(r"^(\s*-\s*)\[[xX]\]", r"\1[ ]", text, flags=re.MULTILINE)
+
+
+def _resolve_baseline_spec_show(spec_rel: str, diff_anchor: str) -> subprocess.CompletedProcess:
+    """读取 spec 的契约基线：若 diff_anchor 为旧分叉链且 main 上该 task 仍为 backlog，或 diff_anchor 无该文件，则取 main。"""
+    progress_rel = f"{Path(spec_rel).parent.as_posix()}/{PROGRESS_FILE}"
+    anc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", "main", diff_anchor],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+    )
+    if anc.returncode != 0:
+        main_prog = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"main:{progress_rel}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+        if main_prog.returncode == 0 and "status: backlog" in main_prog.stdout:
+            main_spec = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "show", f"main:{spec_rel}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+            )
+            if main_spec.returncode == 0:
+                return main_spec
+    r = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", f"{diff_anchor}:{spec_rel}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+    )
+    if r.returncode != 0:
+        main_spec = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", f"main:{spec_rel}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+        if main_spec.returncode == 0:
+            return main_spec
+    return r
 
 
 def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str) -> str:
@@ -153,10 +197,7 @@ def contract_drift_notice(spec_rel: str, diff_anchor: str, current_contract: str
     暂时失败时打 stderr 警告并返回 ""，不阻断渲染。
     """
     try:
-        r = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "show", f"{diff_anchor}:{spec_rel}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-        )
+        r = _resolve_baseline_spec_show(spec_rel, diff_anchor)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"WARNING: 契约区 drift 检查跳过（{e}）", file=sys.stderr)
         return ""
@@ -204,6 +245,7 @@ def render_review_prompts(
     for path in template_paths.values():
         if not path.is_file():
             sys.exit(f"missing prompt template: {path}")
+        validate_output_format_template(path.read_text(encoding="utf-8"), source=path)
 
     fm = parse_front_matter(task_path)
     for key in ("tid", "slug", "diff_anchor"):

@@ -18,10 +18,12 @@
   round=N               # 回归轮次：上轮 FAIL、修完重审才计；首轮不计
   max_review_round=N      # 来自 progress.md review_limit；旧 task 默认 5
   max_verify_round=N      # 来自 progress.md verify_limit
-  next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_ac_review|complete_disposition
+  next_action=finalize|fix_or_block|collect_reports|rerender_review|complete_ac_review|sanitize_review_paths|complete_disposition
   review_scope=ok|stale|missing|format_error  # 指纹比对状态；format_error=报告写了 reviewed_scope 但格式无法解析
   ac_review=ok|void|incomplete|no_spec        # 每份报告最后一轮「AC 复验方式」小节的门禁状态
   ac_review_detail=...                        # void / incomplete 的具体原因（逐份报告）
+  privacy_review=ok|leak                      # 报告是否泄漏开发者家目录绝对路径
+  privacy_review_detail=...                   # leak 时的具体文件、行号与路径片段
 
 AC 复验门禁：每份应有报告最后一轮须逐条列出 task.md 全部 AC（格式见 share_prompt.txt）。
   - 全部 TICK-VALID、行集合与 task.md 的 AC 编号一致、task.md 全部已打勾 → 不影响 verdict

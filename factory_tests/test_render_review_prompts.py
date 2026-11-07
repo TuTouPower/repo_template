@@ -443,3 +443,32 @@ def test_real_templates_require_tick_labels_in_every_report(tmp_path, monkeypatc
         assert "trust_prior 项" in content
         # 打勾复核条目：打勾不实除 blocking finding 外，该 AC 行必须标 TICK-VOID
         assert "必须标 `TICK-VOID`" in content
+
+
+@pytest.mark.stub_anchor
+@pytest.mark.parametrize("level", ["full", "single"])
+def test_real_templates_output_format_never_leaks_repo_root(tmp_path, monkeypatch, level):
+    """Issue #89：渲染后的 `## 输出格式` 章节内不得含展开后的 repo_root 绝对路径。"""
+    out, root = _render_real_templates(tmp_path, monkeypatch, level=level)
+    for content in out.values():
+        output_section = extract_section(content, "## 输出格式")
+        assert output_section
+        assert root not in output_section
+        assert "- target：`git diff abc1234`" in output_section
+
+
+@pytest.mark.stub_anchor
+@pytest.mark.parametrize("placeholder", ["{repo_root}", "{task_dir}"])
+def test_render_rejects_template_with_absolute_path_in_output_format(
+    tmp_path, monkeypatch, placeholder
+):
+    prompts = _make_prompts_dir(tmp_path)
+    (prompts / "code_prompt.txt").write_text(
+        f"# Code\n## 输出格式\n```markdown\n- target: {placeholder}\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", prompts)
+    task_dir = _make_task_dir(tmp_path)
+    with pytest.raises(SystemExit, match="输出格式.*不得引用本机绝对路径占位符"):
+        render_review_prompts(task_dir)

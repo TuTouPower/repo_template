@@ -353,7 +353,11 @@ def _discover_effective_entries() -> list[tuple[str, dict, str, str | None]]:
 
     for branch in _unmerged_task_branches():
         owner_tid = ctx.TASK_BRANCH_RE.fullmatch(branch).group(1)
-        branch_task = load_owner_task_at_ref(owner_tid, branch)
+        try:
+            branch_task = load_owner_task_at_ref(owner_tid, branch)
+        except ctx.TaskDataError:
+            # 从未合并链尾分叉出的新分支在 finish 提交前，其 git tree 尚不含主干新建的 owner_tid。
+            continue
         main_task = effective.get(owner_tid)
         # rewind 保留的分支状态过时：main 已显式回 backlog 时，分支 active 不覆盖。
         # worktree 从 start 到 finish 一直存在，无登记 worktree 的 active 分支只来自 rewind。
@@ -427,6 +431,32 @@ def load_task_at_ref(tid: str, ref: str) -> tuple[dict, dict, str]:
         source=f"{ref}:{path}",
     )
     return task, fm, body
+
+
+def load_task_backlog_baseline(tid: str, diff_anchor: str) -> tuple[dict, dict, str, str]:
+    """解析 task 启动时的初始 backlog 定义 (task, fm, body, source_ref)。
+
+    主干 default_branch 是所有 backlog task 创建与调度维护的唯一权威；
+    当 diff_anchor 为从旧主干分叉的 task 分支（主干非其祖先且主干上该 task 仍为 backlog），
+    或 diff_anchor 中尚无该 task 时，基线来自主干 default_branch。
+    """
+    primary = default_branch()
+    primary_is_ancestor = (
+        _git(["merge-base", "--is-ancestor", primary, diff_anchor]).returncode == 0
+    )
+    if not primary_is_ancestor:
+        try:
+            task, fm, body = load_task_at_ref(tid, primary)
+            if fm.get("status") == "backlog":
+                return task, fm, body, primary
+        except ctx.TaskDataError:
+            pass
+    try:
+        task, fm, body = load_task_at_ref(tid, diff_anchor)
+        return task, fm, body, diff_anchor
+    except ctx.TaskDataError:
+        task, fm, body = load_task_at_ref(tid, primary)
+        return task, fm, body, primary
 
 def require_status(fm: dict, *allowed: str) -> None:
     if fm["status"] not in allowed:

@@ -27,3 +27,8 @@
 
 - 写权威/派生状态数据（`progress.md` front matter、`docs/tasks_index.json` / `docs/archive/tasks_index.json`、`docs/pending/` / `docs/archive/pending/`、review prompt 文件等）必须走 tmp 文件 + fsync + `os.replace` 原子写，防中断/掉电产生半写状态。
 - 公共 helper：`from repo_task.documents import atomic_write_text`。
+
+## 路径隐私
+
+- 已跟踪的非归档文本文件（含 `docs/tasks/{tid}_{slug}/` 下的 `review_*.md`、`progress.md`、`task.md` 及 `docs/` 下各文档）禁止出现开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）；统一使用仓库相对路径或 `<worktree>` 占位符。
+- 公共扫描入口：`from repo_task.privacy import find_developer_path_leaks, scan_path_privacy`，由 `check_review_status.py`、`task.py finish` 与 `.repo_template/hooks/pre-commit` 统一强制拦截。

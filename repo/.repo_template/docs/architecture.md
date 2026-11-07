@@ -11,7 +11,7 @@ main ─┬─ t001 ── t003 ── t004   链 1：三者经依赖或冲突�
       └─ t002                   链 2：与其它成员无关
 ```
 
-链内后继因此继承前置成果。每个成员的链编号与 base 由 `task.py plan --serial --json [tid ...]` 的 `members[]` 给出，默认队列与显式 tid 队列共用同一计算；队列中依赖排在依赖者之后时拒绝。队列外依赖仍须在 `start` 前已 done 且已合入。`run-begin`（内含 start）同时检查：
+链内后继因此继承前置成果。每个成员的链编号与 base 由 `task.py plan --serial --json [tid ...]` 的 `members[]` 给出，默认队列与显式 tid 队列共用同一计算；队列中依赖排在依赖者之后时拒绝。队列外依赖须在 `start` 前已 done（未合入主干时须位于单条祖先链，或显式以链尾分支为 `--base`）；在主干新建或更新调度图并已提交的 backlog task 可直接以未合并链尾分支为 `--base` 起步，`start` 从主干权威同步该 task 目录到新 worktree。`run-begin`（内含 start）同时检查：
 
 - `depends_on` 的有效状态均为 done；
 - 实际 base 包含每个依赖的实现 SHA；

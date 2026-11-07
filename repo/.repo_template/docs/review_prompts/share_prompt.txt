@@ -24,6 +24,10 @@ reviewed_scope: {review_scope_fingerprint}
 
 不改代码、不改测试、不改 `task.md` / `progress.md`，不改他人 review 报告，不 `git commit` / `git push`，不派 sub-sub-agent。
 
+### 路径隐私边界（进机器门禁）
+
+报告正文（含 `target`、`位置`、命令回显、报错栈与结论）一律使用仓库相对路径（或 `<worktree>` 占位符），严禁写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）。`check_review_status.py` 与 `task.py finish` 均对报告执行隐私扫描：命中即判 `overall=INCOMPLETE`（`next_action=sanitize_review_paths`）并阻断收尾。
+
 ### 不信任 implementer 自述
 
 `progress.md`（实施笔记 / 收尾报告）是 claim 不是证据。一切以相对 `{diff_anchor}` 的完整交付内容、`git -C '{repo_root}' diff {diff_anchor}`、`git status --short` 与代码/测试本身为准；若状态中仍有 reviewer 看不到的未跟踪交付文件，结论必须为 INCOMPLETE。implementer 的「理由」（YAGNI / 保持简单 / 故意如此 / mock 是临时的）不算 finding 降级依据。

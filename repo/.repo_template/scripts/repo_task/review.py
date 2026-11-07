@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .context import PROGRESS_FILE, TaskDataError
 from .documents import extract_ac_statuses, parse_front_matter as _parse_front_matter
+from .privacy import scan_text_privacy_leaks
 
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
 # 行首容忍照抄环节常见的轻量 markdown 修饰（反引号 / 加粗 / 列表前缀），
@@ -407,6 +408,11 @@ def evaluate_review(
                 "void" if "void" in ac_states else
                 "incomplete" if "incomplete" in ac_states else
                 "no_spec" if expected is None else "ok")
+    privacy_issues: list[str] = []
+    for report in reports:
+        if report.is_file():
+            privacy_issues.extend(scan_text_privacy_leaks(read(report), label=report.name))
+    privacy_state = "leak" if privacy_issues else ("" if not ac_states else "ok")
     overall = ("INCOMPLETE" if "MISSING" in effective else
                "FAIL" if "FAIL" in effective else "PASS")
     stats, disposed = _parse_disposition_rows(task_dir / PROGRESS_FILE)
@@ -421,11 +427,15 @@ def evaluate_review(
         scope_status = "stale"
     else:
         scope_status = "ok"
-    if overall == "PASS" and (missing or scope_status != "ok" or ac_state == "incomplete"):
+    if overall == "PASS" and (
+        missing or scope_status != "ok" or ac_state == "incomplete" or privacy_state == "leak"
+    ):
         overall = "INCOMPLETE"
     result.update(
         overall=overall, review_scope=scope_status, ac_review=ac_state,
         ac_review_detail="; ".join(ac_issues),
+        privacy_review=privacy_state,
+        privacy_review_detail="; ".join(privacy_issues),
         missing_disposition=",".join(missing), round=regression_rounds(*reports),
     )
     # Evidence repair does not itself spend a business regression round.
@@ -433,7 +443,8 @@ def evaluate_review(
         result["next_action"] = (
             "collect_reports" if "MISSING" in verdicts else
             "rerender_review" if scope_status != "ok" else
-            "complete_ac_review" if ac_state == "incomplete" else "complete_disposition"
+            "complete_ac_review" if ac_state == "incomplete" else
+            "sanitize_review_paths" if privacy_state == "leak" else "complete_disposition"
         )
     else:
         result["next_action"] = "finalize" if overall == "PASS" else "fix_or_block"

@@ -28,7 +28,7 @@ from .documents import (
     parse_front_matter_text,
 )
 from .git_ops import _git, _git_bytes, has_unmerged_commits, worktree_paths
-from .store import _task_branch_names, git_text_at_ref, load_task_at_ref
+from .store import _task_branch_names, git_text_at_ref, load_task_at_ref, load_task_backlog_baseline
 
 
 def _ledger_tid_sort_key(tid: str):
@@ -508,12 +508,10 @@ def verify_integrate_ready(
         return "contract", "provenance", f"分支 {branch!r} task diff_anchor 缺失或非法"
     base_level = "full"
     try:
-        base_text = git_text_at_ref(base, f"{task['dir']}/{ctx.PROGRESS_FILE}")
-    except ctx.TaskDataError:
-        base_text = None
-    if base_text is not None:
-        base_fm, _ = parse_front_matter_text(base_text, source=f"{base}:{task['dir']}/{ctx.PROGRESS_FILE}")
+        _, base_fm, _, _ = load_task_backlog_baseline(tid, base)
         base_level = base_fm.get("review_level", "full")
+    except ctx.TaskDataError:
+        pass
     if base_level not in ctx.REVIEW_LEVELS:
         return "contract", "provenance", f"diff_anchor {base[:12]} 处 review_level 非法：{base_level!r}"
     tip_level = fm.get("review_level", "full")
@@ -560,12 +558,18 @@ def verify_integrate_ready(
                     (target / name).write_text(text, encoding="utf-8")
                 result = evaluate_review(target, fm, scope)
             if result["overall"] != "PASS":
+                privacy_info = (
+                    f" privacy_review={result.get('privacy_review', '')} "
+                    f"privacy_review_detail={result.get('privacy_review_detail', '')}"
+                    if result.get("privacy_review") == "leak" else ""
+                )
                 return "contract", "review_gate", (
                     f"review gate：overall={result['overall']} "
                     f"review_scope={result['review_scope']} "
                     f"missing_disposition={result['missing_disposition']} "
                     f"ac_review={result['ac_review']} "
-                    f"ac_review_detail={result['ac_review_detail']}；"
+                    f"ac_review_detail={result['ac_review_detail']}"
+                    f"{privacy_info}；"
                     "最终提交须有同内容的 PASS 证据"
                 )
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:

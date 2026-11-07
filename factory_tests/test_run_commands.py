@@ -8,6 +8,8 @@ import pytest
 from test_dispatch_integration import (
     git_repo, _git, _task_cli, _prepare_done, _cleanup, _worktree, _read_ledger,
 )
+from review_support import valid_spec
+from task_flow_support import finish_cli, prepare_finish
 from repo_task import control
 from repo_task import context as ctx
 from repo_task.documents import parse_front_matter, write_front_matter
@@ -364,3 +366,96 @@ def test_run_close_done_after_integrate_is_idempotent(git_repo):
 
     assert again.returncode == 0, again.stderr
     assert _read_ledger(git_repo) == before
+
+
+def test_run_begin_supports_task_added_and_scheduled_on_main_after_unmerged_chain_fork(git_repo):
+    """Issue #88：存在未合并已 done 链时，在 main 新建 backlog task（含 single 级）并编辑后继依赖后，
+    可用 run-begin --base <链尾>（及自动选 base）起步、finish、run-close 并整链 integrate-chain 闭环。
+    """
+    first, first_branch, _ = _prepare_done(
+        git_repo, "t001", "alpha",
+        mutate=lambda w: (w / "chain_1.txt").write_text("from t001\n", encoding="utf-8"),
+    )
+    _cleanup(git_repo, "t001", first)
+    second, second_branch, second_tip = _prepare_done(
+        git_repo, "t002", "beta", base=first_branch,
+        mutate=lambda w: (w / "chain_2.txt").write_text("from t002\n", encoding="utf-8"),
+    )
+    _cleanup(git_repo, "t002", second)
+
+    # 在 main 创建 t004（single 级，依赖链尾 t002），并给队列下一 task t003 追加 depends_on=t004
+    added = _task_cli(
+        git_repo, "add", "--title", "delta", "--slug", "delta", "--review-level", "single"
+    )
+    assert added.returncode == 0, added.stderr
+    t004_dir = git_repo / "docs/tasks/t004_delta"
+    (t004_dir / "task.md").write_text(valid_spec(), encoding="utf-8")
+    t004_note = t004_dir / "progress.md"
+    t004_note.write_text(
+        t004_note.read_text(encoding="utf-8")
+        + "\n- specs_index: not_applicable: 隔离链尾起步测试。\n",
+        encoding="utf-8",
+    )
+    assert _task_cli(git_repo, "edit", "t004", "--depends-on", "t002").returncode == 0
+    assert _task_cli(git_repo, "edit", "t003", "--depends-append", "t004").returncode == 0
+
+    # 未在 main 提交前，run-begin 拒绝启动未入库 task
+    uncommitted = _task_cli(
+        git_repo, "run-begin", "t004", "--owner-id", OWNER, "--base", second_branch
+    )
+    assert uncommitted.returncode != 0
+    assert "尚未提交" in uncommitted.stderr
+
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "chore(task): add t004 and update t003 dependency")
+
+    # 1. t004 显式以未合并链尾 t002_beta 为 --base 起步
+    identity_4 = _begin(git_repo, "t004", OWNER, "--base", second_branch)
+    wt4 = _worktree(git_repo, "t004")
+    assert (wt4 / "chain_1.txt").is_file() and (wt4 / "chain_2.txt").is_file()
+    fm4, _ = parse_front_matter(wt4 / "docs/tasks/t004_delta/progress.md")
+    assert fm4["status"] == "active"
+    assert fm4["review_level"] == "single"
+    assert fm4["depends_on"] == "t002"
+    assert fm4["diff_anchor"] == second_tip
+    # 链尾分支 tip 未被污染
+    assert _git(git_repo, "rev-parse", second_branch).stdout.strip() == second_tip
+
+    msg4 = prepare_finish(
+        wt4, "t004", "delta",
+        mutate=lambda w: (w / "chain_4.txt").write_text("from t004\n", encoding="utf-8"),
+    )
+    assert finish_cli(wt4, "t004", OWNER, msg4).returncode == 0
+    closed4 = _close(git_repo, "done", "t004", OWNER)
+    assert closed4.returncode == 0, closed4.stderr
+
+    # 2. t003 在 main 上追加了 depends_on=t004，不传 --base 自动落到 t004_delta 并同步新图定义
+    identity_3 = _begin(git_repo, "t003", OWNER)
+    wt3 = _worktree(git_repo, "t003")
+    assert (wt3 / "chain_4.txt").is_file()
+    fm3, _ = parse_front_matter(wt3 / "docs/tasks/t003_gamma/progress.md")
+    assert fm3["depends_on"] == "t004"
+    msg3 = prepare_finish(
+        wt3, "t003", "gamma",
+        mutate=lambda w: (w / "chain_3.txt").write_text("from t003\n", encoding="utf-8"),
+    )
+    assert finish_cli(wt3, "t003", OWNER, msg3).returncode == 0
+    closed3 = _close(git_repo, "done", "t003", OWNER)
+    assert closed3.returncode == 0, closed3.stderr
+
+    assert identity_4["tid"] == "t004" and identity_3["tid"] == "t003"
+    ps_out = _task_cli(git_repo, "ps")
+    assert ps_out.returncode == 0, ps_out.stderr
+    assert "contract" not in ps_out.stdout
+
+    # 3. integrate-chain 整链合并（主干存在 t004/t003 的 backlog 初始目录，自动收敛为分支 done 终态并归档）
+    prep = _task_cli(git_repo, "integrate-chain", "t003")
+    assert prep.returncode == 0, prep.stderr
+    cont = _task_cli(git_repo, "integrate-chain", "t003", "--continue")
+    assert cont.returncode == 0, cont.stderr
+
+    for name in ("t001_alpha", "t002_beta", "t004_delta", "t003_gamma"):
+        assert not (git_repo / "docs/tasks" / name).exists()
+        assert (git_repo / "docs/archive/tasks" / name / "handoff.json").is_file()
+    for fname in ("chain_1.txt", "chain_2.txt", "chain_4.txt", "chain_3.txt"):
+        assert (git_repo / fname).is_file()

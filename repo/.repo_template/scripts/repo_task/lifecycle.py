@@ -727,6 +727,34 @@ def _check_markdown_format(task_dir: Path) -> None:
         )
 
 
+def _privacy_paths_to_check(task_dir: Path) -> list[str]:
+    result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "docs"])
+    if result.returncode != 0:
+        sys.exit(f"finish=FAIL：无法列出已暂存 docs 文件：{result.stderr.strip()}；零写入退出")
+    rels = {
+        path for path in result.stdout.split("\0")
+        if path and not path.startswith(("docs/archive/", ".scratch/"))
+    }
+    for path in task_dir.rglob("*"):
+        if path.is_file():
+            rel = path.relative_to(ctx.REPO_ROOT).as_posix()
+            if not rel.startswith(("docs/archive/", ".scratch/")):
+                rels.add(rel)
+    return sorted(rels)
+
+
+def _check_privacy_leaks(task_dir: Path) -> None:
+    from .privacy import scan_path_privacy
+
+    leaks = scan_path_privacy(ctx.REPO_ROOT, _privacy_paths_to_check(task_dir))
+    if leaks:
+        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
+        sys.exit(
+            f"finish=FAIL：检测到开发者家目录绝对路径泄漏（{shown}）。"
+            "请改为仓库相对路径或 <worktree> 占位符后再 finish。零写入退出"
+        )
+
+
 def _finish_prechecks(args) -> dict:
     """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
     from .attempts import current_attempt_record, resolve_identity
@@ -794,14 +822,21 @@ def _finish_prechecks(args) -> dict:
     except (ReviewDataError, ctx.TaskDataError) as error:
         sys.exit(f"finish=FAIL：review 门禁无法评估：{error}")
     if review["overall"] != "PASS":
+        privacy_info = (
+            f" privacy_review={review.get('privacy_review', '')} "
+            f"privacy_review_detail={review.get('privacy_review_detail', '')}"
+            if review.get("privacy_review") == "leak" else ""
+        )
         sys.exit(
             f"finish=FAIL：review 门禁未通过 overall={review['overall']} "
             f"review_scope={review['review_scope']} "
             f"missing_disposition={review['missing_disposition'] or '-'} "
             f"ac_review={review['ac_review']} "
-            f"ac_review_detail={review['ac_review_detail']} "
+            f"ac_review_detail={review['ac_review_detail']}"
+            f"{privacy_info} "
             f"next_action={review['next_action']}；零写入退出"
         )
+    _check_privacy_leaks(task_dir)
 
     # 6. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:

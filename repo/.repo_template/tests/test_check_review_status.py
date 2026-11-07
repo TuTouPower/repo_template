@@ -886,3 +886,55 @@ def test_prompt_output_examples_parse_with_the_gate(name):
     assert [line.split("：")[1].split("，")[0] for line in examples] == ["TICK-VALID", "TICK-VOID"]
     for line in examples:
         assert AC_ROW_RE.match(line), line
+
+
+@pytest.mark.parametrize("name", ["code_prompt.txt", "test_prompt.txt", "general_prompt.txt"])
+def test_prompt_output_format_forbids_absolute_repo_root_and_home_paths(name):
+    """输出格式模板不得写入 {repo_root} 或 {task_dir}，且须明确禁止开发者家目录绝对路径（Issue #89）。"""
+    text = (SCRIPTS_DIR.parent / "docs/review_prompts" / name).read_text(encoding="utf-8")
+    assert "- target：`git diff {diff_anchor}`" in text
+    assert "- target：`git -C '{repo_root}' diff {diff_anchor}`" not in text
+    assert "开发者家目录绝对路径" in text
+
+
+def test_share_prompt_declares_privacy_gate():
+    text = (SCRIPTS_DIR.parent / "docs/review_prompts/share_prompt.txt").read_text(encoding="utf-8")
+    assert "路径隐私边界" in text
+    assert "sanitize_review_paths" in text
+
+
+@pytest.mark.parametrize(
+    "leak_fragment",
+    [
+        "/".join(("", "Users", "alice", "worktree")),
+        "/".join(("", "home", "bob", "worktree")),
+        "C:\\" + "\\".join(("Users", "carol", "worktree")) + "\\",
+        "C:" + "/".join(("", "Users", "dave", "worktree")),
+        "/".join(("", "root", "work", "repo")),
+    ],
+)
+def test_privacy_gate_blocks_developer_home_paths_in_review_reports(
+    tmp_path, monkeypatch, capsys, leak_fragment
+):
+    report = f"- target：`git -C '{leak_fragment}' diff abc`\n\n" + _report([ROW_1, ROW_2])
+    task_dir = _ac_task(tmp_path, monkeypatch, report)
+    out = _check(task_dir, monkeypatch, capsys)
+    assert out["overall"] == "INCOMPLETE"
+    assert out["privacy_review"] == "leak"
+    assert "review_general.md:1:" in out["privacy_review_detail"]
+    assert out["next_action"] == "sanitize_review_paths"
+
+
+def test_privacy_gate_allows_container_and_system_identities(tmp_path, monkeypatch, capsys):
+    cbrowser = "/".join(("", "home", "cbrowser", "app"))
+    public_win = "C:\\" + "\\".join(("Users", "Public", "shared"))
+    chrome_root = "/".join(("", "root", ".config", "google-chrome", "Default"))
+    report = (
+        f"- target：`git diff abc`\n- 证据：`{cbrowser}` `{public_win}` `{chrome_root}`\n\n"
+        + _report([ROW_1, ROW_2])
+    )
+    task_dir = _ac_task(tmp_path, monkeypatch, report)
+    out = _check(task_dir, monkeypatch, capsys)
+    assert out["overall"] == "PASS"
+    assert out["privacy_review"] == "ok"
+    assert out["next_action"] == "finalize"
