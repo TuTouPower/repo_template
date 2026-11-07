@@ -84,5 +84,5 @@ verdict: FAIL
 - 信任 implementer 自述作为 finding 降级依据
 - 把上下文区已声明「有意不测」的场景当覆盖缺口出 finding
 - 把「可以再加 case」标成 blocking
-- 在报告中写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）；`target`、`位置` 与证据一律使用仓库相对路径
+- 在报告中写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（macOS/Linux 用户家目录、Windows `C:\Users\<dev>` 与 Linux root 家目录及其子路径）；`target`、`位置` 与证据一律使用仓库相对路径
 - 为凑数制造 finding

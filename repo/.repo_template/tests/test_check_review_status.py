@@ -925,12 +925,11 @@ def test_privacy_gate_blocks_developer_home_paths_in_review_reports(
     assert out["next_action"] == "sanitize_review_paths"
 
 
-def test_privacy_gate_allows_container_and_system_identities(tmp_path, monkeypatch, capsys):
-    cbrowser = "/".join(("", "home", "cbrowser", "app"))
+def test_privacy_gate_allows_windows_system_profiles_only(tmp_path, monkeypatch, capsys):
+    """A08：仅 Windows 系统配置目录（Public 等）免检；容器用户名不再全局豁免。"""
     public_win = "C:\\" + "\\".join(("Users", "Public", "shared"))
-    chrome_root = "/".join(("", "root", ".config", "google-chrome", "Default"))
     report = (
-        f"- target：`git diff abc`\n- 证据：`{cbrowser}` `{public_win}` `{chrome_root}`\n\n"
+        f"- target：`git diff abc`\n- 证据：`{public_win}`\n\n"
         + _report([ROW_1, ROW_2])
     )
     task_dir = _ac_task(tmp_path, monkeypatch, report)
@@ -938,6 +937,48 @@ def test_privacy_gate_allows_container_and_system_identities(tmp_path, monkeypat
     assert out["overall"] == "PASS"
     assert out["privacy_review"] == "ok"
     assert out["next_action"] == "finalize"
+
+
+@pytest.mark.parametrize(
+    "container_path",
+    [
+        "/".join(("", "home", "cbrowser", "app")),
+        "/".join(("", "home", "runner", "work")),
+        "/".join(("", "root", ".config", "google-chrome", "Default")),
+    ],
+)
+def test_privacy_gate_no_longer_exempts_container_usernames(
+    tmp_path, monkeypatch, capsys, container_path
+):
+    """A08：取消仅凭用户名认定容器路径的全局放行。"""
+    report = f"- target：`git diff abc`\n- 证据：`{container_path}`\n\n" + _report([ROW_1, ROW_2])
+    task_dir = _ac_task(tmp_path, monkeypatch, report)
+    out = _check(task_dir, monkeypatch, capsys)
+    assert out["overall"] == "INCOMPLETE"
+    assert out["privacy_review"] == "leak"
+    assert out["next_action"] == "sanitize_review_paths"
+
+
+@pytest.mark.parametrize(
+    "boundary_path",
+    [
+        "/".join(("", "Users", "alice")),                      # 裸家目录（无尾随分隔符）
+        "/".join(("", "home", "bob")),                         # 裸 Linux 家目录
+        "C:" + "/".join(("", "Users", "carol")),               # Windows 正斜杠裸家目录
+        "C:\\" + "\\".join(("Users", "dave")),                 # Windows 反斜杠裸家目录
+        "/".join(("", "root")),                                # 裸 root 家目录
+        "/".join(("", "Users", "alice", "proj")),              # 子路径
+    ],
+)
+def test_privacy_gate_detects_bare_and_subpath_home_tokens(
+    tmp_path, monkeypatch, capsys, boundary_path
+):
+    """A08：裸家目录、子路径、单双斜杠形式均得到确定结果。"""
+    report = f"- 证据：`{boundary_path}`。\n\n" + _report([ROW_1, ROW_2])
+    task_dir = _ac_task(tmp_path, monkeypatch, report)
+    out = _check(task_dir, monkeypatch, capsys)
+    assert out["privacy_review"] == "leak"
+    assert out["next_action"] == "sanitize_review_paths"
 
 
 def test_review_parse_front_matter_raises_on_missing_or_corrupt_file(tmp_path):

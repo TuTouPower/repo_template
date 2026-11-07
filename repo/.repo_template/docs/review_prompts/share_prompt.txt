@@ -26,7 +26,7 @@ reviewed_scope: {review_scope_fingerprint}
 
 ### 路径隐私边界（进机器门禁）
 
-报告正文（含 `target`、`位置`、命令回显、报错栈与结论）一律使用仓库相对路径（或 `<worktree>` 占位符），严禁写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（`/Users/<dev>/...`、`/home/<dev>/...`、`C:\Users\<dev>\...`、`/root/<path>`）。`check_review_status.py` 与 `task.py finish` 均对报告执行隐私扫描：命中即判 `overall=INCOMPLETE`（`next_action=sanitize_review_paths`）并阻断收尾。
+报告正文（含 `target`、`位置`、命令回显、报错栈与结论）一律使用仓库相对路径（或 `<worktree>` 占位符），严禁写入 `{repo_root}`、`{task_dir}` 或任何开发者家目录绝对路径（macOS/Linux 用户家目录、Windows `C:\Users\<dev>` 与 Linux root 家目录及其子路径）。`check_review_status.py` 与 `task.py finish` 均对报告执行隐私扫描：命中即判 `overall=INCOMPLETE`（`next_action=sanitize_review_paths`）并阻断收尾。
 
 ### 不信任 implementer 自述
 

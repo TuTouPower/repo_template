@@ -727,31 +727,46 @@ def _check_markdown_format(task_dir: Path) -> None:
         )
 
 
-def _privacy_paths_to_check(task_dir: Path) -> list[str]:
-    result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "docs"])
-    if result.returncode != 0:
-        sys.exit(f"finish=FAIL：无法列出已暂存 docs 文件：{result.stderr.strip()}；零写入退出")
-    rels = {
-        path for path in result.stdout.split("\0")
-        if path and not path.startswith(("docs/archive/", ".scratch/"))
-    }
-    for path in task_dir.rglob("*"):
-        if path.is_file():
-            rel = path.relative_to(ctx.REPO_ROOT).as_posix()
-            if not rel.startswith(("docs/archive/", ".scratch/")):
-                rels.add(rel)
-    return sorted(rels)
+def _task_dir_worktree_paths(task_dir: Path) -> list[str]:
+    """当前 task 目录内尚未暂存、但会被 finish 一并纳入提交的文件。"""
+    return [
+        path.relative_to(ctx.REPO_ROOT).as_posix()
+        for path in task_dir.rglob("*")
+        if path.is_file()
+    ]
 
 
 def _check_privacy_leaks(task_dir: Path) -> None:
-    from .privacy import scan_path_privacy
+    """扫描预期提交快照（index 全量 + 当前 task 目录未暂存文件），fail-closed（A07）。"""
+    from .privacy import PrivacyScanError, scan_git_index_privacy
 
-    leaks = scan_path_privacy(ctx.REPO_ROOT, _privacy_paths_to_check(task_dir))
+    try:
+        leaks = scan_git_index_privacy(
+            ctx.REPO_ROOT, extra_worktree_paths=_task_dir_worktree_paths(task_dir)
+        )
+    except PrivacyScanError as error:
+        sys.exit(f"finish=FAIL：隐私扫描失败（fail-closed）：{error}；零写入退出")
     if leaks:
         shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
         sys.exit(
             f"finish=FAIL：检测到开发者家目录绝对路径泄漏（{shown}）。"
             "请改为仓库相对路径或 <worktree> 占位符后再 finish。零写入退出"
+        )
+
+
+def _verify_committed_privacy() -> None:
+    """提交后核对实际快照（HEAD 全量非归档文本），防止 hook 或外部改写引入泄漏（A07）。"""
+    from .privacy import PrivacyScanError, scan_git_tree_privacy
+
+    try:
+        leaks = scan_git_tree_privacy(ctx.REPO_ROOT, "HEAD")
+    except PrivacyScanError as error:
+        sys.exit(f"finish=FAIL：提交后隐私核对失败（fail-closed）：{error}")
+    if leaks:
+        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
+        sys.exit(
+            f"finish=FAIL：提交快照检测到开发者家目录绝对路径泄漏（{shown}）；"
+            "HEAD 已前移不回滚，请修正后按 recovery 处理"
         )
 
 
@@ -938,6 +953,7 @@ def cmd_finish(args):
             f"HEAD 重算={actual_scope!r}）；HEAD 已前移不回滚，"
             f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`：判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
         )
+    _verify_committed_privacy()
     print(f"finish=OK {tid} commit={_get_head()}")
 
 @control_locked
