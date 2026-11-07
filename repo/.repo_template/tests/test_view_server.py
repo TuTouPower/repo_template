@@ -334,6 +334,45 @@ def test_build_model_has_no_schedule_status(monkeypatch):
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
 
 
+def test_board_renders_server_stop_reason_without_client_algorithm():
+    """A17：链停止原因只由服务端提供；前端缺字段报接口错误，空字符串正常渲染。"""
+    static = Path(__file__).resolve().parents[1] / "scripts/repo_task/view_static"
+    board = (static / "board.js").read_text(encoding="utf-8")
+    chain_plan = (static / "chain_plan.js").read_text(encoding="utf-8")
+    assert "chainStopInfo" not in board
+    assert "chainStopInfo" not in chain_plan
+    assert "接口错误：链缺少 stop_reason 字段" in board
+    assert "hasOwnProperty.call(chain, 'stop_reason')" in board
+
+
+def test_compute_batch_plan_always_sets_stop_reason(tmp_path, monkeypatch):
+    """A17：后端展示模型必须为每条链给出 stop_reason（字符串，可为空）。"""
+    from repo_task import plan as plan_mod
+
+    schedule = {
+        "tasks": {
+            "t001": {"tid": "t001", "title": "one", "status": "backlog", "depends_on": "", "conflicts_with": ""},
+        },
+        "selected": ["t001"],
+        "waiting_deps": [], "blocked_conflicts": [],
+        "conflicts": {"t001": set()},
+        "main_done_set": set(), "effective_done_set": set(), "unmerged_done": [],
+        "dropped_set": set(), "active_list": [], "active_set": set(),
+        "backlog_tasks": {"t001": schedule_task("t001")},
+        "ready": ["t001"],
+        "dependencies": {"t001": []},
+    }
+    board = plan_mod.build_board_model(schedule)
+    batch = plan_mod.compute_batch_plan(board)
+    assert batch["chains"]
+    for chain in batch["chains"]:
+        assert isinstance(chain.get("stop_reason"), str)
+
+
+def schedule_task(tid):
+    return {"tid": tid, "title": tid, "status": "backlog", "depends_on": "", "conflicts_with": ""}
+
+
 def test_serve_rejects_out_of_range_port():
     """验证非法端口在启动前明确拒绝，避免原始 OverflowError 崩溃（Issue #63）。"""
     with pytest.raises(SystemExit, match="看板端口非法：-1；端口必须在 0 到 65535 之间"):

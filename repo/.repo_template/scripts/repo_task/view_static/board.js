@@ -723,10 +723,14 @@ function buildChainCard(chain) {
   });
   card.appendChild(tasks);
 
-  var stop = chain.stop_reason
-    || (window.ChainPlan ? window.ChainPlan.chainStopInfo(chain, plan, model) : '');
-  if (stop) {
-    card.appendChild(el('footer', { class: 'chain-card-foot' }, [stop]));
+  // 停止原因只来自服务端模型：缺字段是接口错误，空字符串按正常值渲染，不做客户端补算。
+  if (!Object.prototype.hasOwnProperty.call(chain, 'stop_reason')
+      || typeof chain.stop_reason !== 'string') {
+    card.appendChild(el('footer', { class: 'chain-card-foot' }, [
+      '接口错误：链缺少 stop_reason 字段',
+    ]));
+  } else if (chain.stop_reason) {
+    card.appendChild(el('footer', { class: 'chain-card-foot' }, [chain.stop_reason]));
   }
   return card;
 }
