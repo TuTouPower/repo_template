@@ -2166,14 +2166,44 @@ def test_migrate_specs_index_keeps_column_with_real_supersedes_data(env):
     assert specs_index_migration_status() == []
 
 
-def test_apply_reports_remaining_specs_index_violations(env, capsys):
-    _write_specs_index(env["consumer"], (
-        "|slug|验证方式|task 清单|最后固化时间|\n"
-        "|---|---|---|---|\n"
-        "|feature|API|t001|2026-10-24|\n"
-    ))
+# 原 test_apply_reports_remaining_specs_index_violations 固化了已废弃的
+# 「specs_index 违规仅打印但 apply 仍返回 0」契约；按 A02 整体替换为阻断并完整回滚测试。
+
+
+@pytest.mark.parametrize(
+    "bad_table",
+    [
+        # 1. 有真实 supersedes 数据，不可猜测丢列
+        "|slug|task 清单|最后更新时间|supersedes|\n|---|---|---|---|\n|feature|t001|2026-10-24|old_slug|\n",
+        # 2. 额外自定义列
+        "|slug|验证方式|task 清单|最后固化时间|\n|---|---|---|---|\n|feature|API|t001|2026-10-24|\n",
+        # 3. 坏 slug（kebab-case）
+        "|slug|task 清单|最后更新时间|\n|---|---|---|\n|bad-slug|t001|2026-10-24|\n",
+    ],
+)
+def test_apply_rejects_remaining_specs_index_violations_and_rolls_back(env, capsys, bad_table):
+    consumer = env["consumer"]
+    (consumer / "docs/specs").mkdir(exist_ok=True)
+    (consumer / "docs/specs/feature.md").write_text("# feature\n", encoding="utf-8")
+    index = _write_specs_index(consumer, bad_table)
+    state_before = env["state_file"].read_bytes()
+
+    assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 1
+    captured = capsys.readouterr()
+    assert "specs_index 契约违规:" in captured.out
+    assert "已完整回滚" in captured.err
+    assert index.read_text(encoding="utf-8") == bad_table
+    assert not (consumer / ".repo_template/scripts/task.py").exists()
+    assert not (consumer / ".repo_template/sync_manifest.json").exists()
+    assert env["state_file"].read_bytes() == state_before
+
+    # 修正数据后才能完成同步
+    _write_specs_index(
+        consumer,
+        "|slug|task 清单|最后更新时间|\n|---|---|---|\n|feature|t001|2026-10-24|\n",
+    )
     assert cmd_apply(Namespace(allow_dirty_source=True, skip_tests=True, decisions={})) == 0
-    assert "specs_index 契约违规:" in capsys.readouterr().out
+    assert (consumer / ".repo_template/scripts/task.py").exists()
 
 
 def test_status_and_plan_show_specs_index_contract(env, capsys):

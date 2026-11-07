@@ -85,8 +85,6 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         print(f"提示: {report}")
     for report in migrate_specs_index(changed):
         print(f"提示: {report}")
-    for problem in specs_index_report():
-        print(f"specs_index 契约违规: {problem}")
     reports = repair_symlinks(changed)
     for r in reports:
         print(f"提示: {r}")
@@ -189,6 +187,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
             (ctx.CONSUMER / "AGENTS.md").write_text(result, encoding="utf-8")
             changed.add(ctx.CONSUMER / "AGENTS.md")
         load_policy(ctx.CONSUMER)
+        specs_problems = specs_index_report()
+        if specs_problems:
+            for problem in specs_problems:
+                print(f"specs_index 契约违规: {problem}")
+            raise ctx.SyncError(
+                "docs/specs_index.md 契约违规（同步中止）：" + "；".join(specs_problems)
+            )
         if not args.skip_tests:
             if not _run_tests(ctx.CONSUMER):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")

@@ -99,7 +99,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     for path in si_migrations:
         print(f"  migrate {path}")
     for problem in si_problems:
-        print(f"  违规: {problem}")
+        print(f"  BLOCKED（不可机械迁移，阻断同步）: {problem}")
     if not si_migrations and not si_problems:
         print("  一致")
     return 0
@@ -248,7 +248,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     for path in si_migrations:
         print(f"- migrate {path}")
     for problem in si_problems:
-        print(f"- 违规: {problem}")
+        print(f"- BLOCKED（不可机械迁移，阻断同步）: {problem}")
     if not si_migrations and not si_problems:
         print("一致")
     return 0
