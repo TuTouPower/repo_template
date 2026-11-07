@@ -78,14 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("link-skills", help="校验并修复宿主 skills 软链，生成 .opencode/commands 命令薄层").set_defaults(func=cmd_link_skills)
     hooks = sub.add_parser(
         "install-hooks",
-        help="幂等设置 core.hooksPath 指向工具链 hooks（已有其它值须 --force）；--statusline 改为启用状态行 hook",
+        help="幂等设置 core.hooksPath 指向工具链 hooks（已有其它值须 --force）",
     )
     hooks.add_argument("--force", action="store_true", help="覆盖已有的 core.hooksPath")
-    hooks.add_argument(
-        "--statusline",
-        action="store_true",
-        help="只把状态行 PostToolUse hook 写入 .claude/settings.json（不改 core.hooksPath）",
-    )
     hooks.set_defaults(func=cmd_install_hooks)
     return parser
 

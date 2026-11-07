@@ -131,11 +131,11 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 |可选能力|后台子代理不支持时顺序执行；goal 仅宿主支持时使用；hooks 需显式 install-hooks|
 |网络|本地固定来源可离线同步；URL clone/fetch 与 GitHub issue 需要网络及用户现有凭据|
 
-## 状态行 Hook 与执行范围
+## 状态行绑定与执行范围
 
-默认不启用。需要时执行 `python3 .repo_template/scripts/repo_sync.py install-hooks --statusline`，将 PostToolUse hook 合并到 `.claude/settings.json`，保留已有配置；JSON 格式错误时拒绝，不改 `core.hooksPath`。已有消费仓的 hook 由消费仓维护，模板同步不增删。
+`run-begin` 在 claim 成功后以 `owner_id` 作为会话标识，把该会话与 task 当前 worktree 显式写入 `.scratch/statusline_workdir.jsonl`；`run-close --result done` 解除绑定。渲染脚本读取该文件并用 `track_worktree.py resolve --session <owner_id>`（或同名库函数）取得当前 worktree；attempt 已终结时解析为空。
 
-hook 在调度账本存在、命令包含 `run-begin` / `start` / `track_worktree` / `--tid` 时，把会话对应的 worktree 写入 `.scratch/statusline_workdir.jsonl`。显示状态行还需在全局 `statusLine.command` 配置读取该文件的渲染脚本。
+绑定不解析终端命令文本、不依赖宿主私有字段；写入或读取失败只输出诊断，不影响任务生命周期与收尾。宿主 session 与 `owner_id` 的映射由宿主适配层维护。
 
 ## 附属生命周期闭环
 

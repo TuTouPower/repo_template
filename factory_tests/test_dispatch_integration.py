@@ -784,46 +784,62 @@ def test_track_worktree_resolves_from_start_through_execution_claim(tmp_path):
     assert tw.resolve_worktree(str(project), "t001") == ""
 
 
-@pytest.mark.parametrize("command, expected_mapping", [
-    ("python3 .repo_template/scripts/task.py run-begin t001 --owner-id owner-a", True),
-    ("python3 .repo_template/scripts/task.py start t001", True),
-    ("python3 .repo_template/scripts/track_worktree.py --tid t001", True),
-    ("python3 .repo_template/scripts/track_worktree.py --tid=t001", True),
-    ("git status --short", False),
-])
-def test_track_worktree_hook_records_task_commands(tmp_path, command, expected_mapping):
+def test_track_worktree_binds_session_explicitly_without_command_sniffing(tmp_path):
+    """A16：会话绑定由显式身份建立，不解析终端命令文本。"""
+    import importlib.util
+    import json
+    scripts_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
+    spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
+    tw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tw)
+
     project = tmp_path / "project"
     runtime = project / "docs/runtime"
     runtime.mkdir(parents=True)
     ledger = runtime / "dispatch_ledger.jsonl"
-    events = [
-        {"tid": "t001", "event": "start", "worktree": "../project_t001"},
-        {"tid": "t001", "event": "attempt_reserved", "attempt": 1, "state": "running"},
-        {"tid": "t001", "event": "execution_claimed", "attempt": 1, "owner_id": "owner-a"},
-    ]
-    ledger.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
-    payload = json.dumps({
-        "session_id": "session-a", "cwd": str(project),
-        "tool_input": {"command": command},
-    })
-    args = [sys.executable, str(SCRIPTS_DIR / "track_worktree.py"), "--write", "--agent", "claude-code"]
-    result = subprocess.run(args, input=payload, capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stderr
-    mapping = project / ".scratch/statusline_workdir.jsonl"
-    if not expected_mapping:
-        assert not mapping.exists()
-        return
-    record = json.loads(mapping.read_text(encoding="utf-8"))
-    assert record["tid"] == "t001"
-    assert record["session_id"] == "session-a"
-    assert record["agent"] == "claude-code"
-    assert record["worktree"] == str(tmp_path / "project_t001")
-    before = mapping.read_bytes()
+    ledger.write_text(
+        "".join(json.dumps(event) + "\n" for event in [
+            {"tid": "t001", "event": "start", "worktree": "../project_t001"},
+            {"tid": "t001", "event": "attempt_reserved", "attempt": 1, "state": "running"},
+            {"tid": "t001", "event": "execution_claimed", "attempt": 1, "owner_id": "owner-a"},
+        ]),
+        encoding="utf-8",
+    )
+
+    assert tw.bind(str(project), "owner-a", "t001", 1, "exec-1") is True
+    assert tw.current_worktree(str(project), "owner-a") == str(tmp_path / "project_t001")
+    record = json.loads(
+        (project / ".scratch/statusline_workdir.jsonl").read_text(encoding="utf-8")
+    )
+    assert record["session"] == "owner-a"
+    assert record["attempt"] == 1
+
     with ledger.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"tid": "t001", "event": "attempt_terminal"}) + "\n")
-    result = subprocess.run(args, input=payload, capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, result.stderr
-    assert mapping.read_bytes() == before
+    assert tw.current_worktree(str(project), "owner-a") == ""
+    assert tw.bind(str(project), "owner-b", "t001") is False
+    assert tw.current_worktree(str(project), "owner-b") == ""
+
+
+def test_run_begin_binds_and_run_close_done_unbinds_statusline(git_repo):
+    """A16：run-begin 显式写绑定；run-close done 解除绑定，渲染端解析为空。"""
+    from test_run_commands import OWNER
+    from task_flow_support import finish_cli, prepare_finish
+
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", OWNER)
+    assert begun.returncode == 0, begun.stderr
+    mapping = git_repo / ".scratch/statusline_workdir.jsonl"
+    record = json.loads(mapping.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["session"] == OWNER and record["tid"] == "t001"
+    assert record["worktree"] == str(_worktree(git_repo, "t001").resolve())
+
+    worktree = _worktree(git_repo, "t001")
+    message = prepare_finish(worktree, "t001", "alpha")
+    assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
+    closed = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
+    assert closed.returncode == 0, closed.stderr
+    last = json.loads(mapping.read_text(encoding="utf-8").splitlines()[-1])
+    assert last["session"] == OWNER and last["worktree"] == ""
 
 
 def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
@@ -911,33 +927,3 @@ def test_chain_locked_uses_shared_file_lock(tmp_path, monkeypatch):
     assert my_action(21) == 42
     assert len(lock_calls) == 1
     assert lock_calls[0] == tmp_path / "integrate.lock"
-
-
-def test_track_worktree_early_exit_on_regular_commands(tmp_path, monkeypatch):
-    """验证 track_worktree 在常规命令下快速短路退出且零副作用（Issue #53）。"""
-    import importlib.util
-    import json
-    scripts_dir = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
-    spec = importlib.util.spec_from_file_location("track_worktree", str(scripts_dir / "track_worktree.py"))
-    tw = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tw)
-
-    project = tmp_path / "proj"
-    project.mkdir(parents=True)
-
-    # 1. 常规无关命令 payload
-    payload = {
-        "session_id": "sess_1",
-        "cwd": str(project),
-        "tool_input": {"command": "git status"},
-    }
-    monkeypatch.setattr(tw, "read_payload", lambda: payload)
-    monkeypatch.setattr(sys, "argv", ["track_worktree.py", "--write", "--agent", "claude-code"])
-
-    ret = tw.main()
-    assert ret == 0
-    # 零副作用：未产生 statusline 文件
-    assert not (project / ".scratch" / "statusline_workdir.jsonl").exists()
-
-
-

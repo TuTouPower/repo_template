@@ -18,7 +18,7 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 .repo_template/scripts/repo_sync.py prompt add --text "..." [--tags a,b]
   python3 .repo_template/scripts/repo_sync.py prompt revoke --id N
   python3 .repo_template/scripts/repo_sync.py link-skills
-  python3 .repo_template/scripts/repo_sync.py install-hooks [--force | --statusline]
+  python3 .repo_template/scripts/repo_sync.py install-hooks [--force]
 
 本脚本处理模板工具链与模板侧资产，并在 apply 时强制迁移 active/backlog task 的 workflow schema；不碰业务代码。禁止自动 commit——写盘与 state 更新完成后由 agent 走审批门禁。
 """

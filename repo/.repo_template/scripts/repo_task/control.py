@@ -147,6 +147,25 @@ def _print_json(event: dict) -> None:
     print(json.dumps(event, ensure_ascii=False))
 
 
+def _bind_statusline(owner_id: str, tid: str, attempt: int, execution_id: str) -> None:
+    """展示层副作用：显式写入会话 → worktree 绑定；失败只诊断，不影响业务事务。"""
+    from . import statusline
+
+    try:
+        statusline.bind(str(ctx.REPO_ROOT), owner_id, tid, attempt, execution_id)
+    except (OSError, ValueError) as error:
+        print(f"WARNING: 状态行绑定失败（{error}）；不影响任务收尾", file=sys.stderr)
+
+
+def _unbind_statusline(owner_id: str, tid: str) -> None:
+    from . import statusline
+
+    try:
+        statusline.unbind(str(ctx.REPO_ROOT), owner_id, tid)
+    except (OSError, ValueError) as error:
+        print(f"WARNING: 状态行解绑失败（{error}）；不影响任务收尾", file=sys.stderr)
+
+
 @control_locked
 def cmd_attempt_reserve(args):
     require_primary_worktree()
@@ -245,6 +264,7 @@ def cmd_run_begin(args):
             f"run-begin 失败于步骤 {step}：{detail}\n"
             f"run-begin 不回滚已完成的步骤；{_recovery_hint(tid)}，勿重复 run-begin"
         )
+    _bind_statusline(owner_id, tid, reserved["attempt"], reserved["execution_id"])
     _print_json({
         "tid": tid,
         "attempt": reserved["attempt"],
@@ -327,6 +347,7 @@ def cmd_run_close(args):
         if args.result == "done":
             print(_cleanup_worktree(tid, attempt, execution_id), file=sys.stderr)
             written.append("cleanup")
+        _unbind_statusline(owner_id, tid)
     except (SystemExit, ctx.TaskDataError, OSError) as error:
         detail = error.code if isinstance(error, SystemExit) else error
         sys.exit(
