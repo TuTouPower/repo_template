@@ -161,6 +161,31 @@ def cmd_complete(args: argparse.Namespace) -> None:
     print(f"已完成 spike {sid}：{spike_dir.name}")
 
 
+def check_supersede_cycle(root: Path, sid: str, successor_sid: str) -> None:
+    """检测若将 sid 替代为 successor_sid 是否会形成循环引用；检测到环则退出阻断。"""
+    visited = {sid}
+    curr = successor_sid
+    while curr:
+        if curr in visited:
+            sys.exit(f"错误: 严禁循环引用：检测到替代循环涉及 {curr}")
+        visited.add(curr)
+        try:
+            curr_dir = find_spike_dir(root, curr)
+        except SpikeMetadataError:
+            break
+        report = curr_dir / "report.md"
+        if not report.is_file():
+            break
+        try:
+            curr_fm, _ = parse_front_matter(report)
+        except Exception:
+            break
+        if curr_fm.get("status") == "superseded":
+            curr = curr_fm.get("superseded_by")
+        else:
+            break
+
+
 def cmd_supersede(args: argparse.Namespace) -> None:
     sid = args.sid
     if not SPIKE_SID_RE.match(sid):
@@ -211,6 +236,9 @@ def cmd_supersede(args: argparse.Namespace) -> None:
     except Exception as err:
         sys.exit(f"错误: 替代目标元数据非法：{err}")
 
+    # 循环引用检查：若将 sid 替代为 successor_sid，检测是否存在反向或传递循环
+    check_supersede_cycle(REPO_ROOT, sid, successor_sid)
+
     if succ_fm.get("status") != "completed":
         sys.exit(
             f"错误: 替代目标 {successor_sid} 状态必须为 completed（当前为 {succ_fm.get('status')}）"
@@ -221,20 +249,6 @@ def cmd_supersede(args: argparse.Namespace) -> None:
     except (ValueError, ctx.TaskDataError) as err:
         sys.exit(f"错误: 替代目标 {successor_sid} 证据校验未通过：{err}")
 
-    # 循环引用检查
-    visited = {sid}
-    curr = successor_sid
-    while curr:
-        if curr in visited:
-            sys.exit(f"错误: 严禁循环引用：检测到替代循环涉及 {curr}")
-        visited.add(curr)
-        try:
-            curr_dir = find_spike_dir(REPO_ROOT, curr)
-            curr_fm, _ = parse_front_matter(curr_dir / "report.md")
-            curr = curr_fm.get("superseded_by")
-        except Exception:
-            break
-
     if not args.write:
         print(f"dry-run: spike {sid} 可替代为 {successor_sid}（加 --write 落盘）")
         return
@@ -244,6 +258,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         validate_spike_metadata(fm, expected_sid=sid)
         if fm.get("status") == "superseded":
             sys.exit(f"错误: spike {sid} 已处于 superseded 状态")
+        check_supersede_cycle(REPO_ROOT, sid, successor_sid)
         succ_dir = find_spike_dir(REPO_ROOT, successor_sid)
         succ_fm, _ = parse_front_matter(succ_dir / "report.md")
         if succ_fm.get("status") != "completed":

@@ -15,7 +15,7 @@ import repo_task.context as ctx
 from .locks import control_locked
 
 from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
-from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
+from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, is_ancestor, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
@@ -1096,13 +1096,10 @@ def cmd_rewind(args):
     try:
         write_front_matter(path, fm, body)
     except (OSError, ctx.TaskDataError) as error:
-        try:
-            append_audit(
-                "rewind_failed", tid=args.tid, fr=target, to=effective,
-                reason=f"write_front_matter failed: {error}", repo=repo,
-            )
-        except Exception:
-            pass
+        append_audit(
+            "rewind_failed", tid=args.tid, fr=target, to=effective,
+            reason=f"write_front_matter failed: {error}", repo=repo,
+        )
         sys.exit(
             f"rewind 状态写入失败（{error}）；权威状态仍处 {effective}，审计已记录失败标记，请排查原因后重试"
         )
@@ -1189,7 +1186,7 @@ def cmd_finish_unwind(args):
     for other in [name.strip() for name in listing.stdout.splitlines() if name.strip()]:
         if other == branch:
             continue
-        if _git(["merge-base", "--is-ancestor", tip_sha, other], repo=repo).returncode == 0:
+        if is_ancestor(tip_sha, other, repo=repo):
             sys.exit(f"已有后继分支 {other!r} 包含当前 tip；撤销会使其悬空，停止并报告")
     dirty = porcelain_entries(worktree, repo=repo)
     if dirty:

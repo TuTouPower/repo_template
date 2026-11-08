@@ -350,3 +350,17 @@ def require_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext") -> None:
             f"{fm['tid']} 必须在自身 worktree {repo.effective_worktree(fm)} 的分支 "
             f"{fm.get('branch')!r} 执行"
         )
+
+
+def is_ancestor(
+    maybe_ancestor: str, descendant: str, *, repo: "ctx.RepoContext",
+) -> bool:
+    """严格判定 maybe_ancestor 是否为 descendant 的祖先（0->True, 1->False, 其余->TaskDataError）。"""
+    result = _git(["merge-base", "--is-ancestor", maybe_ancestor, descendant], repo=repo)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    error = result.stderr.strip() or f"退出码 {result.returncode}"
+    raise ctx.TaskDataError(f"git merge-base 失败：{error}")
+

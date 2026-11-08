@@ -4,7 +4,7 @@ import json
 from . import context as ctx
 from .attempts import current_attempt_record, overlapping_attempts, validate_execution_context
 from .documents import parse_front_matter
-from .git_ops import _git, require_primary_worktree, worktree_paths
+from .git_ops import _git, is_ancestor, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
 from .locks import control_locked
 from .monitoring import implementation_commit, verify_integrate_ready
@@ -201,7 +201,7 @@ def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: "ctx.RepoCont
     for branch in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
         if branch == current_branch:
             continue
-        if _git(["merge-base", "--is-ancestor", tip_sha, branch], repo=repo).returncode == 0:
+        if is_ancestor(tip_sha, branch, repo=repo):
             return True
     return False
 

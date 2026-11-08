@@ -28,7 +28,7 @@ TXN_DIR_NAME = "repo-task-finish"
 JOURNAL = "journal.json"
 INDEX_BACKUP = "index.backup"
 FILES_DIR = "files"
-LOCK_FILES = ("index.lock", "HEAD.lock", "refs/heads", "shallow.lock", "MERGE_HEAD")
+LOCK_FILES = ("index.lock", "HEAD.lock", "shallow.lock", "MERGE_HEAD")
 JOURNAL_VERSION = 1
 
 

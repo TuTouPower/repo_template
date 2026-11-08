@@ -272,7 +272,6 @@ def test_disposition_stats_ignores_fenced_table(tmp_path):
 
 
 def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
     (task_dir / "progress.md").write_text(
@@ -289,7 +288,7 @@ def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
 
 
 def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -302,7 +301,6 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
 
 def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):
     """报告含但处置表未处置的 finding → overall=INCOMPLETE 并列出漏记。"""
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
     (task_dir / "progress.md").write_text(
@@ -340,7 +338,7 @@ def test_main_reports_missing_disposition_for_heading_findings(tmp_path, monkeyp
         + "### t001_gen_f002 - 标题二\n\n- 严重度：minor\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args: SCOPE)
+    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE)
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
     )
@@ -394,7 +392,6 @@ def test_disposition_legacy_requires_fix_ref_column(tmp_path):
 
 def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys):
     """首轮 FAIL（报告含 blocker、处置表未填）→ overall 保留 FAIL，不降 INCOMPLETE。"""
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
     (task_dir / "progress.md").write_text(
@@ -408,7 +405,7 @@ def test_main_keeps_fail_when_disposition_missing(tmp_path, monkeypatch, capsys)
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -462,7 +459,6 @@ SPEC_TICKED = (
 
 
 def _scope_task_dir(tmp_path, monkeypatch, scope_line):
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs/tasks/t001_x"
     task_dir.mkdir(parents=True)
     (task_dir / "progress.md").write_text(
@@ -484,7 +480,7 @@ def test_main_pass_requires_matching_scope(tmp_path, monkeypatch, capsys):
         tmp_path, monkeypatch, f"reviewed_scope: {SCOPE}\n"
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -501,7 +497,7 @@ def test_main_pass_stale_scope_fails(tmp_path, monkeypatch, capsys):
         tmp_path, monkeypatch, f"reviewed_scope: {SCOPE}\n"
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: "0" * 16
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: "0" * 16
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -516,7 +512,7 @@ def test_main_pass_missing_scope_fails(tmp_path, monkeypatch, capsys):
     """报告缺 reviewed_scope → overall=INCOMPLETE, review_scope=missing。"""
     task_dir = _scope_task_dir(tmp_path, monkeypatch, "verdict: PASS\n")
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -533,7 +529,7 @@ def test_main_scope_tolerates_backtick_wrapped(tmp_path, monkeypatch, capsys):
         tmp_path, monkeypatch, f"`reviewed_scope: {SCOPE}`\n"
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -553,7 +549,7 @@ def test_main_scope_tolerates_bold_and_list_prefix(
         tmp_path, monkeypatch, f"{prefix}reviewed_scope: {SCOPE}\n"
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -569,7 +565,7 @@ def test_main_scope_reports_format_error(tmp_path, monkeypatch, capsys):
         tmp_path, monkeypatch, "reviewed_scope: not-hex\n"
     )
     monkeypatch.setattr(
-        crs, "current_scope_fingerprint", lambda task_dir, anchor: SCOPE
+        crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE
     )
     monkeypatch.setattr(
         sys, "argv", ["task.py", "--task-dir", str(task_dir)]
@@ -584,7 +580,7 @@ def test_checker_reads_persisted_budget_and_refuses_implicit_raise(tmp_path, mon
     task_dir = _scope_task_dir(tmp_path, monkeypatch, f'reviewed_scope: {SCOPE}\n')
     path = task_dir / 'progress.md'
     path.write_text(path.read_text().replace('review_level: single', 'review_level: single\nreview_limit: 8\nverify_limit: 7'))
-    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: SCOPE)
+    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args, **kwargs: SCOPE)
     monkeypatch.setattr(sys, 'argv', ['task.py', '--task-dir', str(task_dir)])
     crs.main()
     out = capsys.readouterr().out
@@ -604,7 +600,7 @@ def test_incomplete_has_explicit_recovery_action(tmp_path, monkeypatch, capsys, 
         report.unlink()
     elif defect == 'missing_disposition':
         report.write_text(report.read_text() + '\n|t001_gen_f001|important|bug|\n')
-    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args: '0' * 16 if defect == 'stale' else SCOPE)
+    monkeypatch.setattr(crs, 'current_scope_fingerprint', lambda *args, **kwargs: '0' * 16 if defect == 'stale' else SCOPE)
     monkeypatch.setattr(sys, 'argv', ['task.py', '--task-dir', str(task_dir)])
     crs.main()
     out = capsys.readouterr().out
@@ -629,7 +625,6 @@ def _report(rows, verdict="PASS", round_header="## Round 1", heading="### AC 复
 
 def _ac_task(tmp_path, monkeypatch, reports, spec=SPEC_TICKED, level="single"):
     """reports 为单个文本（single / 两路同文）或 {code, test} 字典；spec=None 表示不写 task.md。"""
-    monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs/tasks/t001_x"
     task_dir.mkdir(parents=True)
     (task_dir / "progress.md").write_text(
@@ -646,7 +641,7 @@ def _ac_task(tmp_path, monkeypatch, reports, spec=SPEC_TICKED, level="single"):
             reports = {"code": reports, "test": reports}
         for name, text in reports.items():
             (task_dir / f"review_{name}.md").write_text(text, encoding="utf-8")
-    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args: SCOPE)
+    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args, **kwargs: SCOPE)
     return task_dir
 
 
@@ -689,7 +684,7 @@ def test_ac_gate_void_wins_over_stale_scope(tmp_path, monkeypatch, capsys):
     """VOID 等同报告 FAIL：不因 scope 过期降为 INCOMPLETE（与 verdict FAIL 一致）。"""
     void = "- AC-001：TICK-VOID，re_verified。实现缺失。"
     task_dir = _ac_task(tmp_path, monkeypatch, _report([void, ROW_2]))
-    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args: "0" * 16)
+    monkeypatch.setattr(crs, "current_scope_fingerprint", lambda *args, **kwargs: "0" * 16)
     out = _check(task_dir, monkeypatch, capsys)
     assert out["overall"] == "FAIL"
     assert out["review_scope"] == "stale"

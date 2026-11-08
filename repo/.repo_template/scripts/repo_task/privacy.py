@@ -35,12 +35,15 @@ BINARY_SUFFIXES = frozenset({
 # 前导边界避免从另一条路径中间起匹配：Linux root 家目录不得作为其它路径的子串被命中。
 # token 以运行时拼接构造，避免本模块源码自身出现连续家目录路径被自身门禁命中。
 _ROOT_TOKEN = "/" + "root"
-_POSIX_HOME = re.compile(r"(?<![\w.\-/])/(?:Users|home)/([A-Za-z0-9._-]+)")
-_ROOT_HOME = re.compile(
-    r"(?<![\w.\-/])" + re.escape(_ROOT_TOKEN) + r"(?![A-Za-z0-9._-])"
+_POSIX_HOME = re.compile(
+    r"(?<![\w.\-/])(?:file://(?:localhost)?|file:)?/(?:Users|home)/([\w.%-]+(?:\s+[\w.%-]+)*)"
 )
-_WIN_FORWARD = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:/Users/([A-Za-z0-9._% -]+)")
-_WIN_BACKWARD = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\Users\\([A-Za-z0-9._% -]+)")
+_ROOT_HOME = re.compile(
+    r"(?<![\w.\-/])(?:file://(?:localhost)?|file:)?/" + re.escape("root") + r"(?![A-Za-z0-9._-])"
+)
+_WIN_PATH = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]:(?:/|\\{1,2})Users(?:/|\\{1,2})([\w.%-]+(?:\s+[\w.%-]+)*)"
+)
 
 
 class PrivacyScanError(Exception):
@@ -56,17 +59,30 @@ def _is_exempt(token: str) -> bool:
 
 def find_developer_path_leaks(text: str) -> list[str]:
     """返回 *text* 中出现的开发者家目录路径 token（确定性、去重、保持出现顺序）。"""
+    win_matches = list(_WIN_PATH.finditer(text))
+    win_spans = [(m.start(), m.end()) for m in win_matches]
+
     spans: list[tuple[int, int, str]] = []
+    for match in win_matches:
+        if match.group(1).strip() in WINDOWS_SYSTEM_PROFILES:
+            continue
+        spans.append((match.start(), match.end(), match.group(0)))
+
     for match in _POSIX_HOME.finditer(text):
-        spans.append((match.start(), match.end(), match.group(0)))
+        m_start, m_end = match.start(), match.end()
+        if any(ws <= m_start and m_end <= we for ws, we in win_spans):
+            continue
+        spans.append((m_start, m_end, match.group(0)))
+
     for match in _ROOT_HOME.finditer(text):
-        spans.append((match.start(), match.end(), match.group(0)))
-    for pattern in (_WIN_FORWARD, _WIN_BACKWARD):
-        for match in pattern.finditer(text):
-            if match.group(1).strip() in WINDOWS_SYSTEM_PROFILES:
-                continue
-            spans.append((match.start(), match.end(), match.group(0)))
-    # 宽匹配优先：Windows 正斜杠路径内含 POSIX 形子串时只报告一次。
+        m_start, m_end = match.start(), match.end()
+        if any(ws <= m_start and m_end <= we for ws, we in win_spans):
+            continue
+        spans.append((m_start, m_end, match.group(0)))
+
+    spans.sort(key=lambda item: (item[0], item[1]))
+
+    # 宽匹配优先：外层路径包含内层子串时只保留外层。
     leaks = [
         value
         for start, end, value in spans
