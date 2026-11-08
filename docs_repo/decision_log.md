@@ -70,6 +70,9 @@
 | L53 | 撤销证据 commit，恢复一 task 一 commit | review_20261104 D01、用户裁定 | 撤销 L43 的证据 commit 部分（D2），恢复一 task 一 commit，review 失效走 amend 并以 `handoff.review_scope` 约束 | `repo_task/{lifecycle,monitoring,recovery}.py`、`recovery.md`、`architecture.md` | 已落地 |
 | L54 | 小 pending 走完整 task 过重；worktree 缺 gitignore 本地文件导致容器验证难跑 | 用户裁定（2026-11-05） | 不做 in-place / main 直跑 task（维持 L4、L30）：worktree 经消费仓 `.worktreeinclude` 软链被忽略的本地文件与目录，仅目录规则的链接追加 `info/exclude` 托管块；小而低风险 pending 经 `pending-fix` 在 main 直修，一条一个 fix commit，超出准入转 task | `repo_task/worktrees.py`、`repo/.worktreeinclude`、`usage.md`、`pending-fix` skill、`AGENTS.md` | 已落地 |
 | L55 | 模板同步与消费项目业务测试的运行环境、耗时耦合；策略校验存在跳过和缓存盲区 | 用户裁定（2026-11-06）、SYNC 范围与闭环审阅；部分取代 M-01 | SYNC 只执行模板 contract，项目 doctor/test/blackbox 仍由 task-work 与 reviewer 按项目策略执行；apply 始终校验 testing.md，--skip-tests 仅跳过 contract；accept 始终重读策略，契约测试按原指纹条件复跑；删除失去生产调用方的业务执行器。保留单块 fail-closed，消费仓自有 testing.md 升级前人工迁移 | `template_sync/{apply,transaction,cli}.py`、`repo_task/validation.py`、`sync.md`、`recovery.md` | 已落地 |
+| L56 | 代码基座与主干规格来源混淆导致已核实规格阻断（Issue #90） | Issue #90、测试性能方案实施 | 移除 `load_task_backlog_baseline` 的 `diff_anchor` 祖先猜测，主干 backlog 为规格与初始调度唯一权威；启动前对主干目标目录无条件严格脏检查（含 rename 两端与未跟踪）；worktree 启动后从锁定的来源 SHA 完整物化规格，并将 `spec_source_sha` 作为不可变字段贯穿生命周期、验证、审阅契约基线与回执 | `repo_task/{store,integration,monitoring,lifecycle,render_review_prompts}.py` | 已落地 |
+| L57 | 环境软链在末尾斜杠规则下未被忽略且进入交付指纹与阻断 finish（Issue #91） | Issue #91、测试性能方案实施 | 显式环境声明 + 精准 Git 原生忽略规则（`info/exclude` 写入不带斜杠规则）；`_review_worktree` 严格区分 cached 与 others，对未忽略环境软链提供明确诊断与指引，不静默算入交付指纹；finish 门禁与指纹使用一致原生忽略边界，真实交付软链（120000）严格保留 | `repo_task/{worktrees,monitoring,lifecycle}.py` | 已落地 |
+| L58 | 测试套件运行开销大、重复 Git 子进程与 Arrange 冗余 | 测试性能优化方案 P1–P4 落地 | Arrange 阶段以显式 RepoContext 领域 API 替代非被测 CLI；`repo_task` 引入单次 `ls-tree` 与非交互 `git cat-file --batch` 批量读取与 commit 快照；`factory_tests` 引入受控 Git 环境、Profile 种子与 session 级别的高速独立复制；全量用例数增至 1098，耗时从 255.77s 降至 179.29s（跌破 3 分钟） | `repo_task/{git_ops,store,integration}.py`、`factory_tests/{git_repo_support,conftest}.py` | 已落地 |
 
 ## 未闭环
 
@@ -130,3 +133,19 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
 ## #85：specs_index 严格 schema（取代「历史索引异常仅告警」）
 
 上表「历史 task 目录连带阻断」行的「历史索引异常仅告警」口径已被 #85 取代；原条目不改写、保留历史记录。现行行为：`docs/specs_index.md` 由 `repo_task/specs_index.py` 单点定义严格 schema（全文一张表、固定 3 列、slug `^[a-z][a-z0-9_]*$`、task 清单为 `tNNN`/`baseline` 且不重复、日期 `YYYY-MM-DD`）；finish 校验整张表，违规一次全部列出（带行号）并使收尾失败，不再有「历史 specs_index 条目需维护」WARN 静默降级。`template_sync/specs_index_migration.py` 在同步时精确移除旧 supersedes 说明句、收敛无数据的 4 列 supersedes 布局，status/plan/apply 报告剩余违规清单。消费仓历史数据（说明性表格、额外列、kebab-case slug、含中文描述的 task 清单）属漂移，须人工收敛，不兼容。落点：`repo/.repo_template/scripts/repo_task/specs_index.py`、`repo_task/finalization.py`、`template_sync/specs_index_migration.py`、`.repo_template/docs/usage.md`。
+
+## #90、#91 与测试性能重构（L56、L57、L58）
+
+落地点与验证记录（2026-11-08）：
+1. **Issue #90 固定规格快照与主干 backlog 权威**：彻底解耦代码基座 `diff_anchor` 与规格快照权威；`load_task_backlog_baseline(tid)` 仅从主干读取 backlog 记录并锁定 SHA；启动前严格无条件检查主仓目标 task 目录脏改动（含 rename 两端与未跟踪）；worktree 启动后从锁定的 `spec_source_sha` 完整物化文件；`spec_source_sha` 作为不可变字段贯穿 `progress.md`、`handoff.json`、start ledger 事件、`verify_integrate_ready` 与审阅提示词渲染。
+2. **Issue #91 显式环境软链与交付物边界**：`_review_worktree()` 严格区分 cached 与 others；利用 Git 原生 `check-ignore --no-index` 精准识别因尾斜杠未被忽略的环境软链并 fail-closed 报错给出修复指引；`link_local_files()` 与 `_ensure_links_ignored()` 强化在 `info/exclude` 写入精准规则；对齐 finish 门禁与未暂存检查；保留真实代码软链（`120000`）交付语义。
+3. **测试性能优化（P1–P4）**：
+   - P1：Arrange 瘦身，以显式 `RepoContext` 的领域 API 替代非被测 CLI 调用；
+   - P2：实现 `git_ops.py` 的非交互式 `batch_cat_file` 协议通信与 `store.py` 的 commit 快照缓存，`_load_tasks_at_commit` 等高频读取由逐文件 spawn Git show 改为单次批量读取；
+   - P3：`factory_tests/git_repo_support.py` 提供受控 Git 环境与固定 Profile 种子（工作流 3 任务、2 任务、同步源仓），通过 session fixture 高速复制提供隔离用例私有仓；
+   - P4：全量调度对比验证，普通复制与 `--dist=worksteal` 稳定进入 3 分钟内。
+4. **全量门禁实测数据**：
+   - 基线：1,055 用例，耗时 255.77s；
+   - 正确性修复后（#90 + #91）：1,069 用例，耗时 210.91s；
+   - 性能优化完成（P1–P4）：1,098 用例（1097 passed, 1 skipped），耗时 179.29s（02:59）。全量测试通过。
+
