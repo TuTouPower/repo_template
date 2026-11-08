@@ -475,20 +475,6 @@ def _resolve_primary_commit(
     return primary, sha
 
 
-def _is_commit_ancestor(
-    ancestor_sha: str, descendant_sha: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
-) -> bool:
-    r = _git(["merge-base", "--is-ancestor", ancestor_sha, descendant_sha], root=root, repo=repo)
-    if r.returncode == 0:
-        return True
-    if r.returncode == 1:
-        return False
-    raise ctx.TaskDataError(
-        f"git merge-base --is-ancestor 失败（exit={r.returncode}）：{r.stderr.strip()}"
-    )
-
-
 def _owner_bundle_at_ref(
     tid: str, ref_sha: str, *, root: Path | None = None,
     repo: "ctx.RepoContext",
@@ -503,37 +489,23 @@ def _owner_bundle_at_ref(
 
 
 def load_task_backlog_baseline(
-    tid: str, diff_anchor: str, *, root: Path | None = None,
+    tid: str, *, root: Path | None = None,
     repo: "ctx.RepoContext",
 ) -> tuple[dict, dict, str, str]:
     """解析 task 启动时的初始 backlog 定义 (task, fm, body, source_commit_sha)。
 
-    主干 default_branch 是所有 backlog task 创建与调度维护的唯一权威；
-    1. 先将主干与 diff_anchor 解析为确定 commit SHA；
-    2. merge-base --is-ancestor 严格区分 0（祖先）、1（非祖先）、其它错误；
-    3. 仅真实缺失（TaskNotFoundError）允许换源，数据损坏或 Git 故障直接抛错。
+    Issue #90：主干 default_branch 是所有 backlog task 创建与调度维护的唯一权威。
+    只从主干 backlog 单源读取并锁定主干 commit SHA；
+    缺失、状态不符和数据损坏明确报错，不回退到代码 anchor。
     """
-    anchor_sha = _resolve_commit_sha(diff_anchor, label="diff_anchor", root=root, repo=repo)
     primary_branch, primary_sha = _resolve_primary_commit(root=root, repo=repo)
-    primary_is_ancestor = _is_commit_ancestor(primary_sha, anchor_sha, root=root, repo=repo)
-    if not primary_is_ancestor:
-        try:
-            task, fm, body = _owner_bundle_at_ref(tid, primary_sha, root=root, repo=repo)
-            if fm.get("status") == "backlog":
-                return task, fm, body, primary_sha
-        except ctx.TaskNotFoundError:
-            pass
-    try:
-        task, fm, body = _owner_bundle_at_ref(tid, anchor_sha, root=root, repo=repo)
-        return task, fm, body, anchor_sha
-    except ctx.TaskNotFoundError:
-        task, fm, body = _owner_bundle_at_ref(tid, primary_sha, root=root, repo=repo)
-        if fm.get("status") != "backlog":
-            raise ctx.TaskDataError(
-                f"{tid} 在 {anchor_sha[:12]} 不存在，且在主干 {primary_branch!r} 中 "
-                f"status={fm.get('status')!r} 非 backlog"
-            )
-        return task, fm, body, primary_sha
+    task, fm, body = _owner_bundle_at_ref(tid, primary_sha, root=root, repo=repo)
+    if fm.get("status") != "backlog":
+        raise ctx.TaskDataError(
+            f"{tid} 在主干 {primary_branch!r} ({primary_sha[:12]}) 中 "
+            f"status={fm.get('status')!r} 非 backlog"
+        )
+    return task, fm, body, primary_sha
 
 
 def _path_exists_in_tree(
@@ -549,46 +521,31 @@ def _path_exists_in_tree(
     return bool(r.stdout.strip())
 
 
-def _progress_status_at_ref(
-    ref_sha: str, progress_rel: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
-) -> str | None:
-    if not _path_exists_in_tree(ref_sha, progress_rel, root=root, repo=repo):
-        return None
-    text = git_text_at_ref(ref_sha, progress_rel, root=root, repo=repo)
-    fm, _ = parse_front_matter_text(text, source=f"{ref_sha}:{progress_rel}")
-    return fm.get("status", "")
-
-
 def resolve_baseline_spec_text(
-    tid: str, spec_rel: str, diff_anchor: str, *, root: Path | None = None,
+    tid: str, spec_rel: str, spec_source_sha: str, *, root: Path | None = None,
     repo: "ctx.RepoContext | None" = None,
 ) -> tuple[str, str]:
-    """解析 spec 的契约基线文本与来源 commit SHA，供 render_review_prompts 与监控共用（A04）。"""
+    """解析 spec 的契约基线文本与来源 commit SHA，供 render_review_prompts 与监控共用（A04/C90）。
+
+    Issue #90：读取启动时锁定的固定来源 commit SHA (spec_source_sha)；
+    验证该位置的初始 backlog 状态；缺失、空值、非 backlog、Git 故障或数据损坏明确报错，
+    不回退到 diff_anchor 猜测。
+    """
     repo = repo or ctx.RepoContext.for_root(root or Path.cwd())
-    anchor_sha = _resolve_commit_sha(diff_anchor, label="diff_anchor", root=root, repo=repo)
-    _, primary_sha = _resolve_primary_commit(root=root, repo=repo)
-    primary_is_ancestor = _is_commit_ancestor(primary_sha, anchor_sha, root=root, repo=repo)
-    progress_rel = f"{Path(spec_rel).parent.as_posix()}/{ctx.PROGRESS_FILE}"
-
-    source_sha = None
-    if not primary_is_ancestor:
-        primary_status = _progress_status_at_ref(primary_sha, progress_rel, root=root, repo=repo)
-        if primary_status == "backlog" and _path_exists_in_tree(primary_sha, spec_rel, root=root, repo=repo):
-            source_sha = primary_sha
-
-    if source_sha is None:
-        # 校验 anchor 处 progress.md（若存在则不允许损坏）
-        _progress_status_at_ref(anchor_sha, progress_rel, root=root, repo=repo)
-        if _path_exists_in_tree(anchor_sha, spec_rel, root=root, repo=repo):
-            source_sha = anchor_sha
-        else:
-            primary_status = _progress_status_at_ref(primary_sha, progress_rel, root=root, repo=repo)
-            if primary_status == "backlog" and _path_exists_in_tree(primary_sha, spec_rel, root=root, repo=repo):
-                source_sha = primary_sha
-            else:
-                raise ctx.TaskNotFoundError(f"{anchor_sha}:{spec_rel} 不存在或无法读取")
-
+    if not spec_source_sha or not isinstance(spec_source_sha, str):
+        raise ctx.TaskDataError(f"spec_source_sha 缺失或为空（got {spec_source_sha!r}）")
+    source_sha = _resolve_commit_sha(spec_source_sha, label="spec_source_sha", root=root, repo=repo)
+    progress_path = f"{Path(spec_rel).parent.as_posix()}/{ctx.PROGRESS_FILE}"
+    if not _path_exists_in_tree(source_sha, progress_path, root=root, repo=repo):
+        raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{progress_path} 不存在或无法读取")
+    source_text = git_text_at_ref(source_sha, progress_path, root=root, repo=repo)
+    source_fm, _ = parse_front_matter_text(source_text, source=f"{source_sha}:{progress_path}")
+    if source_fm.get("status") != "backlog":
+        raise ctx.TaskDataError(
+            f"spec_source_sha {source_sha[:12]} 处 {tid} status={source_fm.get('status')!r} 非 backlog"
+        )
+    if not _path_exists_in_tree(source_sha, spec_rel, root=root, repo=repo):
+        raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{spec_rel} 不存在或无法读取")
     return git_text_at_ref(source_sha, spec_rel, root=root, repo=repo), source_sha
 
 def require_status(fm: dict, *allowed: str) -> None:

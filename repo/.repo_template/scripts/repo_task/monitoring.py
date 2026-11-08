@@ -28,7 +28,7 @@ from .documents import (
     parse_front_matter_text,
 )
 from .git_ops import _git, _git_bytes, has_unmerged_commits, worktree_paths
-from .store import _task_branch_names, git_text_at_ref, load_task_at_ref, load_task_backlog_baseline
+from .store import _task_branch_names, git_text_at_ref, load_task_at_ref
 
 
 def _ledger_tid_sort_key(tid: str):
@@ -324,6 +324,7 @@ _HANDOFF_TYPES = {
     "status": str,
     "branch": str,
     "base_sha": str,
+    "spec_source_sha": str,
     "tests": str,
     "blackbox": str,
     "review": str,
@@ -391,7 +392,7 @@ def staged_ledger_entries(root: Path) -> tuple[list[str], list[str]]:
 
 def build_handoff(
     *, tid: str, attempt: int, execution_id: str, branch: str, base_sha: str,
-    review_scope: str, note_body: str, root: Path,
+    spec_source_sha: str, review_scope: str, note_body: str, root: Path,
 ) -> dict:
     """由 execution context、ledger、暂存区与 progress.md 机器生成 handoff.json；不手写。"""
     summary = read_verification_summary(note_body)
@@ -403,6 +404,7 @@ def build_handoff(
         "status": "done",
         "branch": branch,
         "base_sha": base_sha,
+        "spec_source_sha": spec_source_sha,
         **summary,
         "review_scope": review_scope,
         "pending": pending,
@@ -510,14 +512,29 @@ def verify_integrate_ready(
     diff_anchor = fm.get("diff_anchor")
     if not isinstance(diff_anchor, str) or not diff_anchor:
         return "contract", "provenance", f"分支 {branch!r} task diff_anchor 缺失或非法"
-    base_level = "full"
+    spec_source_sha = fm.get("spec_source_sha")
+    if not isinstance(spec_source_sha, str) or not spec_source_sha:
+        return "contract", "provenance", f"分支 {branch!r} task spec_source_sha 缺失或非法"
+    if handoff.get("spec_source_sha") != spec_source_sha:
+        return "contract", "provenance", (
+            f"{handoff_path} spec_source_sha={handoff.get('spec_source_sha')!r} "
+            f"与 task spec_source_sha={spec_source_sha!r} 不一致"
+        )
+    source_result = _git(["rev-parse", f"{spec_source_sha}^{{commit}}"], repo=repo)
+    if source_result.returncode != 0:
+        return "contract", "provenance", f"{handoff_path} spec_source_sha 无法解析 commit"
+    source_sha = source_result.stdout.strip()
     try:
-        _, base_fm, _, _ = load_task_backlog_baseline(tid, base, repo=repo)
-        base_level = base_fm.get("review_level", "full")
-    except ctx.TaskDataError:
-        pass
+        _, source_fm, _ = load_task_at_ref(tid, source_sha, repo=repo)
+    except ctx.TaskDataError as error:
+        return "contract", "provenance", f"spec_source_sha {source_sha[:12]} 处 task 无法读取或损坏：{error}"
+    if source_fm.get("status") != "backlog":
+        return "contract", "provenance", (
+            f"spec_source_sha {source_sha[:12]} 处 task status={source_fm.get('status')!r} 非 backlog"
+        )
+    base_level = source_fm.get("review_level")
     if base_level not in ctx.REVIEW_LEVELS:
-        return "contract", "provenance", f"diff_anchor {base[:12]} 处 review_level 非法：{base_level!r}"
+        return "contract", "provenance", f"spec_source_sha {source_sha[:12]} 处 review_level 非法：{base_level!r}"
     tip_level = fm.get("review_level", "full")
     if tip_level not in ctx.REVIEW_LEVELS:
         return "contract", "provenance", f"分支 {branch!r} tip review_level 非法：{tip_level!r}"

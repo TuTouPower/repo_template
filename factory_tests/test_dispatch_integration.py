@@ -111,7 +111,7 @@ def _identity_args(identity):
     ]
 
 
-def _handoff(tid, branch, identity, base_sha, *, review_scope="", **overrides):
+def _handoff(tid, branch, identity, base_sha, *, review_scope="", spec_source_sha="", **overrides):
     payload = {
         "tid": tid,
         "attempt": identity["attempt"],
@@ -119,6 +119,7 @@ def _handoff(tid, branch, identity, base_sha, *, review_scope="", **overrides):
         "status": "done",
         "branch": branch,
         "base_sha": base_sha,
+        "spec_source_sha": spec_source_sha or base_sha,
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",
@@ -155,7 +156,9 @@ def _prepare_done(
     review_scope = monitoring.review_scope_fingerprint(
         base_sha, task_dir.relative_to(worktree).as_posix(), repo_root=worktree,
     )
-    payload = _handoff(tid, branch, identity, base_sha, review_scope=review_scope)
+    fm, _ = parse_front_matter(task_dir / "progress.md")
+    spec_source_sha = fm.get("spec_source_sha") or base_sha
+    payload = _handoff(tid, branch, identity, base_sha, review_scope=review_scope, spec_source_sha=spec_source_sha)
     payload.update(handoff_overrides or {})
     (task_dir / "handoff.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"

@@ -159,20 +159,23 @@ def _normalize_checkboxes(text: str) -> str:
 
 def contract_drift_notice(
     spec_rel: str, diff_anchor: str, current_contract: str, *, tid: str = "",
+    spec_source_sha: str = "",
 ) -> str:
-    """契约区相对基线有变更时返回追加给 reviewer 的警告块（A04）。
+    """契约区相对基线有变更时返回追加给 reviewer 的警告块（A04/C90）。
 
-    基线读取统一委托 repo_task.store.resolve_baseline_spec_text（与 start/monitoring 同源）。
+    基线读取统一委托 repo_task.store.resolve_baseline_spec_text（从 spec_source_sha 读取）。
     忽略仅 checkbox 勾选状态（[ ] -> [x]）的变化。
     基线读取或 Git 失败时直接 sys.exit 阻断渲染，不降级为无 drift；
     基线 spec 真实无「## 契约区」小节时返回明确业务提示块。
     """
+    if not spec_source_sha:
+        sys.exit(f"契约区 drift 基线读取失败（{spec_rel}）：缺 spec_source_sha")
     try:
         anchored_text, source_sha = resolve_baseline_spec_text(
-            tid, spec_rel, diff_anchor, root=REPO_ROOT, repo=RepoContext.for_root(REPO_ROOT),
+            tid, spec_rel, spec_source_sha, root=REPO_ROOT, repo=RepoContext.for_root(REPO_ROOT),
         )
     except (OSError, subprocess.SubprocessError, TaskDataError) as e:
-        sys.exit(f"契约区 drift 基线读取失败（{diff_anchor}:{spec_rel}）：{e}")
+        sys.exit(f"契约区 drift 基线读取失败（{spec_source_sha[:12]}:{spec_rel}）：{e}")
     anchored = extract_section(anchored_text, CONTRACT_HEADING)
     if not anchored:
         return (
@@ -186,14 +189,14 @@ def contract_drift_notice(
         difflib.unified_diff(
             anchored.splitlines(),
             current_contract.splitlines(),
-            fromfile=f"{diff_anchor} 契约区",
+            fromfile=f"{source_sha[:12]} 契约区",
             tofile="当前契约区",
             lineterm="",
         )
     )
     return (
         "## 契约区 drift 警告\n\n"
-        f"契约区自 diff_anchor（{diff_anchor}）以来有变更。"
+        f"契约区自规格基准（{source_sha[:12]}）以来有变更。"
         "请核对是否为经用户确认的需求变更；未经确认的 AC 变更按 blocking finding 处理。\n\n"
         f"```diff\n{diff}\n```"
     )
@@ -219,9 +222,9 @@ def render_review_prompts(
         validate_output_format_template(path.read_text(encoding="utf-8"), source=path)
 
     fm = parse_front_matter(task_path)
-    for key in ("tid", "slug", "diff_anchor"):
+    for key in ("tid", "slug", "diff_anchor", "spec_source_sha"):
         if not fm.get(key):
-            sys.exit(f"front matter requires tid, slug, diff_anchor (got {fm})")
+            sys.exit(f"front matter requires tid, slug, diff_anchor, spec_source_sha (got {fm})")
 
     if not re.match(r"^t[0-9]+$", fm["tid"]):
         sys.exit(f"tid must be lowercase task id like t001 (got {fm['tid']!r})")
@@ -288,7 +291,9 @@ def render_review_prompts(
             ),
         }
 
-    drift = contract_drift_notice(spec_rel, diff_anchor, contract, tid=fm["tid"])
+    drift = contract_drift_notice(
+        spec_rel, diff_anchor, contract, tid=fm["tid"], spec_source_sha=fm["spec_source_sha"]
+    )
     if drift:
         prompts = {
             name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()

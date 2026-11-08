@@ -68,6 +68,7 @@ def cmd_add(args):
             "worktree": "",
             "review_level": args.review_level,
             "diff_anchor": "",
+            "spec_source_sha": "",
             "depends_on": "",
             "conflicts_with": "",
             "note": args.note or "",
@@ -388,6 +389,8 @@ def cmd_preflight(args):
     # 3. review 必要字段
     if fm["status"] == "active" and not fm.get("diff_anchor"):
         problems.append("diff_anchor 为空；review 无法渲染，请 rewind 后重走 start")
+    if fm["status"] == "active" and not fm.get("spec_source_sha"):
+        problems.append("spec_source_sha 为空；初始规格来源丢失，请 rewind 后重走 start")
     if fm.get("review_level") not in ctx.REVIEW_LEVELS:
         problems.append(f"review_level={fm.get('review_level')!r} 非法，须为 {ctx.REVIEW_LEVELS}")
 
@@ -798,6 +801,8 @@ def _finish_prechecks(args) -> dict:
             f"finish=FAIL：HEAD {head[:12]} 不是 diff_anchor {str(fm.get('diff_anchor'))[:12]}；"
             "finish 之前不得创建中间 commit，实现 commit 由 finish 提交。零写入退出"
         )
+    if not fm.get("spec_source_sha"):
+        sys.exit("finish=FAIL：spec_source_sha 缺失或为空；零写入退出")
 
     # 5. review 门禁
     scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"], repo=repo)
@@ -839,7 +844,8 @@ def _finish_prechecks(args) -> dict:
     try:
         handoff = build_handoff(
             tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],
-            base_sha=head, review_scope=scope, note_body=body, root=repo.root,
+            base_sha=head, spec_source_sha=fm["spec_source_sha"],
+            review_scope=scope, note_body=body, root=repo.root,
         )
     except ctx.TaskDataError as error:
         sys.exit(f"finish=FAIL：{error}；零写入退出")
@@ -1067,6 +1073,7 @@ def cmd_rewind(args):
         fm["branch"] = ""
         fm["worktree"] = ""
         fm["diff_anchor"] = ""
+        fm["spec_source_sha"] = ""
     else:
         require_own_task_worktree(fm, repo=repo)
 

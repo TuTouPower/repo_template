@@ -123,8 +123,11 @@ def tracked_anywhere(rel_path: str, *, repo: "ctx.RepoContext") -> bool:
     r = _git(["rev-list", "--all", "--max-count=1", "--", rel_path], repo=repo)
     return r.returncode == 0 and bool(r.stdout.strip())
 
-def _porcelain_paths(stdout: str) -> list[str]:
-    """解析 `git status --porcelain -z` 输出的路径列表。"""
+def _porcelain_paths(stdout: str, *, include_rename_sources: bool = True) -> list[str]:
+    """解析 `git status --porcelain -z` 输出的路径列表。
+
+    当 include_rename_sources=True 时，包含重命名/复制的来源路径与目标路径两端（Issue #90）。
+    """
     out, fields, i = [], stdout.split("\0"), 0
     while i < len(fields):
         entry = fields[i]
@@ -133,25 +136,34 @@ def _porcelain_paths(stdout: str) -> list[str]:
             continue
         code, path = entry[:2], entry[3:]
         if code[0] in ("R", "C"):  # 重命名/复制：下一字段是来源路径
+            source_path = fields[i]
             i += 1
+            if include_rename_sources and source_path:
+                out.append(source_path)
         out.append(path)
     return out
 
 def porcelain_entries(
-    root: Path | None = None, *, repo: "ctx.RepoContext",
+    root: Path | None = None,
+    *,
+    include_rename_sources: bool = True,
+    repo: "ctx.RepoContext",
 ) -> list[str]:
     """`git status --porcelain -z` 的路径列表，避免引号与转义带来的解析错误。
 
     git 失败时抛 TaskDataError（fail-closed）：调用方把空集合理解为「干净」，
     若静默降级会在 merge/rewind 时带着未提交改动继续。
     """
-    r = _git(["status", "--porcelain", "-z"], root=root, repo=repo)
+    r = _git(["status", "--porcelain", "-z", "-uall"], root=root, repo=repo)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"git status --porcelain 失败：{r.stderr.strip()}")
-    return _porcelain_paths(r.stdout)
+    return _porcelain_paths(r.stdout, include_rename_sources=include_rename_sources)
 
 def tracked_dirty_entries(
-    root: Path | None = None, *, repo: "ctx.RepoContext",
+    root: Path | None = None,
+    *,
+    include_rename_sources: bool = True,
+    repo: "ctx.RepoContext",
 ) -> list[str]:
     """只含已跟踪文件的未提交改动；未跟踪文件不影响 merge 结果，不计入。"""
     r = _git(["status", "--porcelain", "-z", "--untracked-files=no"], root=root, repo=repo)
@@ -159,7 +171,7 @@ def tracked_dirty_entries(
         raise ctx.TaskDataError(
             f"git status --porcelain (tracked) 失败：{r.stderr.strip()}"
         )
-    return _porcelain_paths(r.stdout)
+    return _porcelain_paths(r.stdout, include_rename_sources=include_rename_sources)
 
 def worktree_paths(*, repo: "ctx.RepoContext") -> dict[str, str]:
     """`git worktree list --porcelain` → {绝对路径: 分支名}。
