@@ -95,7 +95,7 @@ def classify_node(
     status = task["status"]
     if status == "active":
         return "active"
-    if status in ctx.ARCHIVED_STATUSES:
+    if status in ctx.TERMINAL_STATUSES:
         return "done" if status == "done" else "dropped"
     if tid in schedule["selected"]:
         return "runnable"

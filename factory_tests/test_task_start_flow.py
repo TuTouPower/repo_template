@@ -1178,38 +1178,27 @@ def test_drop_from_main_rejects_stale_backlog_with_unmerged_done_branch(git_repo
 
 
 def test_drop_allows_genuine_fresh_backlog(git_repo):
-    """未 start 的真 backlog 仍可正常 drop；目录归档是唯一权威变化，不生成派生索引。"""
+    """未 start 的真 backlog 仍可正常 drop；原位写 dropped，不生成派生索引。"""
     result = _task_cli(git_repo, "drop", "t001", "--reason", "不需要了")
 
     assert result.returncode == 0, result.stderr
     fm, _ = parse_front_matter(
-        git_repo / "docs/archive/tasks/t001_alpha/progress.md"
+        git_repo / "docs/tasks/t001_alpha/progress.md"
     )
     assert fm["status"] == "dropped"
+    assert "不需要了" in fm["note"]
     assert not (git_repo / "docs/tasks_index.json").exists()
-    assert not (git_repo / "docs/archive/tasks_index.json").exists()
 
 
 def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypatch):
-    """归档移动本身失败：front matter 回滚为 backlog，目录留在 docs/tasks。"""
-    from repo_task import lifecycle as lifecycle_mod
-    monkeypatch.setattr(
-        lifecycle_mod.shutil, "move",
-        lambda src, dst: (_ for _ in ()).throw(OSError("permission denied")),
-    )
-    with pytest.raises(SystemExit) as excinfo:
-        lifecycle_mod.cmd_drop(argparse.Namespace(
-            tid="t001", reason="不需要了", repo=ctx.RepoContext.for_root(git_repo),
-        ))
-
-    message = str(excinfo.value)
-    assert "归档移动失败" in message
-    assert "permission denied" in message
-    assert "回滚" in message
+    """drop 原位写 status: dropped，目录保留在 docs/tasks/{tid}_{slug}。"""
+    result = _task_cli(git_repo, "drop", "t001", "--reason", "测试原位 drop")
+    assert result.returncode == 0, result.stderr
     fm, _ = parse_front_matter(
         git_repo / "docs/tasks/t001_alpha/progress.md"
     )
-    assert fm["status"] == "backlog"
+    assert fm["status"] == "dropped"
+    assert (git_repo / "docs/tasks/t001_alpha").is_dir()
     assert not (git_repo / "docs/archive/tasks/t001_alpha").exists()
 
 
@@ -1399,18 +1388,18 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
 def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_repo):
     """验证 scan_tasks_at_ref 在同一 ref 中出现同名 active/archive 时显式报错（Issue #47）。"""
     _git(git_repo, "checkout", "-b", "branch_with_dup")
-    active_t001 = git_repo / "docs/tasks/t001_dup"
-    archive_t001 = git_repo / "docs/archive/tasks/t001_dup"
-    active_t001.mkdir(parents=True, exist_ok=True)
-    archive_t001.mkdir(parents=True, exist_ok=True)
+    t001_a = git_repo / "docs/tasks/t001_dup"
+    t001_b = git_repo / "docs/tasks/t001_other"
+    t001_a.mkdir(parents=True, exist_ok=True)
+    t001_b.mkdir(parents=True, exist_ok=True)
     write_front_matter(
-        active_t001 / "progress.md",
+        t001_a / "progress.md",
         {"tid": "t001", "slug": "dup", "status": "backlog"},
         "active t001\n",
     )
     write_front_matter(
-        archive_t001 / "progress.md",
-        {"tid": "t001", "slug": "dup", "status": "done"},
+        t001_b / "progress.md",
+        {"tid": "t001", "slug": "other", "status": "done"},
         "archive t001\n",
     )
     _git(git_repo, "add", "-A")
@@ -1579,7 +1568,7 @@ def test_rewind_write_failure_appends_failed_audit_marker(git_repo, monkeypatch)
     import argparse
 
     _start(git_repo, "t001")
-    audit_file = git_repo / "docs/archive/tasks_audit.log"
+    audit_file = git_repo / "docs/runtime/tasks_audit.log"
 
     def fail_write(*args, **kwargs):
         raise OSError("injected disk failure")
@@ -1695,7 +1684,7 @@ def test_edit_skips_reverse_edge_for_done_target_in_main(git_repo):
     t002_fm, _ = parse_front_matter(git_repo / "docs/tasks/t002_beta/progress.md")
     assert t002_fm["conflicts_with"] == "t001"
     t001_fm, _ = parse_front_matter(
-        git_repo / "docs/archive/tasks/t001_alpha/progress.md"
+        git_repo / "docs/tasks/t001_alpha/progress.md"
     )
     assert t001_fm.get("conflicts_with", "") == ""
 
@@ -1939,8 +1928,8 @@ def test_view_rejects_dangling_and_dropped_references(git_repo):
 
 
 def test_drop_ignores_archived_task_historical_edges(git_repo):
-    """归档 done task 的历史调度边不应锁死活跃 task 的 drop。"""
-    archived = git_repo / "docs/archive/tasks/t099_archived"
+    """已完成 done task 的历史调度边不应锁死活跃 task 的 drop。"""
+    archived = git_repo / "docs/tasks/t099_archived"
     archived.mkdir(parents=True)
     template_task = git_repo / ".repo_template/docs/task_template/progress.md"
     _, body = parse_front_matter(template_task)
@@ -1965,7 +1954,9 @@ def test_drop_ignores_archived_task_historical_edges(git_repo):
     result = _task_cli(git_repo, "drop", "t003", "--reason", "obsolete")
 
     assert result.returncode == 0, result.stderr
-    assert not (git_repo / "docs/tasks/t003_gamma").exists()
+    assert (git_repo / "docs/tasks/t003_gamma").is_dir()
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t003_gamma/progress.md")
+    assert fm["status"] == "dropped"
 
 
 def test_edit_title_not_blocked_by_stale_dependency_edges(git_repo):
@@ -2172,18 +2163,20 @@ def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_re
 def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
     from repo_task.graph import cmd_merge_backlog
     from repo_task.ledger import ledger_read
+    from repo_task import lifecycle
     repo_ctx = ctx.RepoContext.for_root(git_repo)
     ledger_read(repo=repo_ctx)  # Include the observational control lock in the initial baseline.
     before = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
-    original_move = lifecycle.shutil.move
 
-    def fail_second_source(source, destination):
-        if 't002_beta' in str(source):
-            raise OSError('simulated second source archive failure')
-        return original_move(source, destination)
+    original_close = lifecycle._close_task
 
-    monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": fail_second_source}))
-    with pytest.raises(ctx.TaskDataError, match='已恢复图与来源目录'):
+    def fail_close(args, status, note, **kwargs):
+        if args.tid == 't002':
+            raise OSError('simulated second source drop failure')
+        return original_close(args, status, note, **kwargs)
+
+    monkeypatch.setattr("repo_task.lifecycle._close_task", fail_close)
+    with pytest.raises(ctx.TaskDataError, match='已恢复图与来源元数据'):
         cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002', repo=repo_ctx))
     after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
     assert after == before

@@ -103,8 +103,7 @@ def check_finalization(root, tid, task_dir):
     entries = parse_specs_index(root)
     included = any(tid in tokens for tokens in entries.values())
     if included:
-        matches = [path for parent in ("docs/tasks", "docs/archive/tasks")
-                   for path in (root / parent).glob(f"{tid}_*/{ctx.PROGRESS_FILE}")]
+        matches = [path for path in (root / "docs" / "tasks").glob(f"{tid}_*/{ctx.PROGRESS_FILE}")]
         if len(matches) != 1 or matches[0].parent.resolve() != task_dir.resolve():
             raise ValueError(f"当前 specs_index task 引用缺失或重复：{tid}")
     note_text = (task_dir / ctx.PROGRESS_FILE).read_text(encoding="utf-8")

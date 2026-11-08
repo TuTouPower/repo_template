@@ -115,8 +115,8 @@ def cmd_edit(args):
     tasks = scan_tasks(repo=repo)
     tasks_by_tid = {task["tid"]: task for task in tasks}
     task, path, fm, body = load_task(args.tid, repo=repo)
-    if fm["status"] in ctx.ARCHIVED_STATUSES:
-        sys.exit(f"{args.tid} 已归档（{fm['status']}），不可编辑")
+    if fm["status"] in ctx.TERMINAL_STATUSES:
+        sys.exit(f"{args.tid} 已是终态（{fm['status']}），不可编辑")
     if fm["status"] != "backlog":
         sys.exit(
             f"{args.tid} status={fm['status']}；edit 只改 main 中未进入链的 backlog，"
@@ -189,7 +189,7 @@ def cmd_edit(args):
                 field=f"{candidate['tid']}.depends_on",
             )
             for candidate in tasks
-            if candidate["status"] not in ctx.ARCHIVED_STATUSES
+            if candidate["status"] not in ctx.TERMINAL_STATUSES
         }
         candidate_dependencies[args.tid] = list(dependencies)
         cycle = _dependency_cycle(candidate_dependencies)
@@ -343,8 +343,8 @@ def cmd_preflight(args):
     if creation and (fm["status"] != "backlog" or args.require_verified):
         sys.exit("--creation 仅用于 backlog，且不能与 --require-verified 同用")
     allow_backlog = args.allow_backlog or creation
-    if fm["status"] in ctx.ARCHIVED_STATUSES:
-        problems.append(f"status={fm['status']}，已归档不可执行")
+    if fm["status"] in ctx.TERMINAL_STATUSES:
+        problems.append(f"status={fm['status']}，已是终态不可执行")
     elif fm["status"] == "backlog" and not allow_backlog:
         msg = "status=backlog，须先 start"
         if source_ref:
@@ -547,31 +547,18 @@ def _check_done_ready(tid: str, task_dir: Path, *, repo) -> None:
         sys.exit(f"finish=FAIL：{error}")
 
 
-def _require_archive_target_free(fm: dict, *, repo) -> Path:
-    dst = repo.archive_tasks_dir / f"{fm['tid']}_{fm['slug']}"
-    if dst.exists():
-        sys.exit(f"归档目录已存在：{repo.rel(dst)}（数据冲突，请提示用户）")
-    return dst
-
-
 def _close_task(args, status: str, note: str | None, *, prechecked: bool = False, repo) -> None:
-    """done / dropped 收尾：先做 git 侧动作，再单次写盘；dropped 最后归档目录。
+    """done / dropped 收尾：原位写 front matter，所有 task 终生存储于 docs/tasks/。
 
-    done 只在原位写 `status: done`，目录留在 `docs/tasks/`，由 integrate 的 merge commit
-    移入归档。dropped 仍由本函数把目录移入 `docs/archive/tasks/`。
-    单次写盘是为了避免「front matter 已写 dropped、目录未归档」的中间态——
-    那种状态下 drop/rewind 两条出口全被状态校验挡死，只能手改 front matter。
-    归档移动失败时回滚 front matter，同理避免上述死锁。
     prechecked=True 表示调用方（finish）已完成 done 的写前检查。
     """
     task, path, fm, body = load_task(args.tid, repo=repo)
-    archive = status != "done"
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm, repo=repo)
         if not prechecked:
             _check_done_ready(args.tid, path.parent, repo=repo)
-    elif fm["status"] in ctx.ARCHIVED_STATUSES:
+    elif fm["status"] in ctx.TERMINAL_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
         require_own_task_worktree(fm, repo=repo)
@@ -585,9 +572,6 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
                     "主干副本已滞后。请到对应 worktree 执行 drop，或先合并该 task 分支"
                 )
 
-    src = repo.root / task["dir"]
-    dst = _require_archive_target_free(fm, repo=repo) if archive else None
-
     in_own_worktree = in_own_task_worktree(fm, repo=repo)
     if in_own_worktree:
         removed, wt_msg = False, (
@@ -598,7 +582,6 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
             repo.effective_worktree(fm), expected_branch=fm.get("branch"), repo=repo
         )
 
-    orig_fm = dict(fm)
     fm = dict(fm)
     fm["status"] = status
     if note:
@@ -608,29 +591,7 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     else:
         append_note(fm, f"worktree 未移除：{repo.effective_worktree(fm)}")
     write_front_matter(path, fm, body)
-    if not archive:
-        print(f"{args.tid} status={status}; 目录留在 {task['dir']}（integrate 时归档）; {wt_msg}")
-        return
-
-    repo.archive_tasks_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.move(str(src), str(dst))
-    except (OSError, shutil.Error) as e:
-        # 移动失败：front matter 已写成目标状态但目录仍在原处。完整回滚原始 front matter（Issue #51）
-        rollback_note = ""
-        if src.exists():
-            try:
-                write_front_matter(path, orig_fm, body)
-                rollback_note = "；front matter 已回滚"
-            except (OSError, ctx.TaskDataError) as rb:
-                rollback_note = f"；front matter 回滚失败（{rb}），仍是 status={status}"
-        else:
-            rollback_note = "；源目录不存在，无法回滚 front matter"
-        sys.exit(
-            f"归档移动失败（{e}）{rollback_note}；"
-            f"目录在 {repo.rel(src) if src.exists() else repo.rel(dst)}。排除原因后重试"
-        )
-    print(f"{args.tid} status={status}; 目录已归档 -> {repo.rel(dst)}; {wt_msg}")
+    print(f"{args.tid} status={status}; 目录留在 {task['dir']}; {wt_msg}")
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
 
@@ -779,14 +740,22 @@ def _finish_prechecks(args) -> dict:
             sys.exit("finish=FAIL：严格 preflight 未通过（见上）；零写入退出")
         raise
 
-    # 2. AC 全部打勾 + finalization 闭环；done 归档目标只读占用检查
+    # 2. AC 全部打勾 + finalization 闭环
     _check_done_ready(tid, task_dir, repo=repo)
-    _require_archive_target_free(fm, repo=repo)
 
-    # 3. Markdown 零写入格式检查（含已暂存 .md 与当前 task 目录）
+    # 3. 核心资产所有权校验：diff_anchor 与本次完整交付候选；owner 只能是当前 tid 对应目录
+    from .monitoring import git_tree_entries, git_worktree_entries, validate_task_core_asset_changes
+    before_entries = git_tree_entries(fm["diff_anchor"], repo=repo)
+    after_entries = git_worktree_entries(repo.root, repo=repo)
+    try:
+        validate_task_core_asset_changes(before_entries, after_entries, {task_dir.name})
+    except ctx.TaskDataError as error:
+        sys.exit(f"finish=FAIL：{error}；零写入退出")
+
+    # 4. Markdown 零写入格式检查（含已暂存 .md 与当前 task 目录）
     _check_markdown_format(task_dir, repo=repo)
 
-    # 4. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
+    # 5. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
     loose = _unstaged_outside((task["dir"],), repo=repo)
     if loose:
         from .worktrees import find_unignored_env_symlinks
@@ -820,7 +789,7 @@ def _finish_prechecks(args) -> dict:
     if not fm.get("spec_source_sha"):
         sys.exit("finish=FAIL：spec_source_sha 缺失或为空；零写入退出")
 
-    # 5. review 门禁
+    # 6. review 门禁
     scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"], repo=repo)
     try:
         review = evaluate_review(task_dir, fm, scope or None)
@@ -843,7 +812,7 @@ def _finish_prechecks(args) -> dict:
         )
     _check_privacy_leaks(task_dir, repo=repo)
 
-    # 6. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
+    # 7. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
         attempt, execution_id = resolve_identity(tid, repo=repo)
         ledger = primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl"
@@ -856,7 +825,7 @@ def _finish_prechecks(args) -> dict:
             f"owner_id={record.get('owner_id')!r}，与 --owner-id 不符；零写入退出"
         )
 
-    # 7. 机器生成 handoff.json 内容（progress.md 验证摘要为空或仍是占位时拒绝）
+    # 8. 机器生成 handoff.json 内容（progress.md 验证摘要为空或仍是占位时拒绝）
     try:
         handoff = build_handoff(
             tid=tid, attempt=attempt, execution_id=execution_id, branch=fm["branch"],

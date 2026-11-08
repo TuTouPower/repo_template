@@ -67,19 +67,17 @@ def test_render_html_uses_existing_template():
 @pytest.fixture()
 def repo_layout(tmp_path, monkeypatch):
     tasks_dir = tmp_path / "docs" / "tasks"
-    archive_dir = tmp_path / "docs" / "archive" / "tasks"
     tasks_dir.mkdir(parents=True)
-    archive_dir.mkdir(parents=True)
     (tasks_dir / "t001_spec_doc").mkdir()
     (tasks_dir / "t001_spec_doc" / "task.md").write_text("# task 正文\n", encoding="utf-8")
     (tasks_dir / "t001_spec_doc" / "progress.md").write_text("# note 正文\n", encoding="utf-8")
-    (archive_dir / "t002_archived").mkdir()
-    (archive_dir / "t002_archived" / "task.md").write_text("# 归档 task\n", encoding="utf-8")
-    return tasks_dir, archive_dir
+    (tasks_dir / "t002_done").mkdir()
+    (tasks_dir / "t002_done" / "task.md").write_text("# 终态 task\n", encoding="utf-8")
+    return (tasks_dir, tasks_dir)
 
 
 def test_resolve_task_doc_ok(repo_layout):
-    tasks_dir, _archive_dir = repo_layout
+    tasks_dir = repo_layout[0]
     repo = RepoContext.for_root(tasks_dir.parent.parent)
     tasks = {"t001": {"dir": "docs/tasks/t001_spec_doc"}}
     path = view_server._resolve_task_doc(tasks, "t001", "task", repo=repo)
@@ -87,11 +85,12 @@ def test_resolve_task_doc_ok(repo_layout):
     assert view_server._resolve_task_doc(tasks, "t001", "progress", repo=repo).name == "progress.md"
 
 
-def test_resolve_task_doc_archived_ok(repo_layout):
-    repo = RepoContext.for_root(repo_layout[0].parent.parent)
-    tasks = {"t002": {"dir": "docs/archive/tasks/t002_archived"}}
+def test_resolve_task_doc_done_ok(repo_layout):
+    tasks_dir = repo_layout[0]
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
+    tasks = {"t002": {"dir": "docs/tasks/t002_done"}}
     path = view_server._resolve_task_doc(tasks, "t002", "task", repo=repo)
-    assert path.read_text(encoding="utf-8") == "# 归档 task\n"
+    assert path.read_text(encoding="utf-8") == "# 终态 task\n"
 
 
 def test_resolve_task_doc_rejects_unknown_tid(repo_layout):
@@ -149,7 +148,7 @@ def _git(repo: Path, *args: str) -> None:
 
 
 def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
-    """branch 来源（done 未合并）：用 git show 读分支归档文档，不落主仓 404。"""
+    """branch 来源（done 未合并）：用 git show 读分支文档，不落主仓 404。"""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
@@ -159,17 +158,17 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     _git(repo, "checkout", "-b", "t001_x")
-    (repo / "docs/archive/tasks/t001_x").mkdir(parents=True)
-    (repo / "docs/archive/tasks/t001_x/progress.md").write_text("# 分支归档 note\n", encoding="utf-8")
+    (repo / "docs/tasks/t001_x").mkdir(parents=True)
+    (repo / "docs/tasks/t001_x/progress.md").write_text("# 分支 note\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "task")
     _git(repo, "checkout", "main")
 
     repo_ctx = RepoContext.for_root(repo)
-    schedule = {"tasks": {"t001": {"dir": "docs/archive/tasks/t001_x"}}}
+    schedule = {"tasks": {"t001": {"dir": "docs/tasks/t001_x"}}}
     sources = {"t001": {"source": "branch", "read_at": "t001_x"}}
     body = view_server._read_task_doc(schedule, sources, "t001", "progress", repo=repo_ctx)
-    assert body.decode("utf-8") == "# 分支归档 note\n"
+    assert body.decode("utf-8") == "# 分支 note\n"
     with pytest.raises(ctx.TaskDataError):
         view_server._read_task_doc(schedule, sources, "t001", "task", repo=repo_ctx)
 

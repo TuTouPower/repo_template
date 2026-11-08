@@ -51,7 +51,7 @@ def compute_schedule(tasks: dict | None = None, *, repo) -> dict:
     dependencies: dict[str, list[str]] = {}
     conflicts: dict[str, set[str]] = {tid: set() for tid in tasks}
     for tid, task in tasks.items():
-        if task["status"] in ctx.ARCHIVED_STATUSES:
+        if task["status"] in ctx.TERMINAL_STATUSES:
             continue
         task_dependencies = parse_tid_list(
             task.get("depends_on", ""), field=f"{tid}.depends_on"

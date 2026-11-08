@@ -279,7 +279,7 @@ def resolve_start_base(
             f"--base 分支名 {base_branch!r} 与 {previous_tid} slug 不符"
             f"（应为 {expected_branch!r}）；拒绝伪装成 task 分支的普通分支"
         )
-    if previous_fm.get("status") not in ctx.ARCHIVED_STATUSES:
+    if previous_fm.get("status") not in ctx.TERMINAL_STATUSES:
         # 分支 tip 状态由 finish 提交的实现 commit 决定。有效状态显示已完成
         # 而分支 tip 仍是 backlog 时，真实原因是完成状态尚未提交，不是没完成。
         hint = ""
@@ -287,7 +287,7 @@ def resolve_start_base(
             effective = discover_effective_sources(repo=repo).get(previous_tid)
         except ctx.TaskDataError:
             effective = None
-        if effective and effective["status"] in ctx.ARCHIVED_STATUSES:
+        if effective and effective["status"] in ctx.TERMINAL_STATUSES:
             hint = (
                 f"（{previous_tid} 有效状态为 {effective['status']}（来源 {effective['source']}），"
                 "完成状态尚未提交到分支；先在该 task worktree 提交 task commit 再重试）"

@@ -30,14 +30,13 @@ metadata:
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
-→ 成员 task 目录 git mv 到 docs/archive/tasks/
-→ 重建并暂存派生 index
+→ 成员 task 目录保持在 docs/tasks/ 原位
 → 停在未提交 merge 状态
 ```
 
 此时运行 `docs/blueprint/testing.md` 声明的合并后验证：
 
-- 通过：以同一命令加 `--continue`；脚本重算 Git 自动合并 tree，拒绝非冲突文件在 merge 期间发生的额外内容变化（成员目录的归档移动与派生 index 除外），然后创建 merge commit、写 integrated 事件并删除已完全合入的分支；
+- 通过：以同一命令加 `--continue`；脚本重算 Git 自动合并 tree，校验核心资产所有权与内容一致性，拒绝非冲突文件在 merge 期间发生的额外内容变化，然后创建 merge commit、写 integrated 事件并删除已完全合入的分支；
 - 失败：`git merge --abort`，保留 task 分支继续修复；
 - 冲突：只在 Git 原始冲突路径中按双方语义解决并 `git add`，无法判断时停止请用户裁决；不要在主仓顺手修改非冲突文件。解决后先验证，再 `--continue`。
 
@@ -46,7 +45,7 @@ git merge --no-ff --no-commit <branch-or-tail>
 ## 常见冲突
 
 - blueprint：合成一致语义，不机械拼接。
-- task 目录内文件冲突：只解决冲突路径并保留在 `docs/tasks/{tid}_{slug}/` 原位，归档移动由脚本完成，不手动 `git mv`。
+- task 目录内文件冲突：只解决冲突路径并保留在 `docs/tasks/{tid}_{slug}/` 原位，不移动目录。
 - 派生 index：由脚本重建。
 - 源码和测试：理解双方意图；不确定则停止。
 - pending/finding 同号冲突：说明 ID 锁被绕过，停止。

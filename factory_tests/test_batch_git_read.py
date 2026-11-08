@@ -220,7 +220,7 @@ def repo_with_tasks(sample_repo):
     repo_context = ctx.RepoContext.for_root(sample_repo)
     (sample_repo / "docs" / "tasks" / "t001_first").mkdir(parents=True)
     (sample_repo / "docs" / "tasks" / "t002_second").mkdir(parents=True)
-    (sample_repo / "docs" / "archive" / "tasks" / "t003_old").mkdir(parents=True)
+    (sample_repo / "docs" / "tasks" / "t003_old").mkdir(parents=True)
     (sample_repo / "docs" / "task_template").mkdir(parents=True)
 
     # 写入 template progress.md
@@ -242,7 +242,7 @@ def repo_with_tasks(sample_repo):
     )
 
     # 写入 t003
-    (sample_repo / "docs" / "archive" / "tasks" / "t003_old" / "progress.md").write_text(
+    (sample_repo / "docs" / "tasks" / "t003_old" / "progress.md").write_text(
         "---\ntid: t003\nslug: old\nstatus: done\n---\n# t003 archive body\n", encoding="utf-8"
     )
 

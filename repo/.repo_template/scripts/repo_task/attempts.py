@@ -278,7 +278,7 @@ def reserve_attempt(
         if task is None:
             raise ctx.TaskDataError(f"{tid} 不存在于 task 目录；拒绝 reserve 孤立 attempt")
         status = task.get("status", "")
-        if status in ctx.ARCHIVED_STATUSES:
+        if status in ctx.TERMINAL_STATUSES:
             raise ctx.TaskDataError(
                 f"{tid} 已是终态（{status}）；拒绝 reserve 新 attempt。"
                 "review 失效的修复见 recovery（amend 补审进同一实现 commit）；"

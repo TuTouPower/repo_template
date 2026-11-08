@@ -70,15 +70,17 @@ def _agents_row(prefix):
     return next(line for line in agents.splitlines() if line.startswith(prefix))
 
 
-def test_archive_moves_at_integrate_and_agents_has_no_archive_exception():
-    """D1：done 由 integrate 在 merge commit 中归档；archive 行不再有 amend 例外。"""
+def test_task_dirs_stay_in_tasks_and_agents_has_no_archive_exception():
+    """D1：task 终生固定在 docs/tasks/ 原位；archive 行不再有 task 归档表述。"""
     assert "唯一窄例外" not in _agents_row("|`docs/archive/`|")
     tasks_row = _agents_row("|`docs/tasks/{tid}_{slug}/`|")
-    assert "integrate" in tasks_row and "merge commit" in tasks_row
+    assert "原位表达" in tasks_row and "不迁入 archive" in tasks_row
+    assert "docs/archive/tasks" not in tasks_row
     assert "`finish`/`drop` 由脚本移入" not in tasks_row
     agents = _text(PRODUCT / "AGENTS.md")
     assert "## 目录与读写规则" in agents and "## 开发原则" in agents
-    assert "每个 task 恰好一个实现 commit" in agents and "同一个 merge commit" in agents
+    assert "每个 task 恰好一个实现 commit" in agents
+    assert "归档移动在集成时进入同一个 merge commit" not in agents
 
 
 def test_evidence_commit_removed_and_amend_only_in_recovery_repair_section():

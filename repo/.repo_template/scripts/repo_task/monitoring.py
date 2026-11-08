@@ -9,6 +9,7 @@ import re
 import stat
 import tempfile
 from pathlib import Path
+from typing import Iterable, Mapping
 
 import repo_task.context as ctx
 
@@ -58,6 +59,148 @@ REVIEW_PROCESS_FILES = (
     "review_general.md",
     "handoff.json",
 ) + tuple(name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names)
+
+
+TASK_CORE_ASSET_NAMES = {ctx.PROGRESS_FILE, "task.md", "handoff.json"}
+
+
+def validate_task_core_asset_changes(
+    before_entries: Mapping[str, tuple[str, str]],
+    after_entries: Mapping[str, tuple[str, str]],
+    owner_names: Iterable[str],
+) -> None:
+    """共享核心资产所有权校验（lifecycle 与 integration 共用）。
+
+    输入：完整的路径与条目字典/映射 path -> (mode, oid)（未被 review 规则过滤）；
+    owner_names 为当前授权修改的 task 规范目录名集合（如 {"t001_foo"}）。
+    核心资产定义：任何 task 目录（docs/tasks/{tid}_{slug}/）下的 progress.md、
+    task.md、handoff.json、review_*.md（含子目录下同名文件）。
+    算法：遍历 before 与 after 并集，若任何路径属于非 owner 的 task 且命中核心资产，
+    若存在新增、删除、内容变化（OID 变化）或模式变化，立即抛出 TaskDataError 阻断。
+    允许修改非核心补充文件（普通文件需已审查），但绝不允许篡改非 owner 核心资产。
+    非 owner task 目录下的任何文件引入非法模式（symlink 120000 / gitlink 160000）同样阻断。
+    """
+    owners = set(owner_names)
+    all_paths = set(before_entries.keys()) | set(after_entries.keys())
+
+    for path in sorted(all_paths):
+        parts = path.split("/")
+        if len(parts) < 3 or parts[0] != "docs" or parts[1] != "tasks":
+            continue
+        task_dir_name = parts[2]
+        if task_dir_name == "task_template":
+            continue
+        match = ctx.TASK_BRANCH_RE.fullmatch(task_dir_name)
+        if not match:
+            continue
+        target_tid = match.group(1)
+
+        if task_dir_name in owners:
+            continue
+
+        b_entry = before_entries.get(path)
+        a_entry = after_entries.get(path)
+
+        # 任何非 owner 目录下的文件，不允许引入非 100644/100755 的非法模式
+        if a_entry is not None and a_entry[0] not in ("100644", "100755"):
+            raise ctx.TaskDataError(
+                f"非 owner task 目录含不支持的文件模式：执行者 {sorted(owners)} 引入非法模式 mode={a_entry[0]} 于 {path}"
+            )
+
+        filename = parts[-1]
+        is_core = (
+            filename in TASK_CORE_ASSET_NAMES
+            or (filename.startswith("review_") and filename.endswith(".md"))
+        )
+        if not is_core:
+            continue
+
+        if b_entry != a_entry:
+            if b_entry is None:
+                change_type = "added"
+            elif a_entry is None:
+                change_type = "deleted"
+            elif b_entry[0] != a_entry[0] and b_entry[1] != a_entry[1]:
+                change_type = "content_and_mode_changed"
+            elif b_entry[0] != a_entry[0]:
+                change_type = "mode_changed"
+            else:
+                change_type = "modified"
+            raise ctx.TaskDataError(
+                f"禁止修改其他 task 核心资产：执行者 {sorted(owners)} 试图修改 task {target_tid} 的核心资产 {path}（变更类型：{change_type}）"
+            )
+
+
+def git_tree_entries(
+    ref_or_tree: str, *, root: Path | None = None, repo: "ctx.RepoContext | None" = None,
+) -> dict[str, tuple[str, str]]:
+    """读取指定 commit / tree 的完整 entries：path -> (mode, oid)。"""
+    r = _git(["ls-tree", "-r", "-z", "--end-of-options", ref_or_tree], root=root, repo=repo)
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 tree {ref_or_tree!r}：{r.stderr.strip()}")
+    entries: dict[str, tuple[str, str]] = {}
+    for item in r.stdout.split("\0"):
+        if not item:
+            continue
+        meta, path = item.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3:
+            entries[path] = (parts[0], parts[2])
+    return entries
+
+
+def git_worktree_entries(
+    root: Path, *, repo: "ctx.RepoContext | None" = None,
+) -> dict[str, tuple[str, str]]:
+    """读取 worktree 当前真实物理/暂存文件的完整 entries：path -> (mode, oid)。
+    未经过 review scope 过滤，反映交付候选真实内容。
+    """
+    algorithm = _required_git_bytes(["rev-parse", "--show-object-format"], root).decode().strip()
+    cached_out = _required_git_bytes(["ls-files", "--stage", "-z"], root)
+    entries: dict[str, tuple[str, str]] = {}
+    for item in cached_out.split(b"\0"):
+        if not item:
+            continue
+        meta, raw_p = item.split(b"\t", 1)
+        mode, oid, _stage = meta.decode("ascii").split()
+        entries[os.fsdecode(raw_p)] = (mode, oid)
+
+    modified_out = _required_git_bytes(["ls-files", "-m", "-d", "-z"], root)
+    modified_paths = [os.fsdecode(p) for p in modified_out.split(b"\0") if p]
+    others_out = _required_git_bytes(["ls-files", "--others", "--exclude-standard", "-z"], root)
+    untracked_paths = [os.fsdecode(p) for p in others_out.split(b"\0") if p]
+
+    for p in set(modified_paths) | set(untracked_paths):
+        source = root / p
+        try:
+            st = source.lstat()
+            mode = st.st_mode
+        except FileNotFoundError:
+            entries.pop(p, None)
+            continue
+        if stat.S_ISLNK(mode):
+            content = os.fsencode(os.readlink(source))
+            blob = f"blob {len(content)}\0".encode() + content
+            entries[p] = ("120000", hashlib.new(algorithm, blob).hexdigest())
+        elif stat.S_ISREG(mode):
+            git_mode = "100755" if mode & 0o111 else "100644"
+            size = source.stat().st_size
+            h = hashlib.new(algorithm)
+            h.update(f"blob {size}\0".encode())
+            with open(source, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            entries[p] = (git_mode, h.hexdigest())
+        elif stat.S_ISDIR(mode):
+            git_mode = "160000"
+            try:
+                oid = _required_git_bytes(["rev-parse", "HEAD"], source).decode().strip()
+                entries[p] = (git_mode, oid)
+            except Exception:
+                pass
+        else:
+            raise ctx.TaskDataError(f"不支持的文件类型：{p}")
+    return entries
 
 
 def implementation_commit(ref: str, base_sha: str, *, repo) -> str:
@@ -475,7 +618,7 @@ def verify_integrate_ready(
     except ctx.TaskDataError as error:
         return "incomplete", "incomplete", str(error)
     status = fm.get("status")
-    if status not in ctx.ARCHIVED_STATUSES:
+    if status not in ctx.TERMINAL_STATUSES:
         return "incomplete", "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
     handoff_path = f"{task['dir']}/handoff.json"
     try:
@@ -565,11 +708,17 @@ def verify_integrate_ready(
         )
     shape = "执行分支必须恰好一个实现 commit"
     try:
-        implementation_commit(tip, base, repo=repo)
+        impl_sha = implementation_commit(tip, base, repo=repo)
     except ctx.TaskDataError as error:
         return "contract", "provenance", (
             f"{handoff_path} base_sha={handoff['base_sha']!r} 与分支 {branch!r} tip 不符：{error}；{shape}"
         )
+    try:
+        before_entries = git_tree_entries(base, repo=repo)
+        after_entries = git_tree_entries(impl_sha, repo=repo)
+        validate_task_core_asset_changes(before_entries, after_entries, {Path(task["dir"]).name})
+    except ctx.TaskDataError as error:
+        return "contract", "provenance", f"实现提交篡改其他 task 核心资产：{error}"
     if handoff["base_sha"] != base or diff_anchor != base:
         return "contract", "provenance", (
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
@@ -670,7 +819,7 @@ def compute_ps_rows(
             base["state"] = f"{effective_status}(无 reserve)"
             rows.append(base)
             continue
-        if main_statuses.get(tid) in ctx.ARCHIVED_STATUSES:
+        if main_statuses.get(tid) in ctx.TERMINAL_STATUSES:
             base["state"] = main_statuses[tid]
             rows.append(base)
             continue

@@ -421,13 +421,13 @@ def test_merge_continue_rejects_modified_nonconflict_task_path(git_repo):
     identity, branch, _ = _prepare_done(git_repo, 't001', 'alpha')
     _cleanup(git_repo, 't001', identity)
     assert _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity)).returncode == 0
-    path = git_repo / f'docs/archive/tasks/{branch}/progress.md'
+    path = git_repo / f'docs/tasks/{branch}/progress.md'
     path.write_text(path.read_text() + '\n未经 review 的 merge 期改写\n')
     _git(git_repo, 'add', str(path.relative_to(git_repo)))
     result = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
     assert result.returncode != 0
-    assert '非冲突文件偏离 Git 自动合并结果' in result.stderr
-    assert f'docs/archive/tasks/{branch}/progress.md' in result.stderr
+    assert '非冲突文件偏离 Git 自动合并结果' in result.stderr or '核心资产与已验证实现 tip 不一致' in result.stderr
+    assert f'docs/tasks/{branch}/progress.md' in result.stderr
     assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
 
 

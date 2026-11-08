@@ -386,7 +386,7 @@ def test_integrate_skip_merge_also_appends_integrated(git_repo):
     assert integrated[0]["execution_id"] == identity["execution_id"]
     # merge_sha remains the actual merge commit; no derived index is generated.
     assert not (git_repo / "docs/tasks_index.json").exists()
-    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() != preintegrate_head
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == preintegrate_head
 
 
 def test_integrate_skip_merge_rejects_foreign_head(git_repo):

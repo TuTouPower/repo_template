@@ -74,7 +74,7 @@ def _compute_queue(args, repo) -> list[str]:
             if task is None:
                 raise ctx.TaskDataError(f"{tid} 不存在")
             status = task["status"]
-            if status in ctx.ARCHIVED_STATUSES:
+            if status in ctx.TERMINAL_STATUSES:
                 raise ctx.TaskDataError(f"{tid} 已是终态（{status}）；done/dropped 永不入队")
             queue.append(tid)
         build_execution_plan(mode="serial", queue=queue, repo=repo)
@@ -100,7 +100,7 @@ def _stale_members(queue: list[str], repo) -> list[str]:
     stale = []
     for tid in queue:
         status = statuses.get(tid)
-        if status is None or status in ctx.ARCHIVED_STATUSES:
+        if status is None or status in ctx.TERMINAL_STATUSES:
             stale.append(tid)
     return stale
 

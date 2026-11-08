@@ -61,7 +61,7 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope fingerprint。最终交付内容变化会使旧 PASS 失效。review scope 指纹对交付文件全量哈希（单文件上限 50MB，超限 fail-closed），不存在大文件截断降级。
 
-执行分支恰好 1 个实现 commit；`handoff.json` 的 `review_scope` 绑定 finish 时的交付指纹。done 后 review 失效时，用户同意后对 tip 重新 review，只补 review 过程文件并并入同一实现 commit；交付内容变化不能并入同一实现 commit：attempt 为 running、无后继分支且 report 未写入 done 时用 `task.py finish-unwind` 撤销实现 commit 回到 active 重做，否则停止并报告。cleanup、integrate、integrate-chain 与 `ledger import` 校验分支恰 1 个 commit 且 tip 重算指纹与 `review_scope` 一致。task 目录在执行分支内始终位于 `docs/tasks/`，`finish` 只原位写 done，归档由合并完成。
+执行分支恰好 1 个实现 commit；`handoff.json` 的 `review_scope` 绑定 finish 时的交付指纹。done 后 review 失效时，用户同意后对 tip 重新 review，只补 review 过程文件并并入同一实现 commit；交付内容变化不能并入同一实现 commit：attempt 为 running、无后继分支且 report 未写入 done 时用 `task.py finish-unwind` 撤销实现 commit 回到 active 重做，否则停止并报告。cleanup、integrate、integrate-chain 与 `ledger import` 校验分支恰 1 个 commit 且 tip 重算指纹与 `review_scope` 一致。task 目录始终位于 `docs/tasks/`，`finish` 与 `integrate` 均原位保留目录，不进行物理搬迁。
 
 ## 合并
 
@@ -69,14 +69,13 @@ merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版�
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
-→ 成员 task 目录 git mv 到 docs/archive/tasks/
-→ 重建并暂存派生 index
+→ 成员 task 目录保持在 docs/tasks/ 原位
 → 运行合并后验证
-→ 通过：--continue 重算自动合并 tree；仅原始冲突路径可含人工解决内容，成员目录的归档移动与派生 index 之外的偏离一律拒绝，随后创建 merge commit、写 integrated、删除分支
+→ 通过：--continue 校验核心资产所有权与内容一致性，拒绝非冲突文件偏离，随后创建 merge commit、写 integrated、删除分支
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，全部成员目录在同一个 merge commit 中归档。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，取消物理归档，全部成员目录保留在 `docs/tasks/` 原位。
 
 ## Goal
 
@@ -88,7 +87,7 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 |---|---|---|
 |task-work|当前 task worktree|实现、测试、黑盒、review、文档；`finish` 校验、原位写 done、机器生成执行回执并提交实现 commit（失败整体回滚）|
 |task-run|主仓控制面|`run-begin`、`run-close`（attempt lifecycle、exact cleanup）、队列推进|
-|task-integrate|主仓 main|经授权准备 Git merge、归档成员 task 目录、合并后验证、commit、integrated 和分支清理|
+|task-integrate|主仓 main|经授权准备 Git merge、保持成员 task 目录在 docs/tasks/ 原位、合并后验证、commit、integrated 和分支清理|
 
 ## 模板分发与升级
 

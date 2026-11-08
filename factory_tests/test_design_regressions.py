@@ -57,7 +57,11 @@ def test_merge_preserves_downstream_and_unions_external_dependencies(git_repo, n
     assert _fm(repo, target)["depends_on"] == "t004"
     assert "t004" in _fm(repo, target)["conflicts_with"]
     for tid in {"t001", "t002"} - {target}:
-        assert list((repo / "docs/archive/tasks").glob(f"{tid}_*/progress.md"))
+        notes = list((repo / "docs/tasks").glob(f"{tid}_*/progress.md"))
+        assert len(notes) == 1
+        fm, _ = parse_front_matter(notes[0])
+        assert fm["status"] == "dropped"
+        assert f"merged into {target}" in fm["note"]
     assert _task_cli(repo, "plan", "--serial", "--json").returncode == 0
     # The downstream still cannot start before the replacement completes.
     assert _task_cli(repo, "start", "t003").returncode != 0

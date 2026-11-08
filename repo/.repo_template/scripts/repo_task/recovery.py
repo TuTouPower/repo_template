@@ -60,7 +60,7 @@ def recovery_state(tid: str, *, repo) -> dict:
         return phase("corrupt", corrupt_detail or task.get("note") or "现场数据损坏；人工核查后处理")
 
     if not registered_branch:
-        if task["status"] in ctx.ARCHIVED_STATUSES and (not record or record["state"] == "integrated"):
+        if task["status"] in ctx.TERMINAL_STATUSES and (not record or record["state"] == "integrated"):
             return phase("integrated_or_archived", "检查 Git merge 状态和 integrated 记录；不重复执行")
         if record:
             verdict, _kind, detail = verify_integrate_ready(
