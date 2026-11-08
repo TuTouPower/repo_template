@@ -1,30 +1,48 @@
 """E2：阻塞只停所在链；goal-check 在阻塞时 STOPPED，列出阻塞成员与同链被跳过成员（real-git）。"""
 
+import argparse
+import contextlib
+import io
 import pytest
 
 from test_dispatch_integration import git_repo, _task_cli, _prepare_done, _cleanup
 from test_queue_topology import _relate
+from repo_task import context as ctx
+from repo_task import control
+from repo_task import goal
 from repo_task.goal import _stops_with_skipped
 
 OWNER = "owner-queue"
 
 
 def _freeze(repo, *tids):
-    result = _task_cli(repo, "goal", *tids, "--yes")
-    assert result.returncode == 0, result.stderr
+    context = ctx.RepoContext.for_root(repo)
+    with contextlib.redirect_stdout(io.StringIO()):
+        goal.cmd_goal(argparse.Namespace(tids=list(tids), reset=False, yes=True, repo=context))
 
 
 def _run_close(repo, tid, result, *extra):
-    closed = _task_cli(repo, "run-close", tid, "--owner-id", OWNER, "--result", result, *extra)
-    assert closed.returncode == 0, closed.stderr
+    reason = None
+    if "--reason" in extra:
+        idx = extra.index("--reason")
+        if idx + 1 < len(extra):
+            reason = extra[idx + 1]
+    fail_class = None
+    if "--class" in extra:
+        idx = extra.index("--class")
+        if idx + 1 < len(extra):
+            fail_class = extra[idx + 1]
+    context = ctx.RepoContext.for_root(repo)
+    with contextlib.redirect_stdout(io.StringIO()):
+        control.cmd_run_close(argparse.Namespace(
+            tid=tid, owner_id=OWNER, result=result, fail_class=fail_class, reason=reason, repo=context
+        ))
 
 
 def _block(repo, tid, base=None):
-    args = ["run-begin", tid, "--owner-id", OWNER]
-    if base:
-        args += ["--base", base]
-    begun = _task_cli(repo, *args)
-    assert begun.returncode == 0, begun.stderr
+    context = ctx.RepoContext.for_root(repo)
+    with contextlib.redirect_stdout(io.StringIO()):
+        control.cmd_run_begin(argparse.Namespace(tid=tid, owner_id=OWNER, base=base, repo=context))
     _run_close(repo, tid, "blocked", "--reason", "缺密钥")
 
 

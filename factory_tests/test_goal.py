@@ -1,5 +1,6 @@
 """task.py goal / goal-check 的 real-git 测试。"""
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -16,6 +17,10 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
 from task_flow_support import mark_done
 
+from repo_task import attempts
+from repo_task import context as ctx
+from repo_task import control
+from repo_task import integration
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.monitoring import review_scope_fingerprint
 
@@ -104,9 +109,9 @@ def _identity_args(identity):
 
 def _prepare_done(repo, tid, slug):
     """走完整执行流至 terminal completed + report done（不 cleanup）。"""
-    started = _cli(repo, "start", tid)
-    assert started.returncode == 0, started.stderr
-    identity = _reserve(repo, tid)
+    context = ctx.RepoContext.for_root(repo)
+    integration.cmd_start(argparse.Namespace(tid=tid, base=None, repo=context))
+    identity = attempts.reserve_attempt(tid, repo=context)
     worktree = _worktree(repo, tid)
     task_file = worktree / "docs" / "tasks" / f"{tid}_{slug}" / "task.md"
     if task_file.is_file():
@@ -142,21 +147,23 @@ def _prepare_done(repo, tid, slug):
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "-m", f"feat({tid}): complete {slug}")
     head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    terminal = _cli(
-        repo, "attempt", "terminal", tid, *_identity_args(identity), "--status", "completed",
+    attempts.terminal_attempt(
+        tid, identity["attempt"], identity["execution_id"], "completed", repo=context
     )
-    assert terminal.returncode == 0, terminal.stderr
-    report = _cli(
-        repo, "attempt", "report", tid, *_identity_args(identity),
-        "--status", "done", "--sha", head,
+    control.require_report_done_ready(
+        tid, identity["attempt"], identity["execution_id"], repo=context
     )
-    assert report.returncode == 0, report.stderr
+    attempts.report_attempt(
+        tid, identity["attempt"], identity["execution_id"], "done", sha=head, repo=context
+    )
     return identity
 
 
 def _cleanup(repo, tid, identity):
-    result = _cli(repo, "cleanup-worktree", tid, *_identity_args(identity))
-    assert result.returncode == 0, result.stderr
+    context = ctx.RepoContext.for_root(repo)
+    return integration._cleanup_worktree(
+        tid, identity["attempt"], identity["execution_id"], repo=context
+    )
 
 
 def test_goal_freezes_default_queue_and_prints_paste_line(git_repo):

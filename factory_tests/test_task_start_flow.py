@@ -19,7 +19,7 @@ from review_support import ensure_review_evidence, configure_project_verificatio
 from task_flow_support import mark_done, finish_cli, prepare_finish
 
 from repo_task import context as ctx
-from repo_task import integration, lifecycle, store
+from repo_task import attempts, control, integration, lifecycle, store
 from repo_task.monitoring import review_scope_fingerprint
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -199,7 +199,8 @@ def _set_spec(repo, tid, slug, unknown_contract_item):
 
 
 def _finish_commit_cleanup(repo, tid, slug):
-    identity = _reserve(repo, tid)
+    context = ctx.RepoContext.for_root(repo)
+    identity = attempts.reserve_attempt(tid, repo=context)
     worktree = _worktree_path(repo, tid)
     _check_ac(worktree, tid, slug)
     mark_done(worktree, tid)
@@ -209,11 +210,12 @@ def _finish_commit_cleanup(repo, tid, slug):
     _git(worktree, "commit", "-m", f"feat({tid}): complete {slug}")
     branch = f"{tid}_{slug}"
     branch_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    _terminal(repo, tid, identity)
-    cleaned = _task_cli(
-        repo, "cleanup-worktree", tid, *_identity_args(identity)
+    attempts.terminal_attempt(tid, identity["attempt"], identity["execution_id"], "completed", repo=context)
+    attempts.report_attempt(
+        tid, identity["attempt"], identity["execution_id"], "done",
+        sha=_git(repo, "rev-parse", "HEAD").stdout.strip(), repo=context,
     )
-    assert cleaned.returncode == 0, cleaned.stderr
+    integration._cleanup_worktree(tid, identity["attempt"], identity["execution_id"], repo=context)
     assert not worktree.exists()
     assert _git(repo, "branch", "--list", branch).stdout.strip() == branch
     return identity, branch, branch_head
