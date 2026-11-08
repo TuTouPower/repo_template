@@ -21,6 +21,7 @@ from repo_task.file_transaction import FileTransaction
 from repo_task.monitoring import review_scope_fingerprint
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
+from template_sync.skills_links import opencode_commands_status
 from template_sync.source import resolve_src
 from template_sync.state import active_prompts, cmd_init, cmd_prompt, read_state
 from export_template import export_template
@@ -397,9 +398,20 @@ def test_finish_requires_spec_index_update_or_explicit_exemption(git_repo):
     assert result.returncode == 0, result.stderr
 
 
+def test_actual_product_opencode_commands_in_sync():
+    """repo 产物根目录的 OpenCode 命令薄层必须与 public skills 保持同步一致。"""
+    product = SCRIPTS.parents[1]
+    items = opencode_commands_status(sync=ctx.SyncContext.for_consumer(product))
+    assert items, "repo 产物根目录未检出任何派生 OpenCode 命令"
+    drifts = [item for item in items if item["state"] != "same"]
+    assert not drifts, f"repo 产物根目录 OpenCode 派生命令未同步（请运行 link-skills）：{drifts}"
+
+
 @pytest.mark.parametrize("configured", [False, True])
 def test_actual_product_export_is_clean_and_passes_contract(tmp_path, configured):
     product = SCRIPTS.parents[1]
+    product_status = opencode_commands_status(sync=ctx.SyncContext.for_consumer(product))
+    assert product_status and all(item["state"] == "same" for item in product_status)
     files = subprocess.run(["git", "-C", str(product), "ls-files", "--cached", "--others",
                             "--exclude-standard", "-z", "."], capture_output=True, check=True).stdout
     factory = tmp_path / "factory"
@@ -428,6 +440,8 @@ def test_actual_product_export_is_clean_and_passes_contract(tmp_path, configured
     assert not (target / ".env").exists()
     for host in (".claude/skills", ".agents/skills"):
         assert all(path.is_symlink() and path.exists() for path in (target / host).iterdir())
+    target_status = opencode_commands_status(sync=ctx.SyncContext.for_consumer(target))
+    assert target_status and all(item["state"] == "same" for item in target_status)
     result = subprocess.run([sys.executable, "-m", "pytest", ".repo_template/tests", "-q", "-m", "contract"],
                             cwd=target, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr

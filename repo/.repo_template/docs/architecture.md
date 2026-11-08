@@ -49,6 +49,28 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 `task.py view` 展示当前有效状态，依赖已满足但彼此冲突的 task 会同时列出并明确提示不要并行；`task.py plan` 负责把它们分到不同建议链。状态变化后按当前 front matter 重新计算；调度字段只有 `depends_on` 与 `conflicts_with`，不要求声明冲突反向边。
 
+## Task 存储架构与核心资产保护
+
+### 固定路径契约
+
+Task 终生在 `docs/tasks/{tid}_{slug}/` 原位流转，生命周期业务状态为 `backlog / active / done / dropped`，彻底废除物理搬迁归档机制：
+- `add` 创建固定目录，状态为 backlog；
+- `start` / `run-begin` 保持同一相对路径并在所属 worktree 激活；
+- `finish` 验证后原位写 done，生成 `handoff.json` 并提交实现 commit；
+- `drop` 原位写 dropped 并记录原因；
+- `merge-backlog` 改写依赖图并将非目标来源原位写 dropped；
+- `integrate` 保持所有成员目录在原位，主干记录 `integrated` 事件。
+
+Pending 终生在 `docs/pending/` 原位流转（`todo / parked / closed`）；Spike 终生在 `docs/spikes/` 原位流转（`active / completed / superseded`）；交接快照固定在 `docs/handoff.md` 单文件维护，冷文稿归档唯一收敛至 `docs/archive/reviews/`。所有查询和恢复工具均基于规范固定路径，取消多目录与位置推断。
+
+### 核心资产所有权
+
+跨 task 写权以文件为边界。每个 task 目录内的 `task.md`、`progress.md`、`handoff.json`、`review_*.md`（含子目录同名文件）属于受保护核心资产：
+- 其他 task 的核心资产即使只改正文、空白或文件模式，即使 review 已经 PASS，也不得由非 owner 的 task 改写；
+- 共享校验函数 `monitoring.validate_task_core_asset_changes(before_entries, after_entries, owner_names)` 贯穿 `finish` 前置检查、`verify_integrate_ready`、单任务与整链集成准备及 `--continue` 门禁；
+- 校验输入使用未经过 review 排除规则过滤的完整路径清单（包含 Git mode 与 Blob OID），对任何跨 task 篡改、移动、重命名、目录整体替换或借 symlink 覆盖核心资产的行为严格抛出异常并阻断；
+- 核心资产纠错必须走所属实体明确授权的维护或恢复流程，禁止通过后继 task 交付。
+
 ## Review 与验证
 
 项目验证策略、命令及执行边界见 [testing.md](../../docs/blueprint/testing.md)；verification_policy=project_configured 后才可 start/preflight。single 任务风险扩大时通过 review-upgrade 单调升 full，评审级别参与内容指纹，旧 PASS 失效。
@@ -65,7 +87,7 @@ Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope 
 
 ## 合并
 
-merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。单 task 和链式合并均先完成 exact gate，然后：
+merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。彻底删除旧搬迁归档与专用豁免逻辑，合并事务不再移动实体目录。单 task 和链式合并均先完成 exact gate，然后：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
@@ -75,7 +97,7 @@ git merge --no-ff --no-commit <branch-or-tail>
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，取消物理归档，全部成员目录保留在 `docs/tasks/` 原位。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，取消物理归档，全部成员目录保留在 `docs/tasks/` 原位。最终 staged 检查严格验证两层不变量：非成员核心资产相对当前 HEAD 完全不变；成员核心资产必须严格等于该成员已验证实现 tip 中的相应条目。
 
 ## Goal
 

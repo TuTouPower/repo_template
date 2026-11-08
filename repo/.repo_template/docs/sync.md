@@ -16,11 +16,40 @@
 
 消费仓允许修改的 AGENTS.md 范围只有项目介绍和 `## 目录与读写规则`；`## 开发原则` 及其后的模板规则不应由消费仓自行改写。禁止在 `## 开发原则` 之后或 `## 目录与读写规则` 与 `## 开发原则` 之间放置额外 `##` 标题；消费仓项目专属规则（如门牌、硬约束、特有约定等）必须置于 `## 目录与读写规则` 之前的项目介绍区。若存在协议外额外标题，`plan` 将在分区表中将该标题标记为 `forbidden` 并打印告警与迁移指引，`apply` 与 `--agents-file` 候选校验将抛出 `SyncError` 拒绝同步。
 
+## entity-storage 一次性实体存储迁移
+
+日常 `apply` 遇到旧实体存储布局时会先阻断，并提示运行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`。该一次性迁移彻底废除物理搬迁归档与交接归档，收敛至固定规范路径契约：
+
+- `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验终态 done/dropped 证据）；
+- `docs/pending/todo/pNNN.md` -> `docs/pending/pNNN.md`（status: todo）；
+- `docs/pending/parked/pNNN.md` -> `docs/pending/pNNN.md`（status: parked，保留 reason）；
+- `docs/archive/pending/pNNN.md` -> `docs/pending/pNNN.md`（status: closed，保留 resolution 与 reason）；
+- `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（status: completed，校验报告与 findings 闭环证据）；
+- `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（无损保持原始字节）；
+- `docs/archive/handoff.md` -> 确认内容已完整入库 Git 历史后退役移除；
+- 清理遗留空旧目录，并更新维护文档中的确定引用。
+
+### 迁移维护窗口与规程
+
+1. **准备与清点**：
+   - 停止所有执行会话、hygiene、同步与集成；
+   - 清点所有登记 worktree、本地分支、未完成 attempt、pending merge；先在旧工具链下完成或清理；
+   - 确保主工作区与暂存区干净；备份 Git 对象、refs、`docs/runtime/` 及未跟踪附件。
+2. **拟定计划（dry-run）**：
+   - 执行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage`；
+   - 检查打印的实体映射清单与校验状态，确认无异常。
+3. **正式执行落盘**：
+   - 执行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`；
+   - 迁移器在排他锁与持久文件事务 `FileTransaction` 内原子执行；若任一步骤校验失败，整体回滚原状态。
+4. **提交与恢复正常工作**：
+   - 检查 `git status` 与 diff，提交迁移 commit；
+   - 随后可正常执行 `repo_sync.py apply` 或日常开发流程。
+
 ## workflow schema 强制迁移
 
 日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局或退役 hook 残留时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。迁移不再隐含在同步写盘里。
 
-显式迁移把主仓 `docs/tasks/` 和 `docs/archive/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：失败整体回滚，成功后校验目标 schema，不可机械转换的数据列出并中止。
+显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：失败整体回滚，成功后校验目标 schema，不可机械转换的数据列出并中止。若仍存在 `docs/archive/tasks/` 等旧多目录布局，须先按上一节执行 `entity-storage` 迁移。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
