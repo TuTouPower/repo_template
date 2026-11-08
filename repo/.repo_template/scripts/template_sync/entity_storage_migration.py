@@ -36,6 +36,7 @@ from pending import (
 )
 from repo_task.context import (
     PROGRESS_FILE,
+    TaskDataError,
     TID_RE,
     VALID_STATUSES as TASK_VALID_STATUSES,
 )
@@ -49,6 +50,9 @@ from repo_task.spikes import (
 )
 
 from . import context as ctx
+
+_IGNORED_NAMES = frozenset({".DS_Store", ".gitkeep", ".git"})
+TASK_DIR_RE = re.compile(r"^(t\d{3,})_([a-z0-9_]+)$")
 
 
 class MigrationError(ctx.SyncError):
@@ -135,22 +139,29 @@ def entity_storage_migration_status(sync=None) -> list[str]:
     # 1. 旧 task 归档目录
     archived_tasks_dir = consumer / "docs/archive/tasks"
     if archived_tasks_dir.is_dir():
-        children = [p for p in archived_tasks_dir.iterdir() if p.is_dir() and p.name != ".git"]
+        for item in sorted(archived_tasks_dir.iterdir()):
+            if item.name in _IGNORED_NAMES:
+                continue
+            if not item.is_dir() or not TASK_DIR_RE.match(item.name):
+                problems.append(f"{sync.rel(item)}: docs/archive/tasks 存在非规范任务项或未知散落文件（阻断）")
+        children = [p for p in archived_tasks_dir.iterdir() if p.is_dir() and TASK_DIR_RE.match(p.name)]
         if children:
             problems.append(f"docs/archive/tasks 存在 {len(children)} 个归档任务目录")
 
     # 2. 旧 pending 子目录
-    for sub in ("todo", "parked"):
-        d = consumer / "docs/pending" / sub
+    for sub_rel in ("docs/pending/todo", "docs/pending/parked", "docs/archive/pending"):
+        d = consumer / sub_rel
         if d.is_dir():
-            files = [p for p in d.glob("p*.md") if p.is_file()]
-            if files:
-                problems.append(f"docs/pending/{sub} 存在 {len(files)} 个待办文件")
-    archived_pending_dir = consumer / "docs/archive/pending"
-    if archived_pending_dir.is_dir():
-        files = [p for p in archived_pending_dir.glob("p*.md") if p.is_file()]
-        if files:
-            problems.append(f"docs/archive/pending 存在 {len(files)} 个归档待办文件")
+            valid_files = []
+            for item in sorted(d.iterdir()):
+                if item.name in _IGNORED_NAMES:
+                    continue
+                if not item.is_file() or not PENDING_FILE_RE.match(item.name):
+                    problems.append(f"{sync.rel(item)}: {sub_rel} 存在非规范待办项或未知散落文件（阻断）")
+                else:
+                    valid_files.append(item)
+            if valid_files:
+                problems.append(f"{sub_rel} 存在 {len(valid_files)} 个待办文件")
 
     # 3. 检查扁平 docs/pending 下的文件是否都具备合格的 front matter
     pending_root = consumer / "docs/pending"
@@ -161,13 +172,18 @@ def entity_storage_migration_status(sync=None) -> list[str]:
             try:
                 fm, _ = parse_front_matter_text(p.read_text(encoding="utf-8"), source=sync.rel(p))
                 validate_pending_front_matter(fm, filename=p.name, source=sync.rel(p))
-            except (ctx.TaskDataError, ValueError, KeyError) as err:
+            except (TaskDataError, ValueError, KeyError) as err:
                 problems.append(f"{sync.rel(p)} 缺少或包含非法 Front Matter：{err}")
 
     # 4. 旧 spike 归档目录
     archived_spikes_dir = consumer / "docs/archive/spikes"
     if archived_spikes_dir.is_dir():
-        children = [p for p in archived_spikes_dir.iterdir() if p.is_dir() and p.name != ".git"]
+        for item in sorted(archived_spikes_dir.iterdir()):
+            if item.name in _IGNORED_NAMES:
+                continue
+            if not item.is_dir() or not SPIKE_DIR_RE.match(item.name):
+                problems.append(f"{sync.rel(item)}: docs/archive/spikes 存在非规范 spike 项或未知散落文件（阻断）")
+        children = [p for p in archived_spikes_dir.iterdir() if p.is_dir() and SPIKE_DIR_RE.match(p.name)]
         if children:
             problems.append(f"docs/archive/spikes 存在 {len(children)} 个归档 spike 目录")
 
@@ -193,7 +209,7 @@ def _parse_legacy_pending_content(
     if raw_text.startswith("---"):
         try:
             fm, body = parse_front_matter_text(raw_text, source=source_label)
-        except (ctx.TaskDataError, ValueError, KeyError) as err:
+        except (TaskDataError, ValueError, KeyError) as err:
             raise MigrationError(f"{source_label}: Front Matter 解析失败：{err}") from err
 
     file_match = PENDING_FILE_RE.match(path.name)
@@ -292,7 +308,20 @@ def _parse_legacy_pending_content(
     return result_fm, body
 
 
-def _validate_spike_closed_evidence(report_text: str, source_label: str) -> None:
+def _validate_spike_findings_references(report_text: str, source_label: str, consumer: Path) -> None:
+    """校验 spike 报告引用的 findings 文件在 docs/findings/ 中是否真实存在。"""
+    finding_refs = set(re.findall(r"\b(d\d{3,})\b", report_text))
+    finding_refs.update(re.findall(r"docs/findings/(d\d{3,})_[a-z0-9_]+", report_text))
+    for did in sorted(finding_refs):
+        findings_dir = consumer / "docs/findings"
+        matches = list(findings_dir.glob(f"{did}_*.md")) if findings_dir.is_dir() else []
+        if not any(m.is_file() for m in matches):
+            raise MigrationError(
+                f"{source_label}: 引用的 finding {did} 在 docs/findings/ 中不存在真实文件"
+            )
+
+
+def _validate_spike_closed_evidence(report_text: str, source_label: str, consumer: Path) -> None:
     """校验归档 spike 报告是否包含有效的闭环结论与 findings 事实。"""
     if not report_text.strip():
         raise MigrationError(f"{source_label}: report.md 为空")
@@ -315,6 +344,7 @@ def _validate_spike_closed_evidence(report_text: str, source_label: str) -> None
         raise MigrationError(
             f"{source_label}: report.md 缺少有效 findings 关联（未包含 dNNN 引用）"
         )
+    _validate_spike_findings_references(report_text, source_label, consumer)
 
 
 def _validate_done_task_implementation_and_lineage(
@@ -500,6 +530,23 @@ def _check_worktrees_clean(root: Path) -> None:
         )
 
 
+def _check_no_unknown_entries(dir_path: Path, kind: str, sync: ctx.SyncContext) -> None:
+    if not dir_path.is_dir():
+        return
+    for item in sorted(dir_path.iterdir()):
+        if item.name in _IGNORED_NAMES:
+            continue
+        if kind == "tasks":
+            if not item.is_dir() or not TASK_DIR_RE.match(item.name):
+                raise MigrationError(f"{sync.rel(item)}: docs/archive/tasks 存在非规范任务项或未知散落文件")
+        elif kind == "spikes":
+            if not item.is_dir() or not SPIKE_DIR_RE.match(item.name):
+                raise MigrationError(f"{sync.rel(item)}: docs/archive/spikes 存在非规范 spike 项或未知散落文件")
+        elif kind == "pending":
+            if not item.is_file() or not PENDING_FILE_RE.match(item.name):
+                raise MigrationError(f"{sync.rel(item)}: {sync.rel(dir_path)} 存在非规范待办项或未知散落文件")
+
+
 def build_migration_plan(sync=None) -> MigrationPlan:
     """预检并构建实体存储一次性迁移计划；若存在冲突或数据不符则阻断。"""
     sync = sync or ctx.current_sync()
@@ -542,9 +589,10 @@ def build_migration_plan(sync=None) -> MigrationPlan:
 
     # 收集 docs/archive/tasks/
     if archived_tasks_dir.is_dir():
+        _check_no_unknown_entries(archived_tasks_dir, "tasks", sync)
         dirs_to_clean.append(archived_tasks_dir)
         for child in sorted(archived_tasks_dir.iterdir()):
-            if not child.is_dir() or child.name.startswith("."):
+            if child.name in _IGNORED_NAMES or not child.is_dir() or child.name.startswith("."):
                 continue
             m = re.match(r"^(t\d{3,})_([a-z0-9_]+)$", child.name)
             if not m:
@@ -584,18 +632,21 @@ def build_migration_plan(sync=None) -> MigrationPlan:
     # 扫描旧目录
     p_todo = consumer / "docs/pending/todo"
     if p_todo.is_dir():
+        _check_no_unknown_entries(p_todo, "pending", sync)
         dirs_to_clean.append(p_todo)
         for f in sorted(p_todo.glob("p*.md")):
             if f.is_file() and PENDING_FILE_RE.match(f.name):
                 pending_sources.append((f, "todo", "todo"))
     p_parked = consumer / "docs/pending/parked"
     if p_parked.is_dir():
+        _check_no_unknown_entries(p_parked, "pending", sync)
         dirs_to_clean.append(p_parked)
         for f in sorted(p_parked.glob("p*.md")):
             if f.is_file() and PENDING_FILE_RE.match(f.name):
                 pending_sources.append((f, "parked", "parked"))
     p_archived = consumer / "docs/archive/pending"
     if p_archived.is_dir():
+        _check_no_unknown_entries(p_archived, "pending", sync)
         dirs_to_clean.append(p_archived)
         for f in sorted(p_archived.glob("p*.md")):
             if f.is_file() and PENDING_FILE_RE.match(f.name):
@@ -668,14 +719,16 @@ def build_migration_plan(sync=None) -> MigrationPlan:
                 status = "active"
                 fm = {"sid": sid, "slug": slug, "status": "active"}
                 validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
-                rep_text = f"---\nsid: \"{sid}\"\nslug: \"{slug}\"\nstatus: \"active\"\n---\n\n" + rep_text.strip() + "\n"
+                rep_text = f"---\nsid: \"{sid}\"\nslug: \"{slug}\"\nstatus: \"active\"\n---\n\n" + rep_text.lstrip("\r\n").rstrip() + "\n"
+            _validate_spike_findings_references(rep_text, sync.rel(rep), consumer)
             spikes_plan.append(SpikeItem(sid, slug, child, child, status, rep_text))
 
     # 收集 docs/archive/spikes/
     if archived_spikes_dir.is_dir():
+        _check_no_unknown_entries(archived_spikes_dir, "spikes", sync)
         dirs_to_clean.append(archived_spikes_dir)
         for child in sorted(archived_spikes_dir.iterdir()):
-            if not child.is_dir() or child.name.startswith("."):
+            if child.name in _IGNORED_NAMES or not child.is_dir() or child.name.startswith("."):
                 continue
             m = SPIKE_DIR_RE.match(child.name)
             if not m:
@@ -695,23 +748,44 @@ def build_migration_plan(sync=None) -> MigrationPlan:
             rep_text = rep.read_text(encoding="utf-8")
 
             # 目录来源与 Front Matter 状态一致性检查：归档 spike 决不可声明为 active
+            is_superseded = False
+            existing_fm: dict[str, Any] = {}
             if rep_text.startswith("---"):
                 existing_fm, body = parse_front_matter_text(rep_text, source=sync.rel(rep))
-                if existing_fm.get("status") == "active":
+                st = existing_fm.get("status")
+                if st == "active":
                     raise MigrationError(
                         f"{sync.rel(rep)}: 归档 spike 状态与目录矛盾（声明为 active）"
                     )
+                if st == "superseded":
+                    is_superseded = True
             else:
                 body = rep_text
 
-            _validate_spike_closed_evidence(rep_text, sync.rel(rep))
-
-            new_rep = f"---\nsid: \"{sid}\"\nslug: \"{slug}\"\nstatus: \"completed\"\n---\n\n" + body.strip() + "\n"
-            fm = {"sid": sid, "slug": slug, "status": "completed"}
-            validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
-
-            seen_sids[sid] = child
-            spikes_plan.append(SpikeItem(sid, slug, child, target_dir, "completed", new_rep))
+            clean_body = body.lstrip("\r\n").rstrip()
+            if is_superseded:
+                validate_spike_metadata(existing_fm, expected_sid=sid, expected_slug=slug)
+                _validate_spike_findings_references(rep_text, sync.rel(rep), consumer)
+                fm_lines = [
+                    "---",
+                    f'sid: "{sid}"',
+                    f'slug: "{slug}"',
+                    f'status: "superseded"',
+                    f'superseded_by: "{existing_fm["superseded_by"]}"',
+                    f'reason: "{existing_fm["reason"]}"',
+                    "---",
+                    "",
+                ]
+                new_rep = "\n".join(fm_lines) + (clean_body + "\n" if clean_body else "")
+                seen_sids[sid] = child
+                spikes_plan.append(SpikeItem(sid, slug, child, target_dir, "superseded", new_rep))
+            else:
+                _validate_spike_closed_evidence(rep_text, sync.rel(rep), consumer)
+                fm = {"sid": sid, "slug": slug, "status": "completed"}
+                validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
+                new_rep = f'---\nsid: "{sid}"\nslug: "{slug}"\nstatus: "completed"\n---\n\n' + (clean_body + "\n" if clean_body else "")
+                seen_sids[sid] = child
+                spikes_plan.append(SpikeItem(sid, slug, child, target_dir, "completed", new_rep))
 
     # 5. tasks_audit.log 预检
     old_audit = consumer / "docs/archive/tasks_audit.log"
@@ -910,7 +984,8 @@ def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
                     fm_data["reason"] = p.reason
                     if p.fix_ref:
                         fm_data["fix_ref"] = p.fix_ref
-                new_text = dump_pending_front_matter(fm_data) + p.body.strip() + "\n"
+                clean_body = p.body.lstrip("\r\n").rstrip()
+                new_text = dump_pending_front_matter(fm_data) + (clean_body + "\n" if clean_body else "")
                 atomic_write_text(p.target_path, new_text)
                 if p.source_path.resolve() != p.target_path.resolve() and p.source_path.exists():
                     p.source_path.unlink()

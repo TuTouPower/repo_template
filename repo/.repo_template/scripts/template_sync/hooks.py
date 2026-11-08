@@ -91,8 +91,10 @@ def retired_hooks_status(sync=None) -> list[str]:
     if settings.is_file():
         try:
             data = json.loads(settings.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-            data = None
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+            raise ctx.SyncError(
+                f"{sync.rel(settings)} 无法解析，不能安全移除已退役 merge guard PreToolUse（{error}）"
+            ) from error
         groups = (data or {}).get("hooks", {}).get("PreToolUse", []) if isinstance(data, dict) else []
         if isinstance(groups, list):
             for group in groups:

@@ -69,7 +69,7 @@ def _require_current_schema(src: Path, sync=None) -> None:
             + "\n- ".join(entity_problems)
         )
     problems: list[str] = []
-    migrations, worktrees, errors = workflow_migration_status(src)
+    migrations, worktrees, errors = workflow_migration_status(src, sync=sync)
     if errors:
         problems.extend(f"workflow schema 现场：{error}" for error in errors)
     if worktrees:
@@ -79,12 +79,12 @@ def _require_current_schema(src: Path, sync=None) -> None:
         )
     problems.extend(f"workflow schema 旧布局：{path}" for path in migrations)
     problems.extend(
-        f"conventions 旧写法：{path}" for path in conventions_migration_status()
+        f"conventions 旧写法：{path}" for path in conventions_migration_status(sync=sync)
     )
     problems.extend(
-        f"specs_index 旧布局：{path}" for path in specs_index_migration_status()
+        f"specs_index 旧布局：{path}" for path in specs_index_migration_status(sync=sync)
     )
-    problems.extend(f"退役 hook 残留：{path}" for path in retired_hooks_status())
+    problems.extend(f"退役 hook 残留：{path}" for path in retired_hooks_status(sync=sync))
     if problems:
         raise ctx.SyncError(
             "检测到旧布局；apply 不再自动迁移。先运行 "
