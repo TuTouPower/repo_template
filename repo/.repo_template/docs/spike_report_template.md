@@ -1,3 +1,9 @@
+---
+sid: "{id}"
+slug: "{slug}"
+status: "active"
+---
+
 # Spike report
 
 ## 问题

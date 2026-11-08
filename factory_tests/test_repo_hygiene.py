@@ -1,7 +1,7 @@
 """repo_hygiene.py 机械迁移动作的真实 git 测试。
 
 monkeypatch 模块级路径常量到 tmp_path 构造的 git 仓库，覆盖 handoff 分段
-迁移（append 保留最新）、spike/review 目录 git mv 迁移、dry-run 零写盘、
+迁移（append 保留最新）、review 目录 git mv 迁移、dry-run 零写盘、
 歧义与格式校验。
 """
 
@@ -35,8 +35,6 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _git(root, "config", "user.name", "t")
     for name, value in {
         "REPO_ROOT": root,
-        "SPIKES_DIR": root / "docs/spikes",
-        "ARCHIVE_SPIKES": root / "docs/archive/spikes",
         "REVIEWS_DIR": root / "docs/reviews",
         "ARCHIVE_REVIEWS": root / "docs/archive/reviews",
         "HANDOFF": root / "docs/handoff.md",
@@ -182,49 +180,9 @@ def test_archive_handoff_stops_when_tail_matches_without_marker(repo):
     assert archive.read_text(encoding="utf-8").count("## 2026-08-01") == 1
 
 
-def _make_spike(repo: Path, name: str) -> None:
-    d = repo / "docs/spikes" / name
-    d.mkdir(parents=True)
-    (d / "report.md").write_text("# report\n\n## 结论\n验证完成。\n\n## 是否采纳\n- 决定：否\n- 无需后续理由：验证证实无需修改。\n\n## 关联 findings\n- d001\n", encoding="utf-8")
-    finding = repo / "docs/findings/d001_verified.md"
-    finding.parent.mkdir(parents=True, exist_ok=True)
-    finding.write_text("# 已验证结论\n", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", f"feat(spike): add {name}")
-
-
-def test_archive_spike_moves_dir_with_git_mv(repo):
-    _make_spike(repo, "s001_uv_lock")
-    rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=True))
-    assert not (repo / "docs/spikes/s001_uv_lock").exists()
-    assert (repo / "docs/archive/spikes/s001_uv_lock/report.md").is_file()
-    # git 跟踪：git ls-files 确认迁移被记录
-    tracked = _git(repo, "ls-files").stdout
-    assert "docs/archive/spikes/s001_uv_lock/report.md" in tracked
-    assert "docs/spikes/s001_uv_lock/report.md" not in tracked
-
-
-def test_archive_spike_dry_run_does_not_move(repo):
-    _make_spike(repo, "s001_uv_lock")
-    rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=False))
-    assert (repo / "docs/spikes/s001_uv_lock").is_dir()
-
-
-def test_archive_spike_rejects_missing_closure_evidence(repo):
-    _make_spike(repo, "s001_uv_lock")
-    (repo / "docs/spikes/s001_uv_lock/report.md").write_text("# incomplete\n")
-    with pytest.raises(rh.HygieneError, match="findings"):
-        rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=True))
-    assert (repo / "docs/spikes/s001_uv_lock").is_dir()
-
-
-def test_archive_spike_ambiguous_or_missing(repo):
-    _make_spike(repo, "s001_uv")
-    _make_spike(repo, "s001_lock")
-    with pytest.raises(rh.HygieneError):
-        rh.cmd_archive_spike(argparse.Namespace(sid="s001", write=True))
-    with pytest.raises(rh.HygieneError):
-        rh.cmd_archive_spike(argparse.Namespace(sid="s999", write=True))
+def test_archive_spike_command_removed(repo):
+    with pytest.raises(SystemExit):
+        rh.main(["archive-spike", "s001"])
 
 
 def test_archive_review_moves_dir(repo):

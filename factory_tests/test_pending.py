@@ -76,7 +76,6 @@ def _bind(monkeypatch, repo):
     monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
     monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
     monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
-    monkeypatch.setattr(spikes_mod, "ARCHIVE_DIR", repo / "docs/archive/spikes")
     monkeypatch.setattr(
         spikes_mod, "TEMPLATE_PATH", repo / ".repo_template/docs/spike_report_template.md"
     )
@@ -655,7 +654,7 @@ def _init_spikes(repo):
 def test_spike_dirs_drive_max(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/spikes/s004_probe/report.md")
-    _commit_entry(repo, "docs/archive/spikes/s009_old/report.md")
+    _commit_entry(repo, "docs/spikes/s009_old/report.md")
     assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 9
 
 
@@ -703,7 +702,7 @@ def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
     spikes_mod.main(["new", "--slug", "uv_lock"])
     assert capsys.readouterr().out == "docs/spikes/s001_uv_lock\n"
     report = repo / "docs/spikes/s001_uv_lock/report.md"
-    assert report.read_text(encoding="utf-8") == "# s001 spike 报告\n"
+    assert "# s001 spike 报告\n" in report.read_text(encoding="utf-8")
 
 
 def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
@@ -805,12 +804,12 @@ def test_spikes_list_reports_state(tmp_path, monkeypatch, capsys):
     _init_spikes(repo)
     _bind(monkeypatch, repo)
     spikes_mod.main(["new", "--slug", "uv_lock"])
-    (repo / "docs/archive/spikes/s000_old").mkdir(parents=True)
+    spikes_mod.main(["new", "--slug", "other"])
     capsys.readouterr()
     spikes_mod.main(["list"])
     out = capsys.readouterr().out
-    assert "active    s001_uv_lock" in out
-    assert "archived  s000_old" in out
+    assert "active     s001_uv_lock" in out
+    assert "active     s002_other" in out
 
 
 # ---------- git mv 迁移（已入库条目） ----------
@@ -951,14 +950,11 @@ def test_migrate_legacy_reports_other_sources_blocking(tmp_path, monkeypatch):
 
 
 def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
-    """分支内同号 spike 目录同时出现在 active 与 archive 两侧时报重复。
-
-    迁移是移动而非复制，即使两侧内容一致也属于残留；与工作区扫描口径一致。
-    """
+    """分支内同号 spike 目录出现多份时报重复。"""
     repo = _init_repo(tmp_path)
     _git(repo, "checkout", "-b", "feature")
     _commit_entry(repo, "docs/spikes/s012_probe/report.md", text="# s012\n")
-    _commit_entry(repo, "docs/archive/spikes/s012_probe/report.md", text="# s012\n")
+    _commit_entry(repo, "docs/spikes/s012_other/report.md", text="# s012\n")
     _git(repo, "checkout", "main")
     with pytest.raises(IdScanError, match="s012"):
         scan_max_id(repo, "s", SPIKE_DIRS, kind="dir")
