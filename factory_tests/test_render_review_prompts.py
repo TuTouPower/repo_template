@@ -144,7 +144,7 @@ def _make_task_dir(tmp_path, level="full", contract="AC1", context="策略"):
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
-        f'---\ntid: t001\nslug: foo\ndiff_anchor: "abc1234"\nreview_level: "{level}"\n---\nbody\n',
+        f'---\ntid: t001\nslug: foo\nstatus: backlog\ndiff_anchor: "abc1234"\nspec_source_sha: "abc1234"\nreview_level: "{level}"\n---\nbody\n',
         encoding="utf-8",
     )
     (task_dir / "task.md").write_text(
@@ -195,7 +195,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
     (task_dir / "progress.md").write_text(
-        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\nspec_source_sha: abc\n"
         "spec_path: ../private.md\n---\nbody\n",
         encoding="utf-8",
     )
@@ -214,7 +214,7 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
     task_dir = _make_task_dir(repo)
     (repo / "linked_spec.md").symlink_to(outside)
     (task_dir / "progress.md").write_text(
-        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\nspec_source_sha: abc\n"
         "spec_path: linked_spec.md\n---\nbody\n",
         encoding="utf-8",
     )
@@ -228,7 +228,7 @@ def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
     monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
     (task_dir / "progress.md").write_text(
-        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\n"
+        "---\ntid: t001\nslug: foo\ndiff_anchor: abc\nspec_source_sha: abc\n"
         "spec_path: docs\\spec.md\n---\nbody\n",
         encoding="utf-8",
     )
@@ -243,7 +243,7 @@ def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
-        '---\ntid: t001\nslug: foo\ndiff_anchor: "abc"\n---\nx\n',
+        '---\ntid: t001\nslug: foo\ndiff_anchor: "abc"\nspec_source_sha: "abc"\n---\nx\n',
         encoding="utf-8",
     )
     (task_dir / "task.md").write_text("# Spec\n无契约区\n", encoding="utf-8")
@@ -257,11 +257,25 @@ def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
-        '---\ntid: t001\nslug: foo\ndiff_anchor: ""\n---\nx\n',
+        '---\ntid: t001\nslug: foo\ndiff_anchor: ""\nspec_source_sha: "abc"\n---\nx\n',
         encoding="utf-8",
     )
     (task_dir / "task.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="diff_anchor"):
+        render_review_prompts(task_dir)
+
+
+def test_render_missing_spec_source_sha_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    task_dir = tmp_path / "t001_foo"
+    task_dir.mkdir()
+    (task_dir / "progress.md").write_text(
+        '---\ntid: t001\nslug: foo\ndiff_anchor: "abc"\nspec_source_sha: ""\n---\nx\n',
+        encoding="utf-8",
+    )
+    (task_dir / "task.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="spec_source_sha"):
         render_review_prompts(task_dir)
 
 
@@ -301,8 +315,9 @@ def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-m", "init")
     anchor = _git(tmp_path, "rev-parse", "--short", "HEAD").stdout.strip()
+    full_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
     (task_dir / "progress.md").write_text(
-        f'---\ntid: t001\nslug: foo\ndiff_anchor: "{anchor}"\nreview_level: "full"\n---\nbody\n',
+        f'---\ntid: t001\nslug: foo\nstatus: active\ndiff_anchor: "{anchor}"\nspec_source_sha: "{full_sha}"\nreview_level: "full"\n---\nbody\n',
         encoding="utf-8",
     )
     return task_dir
@@ -418,11 +433,13 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
     )
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-m", "add t002 on primary")
+    primary_source_sha = _git(tmp_path, "rev-parse", primary_branch).stdout.strip()
 
-    # 模拟在链尾 worktree 中激活 t002_new（diff_anchor = chain_anchor）
+    # 模拟在链尾 worktree 中激活 t002_new（diff_anchor = chain_anchor，spec_source_sha = primary_source_sha）
     (task_dir / "progress.md").write_text(
         f"---\ntid: t002\nslug: new\ntitle: new\nstatus: active\nbranch: t002_new\n"
         f"worktree: ../wt\nreview_level: single\ndiff_anchor: {chain_anchor}\n"
+        f"spec_source_sha: {primary_source_sha}\n"
         "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nbody\n",
         encoding="utf-8",
     )
@@ -452,9 +469,11 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
     )
     _git(tmp_path, "add", str(task_dir / "progress.md"))
     _git(tmp_path, "commit", "-m", "mark done with spoofed body")
+    spoofed_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
     (task_dir / "progress.md").write_text(
         f"---\ntid: t002\nslug: new\ntitle: new\nstatus: active\nbranch: t002_new\n"
         f"worktree: ../wt\nreview_level: single\ndiff_anchor: {chain_anchor}\n"
+        f"spec_source_sha: {spoofed_sha}\n"
         "depends_on: t001\nconflicts_with: \"\"\nnote: \"\"\n---\nbody\n",
         encoding="utf-8",
     )

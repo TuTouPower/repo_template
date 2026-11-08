@@ -134,6 +134,7 @@ def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
         "status": "done",
         "branch": "t001_alpha",
         "base_sha": anchor,
+        "spec_source_sha": _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
         "tests": "pytest -q 通过",
         "blackbox": "无黑盒",
         "review": "PASS",
@@ -564,6 +565,7 @@ def test_recovery_detects_finish_interrupted_before_commit(git_repo):
         "tid": "t001", "attempt": identity["attempt"], "execution_id": identity["execution_id"],
         "status": "done", "branch": "t001_alpha",
         "base_sha": base,
+        "spec_source_sha": _git(git_repo, "rev-parse", "HEAD").stdout.strip(),
         "tests": "t", "blackbox": "b", "review": "r", "pending": [], "findings": [],
         "review_scope": monitoring.review_scope_fingerprint(
             base, "docs/tasks/t001_alpha", repo_root=worktree

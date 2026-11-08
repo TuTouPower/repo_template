@@ -117,6 +117,8 @@ def _prepare_done(repo, tid, slug):
     base_sha = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     task_dir = worktree / "docs" / "tasks" / branch
     ensure_review_evidence(worktree, task_dir, base_sha)
+    fm, _ = parse_front_matter(task_dir / "progress.md")
+    spec_source_sha = fm.get("spec_source_sha") or base_sha
     payload = {
         "tid": tid,
         "attempt": identity["attempt"],
@@ -124,6 +126,7 @@ def _prepare_done(repo, tid, slug):
         "status": "done",
         "branch": branch,
         "base_sha": base_sha,
+        "spec_source_sha": spec_source_sha,
         "tests": "pytest -q",
         "blackbox": "pass",
         "review": "pass",

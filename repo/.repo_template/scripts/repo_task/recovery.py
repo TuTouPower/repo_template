@@ -112,7 +112,8 @@ def recovery_state(tid: str, *, repo) -> dict:
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
         expected = {"tid": tid, "branch": branch, "status": "done",
                     "attempt": record["attempt"], "execution_id": record["execution_id"],
-                    "base_sha": fm["diff_anchor"]}
+                    "base_sha": fm["diff_anchor"],
+                    "spec_source_sha": fm.get("spec_source_sha", "")}
         if any(handoff.get(key) != value for key, value in expected.items()):
             raise ValueError("handoff identity/base 不匹配")
         head = _git(["rev-parse", "HEAD"], root=worktree)

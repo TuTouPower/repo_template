@@ -192,24 +192,23 @@ def _load_validated_start_task(
 
     try:
         task, ref_fm, ref_task_body, source_ref = load_task_backlog_baseline(
-            tid, base_sha, repo=repo
+            tid, repo=repo
         )
     except ctx.TaskNotFoundError:
         if tid in effective:
             sys.exit(f"start=FAIL：{tid} 在主干尚未提交；请先提交创建与调度变更后再 start")
         raise
     require_status(ref_fm, "backlog")
-    if source_ref != base_sha:
-        dirty_in_task = [
-            p for p in porcelain_entries(repo=repo)
-            if p == task["dir"] or p.startswith(task["dir"] + "/")
-        ]
-        if dirty_in_task:
-            sys.exit(f"start=FAIL：{task['dir']} 在主干有未提交改动；请先提交后再 start")
-        try:
-            _validate_task_dir_tree_modes(source_ref, task["dir"], repo=repo)
-        except ctx.TaskDataError as error:
-            sys.exit(f"start=FAIL：{error}")
+    dirty_in_task = [
+        p for p in porcelain_entries(include_rename_sources=True, repo=repo)
+        if p == task["dir"] or p.startswith(task["dir"] + "/")
+    ]
+    if dirty_in_task:
+        sys.exit(f"start=FAIL：{task['dir']} 在主干有未提交改动；请先提交后再 start")
+    try:
+        _validate_task_dir_tree_modes(source_ref, task["dir"], repo=repo)
+    except ctx.TaskDataError as error:
+        sys.exit(f"start=FAIL：{error}")
     spec_path = f"{task['dir']}/task.md"
     try:
         spec_text = git_text_at_ref(source_ref, spec_path, repo=repo)
@@ -357,8 +356,7 @@ def cmd_start(args):
     try:
         rel = create_worktree(ref_fm["tid"], branch, base_sha, repo=repo)
         created_worktree = True
-        if source_ref != base_sha:
-            _materialize_task_dir_from_ref(source_ref, task["dir"], worktree, repo=repo)
+        _materialize_task_dir_from_ref(source_ref, task["dir"], worktree, repo=repo)
         task_path = worktree / task["dir"] / ctx.PROGRESS_FILE
         fm, body = parse_front_matter(task_path)
         if fm.get("status") != "backlog":
@@ -367,6 +365,7 @@ def cmd_start(args):
         fm["branch"] = branch
         fm["worktree"] = worktree_rel
         fm["diff_anchor"] = base_sha
+        fm["spec_source_sha"] = source_ref
         write_front_matter(task_path, fm, body)
         linked = link_local_files(worktree, repo=repo)
     except (OSError, ctx.TaskDataError) as error:
@@ -412,6 +411,7 @@ def cmd_start(args):
         )
     _ledger_append_safely({
         "event": "start", "tid": args.tid, "branch": branch, "worktree": worktree_rel,
+        "spec_source_sha": fm["spec_source_sha"],
     }, repo=repo)
 
 
@@ -714,7 +714,7 @@ def _is_pure_backlog_to_done_member_conflict(
         return False
     if (set(head_fm.keys()) | set(branch_fm.keys())) - set(ctx.FRONT_MATTER_KEYS):
         return False
-    if any(head_fm.get(key, "") != "" for key in ("branch", "worktree", "diff_anchor")):
+    if any(head_fm.get(key, "") != "" for key in ("branch", "worktree", "diff_anchor", "spec_source_sha")):
         return False
     if any(
         head_fm.get(key, "") != branch_fm.get(key, "")
