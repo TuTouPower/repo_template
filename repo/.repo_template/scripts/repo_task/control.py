@@ -419,7 +419,7 @@ def cmd_ps(args):
     main_statuses = {task["tid"]: task["status"] for task in scan_tasks(repo=repo)}
     rows = compute_ps_rows(events, effective, main_statuses, repo=repo)
     if not args.all:
-        rows = [row for row in rows if row["state"] not in ctx.ARCHIVED_STATUSES]
+        rows = [row for row in rows if row["state"] not in ctx.TERMINAL_STATUSES]
     if not rows:
         print("（无在飞 task；--all 显示已结束）")
         return

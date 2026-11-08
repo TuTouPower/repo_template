@@ -43,6 +43,7 @@ from .git_ops import (
 )
 from .ledger import _ledger_append_safely, ledger_read
 from .monitoring import (
+    _HANDOFF_TYPES,
     git_tree_entries,
     validate_task_core_asset_changes,
     verify_integrate_ready,
@@ -135,6 +136,16 @@ def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[st
         handoff = json.loads(git_text_at_ref(main_sha, handoff_path, repo=repo))
         if not isinstance(handoff, dict) or handoff.get("tid") != dep:
             raise ValueError("handoff tid 不匹配")
+        for key, expected in _HANDOFF_TYPES.items():
+            if key not in handoff:
+                raise ValueError(f"handoff 缺失必需键 {key}")
+            val = handoff[key]
+            if not isinstance(val, expected) or (expected is int and isinstance(val, bool)):
+                raise ValueError(f"handoff 字段 {key} 类型非法")
+        if not (isinstance(handoff.get("attempt"), int) and not isinstance(handoff.get("attempt"), bool) and handoff["attempt"] > 0):
+            raise ValueError("handoff attempt 必须为正整数")
+        if not (isinstance(handoff.get("execution_id"), str) and bool(handoff["execution_id"].strip())):
+            raise ValueError("handoff execution_id 必须为非空字符串")
         base_sha = handoff.get("base_sha")
         if not base_sha or not isinstance(base_sha, str):
             raise ValueError("handoff base_sha 缺失")
@@ -143,7 +154,7 @@ def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[st
         # 2. 在提交历史中按 Blob OID 定位引入该对象的唯一非 merge 实现提交
         log_res = _git([
             "log", "--format=%H", "--no-merges", f"--find-object={blob_oid}",
-            f"refs/heads/{main}",
+            main_sha,
         ], repo=repo)
         if log_res.returncode != 0:
             raise ValueError(f"git log --find-object 失败：{log_res.stderr.strip()}")
@@ -466,7 +477,7 @@ def _resolve_integrate_branch(
     expected = f"{tid}_{fm.get('slug', '')}"
     if branch != expected:
         raise ctx.TaskDataError(f"分支 {branch!r} 与 {tid} slug 不符（应为 {expected!r}）")
-    if fm.get("status") not in ctx.ARCHIVED_STATUSES:
+    if fm.get("status") not in ctx.TERMINAL_STATUSES:
         raise ctx.TaskDataError(
             f"{tid} 在分支 {branch!r} 中 status={fm.get('status')!r}，须为 done/dropped"
         )
@@ -722,7 +733,7 @@ def _is_pure_backlog_to_done_member_conflict(
         )
     except ctx.TaskDataError:
         return False
-    if head_fm.get("status") != "backlog" or branch_fm.get("status") not in ctx.ARCHIVED_STATUSES:
+    if head_fm.get("status") != "backlog" or branch_fm.get("status") not in ctx.TERMINAL_STATUSES:
         return False
     if (set(head_fm.keys()) | set(branch_fm.keys())) - set(ctx.FRONT_MATTER_KEYS):
         return False

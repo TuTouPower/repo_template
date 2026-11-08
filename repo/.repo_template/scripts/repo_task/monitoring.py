@@ -618,7 +618,7 @@ def verify_integrate_ready(
     except ctx.TaskDataError as error:
         return "incomplete", "incomplete", str(error)
     status = fm.get("status")
-    if status not in ctx.ARCHIVED_STATUSES:
+    if status not in ctx.TERMINAL_STATUSES:
         return "incomplete", "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
     handoff_path = f"{task['dir']}/handoff.json"
     try:
@@ -819,7 +819,7 @@ def compute_ps_rows(
             base["state"] = f"{effective_status}(无 reserve)"
             rows.append(base)
             continue
-        if main_statuses.get(tid) in ctx.ARCHIVED_STATUSES:
+        if main_statuses.get(tid) in ctx.TERMINAL_STATUSES:
             base["state"] = main_statuses[tid]
             rows.append(base)
             continue

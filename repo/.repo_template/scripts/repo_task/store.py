@@ -82,7 +82,7 @@ def task_schedule_references(
     for task in tasks:
         if task["tid"] == target_tid:
             continue
-        if task["status"] in ctx.ARCHIVED_STATUSES:
+        if task["status"] in ctx.TERMINAL_STATUSES:
             continue
         for field in ("depends_on", "conflicts_with"):
             tids = parse_tid_list(task.get(field, ""), field=f"{task['tid']}.{field}")

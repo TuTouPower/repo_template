@@ -109,7 +109,6 @@ class RepoContext:
 
 VALID_STATUSES = ("backlog", "active", "done", "dropped")
 TERMINAL_STATUSES = ("done", "dropped")
-ARCHIVED_STATUSES = TERMINAL_STATUSES  # 终态集合（done / dropped），严禁与物理存储目录绑定
 # 仅活跃状态可 rewind 及其顺序（防 forward）
 STATUS_ORDER = ("backlog", "active")
 DEFAULT_REWIND = {"active": "backlog"}  # 撤一步映射

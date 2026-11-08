@@ -298,8 +298,8 @@ def _legacy_archived_history(repo):
     (repo / old_path).mkdir(parents=True, exist_ok=True)
     handoff_content = json.dumps({
         "tid": "t001", "attempt": 1, "execution_id": "legacy", "status": "done",
-        "branch": "t001_alpha", "base_sha": base, "tests": "t", "blackbox": "b",
-        "review": "r", "pending": [], "findings": [],
+        "branch": "t001_alpha", "base_sha": base, "spec_source_sha": base,
+        "tests": "t", "blackbox": "b", "review": "r", "pending": [], "findings": [],
         "review_scope": "legacy_scope_1234",
     }, indent=2) + "\n"
     (repo / old_path / "handoff.json").write_text(handoff_content, encoding="utf-8")
@@ -362,6 +362,35 @@ def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(gi
 
     with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
         integration._dependency_implementations("t001", repo=RepoContext.for_root(git_repo))
+
+
+@pytest.mark.parametrize("mutator", [
+    lambda p: p.pop("execution_id"),
+    lambda p: p.update({"execution_id": ""}),
+    lambda p: p.update({"execution_id": "   "}),
+    lambda p: p.pop("attempt"),
+    lambda p: p.update({"attempt": 0}),
+    lambda p: p.update({"attempt": -1}),
+    lambda p: p.update({"attempt": True}),
+    lambda p: p.update({"attempt": "1"}),
+    lambda p: p.pop("spec_source_sha"),
+])
+def test_dependency_implementation_rejects_invalid_handoff_fields(git_repo, mutator):
+    from repo_task import integration
+    from repo_task.context import TaskDataError
+
+    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
+    _integrated(git_repo, "t001", identity)
+    handoff = git_repo / ACTIVE / "handoff.json"
+    payload = json.loads(handoff.read_text("utf-8"))
+    mutator(payload)
+    handoff.write_text(json.dumps(payload), encoding="utf-8")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-m", "tamper handoff fields")
+
+    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+        integration._dependency_implementations("t001", repo=RepoContext.for_root(git_repo))
+
 
 # --------------------------------------------------------------------------
 # M03：链连续性回归与单 task base 已在主干

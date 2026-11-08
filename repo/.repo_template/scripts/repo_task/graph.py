@@ -36,7 +36,7 @@ def cmd_merge_backlog(args):
         dependencies[args.tid] = set().union(*(dependencies[tid] for tid in group)) - group
         conflicts[args.tid] = set().union(*(conflicts[tid] for tid in group)) - group
         for tid in tasks:
-            if tasks[tid]["status"] in ctx.ARCHIVED_STATUSES:
+            if tasks[tid]["status"] in ctx.TERMINAL_STATUSES:
                 continue
             if tid in group - {args.tid}:
                 dependencies[tid] = set()
@@ -51,7 +51,7 @@ def cmd_merge_backlog(args):
             sys.exit(f"合并会形成依赖环：{' -> '.join(cycle)}；未写入")
         updates = []
         for tid, task in tasks.items():
-            if tid not in affected or task["status"] in ctx.ARCHIVED_STATUSES:
+            if tid not in affected or task["status"] in ctx.TERMINAL_STATUSES:
                 continue
             deps = dump_tid_list(sorted(dependencies[tid]))
             peers = dump_tid_list(sorted(conflicts[tid]))

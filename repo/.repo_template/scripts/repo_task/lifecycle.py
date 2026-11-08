@@ -115,8 +115,8 @@ def cmd_edit(args):
     tasks = scan_tasks(repo=repo)
     tasks_by_tid = {task["tid"]: task for task in tasks}
     task, path, fm, body = load_task(args.tid, repo=repo)
-    if fm["status"] in ctx.ARCHIVED_STATUSES:
-        sys.exit(f"{args.tid} 已归档（{fm['status']}），不可编辑")
+    if fm["status"] in ctx.TERMINAL_STATUSES:
+        sys.exit(f"{args.tid} 已是终态（{fm['status']}），不可编辑")
     if fm["status"] != "backlog":
         sys.exit(
             f"{args.tid} status={fm['status']}；edit 只改 main 中未进入链的 backlog，"
@@ -189,7 +189,7 @@ def cmd_edit(args):
                 field=f"{candidate['tid']}.depends_on",
             )
             for candidate in tasks
-            if candidate["status"] not in ctx.ARCHIVED_STATUSES
+            if candidate["status"] not in ctx.TERMINAL_STATUSES
         }
         candidate_dependencies[args.tid] = list(dependencies)
         cycle = _dependency_cycle(candidate_dependencies)
@@ -343,8 +343,8 @@ def cmd_preflight(args):
     if creation and (fm["status"] != "backlog" or args.require_verified):
         sys.exit("--creation 仅用于 backlog，且不能与 --require-verified 同用")
     allow_backlog = args.allow_backlog or creation
-    if fm["status"] in ctx.ARCHIVED_STATUSES:
-        problems.append(f"status={fm['status']}，已归档不可执行")
+    if fm["status"] in ctx.TERMINAL_STATUSES:
+        problems.append(f"status={fm['status']}，已是终态不可执行")
     elif fm["status"] == "backlog" and not allow_backlog:
         msg = "status=backlog，须先 start"
         if source_ref:
@@ -558,7 +558,7 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
         require_own_task_worktree(fm, repo=repo)
         if not prechecked:
             _check_done_ready(args.tid, path.parent, repo=repo)
-    elif fm["status"] in ctx.ARCHIVED_STATUSES:
+    elif fm["status"] in ctx.TERMINAL_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
         require_own_task_worktree(fm, repo=repo)
