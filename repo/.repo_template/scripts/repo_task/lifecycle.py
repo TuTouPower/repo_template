@@ -789,6 +789,22 @@ def _finish_prechecks(args) -> dict:
     # 4. 除 finish 自身改动的 task 目录外，交付文件须已暂存且无未跟踪文件
     loose = _unstaged_outside((task["dir"],), repo=repo)
     if loose:
+        from .worktrees import find_unignored_env_symlinks
+        env_symlinks = find_unignored_env_symlinks(repo.root, loose)
+        if env_symlinks:
+            details = "\n".join(
+                f"- {path}：命中规则 {rule}（因尾斜杠 '/' 仅忽略真实目录，未忽略同名软链）"
+                for path, rule in env_symlinks.items()
+            )
+            sys.exit(
+                f"finish=FAIL：检测到未被忽略的环境软链：\n{details}\n"
+                "处理方式：\n"
+                "1. 若为本地环境资产：在 .gitignore 或 info/exclude 中补充不带尾斜杠的精准规则（如 "
+                + ", ".join(f"/{p}" for p in env_symlinks)
+                + "），或在主仓 .worktreeinclude 中声明；\n"
+                "2. 若为代码交付物：请执行 git add 暂存该软链。\n"
+                "零写入退出"
+            )
         shown = ", ".join(loose[:8]) + (f" 等共 {len(loose)} 项" if len(loose) > 8 else "")
         sys.exit(
             f"finish=FAIL：存在未暂存或未跟踪的非忽略文件：{shown}。"

@@ -123,11 +123,29 @@ _REVIEW_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB 单文件上限（Issue #50）
 
 
 def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
-    data = _required_git_bytes(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root)
+    cached_data = _required_git_bytes(["ls-files", "--cached", "-z"], root)
+    others_data = _required_git_bytes(["ls-files", "--others", "--exclude-standard", "-z"], root)
     algorithm = _required_git_bytes(["rev-parse", "--show-object-format"], root).decode().strip()
+
+    cached = {os.fsdecode(raw) for raw in cached_data.split(b"\0") if raw}
+    others = {os.fsdecode(raw) for raw in others_data.split(b"\0") if raw}
+
+    untracked_symlinks = [p for p in others if (root / p).is_symlink()]
+    if untracked_symlinks:
+        from .worktrees import find_unignored_env_symlinks
+        env_symlinks = find_unignored_env_symlinks(root, untracked_symlinks)
+        if env_symlinks:
+            first_path = next(iter(env_symlinks))
+            matched_rule = env_symlinks[first_path]
+            raise ctx.TaskDataError(
+                f"review scope 检测到未被忽略的环境软链：{first_path}（命中规则 {matched_rule}，"
+                f"因以 '/' 结尾仅忽略真实目录，未忽略同名软链）。"
+                f"若为本地环境资产，请在 .gitignore 或 info/exclude 补充精准规则（如 /{first_path}），"
+                f"或在主仓 .worktreeinclude 中声明；若为代码交付物，请执行 git add 暂存该软链。"
+            )
+
     tree = {}
-    for raw in set(data.split(b"\0")) - {b""}:
-        physical = os.fsdecode(raw)
+    for physical in sorted(cached | others):
         path = _review_scope_path(physical, task_name)
         if path is None:
             continue
@@ -208,7 +226,11 @@ def review_scope_fingerprint(
                 value = " ".join(tree[path]).encode() if path in tree else b"deleted"
                 _hash_part(digest, label, value)
         return digest.hexdigest()[:16]
-    except (ctx.TaskDataError, OSError, ValueError):
+    except ctx.TaskDataError as error:
+        import sys
+        print(f"WARNING: {error}", file=sys.stderr)
+        return ""
+    except (OSError, ValueError):
         return ""  # fail closed; an unreadable output is never silently omitted
 
 

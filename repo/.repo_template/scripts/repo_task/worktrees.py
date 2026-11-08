@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from pathlib import Path
+from typing import Iterable
 
 import repo_task.context as ctx
 
@@ -65,6 +67,8 @@ def _ensure_links_ignored(
     这些路径在主仓本已被忽略，规则对主仓与其它 worktree 语义不变。"""
     if not linked:
         return
+    if not ((repo.root / ".git").exists() or (repo.primary_root / ".git").exists() or (worktree / ".git").exists()):
+        return
     missing = _untracked_in(worktree, linked)
     if not missing:
         return
@@ -86,6 +90,63 @@ def _ensure_links_ignored(
         raise ctx.TaskDataError(f"软链在 worktree 中未被忽略：{', '.join(still)}")
 
 
+def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, str]:
+    """诊断未跟踪软链中因 Git 规则以 '/' 结尾仅匹配目录而未被忽略的环境软链。
+
+    返回 {rel_path: matched_rule} 映射。未命中目录忽略规则的软链或非软链不返回。
+    """
+    symlinks = [p for p in paths if (root / p).is_symlink()]
+    if not symlinks:
+        return {}
+    r = _git(["rev-parse", "--git-dir"], root=root)
+    if r.returncode != 0:
+        return {}
+    git_dir_raw = r.stdout.strip()
+    git_dir = Path(git_dir_raw) if os.path.isabs(git_dir_raw) else (root / git_dir_raw).resolve()
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        for p in symlinks:
+            parts = Path(p).parts
+            curr_src = root
+            curr_dst = td_path
+            for part in ["", *parts[:-1]]:
+                if part:
+                    curr_src = curr_src / part
+                    curr_dst = curr_dst / part
+                    curr_dst.mkdir(parents=True, exist_ok=True)
+                gi = curr_src / ".gitignore"
+                if gi.is_file():
+                    (curr_dst / ".gitignore").write_bytes(gi.read_bytes())
+
+        check_map = {}
+        check_paths = []
+        for p in symlinks:
+            posix_p = Path(p).as_posix().lstrip("./").rstrip("/")
+            cand = f"{posix_p}/"
+            check_paths.append(cand)
+            check_map[cand] = posix_p
+
+        cmd = [
+            "--git-dir", str(git_dir), "--work-tree", str(td_path),
+            "check-ignore", "-v", "--no-index", "--", *check_paths,
+        ]
+        check = _git(cmd, root=td_path)
+        results = {}
+        if check.returncode == 0:
+            for line in check.stdout.strip().splitlines():
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    matched_rule = parts[0]
+                    matched_cand = parts[1]
+                    orig = check_map.get(matched_cand)
+                    if orig:
+                        results[orig] = matched_rule
+        return results
+
+
 def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
     """把主仓未入库的本地文件软链进 worktree（同相对路径）。
 
@@ -105,21 +166,33 @@ def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
         worktree_resolved = None
 
     sources = []
-    for root, dirs, files in os.walk(repo.root, followlinks=False):
+    env_sources = []
+    for root_dir, dirs, files in os.walk(repo.root, followlinks=False):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         if ".env" in files:
-            src = Path(root) / ".env"
+            src = Path(root_dir) / ".env"
             rel = src.relative_to(repo.root)
             if not any(part in skip_dirs for part in rel.parts[:-1]):
                 sources.append(src)
+                env_sources.append(rel.as_posix())
     env_count = len(sources)
     sources.extend(_include_sources(repo))
-    included = []
+
+    ignored_env = set()
+    if env_sources and ((repo.root / ".git").exists() or (repo.primary_root / ".git").exists()):
+        try:
+            untracked_in_main = set(_untracked_in(repo.root, env_sources))
+            ignored_env = {p for p in env_sources if p not in untracked_in_main}
+        except ctx.TaskDataError:
+            pass
+
+    to_ensure = []
     for index, src in enumerate(sources):
         try:
             rel = src.relative_to(repo.root)
         except ValueError:
             continue
+        rel_posix = rel.as_posix()
         try:
             src_res = src.resolve()
             if worktree_resolved and (
@@ -130,15 +203,18 @@ def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
                 continue
         except (ValueError, OSError):
             pass
+
+        if index >= env_count or rel_posix in ignored_env:
+            to_ensure.append(rel_posix)
+
         dst = worktree / rel
         if dst.exists() or dst.is_symlink():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.symlink_to(os.path.relpath(src, dst.parent))
-        linked.append(rel.as_posix())
-        if index >= env_count:
-            included.append(rel.as_posix())
-    _ensure_links_ignored(worktree, included, repo=repo)
+        linked.append(rel_posix)
+
+    _ensure_links_ignored(worktree, to_ensure, repo=repo)
     return linked
 
 def is_managed_link(
