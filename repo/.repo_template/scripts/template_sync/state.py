@@ -132,15 +132,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-@consumer_locked
-def cmd_migrate(args: argparse.Namespace) -> int:
-    """显式迁移入口：把旧布局数据一次性收敛到当前格式。"""
-    sync = getattr(args, "sync", None) or ctx.current_sync()
-    if args.kind != "legacy-state":
-        raise ctx.SyncError(f"未知迁移目标：{args.kind}")
+def migrate_legacy_state(sync=None, *, write: bool = False) -> list[str]:
+    """迁移旧布局 state。默认 dry-run，仅在 write=True 时写盘与删除旧文件。"""
+    sync = sync or ctx.current_sync()
     legacy = legacy_state_path(sync)
     if not legacy.exists():
-        raise ctx.SyncError(f"未找到旧布局 state：{sync.rel(legacy)}")
+        return []
     try:
         legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -155,7 +152,13 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         "last_synced_at": None,
         "user_prompts": [],
     }
-    merged = _merge_legacy_state(data, legacy_data)
+    merged = _merge_legacy_state(dict(data), legacy_data)
+    if not write:
+        return [
+            f"{sync.rel(legacy)} 拟迁移至 {sync.rel(sync.state_path)}"
+            + (f"（并入字段 {', '.join(sorted(set(merged)))}）" if merged else "")
+        ]
+    _merge_legacy_state(data, legacy_data)
     write_state(data, sync)
     try:
         legacy.unlink()
@@ -163,10 +166,27 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         raise ctx.SyncError(
             f"state 已迁移，但旧文件删除失败：{sync.rel(legacy)}（{error}）；请人工删除"
         ) from error
-    print(
+    return [
         f"已迁移旧布局 state：{sync.rel(legacy)} → {sync.rel(sync.state_path)}"
         + (f"；并入字段 {', '.join(sorted(set(merged)))}" if merged else "")
-    )
+    ]
+
+
+@consumer_locked
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """显式迁移入口：把旧布局数据一次性收敛到当前格式。"""
+    sync = getattr(args, "sync", None) or ctx.current_sync()
+    if args.kind != "legacy-state":
+        raise ctx.SyncError(f"未知迁移目标：{args.kind}")
+    legacy = legacy_state_path(sync)
+    if not legacy.exists():
+        raise ctx.SyncError(f"未找到旧布局 state：{sync.rel(legacy)}")
+    write = getattr(args, "write", False)
+    reports = migrate_legacy_state(sync=sync, write=write)
+    mode_str = "落盘" if write else "dry-run 拟定"
+    print(f"legacy-state: {mode_str}完成 {len(reports)} 项")
+    for r in reports:
+        print(f"  {r}")
     return 0
 
 

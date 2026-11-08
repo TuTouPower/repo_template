@@ -1148,7 +1148,13 @@ def test_migrate_legacy_state_preserves_provenance_and_prompts(env):
 
     from template_sync.state import cmd_migrate
 
-    assert cmd_migrate(Namespace(kind="legacy-state")) == 0
+    # dry-run
+    assert cmd_migrate(Namespace(kind="legacy-state", write=False)) == 0
+    assert legacy.exists()
+    assert not env["state_file"].exists()
+
+    # write
+    assert cmd_migrate(Namespace(kind="legacy-state", write=True)) == 0
     assert not legacy.exists()
     data = json.loads(env["state_file"].read_text(encoding="utf-8"))
     assert data["last_synced_commit"] == "abc123"
@@ -1645,7 +1651,7 @@ def test_migrate_all_failure_restores_workflow_migration_and_history(env, monkey
 
     monkeypatch.setitem(migrate_mod._STEPS, "conventions", boom)
     with pytest.raises(ctx.SyncError, match="模拟 conventions 迁移失败"):
-        migrate_mod.cmd_migrate(Namespace(kind="all"))
+        migrate_mod.cmd_migrate(Namespace(kind="all", write=True))
     # 前一步 workflow 迁移已完成；失败步骤自身未写入，旧文件保留
     assert (task_dir / "progress.md").is_file()
     assert conv_file.read_text(encoding="utf-8").endswith("旧写法\n")
@@ -1765,7 +1771,13 @@ def test_apply_refuses_old_workflow_layout_until_explicit_migration(env, capsys)
 
     from template_sync.migrate import cmd_migrate
 
-    assert cmd_migrate(Namespace(kind="workflow-schema")) == 0
+    # dry-run: 默认不落盘
+    assert cmd_migrate(Namespace(kind="workflow-schema", write=False)) == 0
+    assert (task_dir / "note.md").is_file()
+    assert not (task_dir / "progress.md").exists()
+
+    # write: 落盘迁移
+    assert cmd_migrate(Namespace(kind="workflow-schema", write=True)) == 0
     assert (task_dir / "progress.md").is_file()
     assert not (task_dir / "note.md").exists()
 
@@ -1932,7 +1944,12 @@ def test_migrate_specs_index_drops_empty_supersedes_column(env, capsys):
 
     from template_sync.migrate import cmd_migrate
 
-    assert cmd_migrate(Namespace(kind="specs-index")) == 0
+    # dry-run
+    assert cmd_migrate(Namespace(kind="specs-index", write=False)) == 0
+    assert "supersedes" in index.read_text(encoding="utf-8")
+
+    # write
+    assert cmd_migrate(Namespace(kind="specs-index", write=True)) == 0
     text = index.read_text(encoding="utf-8")
     assert "在表即生效" in text
     assert "历史清单由" in text

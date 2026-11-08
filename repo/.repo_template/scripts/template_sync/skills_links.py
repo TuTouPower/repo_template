@@ -14,7 +14,6 @@ from repo_task.file_transaction import FileTransaction
 from . import context as ctx
 from .assets import _dir_has_diff
 from .common import _load_json_object, consumer_locked
-from .hooks import _remove_retired_merge_guard_setting
 
 
 def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Path], reports: list[str], sync=None) -> None:

@@ -20,7 +20,7 @@ from .entity_storage_migration import (
 from .hooks import migrate_retired_hooks, retired_hooks_status
 from .specs_index_migration import specs_index_migration_status, specs_index_report, migrate_specs_index
 from .source import assert_not_self, resolve_src
-from .state import cmd_migrate as state_migrate, read_state
+from .state import migrate_legacy_state, read_state
 from .workflow_migration import force_migrate_workflow_tasks, workflow_migration_status
 
 KINDS = (
@@ -70,7 +70,8 @@ def _resolve_source(sync) -> "Path":
     return src
 
 
-def _migrate_workflow(src: "Path", sync) -> list[str]:
+def _migrate_workflow(sync, write: bool = False) -> list[str]:
+    src = _resolve_source(sync)
     migrations, worktrees, errors = workflow_migration_status(src, sync=sync)
     blockers = list(errors)
     if worktrees:
@@ -79,6 +80,8 @@ def _migrate_workflow(src: "Path", sync) -> list[str]:
         raise ctx.SyncError("workflow schema 迁移前须处理现场：\n- " + "\n- ".join(blockers))
     if not migrations:
         return []
+    if not write:
+        return [f"{path} 拟强制迁移到当前 workflow schema" for path in migrations]
     template_dir = src / ".repo_template/docs/task_template"
     return _transactional(
         ["docs/tasks", "docs/archive/tasks"],
@@ -91,9 +94,15 @@ def _migrate_workflow(src: "Path", sync) -> list[str]:
     )
 
 
-def _migrate_conventions(sync) -> list[str]:
-    if not conventions_migration_status(sync=sync):
+def _migrate_conventions(sync, write: bool = False) -> list[str]:
+    status = conventions_migration_status(sync=sync)
+    if not status:
         return []
+    if not write:
+        return [
+            f"{path} 拟自动迁移原子写约定为 from repo_task.documents import atomic_write_text（保留消费仓自定义内容）"
+            for path in status
+        ]
     return _transactional(
         ["docs/blueprint/conventions.md"],
         migrate_conventions,
@@ -103,9 +112,15 @@ def _migrate_conventions(sync) -> list[str]:
     )
 
 
-def _migrate_specs_index(sync) -> list[str]:
-    if not specs_index_migration_status(sync=sync):
+def _migrate_specs_index(sync, write: bool = False) -> list[str]:
+    status = specs_index_migration_status(sync=sync)
+    if not status:
         return []
+    if not write:
+        return [
+            f"{path} 拟迁移 specs_index 旧说明句/无数据 supersedes 列（保留其余内容）"
+            for path in status
+        ]
     return _transactional(
         ["docs/specs_index.md"],
         migrate_specs_index,
@@ -115,9 +130,12 @@ def _migrate_specs_index(sync) -> list[str]:
     )
 
 
-def _migrate_retired_hooks(sync) -> list[str]:
-    if not retired_hooks_status(sync=sync):
+def _migrate_retired_hooks(sync, write: bool = False) -> list[str]:
+    status = retired_hooks_status(sync=sync)
+    if not status:
         return []
+    if not write:
+        return [f"{path} 拟退役并移除/清理" for path in status]
     return _transactional(
         [".claude/hooks/merge_guard.py", ".claude/settings.json"],
         lambda _changed: migrate_retired_hooks(sync=sync),
@@ -128,10 +146,11 @@ def _migrate_retired_hooks(sync) -> list[str]:
 
 
 _STEPS = {
-    "workflow-schema": _migrate_workflow,
-    "conventions": _migrate_conventions,
-    "specs-index": _migrate_specs_index,
-    "retired-hooks": _migrate_retired_hooks,
+    "legacy-state": lambda sync, write=False: migrate_legacy_state(sync=sync, write=write),
+    "workflow-schema": lambda sync, write=False: _migrate_workflow(sync, write=write),
+    "conventions": lambda sync, write=False: _migrate_conventions(sync, write=write),
+    "specs-index": lambda sync, write=False: _migrate_specs_index(sync, write=write),
+    "retired-hooks": lambda sync, write=False: _migrate_retired_hooks(sync, write=write),
     "entity-storage": lambda sync, write=False: migrate_entity_storage(sync=sync, write=write),
 }
 
@@ -139,24 +158,17 @@ _STEPS = {
 def cmd_migrate(args: argparse.Namespace) -> int:
     """执行显式迁移；`all` 按固定顺序逐项执行，宁可停下也不猜测数据。"""
     sync = getattr(args, "sync", None) or ctx.current_sync()
-    if args.kind == "legacy-state":
-        return state_migrate(argparse.Namespace(kind="legacy-state", sync=sync))
-    kinds = KINDS[1:] if args.kind == "all" else (args.kind,)
+    kinds = KINDS if args.kind == "all" else (args.kind,)
     write = getattr(args, "write", False)
     for kind in kinds:
         step = _STEPS.get(kind)
         if step is None:
             raise ctx.SyncError(f"未知迁移目标：{kind}")
-        if kind == "workflow-schema":
-            reports = step(_resolve_source(sync), sync)
-        elif kind == "entity-storage":
-            reports = step(sync, write=write)
-        else:
-            reports = step(sync)
+        reports = step(sync, write=write)
         if not reports:
             print(f"{kind}: 已是当前格式，无需迁移")
             continue
-        mode_str = "落盘" if write or kind != "entity-storage" else "dry-run 拟定"
+        mode_str = "落盘" if write else "dry-run 拟定"
         print(f"{kind}: {mode_str}完成 {len(reports)} 项")
         for line in reports:
             print(f"  {line}")

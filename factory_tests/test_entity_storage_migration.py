@@ -449,15 +449,21 @@ def test_entity_storage_migration_blocks_on_dirty_working_tree(repo):
         migrate_entity_storage(sync=sync, write=False)
 
 
-def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(repo):
+def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(repo, monkeypatch):
     """严格清理空目录：若清理非空直接阻断报错并触发事务完整回滚。"""
     _setup_legacy_repo(repo)
-    # 在 docs/archive/tasks 留下未预期的文件
-    residual = repo / "docs/archive/tasks/residual_unknown.txt"
-    residual.write_text("should block clean", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add residual to archive tasks")
     sync = ctx.SyncContext.for_consumer(repo)
+
+    # 预检合法通过；在搬移阶段向 docs/archive/tasks 留下残留文件触发清理空目录报错
+    real_move = sys.modules["template_sync.entity_storage_migration"].shutil.move
+
+    def move_with_residual(src, dst):
+        res = real_move(src, dst)
+        residual = repo / "docs/archive/tasks/residual_unknown.txt"
+        residual.write_text("should block clean", encoding="utf-8")
+        return res
+
+    monkeypatch.setattr("template_sync.entity_storage_migration.shutil.move", move_with_residual)
 
     with pytest.raises(MigrationError, match="清理旧目录失败.*仍包含非空残留文件"):
         migrate_entity_storage(sync=sync, write=True)
@@ -523,3 +529,107 @@ def test_apply_blocks_on_legacy_entity_storage(repo, capsys):
     err = capsys.readouterr().err
     assert "检测到旧实体存储布局" in err
     assert "migrate entity-storage --write" in err
+
+
+def test_entity_storage_migration_blocks_on_unknown_residual_files(repo):
+    """散落未知文件检查：在 status 与 build_plan 中拦截非规范文件（非 p*.md、非规范 task/spike 目录）。"""
+    _setup_legacy_repo(repo)
+    # 在 docs/archive/tasks 留下非规范文件
+    bad_file = repo / "docs/archive/tasks/unknown_file.txt"
+    bad_file.write_text("unknown", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add unknown file to archive tasks")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    status_problems = entity_storage_migration_status(sync=sync)
+    assert any("存在非规范任务项或未知散落文件" in p for p in status_problems)
+
+    with pytest.raises(MigrationError, match="存在非规范任务项或未知散落文件"):
+        migrate_entity_storage(sync=sync, write=False)
+
+    # 清理并测试 docs/pending/todo 中的未知文件
+    bad_file.unlink()
+    bad_pending = repo / "docs/pending/todo/notes.txt"
+    bad_pending.write_text("not a pending", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add unknown file to pending todo")
+
+    status_problems = entity_storage_migration_status(sync=sync)
+    assert any("存在非规范待办项或未知散落文件" in p for p in status_problems)
+
+    with pytest.raises(MigrationError, match="存在非规范待办项或未知散落文件"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_nonexistent_finding_ref(repo):
+    """Spike 证据真实性：校验 Spike 正文中的 dNNN 引用时，引用的 finding 文件必须真实存在。"""
+    _setup_legacy_repo(repo)
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "# Spike s001: kv_store\n\n## 结论\n采纳 SQLite方案。\n\n## 关联 findings\n- `d999`\n\n## 采纳决定\n直接进入后续任务。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "reference nonexistent finding d999")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="引用的 finding d999 在 docs/findings/ 中不存在真实文件"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_preserves_superseded_spike_metadata(repo):
+    """Spike 状态保真：迁移归档 spike 时，若原 report 声明为 status: superseded，保留其原有替代关系。"""
+    _setup_legacy_repo(repo)
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "---\n"
+        "sid: \"s001\"\n"
+        "slug: \"kv_store\"\n"
+        "status: \"superseded\"\n"
+        "superseded_by: \"s002\"\n"
+        "reason: \"方案被 s002 替代\"\n"
+        "---\n"
+        "# Spike s001\n\n"
+        "## 背景\n旧方案。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "mark s001 as superseded")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    migrate_entity_storage(sync=sync, write=True)
+
+    target_rep = repo / "docs/spikes/s001_kv_store/report.md"
+    assert target_rep.is_file()
+    text = target_rep.read_text(encoding="utf-8")
+    assert 'status: "superseded"' in text
+    assert 'superseded_by: "s002"' in text
+    assert 'reason: "方案被 s002 替代"' in text
+
+
+def test_entity_storage_migration_preserves_pending_body_indentation(repo):
+    """Pending 排版保真：正文中的缩进排版（代码块、列表缩进等）严格保留，不被无脑 strip 破坏。"""
+    _setup_legacy_repo(repo)
+    p1 = repo / "docs/pending/todo/p001_fix_cli.md"
+    indented_body = (
+        "# p001 fix cli\n\n"
+        "- 现象：\n"
+        "    - 第一层缩进\n"
+        "        - 第二层缩进\n\n"
+        "```python\n"
+        "def foo():\n"
+        "    return 42\n"
+        "```\n"
+    )
+    p1.write_text(indented_body, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add indented pending")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    migrate_entity_storage(sync=sync, write=True)
+
+    target_p1 = repo / "docs/pending/p001_fix_cli.md"
+    assert target_p1.is_file()
+    text = target_p1.read_text(encoding="utf-8")
+    assert "    - 第一层缩进\n        - 第二层缩进" in text
+    assert "def foo():\n    return 42" in text
