@@ -26,4 +26,3 @@ docs/runtime/
 
 # 派生 task 索引不再入库（task 文件是唯一权威）
 docs/tasks_index.json
-docs/archive/tasks_index.json

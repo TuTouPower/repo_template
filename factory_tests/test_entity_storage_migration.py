@@ -3,17 +3,25 @@
 覆盖：
 1. dry-run：默认执行不改写任何文件，输出详细计划；
 2. --write 真实写入：
-   - docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (done 需 handoff.json)
+   - docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (done 需 handoff.json 与实现血缘)
    - docs/tasks/tNNN_slug/ 原位保留
    - docs/pending/todo/pNNN.md -> docs/pending/pNNN.md (status: todo)
    - docs/pending/parked/pNNN.md -> docs/pending/pNNN.md (status: parked, 保留 reason)
    - docs/archive/pending/pNNN.md -> docs/pending/pNNN.md (status: closed, 保留 resolution 与 reason)
-   - docs/archive/spikes/sNNN/ -> docs/spikes/sNNN/ (status: completed, 校验闭环证据)
+   - docs/archive/spikes/sNNN/ -> docs/spikes/sNNN/ (status: completed, 校验闭环证据与 findings 关联)
    - docs/archive/tasks_audit.log -> docs/runtime/tasks_audit.log (保持原始字节)
    - 移除旧 docs/archive/handoff.md
    - 更新 docs/handoff.md 中的引用并清理空旧目录
 3. 重跑零写入（幂等性）
-4. 阻断条件：同号多处、目标占用、缺少闭环依据、归档任务非终态、未提交 handoff 归档
+4. 阻断条件：
+   - 同号多处、目标占用
+   - 缺少闭环依据（缺少 resolution 或 reason，无兜底）
+   - 同字节 audit.log 存在时严格阻断，绝不擅自删除
+   - done 任务缺少合法实现 commit 或血缘不合
+   - 归档 spike 报告缺少有效 findings 关联（dNNN）
+   - 目录来源与 Front Matter 状态矛盾（归档 pending 声明 todo，todo pending 声明 closed，归档 spike 声明 active）
+   - 工作区存在未暂存或已暂存修改
+   - 清理旧目录非空直接阻断报错
 5. 事务保护与失败回滚
 6. apply 门禁阻断与提示
 7. 迁移后依赖实现 (dependency implementations) 统一查验
@@ -65,6 +73,7 @@ def repo(tmp_path: Path) -> Path:
     (root / "docs/tasks").mkdir(parents=True)
     (root / "docs/pending").mkdir(parents=True)
     (root / "docs/spikes").mkdir(parents=True)
+    (root / "docs/findings").mkdir(parents=True)
     (root / "docs/runtime").mkdir(parents=True)
     (root / "docs/archive/reviews").mkdir(parents=True)
 
@@ -139,13 +148,16 @@ def _setup_legacy_repo(repo: Path) -> dict[str, str]:
         encoding="utf-8",
     )
 
-    # 6. Archived spike: docs/archive/spikes/s001_kv_store
+    # 6. Archived spike: docs/archive/spikes/s001_kv_store (包含 d001 关联)
     s1 = repo / "docs/archive/spikes/s001_kv_store"
     s1.mkdir(parents=True, exist_ok=True)
     (s1 / "report.md").write_text(
-        "# Spike s001: kv_store\n\n## 背景\n测试选型。\n\n## 结论\n采纳 SQLite方案。\n\n## 采纳决定\n直接进入后续任务。\n",
+        "# Spike s001: kv_store\n\n## 背景\n测试选型。\n\n## 结论\n采纳 SQLite方案。\n\n## 关联 findings\n- `d001`\n\n## 采纳决定\n直接进入后续任务。\n",
         encoding="utf-8",
     )
+    f1 = repo / "docs/findings/d001_kv_bench.md"
+    f1.parent.mkdir(parents=True, exist_ok=True)
+    f1.write_text("# d001 kv bench\n\n- 结论：SQLite 满足需求\n", encoding="utf-8")
 
     # 7. Active spike: docs/spikes/s002_network
     s2 = repo / "docs/spikes/s002_network"
@@ -223,12 +235,14 @@ def test_entity_storage_migration_write_e2e(repo, capsys):
     assert "status: \"todo\"" in p1_text
     assert "pid: \"p001\"" in p1_text
 
+    # 验证 p002 保留 reason
     p2 = repo / "docs/pending/p002_wait_dep.md"
     assert p2.is_file()
     p2_text = p2.read_text(encoding="utf-8")
     assert "status: \"parked\"" in p2_text
     assert "reason: \"2026-10-01 等待上游稳定\"" in p2_text
 
+    # 验证 p003 保留 resolution 与 reason
     p3 = repo / "docs/pending/p003_closed_item.md"
     assert p3.is_file()
     p3_text = p3.read_text(encoding="utf-8")
@@ -236,7 +250,7 @@ def test_entity_storage_migration_write_e2e(repo, capsys):
     assert "resolution: \"resolved\"" in p3_text
     assert "reason: \"已在 t001 修复并验证通过\"" in p3_text
 
-    # 旧 pending 目录已被清理
+    # 旧 pending 目录已被严格 rmdir 清理
     assert not (repo / "docs/pending/todo").exists()
     assert not (repo / "docs/pending/parked").exists()
     assert not (repo / "docs/archive/pending").exists()
@@ -279,7 +293,9 @@ def test_entity_storage_migration_idempotent_zero_write(repo, capsys):
     cmd_migrate(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
     capsys.readouterr()
 
-    # 第二次迁移（幂等性，零写入）
+    # 保持工作区干净后，第二次迁移（幂等性，零写入）
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: commit migration")
     res = cmd_migrate(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
     assert res == 0
     out = capsys.readouterr().out
@@ -288,10 +304,11 @@ def test_entity_storage_migration_idempotent_zero_write(repo, capsys):
 
 def test_entity_storage_migration_blocks_on_duplicate_tid(repo):
     _setup_legacy_repo(repo)
-    # 模拟在 active 和 archive 同时存在 t001
     dup_t1 = repo / "docs/tasks/t001_alpha"
     dup_t1.mkdir(parents=True)
     (dup_t1 / "progress.md").write_text("---\ntid: \"t001\"\nslug: \"alpha\"\nstatus: \"active\"\n---\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: add duplicate tid")
     sync = ctx.SyncContext.for_consumer(repo)
 
     with pytest.raises(MigrationError, match="同号多处.*t001"):
@@ -300,9 +317,10 @@ def test_entity_storage_migration_blocks_on_duplicate_tid(repo):
 
 def test_entity_storage_migration_blocks_on_duplicate_pid(repo):
     _setup_legacy_repo(repo)
-    # 模拟同时在 todo 和 archive 存在 p001
     dup_p1 = repo / "docs/archive/pending/p001_duplicate.md"
     dup_p1.write_text("# p001 duplicate\n\n- 处理：resolution=resolved；reason=done\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: add duplicate pid")
     sync = ctx.SyncContext.for_consumer(repo)
 
     with pytest.raises(MigrationError, match="同号多处.*p001"):
@@ -311,42 +329,148 @@ def test_entity_storage_migration_blocks_on_duplicate_pid(repo):
 
 def test_entity_storage_migration_blocks_on_missing_closure_reason(repo):
     _setup_legacy_repo(repo)
-    # 破坏 p003 的闭环依据
     p3 = repo / "docs/archive/pending/p003_closed_item.md"
     p3.write_text("# p003 closed item\n\n- 处理：未开\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: tamper p003 reason")
     sync = ctx.SyncContext.for_consumer(repo)
 
-    with pytest.raises(MigrationError, match="缺少闭环依据"):
+    with pytest.raises(MigrationError, match="缺少有效闭环结论|缺少闭环依据"):
         migrate_entity_storage(sync=sync, write=False)
 
 
-def test_entity_storage_migration_blocks_on_incomplete_spike_report(repo):
+def test_entity_storage_migration_blocks_on_missing_resolution_no_default(repo):
+    """根除默认兜底：旧 pending 若仅有 reason 而缺失 resolution，绝不自动 fallback 为 resolved，必须阻断。"""
     _setup_legacy_repo(repo)
-    # 破坏 s001 的报告，仅保留占位符
-    s1 = repo / "docs/archive/spikes/s001_kv_store/report.md"
-    s1.write_text("# Spike s001\n\n## 结论\n{结论}\n", encoding="utf-8")
+    p3 = repo / "docs/archive/pending/p003_closed_item.md"
+    p3.write_text(
+        "# p003 closed item\n\n- 处理：reason=已修复并验证，但未给 resolution 字段\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: remove resolution from p003")
     sync = ctx.SyncContext.for_consumer(repo)
 
-    with pytest.raises(MigrationError, match="未替换占位符"):
+    with pytest.raises(MigrationError, match="缺少有效闭环结论"):
         migrate_entity_storage(sync=sync, write=False)
 
 
-def test_entity_storage_migration_blocks_on_uncommitted_handoff(repo):
+def test_entity_storage_migration_blocks_on_identical_audit_log_existing(repo):
+    """方案契约第 253 行：新旧 audit.log 同字节也绝不擅自删除，阻断并要求人工介入。"""
     _setup_legacy_repo(repo)
-    # 在 docs/archive/handoff.md 中增加未提交修改
-    handoff_arch = repo / "docs/archive/handoff.md"
-    handoff_arch.write_text(handoff_arch.read_text(encoding="utf-8") + "\n- uncommitted dirty content\n", encoding="utf-8")
+    new_audit = repo / "docs/runtime/tasks_audit.log"
+    old_audit = repo / "docs/archive/tasks_audit.log"
+    new_audit.parent.mkdir(parents=True, exist_ok=True)
+    new_audit.write_bytes(old_audit.read_bytes())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: create identical runtime audit log")
     sync = ctx.SyncContext.for_consumer(repo)
 
-    with pytest.raises(MigrationError, match="含有未提交修改"):
+    with pytest.raises(MigrationError, match="目标占用.*禁止擅自覆盖或删除旧归档日志"):
         migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_tampered_task_lineage(repo):
+    """迁移预检中自动调用实现提交与血缘复验门禁：篡改 base_sha 导致无法匹配实现提交时直接阻断。"""
+    _setup_legacy_repo(repo)
+    t1_handoff = repo / "docs/archive/tasks/t001_alpha/handoff.json"
+    data = json.loads(t1_handoff.read_text(encoding="utf-8"))
+    data["base_sha"] = "0" * 40
+    t1_handoff.write_text(json.dumps(data), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "tamper t001 handoff base_sha")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="无法解析为 commit|复验失败|血缘不合法"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_spike_missing_findings_ref(repo):
+    """严格校验 spike 报告必须包含有效 findings 关联（如 dNNN 引用）。"""
+    _setup_legacy_repo(repo)
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "# Spike s001: kv_store\n\n## 结论\n采纳 SQLite方案。\n\n## 采纳决定\n直接进入后续任务。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "remove findings ref from s001 report")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="缺少有效 findings 关联"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_pending_status_conflict(repo):
+    """目录来源与 Front Matter 状态一致性检查：归档待办声明为 todo 时直接阻断。"""
+    _setup_legacy_repo(repo)
+    p3 = repo / "docs/archive/pending/p003_closed_item.md"
+    p3.write_text(
+        "---\npid: \"p003\"\nslug: \"closed_item\"\nstatus: \"todo\"\n---\n# p003\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "tamper p003 status to todo in archive")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="状态与所在目录矛盾"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_spike_status_conflict(repo):
+    """目录来源与 Front Matter 状态一致性检查：归档 spike 声明为 active 时直接阻断。"""
+    _setup_legacy_repo(repo)
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "---\nsid: \"s001\"\nslug: \"kv_store\"\nstatus: \"active\"\n---\n# Spike s001\n\n## 结论\n采纳方案 d001。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "tamper s001 status to active in archive")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="状态与目录矛盾"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_on_dirty_working_tree(repo):
+    """迁移前必须检查工作区干净（staged 和 unstaged 均无修改）。"""
+    _setup_legacy_repo(repo)
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    # 1. 测试 unstaged 修改阻断
+    (repo / "README.md").write_text("# Dirty\n", encoding="utf-8")
+    with pytest.raises(MigrationError, match="工作区必须干净"):
+        migrate_entity_storage(sync=sync, write=False)
+
+    # 2. 测试 staged 修改阻断
+    _git(repo, "add", "README.md")
+    with pytest.raises(MigrationError, match="工作区必须干净"):
+        migrate_entity_storage(sync=sync, write=False)
+
+
+def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(repo):
+    """严格清理空目录：若清理非空直接阻断报错并触发事务完整回滚。"""
+    _setup_legacy_repo(repo)
+    # 在 docs/archive/tasks 留下未预期的文件
+    residual = repo / "docs/archive/tasks/residual_unknown.txt"
+    residual.write_text("should block clean", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add residual to archive tasks")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="清理旧目录失败.*仍包含非空残留文件"):
+        migrate_entity_storage(sync=sync, write=True)
+
+    # 回滚后验证现场恢复：t001 仍在旧归档目录中
+    assert (repo / "docs/archive/tasks/t001_alpha").is_dir()
+    assert not (repo / "docs/tasks/t001_alpha").exists()
 
 
 def test_entity_storage_migration_rollback_on_failure(repo, monkeypatch):
     _setup_legacy_repo(repo)
     sync = ctx.SyncContext.for_consumer(repo)
 
-    # 模拟在写入 pending 阶段抛出异常
     real_atomic_write = sys.modules["template_sync.entity_storage_migration"].atomic_write_text
     calls = {"count": 0}
 
