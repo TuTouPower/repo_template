@@ -32,6 +32,7 @@ from .git_ops import (
     _get_head_short,
     _git,
     _git_bytes,
+    batch_cat_file,
     default_branch,
     has_unmerged_commits,
     porcelain_entries,
@@ -150,23 +151,25 @@ def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[st
 
 def _validate_task_dir_tree_modes(
     ref: str, task_rel: str, *, repo: "ctx.RepoContext",
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """校验 ref:task_rel 下的完整 tree 清单，仅允许 100644/100755 普通文件（A09）。"""
     listing = _git(["ls-tree", "-r", "-z", "--end-of-options", ref, "--", task_rel], repo=repo)
     if listing.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 {ref}:{task_rel}：{listing.stderr.strip()}")
-    entries: list[tuple[str, str]] = []
+    entries: list[tuple[str, str, str]] = []
     for item in listing.stdout.split("\0"):
         if not item:
             continue
         meta, rel_path = item.split("\t", 1)
-        mode = meta.split()[0]
+        parts = meta.split()
+        mode = parts[0]
         if mode not in ("100644", "100755"):
             raise ctx.TaskDataError(
                 f"{ref}:{rel_path} 含不支持的 Git 对象模式 mode={mode}"
                 "（task 目录仅允许 100644/100755 普通文件，拒绝 symlink/gitlink）"
             )
-        entries.append((mode, rel_path))
+        oid = parts[2]
+        entries.append((mode, rel_path, oid))
     if not entries:
         raise ctx.TaskDataError(f"{ref}:{task_rel} 无可物化文件")
     return entries
@@ -235,12 +238,14 @@ def _materialize_task_dir_from_ref(
 ) -> None:
     """将主干 backlog 权威 ref 中的 task 目录完整物化到新创建的 worktree（A09）。"""
     entries = _validate_task_dir_tree_modes(ref, task_rel, repo=repo)
+    oids = [oid for _, _, oid in entries]
+    contents = batch_cat_file(oids, repo=repo)
     blobs: list[tuple[str, str, bytes]] = []
-    for mode, rel_path in entries:
-        blob = _git_bytes(["show", f"{ref}:{rel_path}"], repo=repo)
-        if blob.returncode != 0:
+    for mode, rel_path, oid in entries:
+        blob_bytes = contents.get(oid)
+        if blob_bytes is None:
             raise ctx.TaskDataError(f"无法读取 {ref}:{rel_path}")
-        blobs.append((mode, rel_path, blob.stdout))
+        blobs.append((mode, rel_path, blob_bytes))
     target_dir = worktree / task_rel
     if target_dir.exists():
         shutil.rmtree(target_dir)
