@@ -2,7 +2,7 @@
 
 > 编写时间：2026-11-08T13:02:49+08:00。分析基线：`3037526d73833e5f76922515757974011be7e629`。
 >
-> 目标原则依据用户本次明确要求：tasks、pending、spikes 终生使用固定路径，状态由元数据表达；Archive 仅容纳已经冻结的历史文稿。本文定义目标契约、破坏性变更、迁移步骤与验收条件，代码改造尚未启动。治理记录仍以[裁决总账](../decision_log.md)为准，实施后再同步正式契约与落地状态。
+> 目标原则依据用户本次明确要求：tasks、pending、spikes 终生使用固定路径，状态由元数据表达；Archive 保存冻结的历史文稿，本机操作日志放在 runtime。本文定义目标契约、破坏性变更、迁移步骤与验收条件，代码改造尚未启动。治理记录仍以[裁决总账](../decision_log.md)为准，实施后再同步正式契约与落地状态。
 >
 > 适用范围：模板产物 `repo/`、工厂集成测试及必要的同步迁移代码。本文面向模板工具链维护者；工厂笔记留在 `docs_repo/`，不分发到消费仓。文中新增命令均为目标接口，不能直接当作当前版本操作命令执行。
 
@@ -20,14 +20,15 @@
 |Finding|`docs/findings/{did}_{slug}.md`|保持事实库定位和现行正文结构，原位修订，不进 Archive|
 |任务内审查与执行证据|所属 task 固定目录|与实体一起保留，继续参与 review、finish、cleanup、integrate 和恢复校验|
 |独立历史评审包|`docs/archive/reviews/review_*/`|闭环、冻结、退出运行时依赖后，整包归档|
-|历史交接段落|`docs/archive/handoff.md`|保留现行历史文本追加方式，不承载机器执行回执|
+|项目交接快照|`docs/handoff.md`|只维护当前交接上下文，历史由 Git 保存，不生成 Archive 副本|
 |过时方案与历史设计|消费仓 `docs/archive/` 或工厂 `docs_repo/archive/`|退出当前契约后保留历史版本，更新当前导航|
-|任务操作审计|`docs/audit/tasks_audit.log`|持续追加的审计记录，独立于 Archive 与本机 runtime|
-|存储迁移证明|`docs/audit/entity_storage_migration.json`|一次性验证结果与旧任务集成来源，随迁移提交保存，不进 Archive|
+|任务操作日志|`docs/runtime/tasks_audit.log`|本机操作留痕，不入 Git，不承担状态、执行权或恢复权威|
 
 `tid / pid / sid / did` 分别为 `tNNN / pNNN / sNNN / dNNN`，数字至少三位，沿用现有编号规则。`slug` 为创建时确定的 snake_case 标识；显示标题可以修改，slug 和规范路径不能随标题变化。
 
 本次保留 C90 的固定规格来源、C91 的显式环境资产边界、一个实现 commit、attempt 身份与 owner、现有测试及 review 门禁。Git Tree 审查快照升级、attempt 状态机重写、通用文档数据库和新的调度服务不在范围内。
+
+目标系统只有一套规范路径、实体 schema 和来源验证算法。旧数据在切换前一次性转换为目标格式；日常运行不识别旧格式，不区分迁移记录与新建记录，不依赖迁移生成的持久映射表。备份、dry-run 清单和事务 journal 只服务本次升级及故障恢复，不进入业务读取链路。
 
 ## 现状与问题边界
 
@@ -42,7 +43,6 @@
 |`pending.py`|todo、parked、archived 由三个目录表达，支持按 slug 重命名文件|状态、身份地址与文件操作绑定|
 |`spikes.py`、`repo_hygiene.py`|按活跃或归档目录列举 spike，完结后整目录移动|缺少可独立校验的生命周期元数据|
 |`repo_task/finalization.py`|task、spike 引用同时查询活跃与归档路径|闭环校验依赖多位置查找|
-|`RepoContext.audit_path`|指向 `docs/archive/tasks_audit.log`，生命周期命令持续追加|Archive 混入仍在写入的操作审计|
 |同步迁移模块与消费仓指令|包含双目录扫描、移动与归档约定|升级后容易重新生成旧布局|
 
 Issue #92 暴露了路径变换与门禁不一致：任务侧修改旧路径，Git 合并跟随重命名写入归档路径，范围门禁与自动合并结果校验发生矛盾。固定路径消除任务归档造成的地址变换；一般代码重命名、真实内容冲突和未经审查改写仍须校验。
@@ -58,7 +58,7 @@ Issue #88、#90 涉及代码基座、规格来源和链式启动；#91 涉及环
 5. **每项事实有确定权威。** Task 业务状态、attempt 执行身份、Git 合并事实保持分工。列表和看板是投影，不能回写成第二份状态账本。
 6. **终态保留身份。** done、dropped、closed、completed、superseded 记录继续参与编号占用与引用解析，不因默认视图隐藏而消失。
 7. **历史证据保留。** 终态记录通过追加勘误、后继引用或受审查修订维护，不能以清理目录为由删除证据、重写旧提交或伪造历史 PASS。
-8. **Archive 退出运行时。** 结构化实体、执行权账本、持续写入的审计记录及仍被门禁读取的证据，不存放于 Archive。
+8. **Archive 只保存冻结文稿。** 结构化实体、执行权账本、持续追加的操作日志及仍被门禁读取的证据不存放于 Archive。本机操作日志与执行账本统一放在既有 runtime 目录，不新增审计目录。
 
 稳定地址约束正式实体生命周期。现有 `purge` 仅取消从未入库的误建 task，其授权、引用保护和删除边界不扩大；不把 purge 用于已入库终态实体，也不借本次迁移清理数据。该误建取消事务使用的可恢复临时位置不承担状态视图。
 
@@ -81,25 +81,22 @@ docs/
 │       └── code/
 ├── findings/
 │   └── d001_example.md
-├── audit/
-│   ├── tasks_audit.log
-│   └── entity_storage_migration.json
 ├── runtime/
-│   └── dispatch_ledger.jsonl
+│   ├── dispatch_ledger.jsonl
+│   └── tasks_audit.log
 └── archive/
-    ├── reviews/
-    └── handoff.md
+    └── reviews/
 ```
 
-示例 ID 仅说明布局；文件是否存在由实际任务与审查级别决定。`code/` 是可选实验目录；single task 使用 `review_general.md`。`runtime/` 继续沿用本机运行态与备份约定，审计日志不因迁移到新位置而降为可丢弃缓存。日志沿用现有 `*.log` 忽略策略并纳入本机备份；迁移证明 JSON 作为版本化来源证据提交，不与日志混用。旧日志若被显式跟踪，预检须报告并先确定保存方式，不能让迁址后持续追加意外弄脏主干。
+示例 ID 仅说明布局；文件是否存在由实际任务与审查级别决定。`code/` 是可选实验目录；single task 使用 `review_general.md`。`runtime/` 沿用本机数据不入库、单独备份的约定。ledger 承担执行身份与 owner 控制，操作日志只供人工排障，两者不互相替代。旧日志若被显式跟踪，迁移预检须报告，并在保存完整历史后明确取消跟踪，不能通过忽略规则假装已经取消跟踪。
 
-三类生命周期实体增加 `storage_version: 2`，分别存放于 task 的 `progress.md`、pending 文件和 spike 的 `report.md` front matter。该字段标识固定路径契约，不表达业务状态。新记录由创建脚本写入；旧记录只由显式迁移写入；正常命令缺字段即拒绝，不在读取时自动补齐。
+三类生命周期实体分别在 task 的 `progress.md`、pending 文件和 spike 的 `report.md` front matter 保存规定字段。所有记录只接受目标 schema；旧记录在一次性迁移时补齐，不在运行时自动补字段。不增加逐实体格式版本字段或按来源分派的解析器；切换门禁校验工具链一致性、规范路径和字段完整性。
 
 |实体|机器字段|说明|
 |---|---|---|
-|Task|现有字段加 `storage_version`|保留 `diff_anchor`、`spec_source_sha`、review、依赖、分支与 worktree 等现有契约|
-|Pending|`storage_version`、`pid`、`slug`、`status`、`resolution`、`reason`、`fix_ref`|H1 继续承担显示标题，正文保留问题、来源、证据和处理历史|
-|Spike|`storage_version`、`sid`、`slug`、`status`、`superseded_by`、`reason`|报告正文保留实验、证据、结论、findings 与后续 task|
+|Task|现有严格字段|保留 `diff_anchor`、`spec_source_sha`、review、依赖、分支与 worktree 等现有契约|
+|Pending|`pid`、`slug`、`status`、`resolution`、`reason`、`fix_ref`|H1 继续承担显示标题，正文保留问题、来源、证据和处理历史|
+|Spike|`sid`、`slug`、`status`、`superseded_by`、`reason`|报告正文保留实验、证据、结论、findings 与后续 task|
 
 复用现有 front matter 解析和原子写入机制，增加各实体严格字段与状态校验。Pending、spike 不另建通用实体框架，不为三个有限类型引入 ORM 或索引数据库。机器字段作为当前状态唯一入口；正文历史中的“已归档”“处理”等旧记录保留审计含义，不再作为状态读取来源。
 
@@ -122,7 +119,7 @@ Pending 的 todo、parked 不保存当前闭环 resolution 与 fix_ref，parked 
 
 `done` 表示实施完成，`integrated` 表示对应实现已经合入主干。UI 和 CLI 不把“位于 tasks”解释为尚未完成，也不把“done”直接解释为已经合并。集成事实继续由明确 merge SHA、Git 血缘和可核对的 integrated 回执表达。
 
-Task 列表沿用现有 `--status`、`--ref` 与 JSON 入口；增加 `--active` 作为 `status=active` 的精确筛选，并与 `--status` 互斥。其他状态使用 `--status backlog|done|dropped`，不把 `--active` 暗定义成“所有非终态”。看板默认展示待处理与运行中集合，可切换已完成、已放弃、待合并和全部；默认过滤不影响 ID 查找、调度与历史核验。
+Task 列表统一使用现有 `--status`、`--ref` 与 JSON 入口，运行中筛选使用 `--status active`，其他状态使用对应枚举值，不增加同义参数。看板默认展示待处理与运行中集合，可切换已完成、已放弃、待合并和全部；默认过滤不影响 ID 查找、调度与历史核验。
 
 当前来源和有效状态来源继续区分：主干、指定 ref、所属 worktree 各有明确读取语义；有效状态汇总保留来源说明。固定路径不能成为删除必要跨分支查询的理由，也不允许读取最新主干覆盖 C90 固定初始规格。
 
@@ -173,15 +170,19 @@ Task finalization 只从固定路径解析 sid。引用 active spike 不能通�
 
 `repo_hygiene.py archive-review` 继续保留为独立冷文稿操作，限定 `docs/reviews/review_*/` 到 `docs/archive/reviews/` 的整包迁移，不扩展成任意路径搬运器。保留报告与 `_meta/`，先 dry-run，目标已存在时拒绝覆盖；需要更新当前导航的变更与迁移一并审阅。冻结后采用追加勘误或新评审包，不在多个分支继续修改已冻结包。归档命令仍遵循现有明确授权与提交边界。
 
-`docs/tasks/tNNN_slug/review_*.md`、`handoff.json`、规格附件和 spike 报告均不适用上述归档入口。`archive-handoff` 仅处理人类历史交接段落，不能处理 task 的机器执行回执。
+`docs/tasks/tNNN_slug/review_*.md`、`handoff.json`、规格附件和 spike 报告均不适用上述归档入口。
+
+项目交接只维护固定位置 `docs/handoff.md` 中的当前快照，历史由 Git 提交保存。退役 `archive-handoff` 命令及其段落切分、摘要标记、归档追加和中断恢复逻辑，不再创建或追加 `docs/archive/handoff.md`。交接快照提供当前焦点、未完成事项和下一步等人类上下文，不替代 task 状态、attempt ledger 或机器执行证据。任务内 `handoff.json` 保留原职责与保护规则。
+
+切换前确认旧 `docs/archive/handoff.md` 全部内容已进入可恢复的 Git 历史；未提交、未跟踪内容必须先完整保存并验证，不能假设 Git 已经记录。具备该前提后，显式迁移才从当前目录移除旧归档文件并更新引用，不再生成另一份历史汇总。冻结 reviews 等其他冷文稿保持原样。
 
 过时方案与架构说明归档时，先确认当前契约已由明确 successor 承接，再更新当前入口的路径引用。历史证据中的原路径保留原意，不批量改写引用或格式化冷文稿。工厂 `docs_repo/archive/` 与消费仓 Archive 相互独立，消费仓 hygiene 不写工厂笔记。
 
-`tasks_audit.log` 一次性迁到 `docs/audit/`。新生命周期命令只写新位置；旧日志按原始字节保留并纳入备份和迁移验证。审计继续承担操作历史，不升级为任务状态权威，也不自动导入 attempt ledger。
+`tasks_audit.log` 一次性迁到既有 `docs/runtime/tasks_audit.log`，新命令只写新位置，旧日志按原始字节保存；目标已存在时明确阻断，不覆盖或自动拼接。它记录 rewind、finish-unwind、purge 等操作，供人工排查未入库操作，不作为依赖校验、执行权或自动恢复的数据源。整个 runtime 目录不入 Git，日志沿用本机备份约定；正式任务证据仍在实体目录和 Git 中。
 
 ## 合并与审查门禁
 
-取消 `_stage_archive_moves()`、`_archive_move_deviations()`、`_sync_archive_after_existing_merge()` 及归档目标占用检查。合并事务不再重建归档目录，不为实体目录移动设置豁免；历史 merge 查找只使用切换后协议规定的固定 handoff 路径。
+取消 `_stage_archive_moves()`、`_archive_move_deviations()`、`_sync_archive_after_existing_merge()` 及归档目标占用检查。合并事务不再重建归档目录，不为实体目录移动设置豁免；当前 handoff 只从固定路径读取，实现来源统一按 Git 对象和提交血缘定位，不通过历史目录名称选择算法。
 
 `_expected_auto_merge()` 与 staged 范围、内容保护继续存在，按固定路径收敛调用。门禁仍须验证目标 tip、exact handoff、代码基座、依赖实现、Git 自动合并内容，以及人工冲突解决的现有验证条件。不得把它们替换成单一“staged 路径属于已审路径”的子集判断。
 
@@ -224,7 +225,7 @@ review scope 不增加对全部终态 task 的排除规则。当前 task 的过�
 
 复用现有 `repo_sync.py migrate` 和 `FileTransaction`，增加目标类型 `entity-storage`，提供默认 dry-run 与显式写入。具体目标调用形式为 `repo_sync.py migrate entity-storage [--write]`；新类型的计划、执行、验证、恢复复用同一转换定义，不另建独立迁移框架。
 
-迁移器只负责已识别源布局到本方案目标布局。运行时、新创建接口和正常同步不接受旧目录。单文件 pending 总账、早期 task 文档 schema 等更早版本，先使用对应版本迁移工具显式收敛；本迁移器报告不支持的源版本，不在正常读取中累积兼容链。
+迁移器根据切换前实际数据清单，一次性把路径与字段转换到唯一目标格式，覆盖范围在执行前明确核实。不能机械串联历代迁移步骤，不能把旧解析器挂进 store、finalization 或依赖验证。未识别的数据先完成针对性转换设计和验证，再执行切换；不能通过保留旧运行路径完成升级。迁移工具属于本次升级工具，正常业务命令不导入、不依赖它，不维护永久的历代格式兼容流水线。
 
 ### 维护窗口与备份
 
@@ -240,48 +241,49 @@ review scope 不增加对全部终态 task 的排除规则。当前 task 的过�
 
 |源数据|目标与转换依据|
 |---|---|
-|`docs/tasks/tNNN_slug/`|保留原路径，校验身份与当前状态，写入存储版本|
+|`docs/tasks/tNNN_slug/`|保留原路径，校验身份与当前状态，一次性补齐目标字段|
 |`docs/archive/tasks/tNNN_slug/`|迁到 `docs/tasks/tNNN_slug/`；只接受有明确终态证据的 done、dropped|
 |`docs/pending/todo/pNNN_slug.md`|迁到扁平目录，写 `status: todo`|
 |`docs/pending/parked/pNNN_slug.md`|迁到扁平目录，写 `status: parked`，保留暂搁依据|
 |`docs/archive/pending/pNNN_slug.md`|迁到扁平目录，写 `status: closed`；解析并保留原闭环依据|
 |`docs/spikes/sNNN_slug/`|保持路径；未明确完成者按源协议 active 迁移，不通过正文猜 completed|
 |`docs/archive/spikes/sNNN_slug/`|闭环证据验证通过后迁回固定目录，写 `status: completed`|
-|`docs/archive/tasks_audit.log`|迁到 `docs/audit/tasks_audit.log`，保持原始内容|
+|`docs/archive/tasks_audit.log`|一次性迁到 `docs/runtime/tasks_audit.log`，保持原始内容|
 
 同号多处、目标占用、身份不符、源状态与正文矛盾、归档 spike 缺 findings、旧 pending 缺闭环依据，全部列为阻断项。即使两个文件字节相同，也不擅自决定哪份应删除。需要人工裁定时，先在源版本形成可审阅修复，再重新生成迁移计划。
 
-迁移计划包含源路径、目标路径、输入摘要、字段转换、当前引用改写及附件清单。引用改写限定当前维护文档中的真实链接与路径字段，使用确定的旧新路径映射；不能全仓字符串替换历史报告、代码示例、日志或 URL。
+迁移计划包含源路径、目标路径、输入摘要、字段转换、当前引用改写及附件清单。旧交接归档退役另列文件内容已完整入库的证据与移除动作，纳入同一备份和事务保护。引用改写限定当前维护文档中的真实链接与路径字段，使用确定的旧新路径映射；不能全仓字符串替换历史报告、代码示例、日志或 URL。
 
-### 历史实现来源与迁移证明
+### 实现来源统一校验
 
-仅搬回 task 文档仍不够。当前 `_dependency_implementations()` 会从 handoff 历史定位实现提交；旧实现可能曾直接写入 Archive。若删除旧路径查询而不保存已验证来源，新任务依赖旧 done task 时会丢失实现 SHA。
+任务依赖需要确定实现 SHA，但不需要增加一份迁移来源表。当前 `_dependency_implementations()` 将来源定位绑定于历史文件路径，本次从根因改为按 Git 对象与血缘查证，所有完成任务采用同一算法。
 
-迁移预检须用源版本规则验证每条已集成旧 task 的实现、handoff 与主干包含关系，再写入版本化 `docs/audit/entity_storage_migration.json`。记录至少包含目标证明 schema 版本、迁移输入 commit、各 task 的固定身份与目标路径、历史执行 identity、已核实实现 SHA、集成证据 SHA，以及对应 handoff Blob OID。dropped 条目没有实现时如实记录，不补造实现；缺少足以证明 done 的证据则阻断迁移。
+1. 从确定来源 SHA 中的规范 task 目录读取 `handoff.json`，验证其目标 schema、tid、execution identity 和 base_sha，取得其 Blob OID。
+2. 在该确定来源的提交历史中，按 Blob OID 定位引入该对象的候选实现提交，不限制历史路径，也不猜 commit 标题。Git 原生 `--find-object` 可用于候选检索，但对象出现次数变化只提供候选，不能直接等同于实现来源。[Git log 官方说明](https://git-scm.com/docs/git-log/2.28.0.html)
+3. 对候选验证：恰好一个非 merge 实现 commit、first parent 等于 handoff.base_sha、提交包含完全一致的 handoff 对象及执行身份。只接受唯一匹配；缺失、歧义、缺对象或结构不符明确失败。
+4. 按现有依赖规则验证实现 SHA 位于实际选用 base 的祖先链。主干已包含实现，不能代替实际 base 包含实现的检查。
 
-该证明只表达切换前已经发生的事实，不保存“当前有效状态”、owner 或可变分支 tip，不替代 progress、ledger 和 DAG。新版本依赖检查从已迁移事实取得确定实现 SHA，并继续验证该 SHA 位于所选 base 的祖先链；不能仅凭证明文件中的 done 或当前主干包含它就放行。新版本任务仍从自身 v2 handoff 获取来源，不在两种来源间试探回退。
+一次性迁移保持合法执行回执内容与其 Git 对象身份，不复制为另一份来源账本；实体路径与状态字段按目标契约转换。迁移前后必须用上述同一算法复验每条 done task 的实现关联。若实际旧数据缺少目标回执所需事实，先补齐可验证数据或明确处理缺陷，不能伪造 PASS、默认 done，或留给运行时按旧格式猜测。
 
-迁移证明绑定确切历史 identity 与 handoff Blob，不能仅按 tid 覆盖后来的执行。当前 handoff 与证明中 Blob 一致时使用已迁移事实；已有新的 v2 执行产物时只按新协议验证，不因新证据失败就退回旧证明。严格拒绝重复、身份冲突、损坏或对象不可用。证明在新 clone 与 runtime 备份丢失时仍可证明旧任务已集成，不重新创建旧 attempt、执行 claim 或 review PASS。深度复验旧证据格式仍使用隔离旧版本；新运行时不解析旧 Archive 结构。
-
-证明中的 SHA 不能指向包含该证明自身的提交，避免自引用；目标文件摘要范围也明确排除证明本身。源提交与 Git 对象由迁移提交的血缘及备份保留。该证明在迁移时生成并随切换提交保存，日常命令只读且不得静默重建。
+Git 中原有提交是历史证据，不是第二套活跃存储 schema。新运行时只读取当前规范回执，再查询对象和血缘；不按“迁移前／迁移后”分流，不扫描旧目录，不要求正常业务调用隔离旧版工具。新 clone 即使没有本机 runtime，也能用同一算法核验已完成任务的依赖来源。
 
 ### 执行与恢复
 
 写入前在锁内重新核对默认分支 SHA、index、输入摘要和分支/worktree 清单。任一变化使 dry-run 计划失效，重新预检，不把旧计划直接重放。
 
-迁移在一个受持久文件事务保护的写入阶段完成实体路径转换、元数据补齐、当前引用更新、审计迁址与历史来源证明。先验证完整输出，再清理本次源路径及空旧目录。迁移中的一次性移动是存储协议切换，不是实体生命周期命令；旧布局解析仅存在于显式迁移模块。
+迁移在一个受持久文件事务保护的写入阶段完成实体路径转换、元数据补齐、当前引用更新和操作日志迁址。先验证完整输出、实现来源与日志内容，再清理本次源路径及空旧目录。迁移中的一次性移动是存储协议切换，不是实体生命周期命令；旧布局解析仅存在于本次升级的显式转换工具。
 
 失败时核对事务、源、目标和 index 后恢复。自动回滚只覆盖本次事务拥有且仍符合预期的内容；现场被外部修改或回滚失败时保留 journal、备份与逐路径诊断，停止自动写入，禁止盲目重试。校验为完整目标状态时再次执行应零写入；半完成状态只能走事务恢复。
 
-验收通过后，将目标工具链、数据和当前指令作为一致的协议版本切换。新 clone 从已迁移提交获得固定布局；所有新任务分支必须从已切换主干或同版本已完成前驱创建。旧版本执行分支不能直接进入新 integrate，新工具对缺少存储版本或旧目录的候选来源明确拒绝。
+验收通过后，将目标工具链、数据和当前指令作为一致版本切换。新 clone 从已迁移提交获得固定布局；所有新任务分支必须从已切换主干或同版本已完成前驱创建。未完成切换的执行分支不能直接进入新 integrate；新工具对工具链不一致、旧目录或目标字段缺失的候选来源明确拒绝。
 
-Git 历史不重写。已经 integrated 的旧实现、review、handoff 和 ledger 回执保持历史引用，不通过迁移重新签发 PASS、修改 SHA 或冒充新协议执行。新主干中的历史实体仍可按 ID 查阅；旧格式执行证据的深度复验使用备份或隔离旧版本工具，不能让新运行时通过双路径 fallback 认领旧任务。
+Git 历史不重写。已经 integrated 的实现、review、handoff 和 ledger 回执保持真实历史，不通过迁移重新签发 PASS、修改 SHA 或冒充新执行。新主干中的全部实体均按目标模型读取和验证，不保留历史实体专用运行入口。备份中的旧工具仅供整体回退，不成为新系统正常验证的前置条件。
 
 ### 同步与回退
 
 `repo_sync status/plan/apply` 和初始化导出必须认识目标契约。发现旧数据时，正常 apply 报告迁移要求，不先覆盖工具链和文档再把消费仓留在混合状态。候选版本预检和显式迁移入口须通过现有同步启动流程加载，保留旧工具快照用于恢复；旧启动器无法加载候选模块时明确阻断并给出受控自举步骤。
 
-迁移事务快照必须覆盖新增目标路径、旧路径、审计与本轮实际修改的同步文件；已冻结的独立 reviews 和其他冷文稿不进入重写集合。更新 `workflow_migration.py`、同步 rollback 路径清单及初始化产物校验，防止下一次同步重新生成旧目录。
+迁移事务快照必须覆盖新增目标路径、旧路径、审计、本轮实际修改的同步文件及待退役的旧交接归档；已冻结的独立 reviews 和其他冷文稿不进入重写集合。更新 `workflow_migration.py`、同步 rollback 路径清单及初始化产物校验，防止下一次同步重新生成旧目录或交接归档文件。
 
 提交切换后、尚无新业务写入时，可在停止所有会话后用已验证备份恢复旧工具链、文稿、refs 和 runtime 的同一检查点。已有新协议写入时禁止仅降级脚本或直接反向搬目录；先保存新数据并设计显式恢复或前向修复，不覆盖用户新增工作。不执行强推或历史改写。
 
@@ -291,17 +293,18 @@ Git 历史不重写。已经 integrated 的旧实现、review、handoff 和 ledg
 
 |落点|必要改造|
 |---|---|
-|`repo_task/context.py`、`documents.py`、`store.py`|固定路径、存储版本、状态校验，移除正常扫描的双目录与位置推断|
-|`repo_task/lifecycle.py`、`graph.py`|drop、finish、merge-backlog 原位收敛；事务和审计路径更新|
+|`repo_task/context.py`、`documents.py`、`store.py`|固定路径、唯一 schema 与状态校验，移除正常扫描的双目录与位置推断|
+|`repo_task/lifecycle.py`、`graph.py`|drop、finish、merge-backlog 原位收敛；更新相关事务范围与操作日志路径|
 |`repo_task/integration.py`|删除归档移动与专用豁免；逐成员实现与最终 staged tree 执行核心资产保护，保留范围、内容、血缘与恢复门禁|
 |`repo_task/monitoring.py`、`finalization.py`、`specs_index.py` 及 renderer|共享核心资产校验与就绪门禁；固定引用路径、历史来源边界、spike 状态与替代链校验|
-|依赖实现读取与迁移证明校验|切换前来源明确读取已验证证明，切换后读取 v2 handoff；继续执行实际 base 血缘门禁|
+|`_dependency_implementations()` 及来源核验调用方|统一按当前 handoff 对象定位实现，移除历史路径依赖，不增加来源映射表；保留实际 base 血缘门禁|
 |`repo_task/attempts.py`、`recovery.py`、ledger import 相关入口|核对调用方不再依赖归档路径；不重写 attempt 模型|
 |`pending.py`、`spikes.py`、`findings.py`、`_id_scan.py`|显式状态、固定地址、删除改 slug 入口、全状态编号占用与跨来源检查|
-|`repo_hygiene.py`|删除 spike 归档，仅保留独立冷文稿动作与范围保护|
+|`repo_hygiene.py`|删除 spike 与 handoff 归档及其专用辅助逻辑，仅保留独立冷文稿动作与范围保护|
+|`repo_cleanup.py`|更新日志路径与 runtime 清理保护，不把执行账本作为缓存清理|
 |`repo_task/cli.py`、view 与静态前端|状态筛选、终态可查、done 与 integrated 分开呈现|
 |`template_sync/migrate.py`、`workflow_migration.py`、`apply.py` 及相关预检|显式迁移、旧布局阻断、事务覆盖与自举验证|
-|`repo/docs/`、`.gitignore`、task 与 spike 模板|移除旧实体目录骨架，增加审计位置和元数据；保留历史包与 runtime 原有边界|
+|`repo/docs/`、`.gitignore`、task 与 spike 模板|移除旧实体目录骨架与 handoff 归档模板，更新当前交接说明、实体元数据与日志位置；保留历史包与 runtime 边界|
 |`repo/AGENTS.md`|更新实体固定路径、正式状态及写权不变量|
 |`repo/.repo_template/docs/usage.md`|CLI、数据迁移、工具链写权及 skill 调用的唯一用法定义|
 |`architecture.md`、`recovery.md`、`sync.md`|分别维护机制、故障恢复及升级切换规则|
@@ -316,7 +319,7 @@ Git 历史不重写。已经 integrated 的旧实现、review、handoff 和 ledg
 
 |阶段|实施内容|退出条件|
 |---|---|---|
-|S0 契约与回归|固定状态表、版本字段、规范路径、冷文稿条件与迁移输入；保留 #88–#92 场景和现有安全断言|目标行为、源数据差异及失败条件可复核|
+|S0 契约与回归|固定状态表、唯一 schema、规范路径、冷文稿条件与迁移输入；保留 #88–#92 场景和现有安全断言|目标行为、源数据差异及失败条件可复核|
 |S1 实体读取与状态|实现严格元数据、单路径扫描、pending/spike 状态命令和编号保护|解析、状态转换、CLI 及故障恢复测试通过|
 |S2 Task 与合并|改 finish/drop/graph/integrate/历史 handoff 读取；落实共享核心资产校验、逐成员写权与 staged 内容约束；删除归档专用流程|真实单任务、整链、主干独立改动和核心资产保护回归通过|
 |S3 迁移与同步|一次性迁移、dry-run、备份恢复、旧分支阻断、同步自举与回退|源版本到目标版本的隔离消费仓演练通过|
@@ -342,7 +345,7 @@ S0–S5 在隔离开发分支形成一致版本，中间提交不作为可发布
 
 |类别|必须覆盖的行为|
 |---|---|
-|固定身份|全部状态切换前后路径不变；标题变化不改路径；身份字段不符、缺版本、同源重复 ID 明确拒绝|
+|固定身份|全部状态切换前后路径不变；标题变化不改路径；身份字段不符、缺必填字段、同源重复 ID 明确拒绝|
 |Task 生命周期|add/start/finish/run-close/integrate/drop/rewind/merge-backlog 保持路径；done、dropped 在主干与指定 ref 均可查|
 |合并血缘|单任务、连续链、已合入前驱、保留分支重入及 continue 幂等；一个实现 commit 与 first parent 约束保留|
 |#92|后继已审修改前驱普通资料，在前驱已 integrated 后正确合并；准备与 continue 均无任务目录归档移动、无相反修复提示|
@@ -357,12 +360,14 @@ S0–S5 在隔离开发分支形成一致版本，中间提交不作为可发布
 |Spike|完成报告、缺证据拒绝、后继引用、被替代状态、自引用与循环拒绝；task 收尾解析真实完成证据|
 |取号|终态记录继续占号；并发进程与 worktree 不撞号；旧格式来源阻断且报出位置，Git 查询失败不降级放行|
 |视图|默认过滤不改变 ID 解析、依赖检查和全量结果；状态与集成状态分别输出，指定 ref 不偷读当前主干|
-|冷文稿|独立 review 整包迁移、附件保留、目标冲突拒绝；任务 review、spike、ledger 与审计不能进入 Archive|
+|冷文稿与本机日志|独立 review 整包迁移、附件保留、目标冲突拒绝；任务 review、spike、ledger 与操作日志不进 Archive；日志迁到 runtime 后内容不变、不入 Git、不参与业务状态推导|
+|项目交接|当前快照保持固定位置；新模板不含交接归档文件，旧命令不可用；旧内容未完整入库时拒绝移除，迁移后历史仍可恢复；任务 handoff.json 门禁不变|
 |数据迁移|全部路径映射、闭环字段转换、重复与缺证据拒绝、旧新引用核对、目标重跑零写入|
-|旧任务依赖|旧实现曾直接位于 Archive 时，迁移后新 clone 无 runtime 仍可启动合法后继；缺实现的 base、坏证明、缺对象均拒绝|
+|统一依赖来源|历史文件发生移动、复制或同 Blob 多处出现时，仍按唯一算法核验来源；歧义、身份或 first parent 不符、缺实现的 base、缺对象均拒绝；新 clone 无 runtime 可验证已完成依赖|
 |故障恢复|每个写入阶段异常、Git 操作失败和进程中断；完整回滚或保留可恢复现场，无部分成功冒充完成|
 |同步切换|旧布局正常 apply 阻断；候选自举与显式迁移可完成；新 clone、旧消费仓升级和无新写入时恢复旧检查点|
-|历史证据|旧提交与回执不被改写；迁移记录不伪造 review PASS；切换后深度复验边界清晰|
+|历史证据|原提交与合法回执不被改写；不伪造 review PASS；迁移后所有实体通过同一目标模型与来源算法验证|
+|运行依赖|正常命令不加载迁移工具，不读取迁移映射表，不按格式版本或迁移身份选择解析器；操作日志与 ledger 沿用本机备份及清理保护|
 
 契约测试留在 `repo/.repo_template/tests/`，覆盖固定路径、字段、状态、CLI 路由与权威约定；真实 Git、worktree、迁移、同步和进程中断测试放在工厂 `factory_tests/`。不把工厂 fixture 和性能 harness 分发到消费仓。
 
@@ -384,6 +389,8 @@ pytest .repo_template/tests -q -m contract
 ## 完成标准与停止条件
 
 完成需同时满足：固定布局和状态契约已进入模板；运行时没有旧实体路径 fallback、目录状态推断和生命周期搬运；同步不会重建旧结构；独立冷文稿仍可按约定归档；全量测试、消费契约、迁移和恢复演练通过；当前文档、skill、生成入口与实际行为一致。
+
+架构验收还须核对：没有迁移专用的永久来源表，没有按迁移来源或旧格式选择运行路径的分支，没有逐实体版本解析器，没有仅为延续旧行为而保留的命令别名或路径豁免。迁移转换、备份和事务恢复不替代正常实体模型，也不成为日常命令的隐式依赖。
 
 旧路径字符串允许出现在明确隔离的源布局检测、一次性迁移、失败诊断、迁移测试和历史文稿中。验收按调用职责分类，不以全仓搜索零命中替代架构检查。保留的 `git mv` 只能用于显式存储迁移或冷文稿归档，不能由业务状态转换触发。
 
