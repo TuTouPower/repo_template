@@ -86,39 +86,13 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     )
 
 
-@pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
-    src = tmp_path / "src"
-    src.mkdir()
-    _git(src, "init", "-b", "main")
-    _git(src, "config", "user.email", "test@example.com")
-    _git(src, "config", "user.name", "test")
+from git_repo_support import copy_seed_repo
 
-    toolkit = src / ".repo_template"
-    (toolkit / "scripts").mkdir(parents=True)
-    (toolkit / "scripts/task.py").write_text("print('task')\n")
-    (toolkit / "tests").mkdir(parents=True)
-    (toolkit / "tests/test_x.py").write_text("def test_x():\n    pass\n")
-    (toolkit / "docs/task_template").mkdir(parents=True)
-    (toolkit / "docs/task_template/task.md").write_text("# task\n")
-    (toolkit / "docs/task_template/progress.md").write_text("---\ntid: t000\n---\n## 实施笔记\n无\n")
-    (toolkit / "docs/review_prompts").mkdir(parents=True)
-    (toolkit / "docs/review_prompts/general_prompt.txt").write_text("general\n")
-    (toolkit / "docs/spike_report_template.md").write_text("# report\n")
-    (toolkit / "docs/architecture.md").write_text("# arch\n")
-    (toolkit / "hooks").mkdir(parents=True)
-    hook = toolkit / "hooks/pre-commit"
-    hook.write_text("#!/bin/sh\nexit 0\n")
-    hook.chmod(0o755)
-    (toolkit / "skills/task-run").mkdir(parents=True)
-    (toolkit / "skills/task-run/SKILL.md").write_text(
-        "---\nname: task-run\ndescription: none\ndisable-model-invocation: true\n---\nrun\n"
-    )
-    (src / ".md_kx.toml").write_text("table_mode = \"compact\"\n", encoding="utf-8")
-    (src / "AGENTS.md").write_text("SRC AGENTS\n")
-    (src / ".gitignore").write_text("node_modules/\n*.log\n")
-    _git(src, "add", "-A")
-    _git(src, "commit", "-m", "init")
+
+@pytest.fixture
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sync_source_seed: Path) -> dict:
+    src = tmp_path / "src"
+    copy_seed_repo(sync_source_seed, src)
     head = _git(src, "rev-parse", "HEAD").stdout.strip()
 
     consumer = tmp_path / "consumer"

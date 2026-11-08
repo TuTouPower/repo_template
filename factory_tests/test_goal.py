@@ -32,43 +32,13 @@ def _git(repo, *args, check=True):
     )
 
 
+from git_repo_support import fast_copy_repo
+
+
 @pytest.fixture
-def git_repo(tmp_path):
+def git_repo(tmp_path, workflow_two_tasks_seed):
     repo = tmp_path / "repo"
-    tasks = repo / "docs" / "tasks"
-    archive = repo / "docs" / "archive" / "tasks"
-    template = tasks / "task_template"
-    tasks.mkdir(parents=True)
-    archive.mkdir(parents=True)
-    scripts = repo / ".repo_template" / "scripts"
-    scripts.mkdir(parents=True)
-    shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
-    shutil.copytree(
-        SCRIPTS_DIR / "repo_task", scripts / "repo_task",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
-    shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
-    shutil.copytree(TASK_TEMPLATE_DIR, template)
-    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "progress.md")
-    for tid, slug in (("t001", "alpha"), ("t002", "beta")):
-        task_dir = tasks / f"{tid}_{slug}"
-        shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(task_dir / "progress.md", {
-            "tid": tid, "slug": slug, "title": slug, "status": "backlog",
-            "branch": "", "worktree": "", "review_level": "full",
-            "diff_anchor": "", "note": "",
-        }, body)
-        (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
-    (repo / ".gitignore").write_text(
-        "__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8"
-    )
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "test")
-    configure_project_verification(repo)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "init")
-    return repo
+    return fast_copy_repo(workflow_two_tasks_seed, repo)
 
 
 def _cli(repo, *args, stdin=""):
