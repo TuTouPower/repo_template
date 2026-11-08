@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 """repo_hygiene.py — repo-hygiene skill 的机械迁移动作执行器。
 
-把已闭环 / 已过时内容迁入 docs/archive/ 的确定性文件操作交给脚本执行：
-  - archive-handoff：handoff.md 除最新一节外整段迁入 docs/archive/handoff.md（append）
-  - archive-review  ：docs/reviews/review_*/ 整目录迁 docs/archive/reviews/（git mv）
+把已闭环 / 已过时冷文稿迁入 docs/archive/ 的确定性文件操作交给脚本执行：
+  - archive-review：docs/reviews/review_*/ 整目录迁 docs/archive/reviews/（git mv）
 
 「哪些确认完结 / 过时」是语义裁定，属 skill 判断；本脚本只做动作。默认 dry-run，
 --write 才落盘。不 commit（commit 门禁在 skill）。
 
 用法：
-  repo_hygiene.py archive-handoff [--write]
   repo_hygiene.py archive-review review_xxx [--write]
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import re
 import shutil
 import subprocess
 import sys
@@ -26,14 +22,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REVIEWS_DIR = REPO_ROOT / "docs/reviews"
 ARCHIVE_REVIEWS = REPO_ROOT / "docs/archive/reviews"
-HANDOFF = REPO_ROOT / "docs/handoff.md"
-ARCHIVE_HANDOFF = REPO_ROOT / "docs/archive/handoff.md"
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
-ARCHIVE_HANDOFF_HEADER = (
-    "# 历史交接\n\n"
-    "由 `repo-hygiene` 从 `docs/handoff.md` 迁入。**只追加**，禁止截断或改写已归档段落。\n"
-)
 
 
 class HygieneError(Exception):
@@ -53,98 +41,6 @@ def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
 
 def _rel(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
-
-
-# ---------------------------------------------------------------------------
-# archive-handoff
-# ---------------------------------------------------------------------------
-
-def _split_handoff(text: str) -> tuple[list[str], list[list[str]]]:
-    """返回 (header, sections)。围栏内的 ``## `` 行不作为节边界（Issue #79）。"""
-    lines = text.splitlines()
-    h2 = []
-    fence = None
-    for index, line in enumerate(lines):
-        if fence is not None:
-            close = FENCE_CLOSE_RE.match(line)
-            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= fence[1]:
-                fence = None
-            continue
-        opening = FENCE_RE.match(line)
-        if opening:
-            fence = (opening.group(1)[0], len(opening.group(1)))
-            continue
-        if line.startswith("## "):
-            h2.append(index)
-    if not h2:
-        return lines, []
-    header = lines[: h2[0]]
-    sections = []
-    for idx, start in enumerate(h2):
-        end = h2[idx + 1] if idx + 1 < len(h2) else len(lines)
-        sections.append(lines[start:end])
-    return header, sections
-
-
-def _join_blocks(blocks: list[list[str]]) -> str:
-    return "\n\n".join("\n".join(b).strip() for b in blocks) + "\n"
-
-
-def _replace_text(path: Path, text: str) -> None:
-    """临时文件 + rename 原子落盘：中断不留半截内容，重跑覆盖残留临时文件。"""
-    tmp = path.with_name(path.name + ".tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def cmd_archive_handoff(args: argparse.Namespace) -> None:
-    if not HANDOFF.is_file():
-        raise HygieneError(f"缺 {_rel(HANDOFF)}")
-    header, sections = _split_handoff(HANDOFF.read_text(encoding="utf-8"))
-    if len(sections) <= 1:
-        print("handoff 只有 0/1 节，无过时段落可迁")
-        return
-    stale = sections[:-1]
-    latest = sections[-1]
-    print(f"将迁移 {len(stale)} 个过时段落（保留最后节：{latest[0] if latest else '?'}）:")
-    for section in stale:
-        print(f"- {section[0] if section else '?'}")
-    if not args.write:
-        print("dry-run；加 --write 落盘")
-        return
-    stale_text = _join_blocks(stale)
-    existing = (
-        ARCHIVE_HANDOFF.read_text(encoding="utf-8")
-        if ARCHIVE_HANDOFF.is_file()
-        else ARCHIVE_HANDOFF_HEADER
-    )
-    # 幂等：archive append 与 handoff 重写是两次写；用本轮段落摘要标记确认
-    # append 已生效。仅凭归档尾部文本相同不能证明是本轮追加（Issue #79）。
-    marker = (
-        "<!-- repo-hygiene:handoff-sha256="
-        + hashlib.sha256(stale_text.encode("utf-8")).hexdigest()
-        + " -->"
-    )
-    if marker in existing:
-        print(f"{_rel(ARCHIVE_HANDOFF)} 已含本轮待迁段落，跳过追加（上次中断前的 append 已生效）")
-    elif existing.rstrip("\n").endswith(stale_text.rstrip("\n")):
-        raise HygieneError(
-            f"{_rel(ARCHIVE_HANDOFF)} 尾部已与待迁段落相同但缺少归档标记；"
-            "无法确认是否本轮已追加。未改写 handoff.md，请人工核对归档后重试"
-        )
-    else:
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        if existing and not existing.endswith("\n\n"):
-            existing += "\n"
-        ARCHIVE_HANDOFF.parent.mkdir(parents=True, exist_ok=True)
-        _replace_text(ARCHIVE_HANDOFF, existing + stale_text + marker + "\n")
-    body = "\n".join(header).strip()
-    _replace_text(HANDOFF, (body + "\n\n" + _join_blocks([latest])) if body else _join_blocks([latest]))
-    print(f"已迁 {len(stale)} 节到 {_rel(ARCHIVE_HANDOFF)}；handoff.md 保留最新节")
 
 
 # ---------------------------------------------------------------------------
@@ -202,10 +98,6 @@ def cmd_archive_review(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="repo-hygiene 机械迁移动作")
     sub = parser.add_subparsers(dest="cmd", required=True)
-
-    handoff = sub.add_parser("archive-handoff", help="handoff 过时段落迁 archive（保留最新节）")
-    handoff.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
-    handoff.set_defaults(func=cmd_archive_handoff)
 
     review = sub.add_parser("archive-review", help="确认过时的 review 目录迁 archive")
     review.add_argument("dir", help="review 目录名（如 review_my_check）")

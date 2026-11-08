@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     migrate = sub.add_parser("migrate", help="显式迁移旧布局数据到当前格式")
     migrate.add_argument("kind", choices=(*KINDS, "all"), help="迁移目标")
+    migrate.add_argument("--write", action="store_true", help="写入落盘（默认 dry-run）")
     migrate.set_defaults(func=cmd_migrate)
 
     status_parser = sub.add_parser("status", help="读取状态与差异摘要")

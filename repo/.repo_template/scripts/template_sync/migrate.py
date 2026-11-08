@@ -13,13 +13,24 @@ from repo_task.file_transaction import FileTransaction
 
 from . import context as ctx
 from .conventions_migration import conventions_migration_status, migrate_conventions
+from .entity_storage_migration import (
+    entity_storage_migration_status,
+    migrate_entity_storage,
+)
 from .hooks import migrate_retired_hooks, retired_hooks_status
 from .specs_index_migration import specs_index_migration_status, specs_index_report, migrate_specs_index
 from .source import assert_not_self, resolve_src
 from .state import cmd_migrate as state_migrate, read_state
 from .workflow_migration import force_migrate_workflow_tasks, workflow_migration_status
 
-KINDS = ("legacy-state", "workflow-schema", "conventions", "specs-index", "retired-hooks")
+KINDS = (
+    "legacy-state",
+    "workflow-schema",
+    "conventions",
+    "specs-index",
+    "retired-hooks",
+    "entity-storage",
+)
 
 
 def _transactional(paths: list[str], action, verify, label: str, sync=None) -> list[str]:
@@ -121,6 +132,7 @@ _STEPS = {
     "conventions": _migrate_conventions,
     "specs-index": _migrate_specs_index,
     "retired-hooks": _migrate_retired_hooks,
+    "entity-storage": lambda sync, write=False: migrate_entity_storage(sync=sync, write=write),
 }
 
 
@@ -130,15 +142,22 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     if args.kind == "legacy-state":
         return state_migrate(argparse.Namespace(kind="legacy-state", sync=sync))
     kinds = KINDS[1:] if args.kind == "all" else (args.kind,)
+    write = getattr(args, "write", False)
     for kind in kinds:
         step = _STEPS.get(kind)
         if step is None:
             raise ctx.SyncError(f"未知迁移目标：{kind}")
-        reports = step(_resolve_source(sync), sync) if kind == "workflow-schema" else step(sync)
+        if kind == "workflow-schema":
+            reports = step(_resolve_source(sync), sync)
+        elif kind == "entity-storage":
+            reports = step(sync, write=write)
+        else:
+            reports = step(sync)
         if not reports:
             print(f"{kind}: 已是当前格式，无需迁移")
             continue
-        print(f"{kind}: 已完成 {len(reports)} 项")
+        mode_str = "落盘" if write or kind != "entity-storage" else "dry-run 拟定"
+        print(f"{kind}: {mode_str}完成 {len(reports)} 项")
         for line in reports:
             print(f"  {line}")
     print("迁移完成；校验并提交迁移结果")

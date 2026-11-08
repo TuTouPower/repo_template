@@ -32,6 +32,9 @@ def tree(tmp_path: Path) -> Path:
     (repo / "scripts").mkdir(parents=True)
     (repo / "scripts/debug.log").write_text("log\n")
     (repo / "docs").mkdir(parents=True)
+    (repo / "docs/runtime").mkdir(parents=True)
+    (repo / "docs/runtime/tasks_audit.log").write_text("audit\n")
+    (repo / "docs/runtime/dispatch_ledger.jsonl").write_text('{"event": "start"}\n')
     (repo / "docs/guide.log").write_text("log\n")           # docs/ 下 *.log 保护
     (repo / "docs/.DS_Store").write_bytes(b"x")             # docs/ 下 os 类可清
     (repo / ".DS_Store").write_bytes(b"x")
@@ -71,6 +74,8 @@ def test_scan_default_categories(tree):
     assert "docs/guide.log" not in paths
     assert "AGENTS.md" not in paths
     assert "README.md" not in paths
+    assert "docs/runtime/tasks_audit.log" not in paths
+    assert "docs/runtime/dispatch_ledger.jsonl" not in paths
     # 点名类别未点名 → 不入默认扫描
     assert "node_modules" not in paths
     assert ".scratch/exp/tmp.py" not in paths

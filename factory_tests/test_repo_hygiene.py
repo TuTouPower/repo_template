@@ -1,8 +1,7 @@
 """repo_hygiene.py 机械迁移动作的真实 git 测试。
 
-monkeypatch 模块级路径常量到 tmp_path 构造的 git 仓库，覆盖 handoff 分段
-迁移（append 保留最新）、review 目录 git mv 迁移、dry-run 零写盘、
-歧义与格式校验。
+monkeypatch 模块级路径常量到 tmp_path 构造的 git 仓库，覆盖 review 目录 git mv 迁移、
+dry-run 零写盘、歧义与格式校验，并断言 archive-handoff 与 archive-spike 已退役。
 """
 
 import argparse
@@ -37,147 +36,14 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "REPO_ROOT": root,
         "REVIEWS_DIR": root / "docs/reviews",
         "ARCHIVE_REVIEWS": root / "docs/archive/reviews",
-        "HANDOFF": root / "docs/handoff.md",
-        "ARCHIVE_HANDOFF": root / "docs/archive/handoff.md",
     }.items():
         monkeypatch.setattr(rh, name, value)
     return root
 
 
-def _handoff_two_sections(repo: Path) -> None:
-    (repo / "docs/handoff.md").write_text(
-        "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-01T09:00:00+08:00 a → b\n\n- branch：`t001_x`\n"
-        "- head_commit：`aaa111`\n\n"
-        "## 2026-08-13T16:00:00+08:00 b → c\n\n- branch：`t002_y`\n"
-        "- head_commit：`bbb222`\n",
-        encoding="utf-8",
-    )
-
-
-def test_archive_handoff_moves_stale_keeps_latest(repo):
-    _handoff_two_sections(repo)
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
-    archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-13T16:00:00+08:00" in handoff
-    assert "2026-08-01T09:00:00+08:00" not in handoff
-    assert "2026-08-01T09:00:00+08:00" in archive
-    assert "2026-08-13T16:00:00+08:00" not in archive
-    assert "t002_y" in handoff
-
-
-def test_archive_handoff_preserves_existing_archive_body(repo):
-    archive = repo / "docs/archive/handoff.md"
-    archive.parent.mkdir(parents=True)
-    archive.write_text(
-        "# 历史交接\n\n自定义备注，禁止改写。\n\n"
-        "## 2026-07-01 旧段\n\n- note：keep me\n",
-        encoding="utf-8",
-    )
-    _handoff_two_sections(repo)
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    text = archive.read_text(encoding="utf-8")
-    assert "自定义备注，禁止改写。" in text
-    assert "2026-07-01 旧段" in text
-    assert "2026-08-01T09:00:00+08:00" in text
-    assert text.index("自定义备注") < text.index("2026-08-01")
-
-
-def test_archive_handoff_append_not_truncate(repo):
-    _handoff_two_sections(repo)
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    # 第二轮：上一轮保留的 08-13 节 + 新 08-20 节 → 迁 08-13，追加归档不覆盖旧归档
-    (repo / "docs/handoff.md").write_text(
-        "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-13T16:00:00+08:00 b → c\n\n- head_commit：`bbb222`\n\n"
-        "## 2026-08-20T10:00:00+08:00 c → d\n\n- head_commit：`ccc333`\n",
-        encoding="utf-8",
-    )
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-01T09:00:00+08:00" in archive
-    assert "2026-08-13T16:00:00+08:00" in archive
-    assert "2026-08-20T10:00:00+08:00" not in archive  # 最新节保留在 handoff
-    assert "2026-08-20T10:00:00+08:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
-
-
-def test_archive_handoff_dry_run_does_not_write(repo):
-    _handoff_two_sections(repo)
-    rh.cmd_archive_handoff(argparse.Namespace(write=False))
-    assert not (repo / "docs/archive/handoff.md").exists()
-    assert "2026-08-01T09:00:00+08:00" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
-
-
-def test_archive_handoff_noop_single_section(repo):
-    (repo / "docs/handoff.md").write_text(
-        "# 项目交接记录（最新）\n\n说明。\n\n"
-        "## 2026-08-13T16:00:00+08:00 b → c\n\n- head_commit：`bbb222`\n",
-        encoding="utf-8",
-    )
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    assert not (repo / "docs/archive/handoff.md").exists()
-
-
-def test_archive_handoff_retry_after_partial_failure_no_duplicate(repo, monkeypatch):
-    """两次写之间失败（archive 已 append、handoff 重写未完成）→ 重跑幂等，不重复追加。"""
-    _handoff_two_sections(repo)
-    real_replace = rh._replace_text
-
-    def flaky(path, text):
-        if path == rh.HANDOFF:
-            raise OSError("模拟 handoff 重写失败")
-        return real_replace(path, text)
-
-    monkeypatch.setattr(rh, "_replace_text", flaky)
-    with pytest.raises(OSError):
-        rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    archive = repo / "docs/archive/handoff.md"
-    assert archive.read_text(encoding="utf-8").count("## 2026-08-01") == 1
-    assert "2026-08-01" in (repo / "docs/handoff.md").read_text(encoding="utf-8")
-
-    monkeypatch.setattr(rh, "_replace_text", real_replace)
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    text = archive.read_text(encoding="utf-8")
-    assert text.count("## 2026-08-01") == 1  # 重跑不重复追加
-    handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-13" in handoff and "2026-08-01" not in handoff
-
-
-def test_archive_handoff_ignores_h2_inside_fenced_code(repo):
-    """围栏内的 `## ` 行不作为节边界（Issue #79）。"""
-    (repo / "docs/handoff.md").write_text(
-        "# 项目交接记录（最新）\n\n"
-        "## 2026-08-01T09:00:00+08:00 old\n\n- note：old\n\n"
-        "## 2026-08-13T16:00:00+08:00 new\n\n"
-        "```md\n## example\n```\n\n- note：latest\n",
-        encoding="utf-8",
-    )
-    header, sections = rh._split_handoff((repo / "docs/handoff.md").read_text(encoding="utf-8"))
-    assert header[0].startswith("# 项目交接记录")
-    assert len(sections) == 2
-    assert "## example" in sections[-1]
-    rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
-    assert "## example" in handoff and "old" not in handoff
-    archive = (repo / "docs/archive/handoff.md").read_text(encoding="utf-8")
-    assert "2026-08-01" in archive and "2026-08-13" not in archive
-
-
-def test_archive_handoff_stops_when_tail_matches_without_marker(repo):
-    """归档尾部落已同文但无本轮标记时停止，不改写 handoff（Issue #79）。"""
-    _handoff_two_sections(repo)
-    stale_text = rh._join_blocks(rh._split_handoff(
-        (repo / "docs/handoff.md").read_text(encoding="utf-8")
-    )[1][:-1])
-    archive = repo / "docs/archive/handoff.md"
-    archive.parent.mkdir(parents=True)
-    archive.write_text("# 历史交接\n\n" + stale_text, encoding="utf-8")
-    original_handoff = (repo / "docs/handoff.md").read_text(encoding="utf-8")
-    with pytest.raises(rh.HygieneError, match="缺少归档标记"):
-        rh.cmd_archive_handoff(argparse.Namespace(write=True))
-    assert (repo / "docs/handoff.md").read_text(encoding="utf-8") == original_handoff
-    assert archive.read_text(encoding="utf-8").count("## 2026-08-01") == 1
+def test_archive_handoff_command_removed(repo):
+    with pytest.raises(SystemExit):
+        rh.main(["archive-handoff"])
 
 
 def test_archive_spike_command_removed(repo):
