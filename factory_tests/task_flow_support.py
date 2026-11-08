@@ -19,7 +19,9 @@ from repo_task.documents import parse_front_matter
 _MARK_DONE = (
     "import argparse, sys; sys.path.insert(0, '.repo_template/scripts'); "
     "from repo_task import lifecycle; "
-    "lifecycle._close_task(argparse.Namespace(tid=sys.argv[1]), 'done', None)"
+    "from repo_task.context import RepoContext; "
+    "repo = RepoContext.from_code_location('.repo_template/scripts/task.py'); "
+    "lifecycle._close_task(argparse.Namespace(tid=sys.argv[1]), 'done', None, repo=repo)"
 )
 
 

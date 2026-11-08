@@ -149,7 +149,7 @@ def test_run_begin_reserve_failure_is_recovered_as_started_without_attempt(git_r
 
     monkeypatch.setattr(control, "reserve_attempt", boom)
     with pytest.raises(SystemExit) as stop:
-        control.cmd_run_begin(_namespace())
+        control.cmd_run_begin(_namespace(repo=ctx.RepoContext.for_root(git_repo)))
 
     message = str(stop.value)
     assert "步骤 reserve" in message and "boom-reserve" in message
@@ -166,7 +166,7 @@ def test_run_begin_claim_failure_is_recovered_as_executing_without_owner(git_rep
 
     monkeypatch.setattr(control, "claim_execution", boom)
     with pytest.raises(SystemExit) as stop:
-        control.cmd_run_begin(_namespace())
+        control.cmd_run_begin(_namespace(repo=ctx.RepoContext.for_root(git_repo)))
 
     message = str(stop.value)
     assert "步骤 claim" in message and "boom-claim" in message

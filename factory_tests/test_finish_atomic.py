@@ -145,7 +145,8 @@ def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
     }
     # 与既有验证契约同源：可被 verify_integrate_ready 接受
     verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+        "t001", identity["attempt"], identity["execution_id"],
+        repo=ctx.RepoContext.for_root(git_repo),
     )
     assert verdict == "ready", detail
 

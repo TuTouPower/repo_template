@@ -151,29 +151,29 @@ def test_old_explicit_identity_is_rejected_after_new_attempt(git_repo):
     assert json.loads(current.stdout)["attempt"] == second["attempt"]
 
 
-def test_worktree_resolves_identity_from_execution_context(git_repo, monkeypatch):
+def test_worktree_resolves_identity_from_execution_context(git_repo):
     assert _task_cli(git_repo, "start", "t001").returncode == 0
     identity = _reserve(git_repo, "t001")
     worktree = _worktree(git_repo, "t001")
-    monkeypatch.setattr(ctx, "REPO_ROOT", worktree)
+    repo = ctx.RepoContext.for_root(worktree)
 
-    assert attempts.resolve_identity("t001") == (identity["attempt"], identity["execution_id"])
+    assert attempts.resolve_identity("t001", repo=repo) == (identity["attempt"], identity["execution_id"])
     assert attempts.resolve_identity(
-        "t001", identity["attempt"], identity["execution_id"]
+        "t001", identity["attempt"], identity["execution_id"], repo=repo
     ) == (identity["attempt"], identity["execution_id"])
     with pytest.raises(ctx.TaskDataError, match="不一致"):
-        attempts.resolve_identity("t001", identity["attempt"], "wrong")
+        attempts.resolve_identity("t001", identity["attempt"], "wrong", repo=repo)
 
     context_path = worktree / "docs/runtime/execution_context.json"
     receipt = json.loads(context_path.read_text(encoding="utf-8"))
     receipt["execution_id"] = "stale"
     context_path.write_text(json.dumps(receipt), encoding="utf-8")
     with pytest.raises(ctx.TaskDataError, match="与主仓 ledger 当前 identity"):
-        attempts.resolve_identity("t001")
+        attempts.resolve_identity("t001", repo=repo)
 
     context_path.unlink()
     with pytest.raises(ctx.TaskDataError, match="无法从"):
-        attempts.resolve_identity("t001")
+        attempts.resolve_identity("t001", repo=repo)
 
 
 def test_omitted_identity_keeps_terminal_gate_and_missing_attempt_error(git_repo):

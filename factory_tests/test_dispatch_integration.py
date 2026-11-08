@@ -57,13 +57,6 @@ def git_repo(tmp_path, monkeypatch):
             "diff_anchor": "", "note": "",
         }, body)
         (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
-    monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
-    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
-    monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
-    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
-    monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
-    monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
     # 测试边界注入恒等 md_kx 替身：格式检查契约不依赖宿主机是否安装。
     fake_bin = tmp_path / "bin_md"
     fake_bin.mkdir(exist_ok=True)
@@ -210,11 +203,17 @@ def _rewrite_handoff(repo, tid, slug, content):
 # --------------------------------------------------------------------------
 
 
+def _verify(repo, tid, attempt, execution_id):
+    return monitoring.verify_integrate_ready(
+        tid, attempt, execution_id, repo=ctx.RepoContext.for_root(repo)
+    )
+
+
 def test_verify_ready_with_valid_handoff(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "ready", detail
@@ -230,8 +229,8 @@ def test_verify_incomplete_when_tip_not_terminal(git_repo):
     assert started.returncode == 0, started.stderr
     identity = _reserve(git_repo, "t001")
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "incomplete"
@@ -241,7 +240,7 @@ def test_verify_incomplete_when_tip_not_terminal(git_repo):
 def test_verify_incomplete_without_branch(git_repo):
     # verify_integrate_ready 只查分支/handoff/spec，不查 ledger；
     # 直接传假 identity 验证「无本地分支 → incomplete」，无需真实 reserve（RT-006 门禁要求 start 后 reserve）
-    verdict, kind, detail = monitoring.verify_integrate_ready("t001", 1, "fake-execution")
+    verdict, kind, detail = _verify(git_repo, "t001", 1, "fake-execution")
 
     assert verdict == "incomplete"
     assert "无本地 task 分支" in detail
@@ -296,8 +295,8 @@ def test_verify_contract_on_handoff_defects(git_repo, defect, expected_detail):
         content = json.dumps(payload, ensure_ascii=False)
     _rewrite_handoff(git_repo, "t001", "alpha", content)
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -313,8 +312,8 @@ def test_verify_contract_on_uncompleted_ac(git_repo):
     _git(worktree, "add", str(spec_path))
     _git(worktree, "commit", "--amend", "--no-edit")
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -328,8 +327,8 @@ def test_handoff_rejects_wrong_field_type(git_repo):
     payload["tests"] = ["pytest"]
     _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -343,8 +342,8 @@ def test_handoff_rejects_base_sha_other_than_tip_first_parent(git_repo):
     payload["base_sha"] = "HEAD"
     _rewrite_handoff(git_repo, "t001", "alpha", json.dumps(payload, ensure_ascii=False))
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -361,8 +360,8 @@ def test_handoff_rejects_diff_anchor_not_matching_implementation_parent(git_repo
     write_front_matter(task_path, fm, body)
     _git(worktree, "add", "-A")
     _git(worktree, "commit", "--amend", "--no-edit")
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -467,8 +466,8 @@ def test_verify_contract_when_multiple_branches(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _git(git_repo, "branch", "t001_beta", "t001_alpha")
 
-    verdict, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    verdict, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
 
     assert verdict == "contract"
@@ -478,22 +477,22 @@ def test_verify_contract_when_multiple_branches(git_repo):
 def test_verify_handoff_attempt_must_match_parallel_attempt(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
 
-    mismatch_attempt, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"] + 1, identity["execution_id"]
+    mismatch_attempt, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"] + 1, identity["execution_id"]
     )
     assert mismatch_attempt == "contract"
     assert kind == "handoff"
     assert "attempt=" in detail and "不符" in detail
 
-    mismatch_execution, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], "wrong"
+    mismatch_execution, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], "wrong"
     )
     assert mismatch_execution == "contract"
     assert kind == "handoff"
     assert "execution_id" in detail and "不符" in detail
 
-    ready, kind, detail = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+    ready, kind, detail = _verify(
+        git_repo, "t001", identity["attempt"], identity["execution_id"]
     )
     assert ready == "ready", detail
     assert kind == "ready"
@@ -637,10 +636,11 @@ def test_porcelain_entries_fails_closed_on_git_error(git_repo, monkeypatch):
         stderr = "fatal: test error"
 
     monkeypatch.setattr(git_ops, "_git", lambda *a, **k: Boom())
+    repo_ctx = ctx.RepoContext.for_root(git_repo)
     with pytest.raises(TaskDataError, match="git status"):
-        git_ops.porcelain_entries()
+        git_ops.porcelain_entries(repo=repo_ctx)
     with pytest.raises(TaskDataError, match="git status"):
-        git_ops.tracked_dirty_entries()
+        git_ops.tracked_dirty_entries(repo=repo_ctx)
 
 
 def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
@@ -676,11 +676,12 @@ def test_cmd_integrate_uses_chain_lock(git_repo, monkeypatch):
     monkeypatch.setattr(integration, "file_lock", spy_file_lock)
     monkeypatch.setattr(
         integration, "_integration_lock_path",
-        lambda: git_repo / ".git" / "integrate.lock",
+        lambda repo: git_repo / ".git" / "integrate.lock",
     )
     args = Namespace(
         tid="t999", attempt=1, execution_id="x",
         keep_branch=False, continue_merge=False,
+        repo=ctx.RepoContext.for_root(git_repo),
     )
     with pytest.raises(SystemExit):
         integration.cmd_integrate(args)
@@ -842,7 +843,7 @@ def test_run_begin_binds_and_run_close_done_unbinds_statusline(git_repo):
     assert last["session"] == OWNER and last["worktree"] == ""
 
 
-def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
+def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path):
     """验证大型账本下按 tid 快速预过滤读取与单次打开追加优化（Issue #57）。"""
     from repo_task import context as ctx
     from repo_task.ledger import ledger_allocate_attempt, ledger_append, ledger_read
@@ -850,8 +851,7 @@ def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
     runtime = tmp_path / "docs" / "runtime"
     runtime.mkdir(parents=True)
     ledger_path = runtime / "dispatch_ledger.jsonl"
-    monkeypatch.setattr(ctx, "LEDGER_PATH", ledger_path)
-    monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
+    repo = ctx.RepoContext.for_root(tmp_path)
 
     # 1. 模拟写入 500 条其他任务记录
     lines = [json.dumps({"tid": f"t{i:04d}", "attempt": 1, "event": "start"}) for i in range(1, 501)]
@@ -860,17 +860,19 @@ def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path, monkeypatch):
     ledger_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # 2. 仅读 t001 的记录
-    t001_events = ledger_read(tid="t001")
+    t001_events = ledger_read(tid="t001", repo=repo)
     assert len(t001_events) == 1
     assert t001_events[0]["tid"] == "t001"
 
     # 3. 为 t001 分配下一个 attempt，应为 2
-    allocated = ledger_allocate_attempt("t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"})
+    allocated = ledger_allocate_attempt(
+        "t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"}, repo=repo
+    )
     assert allocated["attempt"] == 2
     assert allocated["tid"] == "t001"
 
     # 4. 再次按 tid 读，包含两条
-    t001_events2 = ledger_read(tid="t001")
+    t001_events2 = ledger_read(tid="t001", repo=repo)
     assert len(t001_events2) == 2
 
 
@@ -887,8 +889,7 @@ def test_ledger_unreadable_fails_closed_instead_of_reusing_attempt(tmp_path, mon
         json.dumps({"tid": "t001", "attempt": 1, "event": "start"}) + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(ctx, "LEDGER_PATH", ledger_path)
-    monkeypatch.setattr(ctx, "REPO_ROOT", repo_root)
+    repo = ctx.RepoContext.for_root(repo_root)
 
     real_open = Path.open
 
@@ -900,10 +901,10 @@ def test_ledger_unreadable_fails_closed_instead_of_reusing_attempt(tmp_path, mon
 
     monkeypatch.setattr(Path, "open", denied)
     with pytest.raises(ctx.TaskDataError, match="无法读取"):
-        ledger_read()
+        ledger_read(repo=repo)
     with pytest.raises(ctx.TaskDataError, match="无法读取"):
         ledger_allocate_attempt(
-            "t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"}
+            "t001", lambda att, ev: {"event": "attempt_reserved", "state": "running"}, repo=repo
         )
     with real_open(ledger_path, "r", encoding="utf-8") as stream:
         assert stream.read().count("\n") == 1
@@ -921,12 +922,12 @@ def test_chain_locked_uses_shared_file_lock(tmp_path, monkeypatch):
         return real_file_lock(path)
 
     monkeypatch.setattr(integration, "file_lock", spy_file_lock)
-    monkeypatch.setattr(integration, "_integration_lock_path", lambda: tmp_path / "integrate.lock")
+    monkeypatch.setattr(integration, "_integration_lock_path", lambda repo=None: tmp_path / "integrate.lock")
 
     @integration._chain_locked
-    def my_action(val):
+    def my_action(val, repo=None):
         return val * 2
 
-    assert my_action(21) == 42
+    assert my_action(21, repo=ctx.RepoContext.for_root(tmp_path)) == 42
     assert len(lock_calls) == 1
     assert lock_calls[0] == tmp_path / "integrate.lock"

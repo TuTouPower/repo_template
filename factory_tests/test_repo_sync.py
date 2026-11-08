@@ -1472,11 +1472,7 @@ def _install_current_workflow_templates(consumer: Path) -> tuple[str, str]:
 
 
 def _bind_repo_task_context(monkeypatch: pytest.MonkeyPatch, consumer: Path) -> None:
-    from repo_task import context as task_ctx
-
-    monkeypatch.setattr(task_ctx, "REPO_ROOT", consumer)
-    monkeypatch.setattr(task_ctx, "TASKS_DIR", consumer / "docs/tasks")
-    monkeypatch.setattr(task_ctx, "ARCHIVE_TASKS_DIR", consumer / "docs/archive/tasks")
+    del monkeypatch, consumer
 
 
 def _old_task_documents(spec: str, task: str) -> tuple[str, str]:

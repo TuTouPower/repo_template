@@ -64,7 +64,9 @@ def test_purge_rejects_worktree_removal_failure(git_repo, monkeypatch):
     target = _task_dir(git_repo, tid)
     monkeypatch.setattr(lifecycle, "remove_worktree", lambda *a, **k: (False, "simulated worktree busy"))
     with pytest.raises(SystemExit, match="worktree 未清理"):
-        lifecycle.cmd_purge(argparse.Namespace(tid=tid, reason="miscreated"))
+        lifecycle.cmd_purge(argparse.Namespace(
+            tid=tid, reason="miscreated", repo=ctx.RepoContext.for_root(git_repo),
+        ))
     assert target.exists()
 
 

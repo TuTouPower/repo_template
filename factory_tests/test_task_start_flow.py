@@ -78,13 +78,6 @@ def git_repo(tmp_path, monkeypatch):
             _valid_task_body(),
         )
         (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
-    monkeypatch.setattr(ctx, "TASKS_DIR", tasks)
-    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive)
-    monkeypatch.setattr(ctx, "TEMPLATE_DIR", template)
-    monkeypatch.setattr(ctx, "AUDIT_PATH", repo / "docs" / "archive" / "tasks_audit.log")
-    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
-    monkeypatch.setattr(ctx, "RUNTIME_DIR", repo / "docs" / "runtime")
-    monkeypatch.setattr(ctx, "LEDGER_PATH", repo / "docs" / "runtime" / "dispatch_ledger.jsonl")
     # 测试边界注入恒等 md_kx 替身：格式检查契约不依赖宿主机是否安装。
     fake_bin = tmp_path / "bin_md"
     fake_bin.mkdir(exist_ok=True)
@@ -103,7 +96,7 @@ def git_repo(tmp_path, monkeypatch):
 
 
 def _start(repo, tid="t001", base=None):
-    integration.cmd_start(argparse.Namespace(tid=tid, base=base))
+    integration.cmd_start(argparse.Namespace(tid=tid, base=base, repo=ctx.RepoContext.for_root(repo)))
 
 
 def _task_cli(repo, *args):
@@ -516,7 +509,10 @@ def test_rewind_discards_uncommitted_activation_and_removes_empty_branch(git_rep
     worktree = _worktree_path(git_repo)
 
     lifecycle.cmd_rewind(
-        argparse.Namespace(tid="t001", to="backlog", reason="撤回", yes=True)
+        argparse.Namespace(
+            tid="t001", to="backlog", reason="撤回", yes=True,
+            repo=ctx.RepoContext.for_root(git_repo),
+        )
     )
 
     assert not worktree.exists()
@@ -606,7 +602,7 @@ def test_prepare_merge_checks_merge_tree_capability_before_git_merge(monkeypatch
     with pytest.raises(SystemExit, match='merge 尚未开始.*Git >= 2.38'):
         integration._prepare_native_merge(
             't001_alpha', 'merge(t001): t001_alpha', ['t001_alpha'],
-            repo=ctx.current_context(),
+            repo=ctx.RepoContext.for_root(Path.cwd()),
         )
     assert calls == []
 
@@ -1062,7 +1058,9 @@ def test_preflight_rejects_blocking_marker_added_after_start(git_repo):
 # --------------------------------------------------------------------------
 
 def _rewind(repo, tid="t001", to="backlog", yes=True):
-    lifecycle.cmd_rewind(argparse.Namespace(tid=tid, to=to, reason="撤回", yes=yes))
+    lifecycle.cmd_rewind(argparse.Namespace(
+        tid=tid, to=to, reason="撤回", yes=yes, repo=ctx.RepoContext.for_root(repo),
+    ))
 
 
 def test_rewind_keeps_branch_with_own_commits_and_guides(git_repo, capsys):
@@ -1239,7 +1237,7 @@ def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypa
     )
     with pytest.raises(SystemExit) as excinfo:
         lifecycle_mod.cmd_drop(argparse.Namespace(
-            tid="t001", reason="不需要了",
+            tid="t001", reason="不需要了", repo=ctx.RepoContext.for_root(git_repo),
         ))
 
     message = str(excinfo.value)
@@ -1413,7 +1411,7 @@ def test_scan_tasks_at_ref_ignores_nested_task_md(git_repo):
     _git(worktree, "commit", "-m", "add nested attachment")
 
     # --ref 读 t002 分支：嵌套 progress.md 不应被当成独立 task（否则 t999 目录名校验报错）
-    tasks = store.scan_tasks_at_ref("t002_beta")
+    tasks = store.scan_tasks_at_ref("t002_beta", repo=ctx.RepoContext.for_root(git_repo))
     tids = [t["tid"] for t in tasks]
     assert "t999" not in tids
     assert "t002" in tids
@@ -1433,7 +1431,7 @@ def test_scan_tasks_at_ref_reports_missing_root_task_md(git_repo):
     _git(worktree, "commit", "-m", "add broken dir")
 
     with pytest.raises(ctx.TaskDataError, match="缺 progress.md"):
-        store.scan_tasks_at_ref("t002_beta")
+        store.scan_tasks_at_ref("t002_beta", repo=ctx.RepoContext.for_root(git_repo))
 
 
 def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_repo):
@@ -1457,7 +1455,7 @@ def test_scan_tasks_at_ref_detects_duplicate_tid_across_active_and_archive(git_r
     _git(git_repo, "commit", "-m", "commit with dup t001")
 
     with pytest.raises(ctx.TaskDataError, match="重复 tid"):
-        store.scan_tasks_at_ref("branch_with_dup")
+        store.scan_tasks_at_ref("branch_with_dup", repo=ctx.RepoContext.for_root(git_repo))
 
 
 def test_link_local_files_excludes_foreign_and_worktree_envs(git_repo):
@@ -1484,7 +1482,7 @@ def test_link_local_files_excludes_foreign_and_worktree_envs(git_repo):
     new_wt = git_repo / "worktrees/t002_beta"
     new_wt.mkdir(parents=True, exist_ok=True)
 
-    linked = worktrees.link_local_files(new_wt)
+    linked = worktrees.link_local_files(new_wt, repo=ctx.RepoContext.for_root(git_repo))
 
     # 只有根目录的 .env 被链入
     assert linked == [".env"]
@@ -1547,10 +1545,11 @@ def test_worktree_removal_keeps_linked_primary_data(git_repo):
     _write_worktree_include(git_repo)
     _start(git_repo)
     wt = _worktree_path(git_repo)
-    rel = ctx.worktree_rel_path("t001")
+    repo_ctx = ctx.RepoContext.for_root(git_repo)
+    rel = repo_ctx.worktree_rel("t001")
     _git(wt, "commit", "-am", "active")
 
-    removed, message = worktrees.remove_worktree(rel, expected_branch="t001_alpha")
+    removed, message = worktrees.remove_worktree(rel, expected_branch="t001_alpha", repo=repo_ctx)
 
     assert removed, message
     assert not wt.exists()
@@ -1567,7 +1566,8 @@ def test_forced_worktree_discard_does_not_follow_unmanaged_dir_link(git_repo):
     wt = _worktree_path(git_repo)
     (wt / "extra_data").symlink_to(git_repo / "data")
 
-    removed, message = worktrees.discard_worktree(ctx.worktree_rel_path("t001"))
+    repo_ctx = ctx.RepoContext.for_root(git_repo)
+    removed, message = worktrees.discard_worktree(repo_ctx.worktree_rel("t001"), repo=repo_ctx)
 
     assert removed, message
     assert not wt.exists()
@@ -1584,7 +1584,10 @@ def test_rewind_audit_failure_persists_trace_and_reports_real_state(git_repo, mo
     monkeypatch.setattr(lifecycle, "append_audit", fail_audit)
     with pytest.raises(SystemExit, match="审计写入失败"):
         lifecycle.cmd_rewind(
-            argparse.Namespace(tid="t001", to=None, reason="audit failure", yes=True)
+            argparse.Namespace(
+                tid="t001", to=None, reason="audit failure", yes=True,
+                repo=ctx.RepoContext.for_root(git_repo),
+            )
         )
     note = git_repo / "docs/tasks/t001_alpha/progress.md"
     fm, body = parse_front_matter(note)
@@ -1623,7 +1626,10 @@ def test_rewind_write_failure_appends_failed_audit_marker(git_repo, monkeypatch)
 
     # 尝试 rewind，预期失败退出
     with pytest.raises(SystemExit, match="rewind 状态写入失败"):
-        lifecycle.cmd_rewind(argparse.Namespace(tid="t001", to=None, reason="test failure", yes=True))
+        lifecycle.cmd_rewind(argparse.Namespace(
+            tid="t001", to=None, reason="test failure", yes=True,
+            repo=ctx.RepoContext.for_root(git_repo),
+        ))
 
     audit_text = audit_file.read_text(encoding="utf-8")
     assert "rewind_failed" in audit_text
@@ -2130,7 +2136,7 @@ def test_chain_start_base_names_uncommitted_finish_as_cause(git_repo):
 
 
 def test_effective_sources_all_backlog_main(git_repo):
-    sources = store.discover_effective_sources()
+    sources = store.discover_effective_sources(repo=ctx.RepoContext.for_root(git_repo))
     assert set(sources) == {"t001", "t002", "t003"}
     for tid in ("t001", "t002", "t003"):
         assert sources[tid]["status"] == "backlog"
@@ -2140,7 +2146,7 @@ def test_effective_sources_all_backlog_main(git_repo):
 
 def test_effective_sources_active_worktree(git_repo):
     _start(git_repo, "t001")
-    sources = store.discover_effective_sources()
+    sources = store.discover_effective_sources(repo=ctx.RepoContext.for_root(git_repo))
     assert sources["t001"]["status"] == "active"
     assert sources["t001"]["source"] == "worktree"
     assert sources["t001"]["read_at"] == str(_worktree_path(git_repo, "t001"))
@@ -2151,7 +2157,7 @@ def test_effective_sources_active_worktree(git_repo):
 def test_effective_sources_completed_branch_after_cleanup(git_repo):
     _start(git_repo, "t001")
     _, branch, _ = _finish_commit_cleanup(git_repo, "t001", "alpha")
-    sources = store.discover_effective_sources()
+    sources = store.discover_effective_sources(repo=ctx.RepoContext.for_root(git_repo))
     assert sources["t001"]["status"] == "done"
     assert sources["t001"]["source"] == "branch"
     assert sources["t001"]["read_at"] == branch
@@ -2160,12 +2166,12 @@ def test_effective_sources_completed_branch_after_cleanup(git_repo):
 def test_effective_status_cli_output(git_repo, capsys):
     from repo_task.control import cmd_effective_status
     import argparse
-    cmd_effective_status(argparse.Namespace(status=None))
+    cmd_effective_status(argparse.Namespace(status=None, repo=ctx.RepoContext.for_root(git_repo)))
     out = capsys.readouterr().out
     assert "t001" in out and "backlog" in out and "main" in out
 
     _start(git_repo, "t001")
-    cmd_effective_status(argparse.Namespace(status=None))
+    cmd_effective_status(argparse.Namespace(status=None, repo=ctx.RepoContext.for_root(git_repo)))
     out = capsys.readouterr().out
     assert "worktree" in out
     assert str(_worktree_path(git_repo, "t001")) in out
@@ -2183,7 +2189,7 @@ def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_re
     _git(git_repo, "checkout", "main")
 
     # 1. 观察入口：展示 corrupt 与来源 branch，不回落为 main backlog
-    sources = store.discover_effective_sources()
+    sources = store.discover_effective_sources(repo=ctx.RepoContext.for_root(git_repo))
     assert sources["t001"]["status"] == "corrupt"
     assert sources["t001"]["source"] == "branch"
     assert sources["t001"]["read_at"] == "t001_alpha"
@@ -2195,7 +2201,7 @@ def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_re
 
     # 2. 调度与写操作入口：阻断，不按旧 backlog 放行
     with pytest.raises(ctx.TaskDataError, match="数据损坏"):
-        store.discover_effective_tasks()
+        store.discover_effective_tasks(repo=ctx.RepoContext.for_root(git_repo))
     assert _task_cli(git_repo, "view").returncode != 0
     assert _task_cli(git_repo, "plan").returncode != 0
     assert _task_cli(git_repo, "start", "t002").returncode != 0
@@ -2204,7 +2210,8 @@ def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_re
 def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
     from repo_task.graph import cmd_merge_backlog
     from repo_task.ledger import ledger_read
-    ledger_read()  # Include the observational control lock in the initial baseline.
+    repo_ctx = ctx.RepoContext.for_root(git_repo)
+    ledger_read(repo=repo_ctx)  # Include the observational control lock in the initial baseline.
     before = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
     original_move = lifecycle.shutil.move
 
@@ -2215,7 +2222,7 @@ def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories
 
     monkeypatch.setattr(lifecycle, "shutil", SimpleNamespace(**{**vars(lifecycle.shutil), "move": fail_second_source}))
     with pytest.raises(ctx.TaskDataError, match='已恢复图与来源目录'):
-        cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002'))
+        cmd_merge_backlog(argparse.Namespace(tid='t003', sources='t001,t002', repo=repo_ctx))
     after = {p.relative_to(git_repo): p.read_bytes() for p in (git_repo / 'docs').rglob('*') if p.is_file()}
     assert after == before
 
@@ -2273,7 +2280,7 @@ def test_start_timeout_reports_unconfirmed_resources_without_deleting_them(git_r
     monkeypatch.setattr(worktrees, '_git', interrupted_add)
     head = _git(git_repo, 'rev-parse', 'HEAD').stdout.strip()
     with pytest.raises(SystemExit, match='创建结果未确认'):
-        integration.cmd_start(argparse.Namespace(tid='t001', base=None))
+        integration.cmd_start(argparse.Namespace(tid='t001', base=None, repo=ctx.RepoContext.for_root(git_repo)))
     assert _git(git_repo, 'rev-parse', 'HEAD').stdout.strip() == head
     assert _git(git_repo, 'rev-parse', '--verify', 'refs/heads/t001_alpha').stdout.strip() == head
     assert _worktree_path(git_repo, 't001').exists() == (partial == 'worktree')

@@ -13,8 +13,18 @@ from task_flow_support import finish_cli, mark_done, prepare_finish
 from repo_task import monitoring
 from repo_task.documents import parse_front_matter, write_front_matter
 
+from repo_task.context import RepoContext
+
 REL = "docs/tasks/t001_alpha"
 OWNER = "owner-repair"
+_CURRENT_REPO = [None]
+
+
+@pytest.fixture(autouse=True)
+def _capture_test_repo(git_repo):
+    _CURRENT_REPO[0] = git_repo
+    yield
+    _CURRENT_REPO[0] = None
 
 
 def _recovery(repo, tid="t001"):
@@ -25,9 +35,11 @@ def _recovery(repo, tid="t001"):
     return json.loads(result.stdout)
 
 
-def _verify(identity):
+def _verify(identity, repo=None):
+    target = repo or _CURRENT_REPO[0]
     return monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"]
+        "t001", identity["attempt"], identity["execution_id"],
+        repo=RepoContext.for_root(target),
     )
 
 
