@@ -1,8 +1,10 @@
 # 生命周期实体稳定存储与历史文稿归档重构方案
 
-> 编写时间：2026-11-08T13:02:49+08:00。分析基线：`3037526d73833e5f76922515757974011be7e629`。
+> 编写时间：2026-11-08T13:02:49+08:00。更新时间：2026-11-08T18:40:00+08:00。
 >
-> 目标原则依据用户本次明确要求：tasks、pending、spikes 终生使用固定路径，状态由元数据表达；Archive 保存冻结的历史文稿，本机操作日志放在 runtime。本文定义目标契约、破坏性变更、迁移步骤与验收条件，代码改造尚未启动。治理记录仍以[裁决总账](../decision_log.md)为准，实施后再同步正式契约与落地状态。
+> 文档性质：已实施优化与重构方案。各阶段实施成果与验收结论已记录于文末及[裁决总账](../decision_log.md)（L59）。
+>
+> 目标原则依据用户本次明确要求：tasks、pending、spikes 终生使用固定路径，状态由元数据表达；Archive 保存冻结的历史文稿，本机操作日志放在 runtime。治理记录仍以[裁决总账](../decision_log.md)为准。
 >
 > 适用范围：模板产物 `repo/`、工厂集成测试及必要的同步迁移代码。本文面向模板工具链维护者；工厂笔记留在 `docs_repo/`，不分发到消费仓。文中新增命令均为目标接口，不能直接当作当前版本操作命令执行。
 
@@ -397,3 +399,18 @@ pytest .repo_template/tests -q -m contract
 以下情况停止对应写入阶段：备份不可恢复；执行现场未清；源状态有歧义；目标路径冲突；输入在预检后变化；无法加载一致工具链；校验失败或回滚不完整。报告实际路径、已完成动作、剩余状态及恢复入口，不以静默忽略、默认状态、自动删分支或路径兼容层继续执行。
 
 本方案实施收益以正确性和职责收敛验收。性能变化在最终版本重新测量；不预先承诺 Git 调用降幅或全量提速比例。
+
+## 实施验收数据与结论
+
+本方案各阶段（S0–S5）已于 2026-11-08 全部实施并通过独立资深架构审阅（详见各提交记录与 [裁决总账](../decision_log.md) L59）：
+
+|阶段|核心交付内容|用例数量|门禁状态|
+|---|---|---|---|
+|S1-A (Pending)|扁平固定路径 `docs/pending/pNNN_slug.md`、严格元数据、移除 rename/archive、防并发修改摘要|18 contract|全部通过|
+|S1-B (Spikes)|固定目录 `docs/spikes/sNNN_slug/`、显式 Front Matter、闭环与替代链校验、退役 archive-spike|24 contract + 3 factory|全部通过|
+|S1-C & S2 (Task & Merge Guard)|终生固定 `docs/tasks/`、共享核心资产所有权网（`validate_task_core_asset_changes`）、清除移动归档、纯 Git 对象依赖定位|27 guard + 全量|全部通过|
+|S4-A (Archive & Hygiene)|退役 `archive-handoff` 与交接归档、收纳操作日志至 `docs/runtime/` 并硬保护|全量|全部通过|
+|S3 (Migration & Sync)|`repo_sync.py migrate entity-storage` 原子事务与严格零兜底预检、日常 `apply` fail-closed 阻断|10 factory + 全量|全部通过|
+|S4-B (Docs & Skills)|产物规范收敛、Skills 原位流转改写、OpenCode 派生命令同步与工厂一致性门禁|全量|全部通过|
+|S5 (全案终审)|契约测试 367 passed、工厂全量测试 1174 passed, 1 skipped (203.27s)|1,175 全量|PASS（全案终审通过）|
+

@@ -73,6 +73,7 @@
 | L56 | 代码基座与主干规格来源混淆导致已核实规格阻断（Issue #90） | Issue #90、测试性能方案实施 | 移除 `load_task_backlog_baseline` 的 `diff_anchor` 祖先猜测，主干 backlog 为规格与初始调度唯一权威；启动前对主干目标目录无条件严格脏检查（含 rename 两端与未跟踪）；worktree 启动后从锁定的来源 SHA 完整物化规格，并将 `spec_source_sha` 作为不可变字段贯穿生命周期、验证、审阅契约基线与回执 | `repo_task/{store,integration,monitoring,lifecycle,render_review_prompts}.py` | 已落地 |
 | L57 | 环境软链在末尾斜杠规则下未被忽略且进入交付指纹与阻断 finish（Issue #91） | Issue #91、测试性能方案实施 | 显式环境声明 + 精准 Git 原生忽略规则（`info/exclude` 写入不带斜杠规则）；`_review_worktree` 严格区分 cached 与 others，对未忽略环境软链提供明确诊断与指引，不静默算入交付指纹；finish 门禁与指纹使用一致原生忽略边界，真实交付软链（120000）严格保留 | `repo_task/{worktrees,monitoring,lifecycle}.py` | 已落地 |
 | L58 | 测试套件运行开销大、重复 Git 子进程与 Arrange 冗余 | 测试性能优化方案 P1–P4 落地 | Arrange 阶段以显式 RepoContext 领域 API 替代非被测 CLI；`repo_task` 引入单次 `ls-tree` 与非交互 `git cat-file --batch` 批量读取与 commit 快照；`factory_tests` 引入受控 Git 环境、Profile 种子与 session 级别的高速独立复制；全量用例数增至 1098，耗时从 255.77s 降至 179.29s（跌破 3 分钟） | `repo_task/{git_ops,store,integration}.py`、`factory_tests/{git_repo_support,conftest}.py` | 已落地 |
+| L59 | 实体生命周期目录搬迁导致路径变换与 Git 自动合并重命名冲突（Issue #92） | Issue #92、实体稳定存储方案实施 | 实体终生原位流转不进 Archive：Task（`docs/tasks/`）、Pending（`docs/pending/`）、Spike（`docs/spikes/`）；Archive 仅保留冻结冷文稿（`reviews/` 与 `specs/`）；退役 `archive-handoff` 与 `archive-spike`；跨任务核心资产（progress, task, handoff, review_*）基于完整 `(mode, oid)` 实施所有权严格拦截；依赖实现按 `handoff.json` Blob OID 与非 merge commit 血缘纯拓扑定位；提供 `repo_sync.py migrate entity-storage` 一次性迁移与同步阻断 | `repo_task/{store,lifecycle,integration,monitoring,graph}.py`、`pending.py`、`spikes.py`、`template_sync/entity_storage_migration.py` | 已落地 |
 
 ## 未闭环
 
@@ -148,4 +149,26 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
    - 基线：1,055 用例，耗时 255.77s；
    - 正确性修复后（#90 + #91）：1,069 用例，耗时 210.91s；
    - 性能优化完成（P1–P4）：1,098 用例（1097 passed, 1 skipped），耗时 179.29s（02:59）。全量测试通过。
+
+## #92 与实体稳定存储重构（L59）
+
+落地点与验证记录（2026-11-08）：
+1. **实体规范路径终生固定**：
+   - Task 终生在 `docs/tasks/{tid}_{slug}/` 原位表达 `backlog / active / done / dropped`；`finish` 与 `drop` 原位流转，彻底删除 `_stage_archive_moves`、`_archive_move_deviations` 与合并后的任务目录搬迁。
+   - Pending 终生在 `docs/pending/{pid}_{slug}.md` 扁平目录原位表达 `todo / parked / closed`；删除 `archive` 与 `rename` 命令；取消自动 `git add`，引入文件内容摘要防御并发修改。
+   - Spike 终生在 `docs/spikes/{sid}_{slug}/` 原位表达 `active / completed / superseded`；退役 `archive-spike`；严格校验 findings 关联并拦截循环替代链。
+2. **归档边界纯净化**：
+   - `docs/archive/` 仅保留 `reviews/` 与 `specs/` 冻结冷文稿；`repo_hygiene.py archive-review` 为唯一合法冷文稿归档命令。
+   - 退役 `archive-handoff` 命令；交接快照单文件维护于固定 `docs/handoff.md`，历史由 Git 记录。
+   - 本机操作审计日志迁移至 `docs/runtime/tasks_audit.log`，不入库，`repo_cleanup.py` 硬保护。
+3. **共享核心资产所有权网**：
+   - `monitoring.validate_task_core_asset_changes` 基于未过滤完整 Git 条目 `(mode, oid)`，在 finish 预检、集成就绪、链预检与 staged 两层门禁全链路拦截对非 owner 核心资产（progress, task, handoff, review_*）的新增、删除、篡改、模式变更及非法模式（120000/160000）。
+4. **依赖实现来源统一查验**：
+   - 彻底脱钩历史文件路径，纯粹基于目标 `handoff.json` Blob OID 与唯一非 merge 实现 commit 血缘拓扑验证。
+5. **一次性迁移与同步阻断**：
+   - `repo_sync.py migrate entity-storage [--write]` 提供原子文件事务保护与完整前置预检（零兜底、全阻断）；日常 `template_sync apply` 严格阻断旧布局，杜绝旧结构重生。
+6. **全量验收实测数据**：
+   - 契约测试：367 passed（13.52s）；
+   - 工厂全量：1,175 用例（1174 passed, 1 skipped），耗时 203.27s。零回归，全量通过。
+
 
