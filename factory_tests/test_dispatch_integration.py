@@ -1,5 +1,6 @@
 """Real-git tests for exact handoff, cleanup, single integration, and chain transactions."""
 
+import argparse
 import json
 import os
 import shutil
@@ -17,7 +18,10 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from review_support import ensure_review_evidence, configure_project_verification, valid_spec as _valid_spec
 from task_flow_support import mark_done
 
+from repo_task import attempts
 from repo_task import context as ctx
+from repo_task import control
+from repo_task import integration
 from repo_task import monitoring
 from repo_task.documents import parse_front_matter, write_front_matter
 
@@ -135,12 +139,9 @@ def _prepare_done(
     repo, tid, slug, *, base=None, handoff_overrides=None, mutate=None,
     terminal=True,
 ):
-    start_args = ["start", tid]
-    if base:
-        start_args += ["--base", base]
-    started = _task_cli(repo, *start_args)
-    assert started.returncode == 0, started.stderr
-    identity = _reserve(repo, tid)
+    context = ctx.RepoContext.for_root(repo)
+    integration.cmd_start(argparse.Namespace(tid=tid, base=base, repo=context))
+    identity = attempts.reserve_attempt(tid, repo=context)
     worktree = _worktree(repo, tid)
     task_file = worktree / "docs" / "tasks" / f"{tid}_{slug}" / "task.md"
     if task_file.is_file():
@@ -167,23 +168,29 @@ def _prepare_done(
     _git(worktree, "commit", "-m", f"feat({tid}): complete {slug}")
     head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     if terminal:
-        result = _task_cli(
-            repo, "attempt", "terminal", tid, *_identity_args(identity),
-            "--status", "completed",
+        attempts.terminal_attempt(
+            tid, identity["attempt"], identity["execution_id"], "completed", repo=context
         )
-        assert result.returncode == 0, result.stderr
-        report = _task_cli(
-            repo, "attempt", "report", tid, *_identity_args(identity),
-            "--status", "done", "--sha", head,
+        control.require_report_done_ready(
+            tid, identity["attempt"], identity["execution_id"], repo=context
         )
-        assert report.returncode == 0, report.stderr
+        attempts.report_attempt(
+            tid, identity["attempt"], identity["execution_id"], "done", sha=head, repo=context
+        )
     return identity, branch, head
 
 
-def _cleanup(repo, tid, identity):
+def _cleanup_cli(repo, tid, identity):
     result = _task_cli(repo, "cleanup-worktree", tid, *_identity_args(identity))
     assert result.returncode == 0, result.stderr
     return result
+
+
+def _cleanup(repo, tid, identity):
+    context = ctx.RepoContext.for_root(repo)
+    return integration._cleanup_worktree(
+        tid, identity["attempt"], identity["execution_id"], repo=context
+    )
 
 
 def _handoff_path(repo, tid, slug):
@@ -548,7 +555,7 @@ def test_parallel_cleanup_and_integrate_require_terminal_attempt(git_repo):
     assert (worktree / "dirty.txt").read_text("utf-8") == "user data\n"
     (worktree / "dirty.txt").unlink()
 
-    cleaned = _cleanup(git_repo, "t001", identity)
+    cleaned = _cleanup_cli(git_repo, "t001", identity)
     assert "worktree 已移除" in cleaned.stdout
     assert not worktree.exists()
     assert _git(git_repo, "branch", "--list", branch).stdout.strip() == branch

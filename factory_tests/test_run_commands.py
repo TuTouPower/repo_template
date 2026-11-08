@@ -10,6 +10,7 @@ from test_dispatch_integration import (
 )
 from review_support import valid_spec
 from task_flow_support import finish_cli, prepare_finish
+from repo_task import attempts
 from repo_task import control
 from repo_task import context as ctx
 from repo_task.documents import parse_front_matter, write_front_matter
@@ -190,8 +191,9 @@ def test_run_begin_claim_failure_is_recovered_as_executing_without_owner(git_rep
 def _claimed_done(repo, owner=OWNER):
     """已 finish 并提交、已 claim、尚未 terminal 的 task。"""
     identity, branch, head = _prepare_done(repo, "t001", "alpha", terminal=False)
-    claim = _task_cli(repo, "attempt", "claim", "t001", "--owner-id", owner)
-    assert claim.returncode == 0, claim.stderr
+    attempts.claim_execution(
+        "t001", identity["attempt"], identity["execution_id"], owner, repo=ctx.RepoContext.for_root(repo)
+    )
     return identity, branch, head
 
 

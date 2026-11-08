@@ -1,5 +1,8 @@
 """C3：finish 原子化 —— 前置检查零写入、机器生成 handoff.json、提交失败整体回滚。"""
 
+import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -10,6 +13,7 @@ import pytest
 from test_dispatch_integration import git_repo, _git, _task_cli, _worktree, _read_ledger
 from task_flow_support import mark_done, fill_summary, finish_cli, prepare_finish
 from review_support import pass_report
+from repo_task import control
 from repo_task import monitoring
 from repo_task import context as ctx
 from repo_task.documents import parse_front_matter
@@ -18,9 +22,13 @@ OWNER = "owner-fin"
 
 
 def _begin(repo, tid="t001", owner=OWNER):
-    result = _task_cli(repo, "run-begin", tid, "--owner-id", owner)
-    assert result.returncode == 0, result.stderr
-    return json.loads(result.stdout)
+    context = ctx.RepoContext.for_root(repo)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        control.cmd_run_begin(argparse.Namespace(
+            tid=tid, owner_id=owner, base=None, repo=context
+        ))
+    return json.loads(buf.getvalue())
 
 
 def _ready(repo, **kwargs):
