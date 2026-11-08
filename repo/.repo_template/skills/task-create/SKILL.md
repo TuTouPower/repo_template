@@ -22,10 +22,10 @@ metadata:
 4. 用 `task.py add` 创建目录，严格填写 `task.md` 和 `progress.md`：只替换占位符，不删除模板规范块，不手改 front matter。
 5. 按风险设置 `review_level`：安全、鉴权、资金、并发、迁移、协议兼容用 `full`；其它通常用 `single`。
 6. 对每个 task 运行 `task.py preflight {tid} --creation`。结构、AC、占位符或裸 `UNVERIFIED` 为 FAIL；已分类的 `UNVERIFIED-BLOCKING` 可作为 backlog WARN，但仍不能 start。
-7. 列出新增 task、依赖建议和创建有效性结果，询问是否提交；同意后本批 task 和派生 index 用一个创建 commit 提交。
+7. 列出新增 task、依赖建议和创建有效性结果，询问是否提交；同意后本批 task 用一个创建 commit 提交。
 
 ## 边界
 
 - 不实现、不 start、不 finish。
-- 只写本批 task 目录和脚本派生 index。
+- 只写本批 task 目录。
 - bug 分析走 `bug-to-pending`；pending 转 task 走 `task-from-pending`。

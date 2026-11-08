@@ -1190,8 +1190,8 @@ def test_drop_allows_genuine_fresh_backlog(git_repo):
     assert not (git_repo / "docs/tasks_index.json").exists()
 
 
-def test_drop_moves_back_front_matter_when_archive_move_fails(git_repo, monkeypatch):
-    """drop 原位写 status: dropped，目录保留在 docs/tasks/{tid}_{slug}。"""
+def test_drop_keeps_task_in_place_without_archive(git_repo):
+    """drop 原位写 status: dropped，目录保留在 docs/tasks/{tid}_{slug}，杜绝归档搬移。"""
     result = _task_cli(git_repo, "drop", "t001", "--reason", "测试原位 drop")
     assert result.returncode == 0, result.stderr
     fm, _ = parse_front_matter(
@@ -1768,7 +1768,8 @@ def test_view_handles_diamond_dependencies(git_repo):
     assert "t002 → t003" in result.stdout
 
 
-def test_view_reads_done_from_main_archive(git_repo):
+def test_view_resolves_done_task_in_place_to_unblock_dependents(git_repo):
+    """主干原位 done task 正常解开下游依赖。"""
     dependency = _task_cli(
         git_repo,
         "edit",
@@ -1927,18 +1928,18 @@ def test_view_rejects_dangling_and_dropped_references(git_repo):
     assert "invalid_graph: t001.conflicts_with 引用 dropped task t003" in stale_conflict.stderr
 
 
-def test_drop_ignores_archived_task_historical_edges(git_repo):
+def test_drop_ignores_done_task_historical_edges(git_repo):
     """已完成 done task 的历史调度边不应锁死活跃 task 的 drop。"""
-    archived = git_repo / "docs/tasks/t099_archived"
-    archived.mkdir(parents=True)
+    done_task = git_repo / "docs/tasks/t099_done"
+    done_task.mkdir(parents=True)
     template_task = git_repo / ".repo_template/docs/task_template/progress.md"
     _, body = parse_front_matter(template_task)
     write_front_matter(
-        archived / "progress.md",
+        done_task / "progress.md",
         {
             "tid": "t099",
-            "slug": "archived",
-            "title": "archived",
+            "slug": "done",
+            "title": "done",
             "status": "done",
             "branch": "",
             "worktree": "",
@@ -2160,7 +2161,7 @@ def test_effective_discovery_exposes_corrupt_branch_and_blocks_scheduling(git_re
     assert _task_cli(git_repo, "start", "t002").returncode != 0
 
 
-def test_backlog_merge_archive_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
+def test_backlog_merge_source_close_failure_restores_graph_and_all_source_directories(git_repo, monkeypatch):
     from repo_task.graph import cmd_merge_backlog
     from repo_task.ledger import ledger_read
     from repo_task import lifecycle

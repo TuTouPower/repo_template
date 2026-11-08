@@ -10,8 +10,7 @@
   python3 .repo_template/scripts/md_format.py --all        # 全部已跟踪非黑名单 .md
   python3 .repo_template/scripts/md_format.py --check      # 只检查不写入，格式漂移非 0
 
-库函数（供 pending/findings/spikes new 等）：format_paths() 缺二进制时跳过并
-警告，不阻断（CI 无二进制时现有测试不红）；CLI 缺二进制硬失败。
+库函数 format_paths() 与 CLI 统一在缺二进制或执行失败时抛出 MdFormatError（硬失败，无静默降级）。
 """
 
 from __future__ import annotations

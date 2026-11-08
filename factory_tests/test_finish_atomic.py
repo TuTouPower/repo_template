@@ -671,7 +671,7 @@ def test_finish_reports_fail_when_hook_rewrites_delivered_markdown(git_repo):
     assert "hook rewrite" in _git(worktree, "show", "HEAD:docs/tasks/t001_alpha/task.md").stdout
 
 
-def test_finish_done_rejects_occupied_archive_target_with_zero_writes(git_repo):
+def test_finish_rejects_tampered_other_task_core_asset_with_zero_writes(git_repo):
     """拦截对其他 task 核心资产的篡改，零写入退出。"""
     _, worktree, message = _ready(git_repo)
     other_task_md = worktree / "docs/tasks/t002_beta/task.md"

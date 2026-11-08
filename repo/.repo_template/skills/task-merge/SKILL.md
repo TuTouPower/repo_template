@@ -26,4 +26,4 @@ metadata:
 
 ## 边界
 
-只处理 backlog，不实现、不 start。不得静默丢 AC，不直接编辑 front matter 或 index。
+只处理 backlog，不实现、不 start。不得静默丢 AC，不直接编辑 front matter。

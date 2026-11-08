@@ -363,11 +363,12 @@ def test_start_appends_ledger_event(git_repo):
 
 
 
-def test_integrate_skip_merge_also_appends_integrated(git_repo):
+def test_dispatch_completes_in_place_without_archive(git_repo):
+    """已合入跳过 merge 时记录 integrated，且 task 保持原位、无归档、无派生索引。"""
     identity, branch, branch_head = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     # RT-003 后 skip-merge 须解析真实 merge({tid}) commit（不再无条件取当前 HEAD）；
-    # 预 merge 用工具链规范 message，使新实现可识别该 merge commit。断言语义不变。
+    # 预 merge 用工具链规范 message，使新实现可识别该 merge commit。
     manual = _git(git_repo, "merge", "--no-ff", "-m", "merge(t001): t001_alpha", branch)
     assert manual.returncode == 0, manual.stderr
     preintegrate_head = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
@@ -384,7 +385,9 @@ def test_integrate_skip_merge_also_appends_integrated(git_repo):
     assert integrated[0]["merge_sha"] == preintegrate_head
     assert integrated[0]["attempt"] == identity["attempt"]
     assert integrated[0]["execution_id"] == identity["execution_id"]
-    # merge_sha remains the actual merge commit; no derived index is generated.
+    # 固定路径原位保留、杜绝归档搬移、不生成派生 index
+    assert (git_repo / "docs/tasks/t001_alpha").is_dir()
+    assert not (git_repo / "docs/archive/tasks/t001_alpha").exists()
     assert not (git_repo / "docs/tasks_index.json").exists()
     assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == preintegrate_head
 
