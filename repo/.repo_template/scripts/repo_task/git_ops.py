@@ -14,7 +14,9 @@ def _git(
     args: list, *, repo: "ctx.RepoContext | None" = None, root: Path | None = None,
     timeout: int = 60,
 ) -> subprocess.CompletedProcess:
-    target = root or (repo or ctx.current_context()).root
+    if root is None and repo is None:
+        raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
+    target = root or repo.root
     try:
         return subprocess.run(
             ["git", "-C", str(target), *args],
@@ -32,7 +34,9 @@ def _git_bytes(
     timeout: int = 60,
 ) -> subprocess.CompletedProcess:
     """Run Git without text decoding for binary-safe snapshots and diffs."""
-    target = root or (repo or ctx.current_context()).root
+    if root is None and repo is None:
+        raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
+    target = root or repo.root
     try:
         return subprocess.run(
             ["git", "-C", str(target), *args],
@@ -46,7 +50,9 @@ def default_branch(
     root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> str:
     """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → 本地唯一非 task 分支。"""
-    root = root or (repo or ctx.current_context()).root
+    if root is None and repo is None:
+        raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
+    root = root or repo.root
     r = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root=root)
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().removeprefix("origin/")
@@ -69,7 +75,7 @@ def default_branch(
     return "main"
 
 def resolve_local_branch(
-    name: str, *, repo: "ctx.RepoContext | None" = None,
+    name: str, *, repo: "ctx.RepoContext",
 ) -> tuple[str, str]:
     """校验本地分支并返回 (分支名, 完整 HEAD SHA)。"""
     if not name or name.startswith("-"):
@@ -82,16 +88,16 @@ def resolve_local_branch(
         raise ctx.TaskDataError(f"无法解析本地分支 {name!r} 的 HEAD")
     return name, r.stdout.strip()
 
-def _get_head_short(*, repo: "ctx.RepoContext | None" = None) -> str:
+def _get_head_short(*, repo: "ctx.RepoContext") -> str:
     r = _git(["rev-parse", "--short", "HEAD"], repo=repo)
     return (r.stdout.strip() or "unknown") if r.returncode == 0 else "unknown"
 
-def _get_head(*, repo: "ctx.RepoContext | None" = None) -> str:
+def _get_head(*, repo: "ctx.RepoContext") -> str:
     """全量 hash：存 diff_anchor 用（短 hash 长历史下有歧义风险）；展示场景用 _get_head_short。"""
     r = _git(["rev-parse", "HEAD"], repo=repo)
     return (r.stdout.strip() or "unknown") if r.returncode == 0 else "unknown"
 
-def has_unmerged_commits(branch: str, *, repo: "ctx.RepoContext | None" = None) -> bool:
+def has_unmerged_commits(branch: str, *, repo: "ctx.RepoContext") -> bool:
     """branch 上是否有未合并进主干的 commit；不可判定时保守返回 True。"""
     if not branch:
         return False
@@ -110,7 +116,7 @@ def has_unmerged_commits(branch: str, *, repo: "ctx.RepoContext | None" = None) 
     except ValueError:
         return True
 
-def tracked_anywhere(rel_path: str, *, repo: "ctx.RepoContext | None" = None) -> bool:
+def tracked_anywhere(rel_path: str, *, repo: "ctx.RepoContext") -> bool:
     """路径是否在**任意分支**被跟踪（不只当前签出的索引）。"""
     if _git(["ls-files", "--error-unmatch", rel_path], repo=repo).returncode == 0:
         return True
@@ -132,7 +138,7 @@ def _porcelain_paths(stdout: str) -> list[str]:
     return out
 
 def porcelain_entries(
-    root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
+    root: Path | None = None, *, repo: "ctx.RepoContext",
 ) -> list[str]:
     """`git status --porcelain -z` 的路径列表，避免引号与转义带来的解析错误。
 
@@ -145,7 +151,7 @@ def porcelain_entries(
     return _porcelain_paths(r.stdout)
 
 def tracked_dirty_entries(
-    root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
+    root: Path | None = None, *, repo: "ctx.RepoContext",
 ) -> list[str]:
     """只含已跟踪文件的未提交改动；未跟踪文件不影响 merge 结果，不计入。"""
     r = _git(["status", "--porcelain", "-z", "--untracked-files=no"], root=root, repo=repo)
@@ -155,7 +161,7 @@ def tracked_dirty_entries(
         )
     return _porcelain_paths(r.stdout)
 
-def worktree_paths(*, repo: "ctx.RepoContext | None" = None) -> dict[str, str]:
+def worktree_paths(*, repo: "ctx.RepoContext") -> dict[str, str]:
     """`git worktree list --porcelain` → {绝对路径: 分支名}。
 
     键统一为 Path.resolve() 后的字符串，与所有调用方 str(path) 比较对齐。
@@ -177,22 +183,21 @@ def worktree_paths(*, repo: "ctx.RepoContext | None" = None) -> dict[str, str]:
             result[current] = line[len("branch "):].strip().removeprefix("refs/heads/")
     return result
 
-def primary_worktree_path(*, repo: "ctx.RepoContext | None" = None) -> Path:
+def primary_worktree_path(*, repo: "ctx.RepoContext") -> Path:
     """返回 Git 登记的主工作区；worktree list 第一项始终是主工作区。"""
     paths = worktree_paths(repo=repo)
     if not paths:
         sys.exit("无法读取 git worktree 列表")
     return Path(next(iter(paths))).resolve()
 
-def in_primary_worktree(*, repo: "ctx.RepoContext | None" = None) -> bool:
-    repo = repo or ctx.current_context()
+def in_primary_worktree(*, repo: "ctx.RepoContext") -> bool:
     return repo.root.resolve() == primary_worktree_path(repo=repo)
 
-def current_branch(*, repo: "ctx.RepoContext | None" = None) -> str:
+def current_branch(*, repo: "ctx.RepoContext") -> str:
     r = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo=repo)
     return r.stdout.strip() if r.returncode == 0 else ""
 
-def require_primary_worktree(*, repo: "ctx.RepoContext | None" = None) -> None:
+def require_primary_worktree(*, repo: "ctx.RepoContext") -> None:
     if not in_primary_worktree(repo=repo):
         sys.exit("此命令只能在主工作区执行；请 cd 回主仓")
     base = default_branch(repo=repo)
@@ -200,12 +205,10 @@ def require_primary_worktree(*, repo: "ctx.RepoContext | None" = None) -> None:
     if branch != base:
         sys.exit(f"此命令只能在主干 {base!r} 执行（当前 {branch!r}）")
 
-def task_worktree_path(fm: dict, *, repo: "ctx.RepoContext | None" = None) -> Path:
-    repo = repo or ctx.current_context()
+def task_worktree_path(fm: dict, *, repo: "ctx.RepoContext") -> Path:
     return (repo.primary_root / repo.effective_worktree(fm)).resolve()
 
-def in_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext | None" = None) -> bool:
-    repo = repo or ctx.current_context()
+def in_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext") -> bool:
     expected = task_worktree_path(fm, repo=repo)
     return (
         repo.root.resolve() == expected
@@ -213,8 +216,7 @@ def in_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext | None" = None) -> 
         and current_branch(repo=repo) == fm.get("branch", "")
     )
 
-def require_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext | None" = None) -> None:
-    repo = repo or ctx.current_context()
+def require_own_task_worktree(fm: dict, *, repo: "ctx.RepoContext") -> None:
     if not in_own_task_worktree(fm, repo=repo):
         sys.exit(
             f"{fm['tid']} 必须在自身 worktree {repo.effective_worktree(fm)} 的分支 "

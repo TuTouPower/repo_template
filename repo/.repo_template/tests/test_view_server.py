@@ -75,49 +75,53 @@ def repo_layout(tmp_path, monkeypatch):
     (tasks_dir / "t001_spec_doc" / "progress.md").write_text("# note 正文\n", encoding="utf-8")
     (archive_dir / "t002_archived").mkdir()
     (archive_dir / "t002_archived" / "task.md").write_text("# 归档 task\n", encoding="utf-8")
-    monkeypatch.setattr(ctx, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(ctx, "TASKS_DIR", tasks_dir)
-    monkeypatch.setattr(ctx, "ARCHIVE_TASKS_DIR", archive_dir)
     return tasks_dir, archive_dir
 
 
 def test_resolve_task_doc_ok(repo_layout):
+    tasks_dir, _archive_dir = repo_layout
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
     tasks = {"t001": {"dir": "docs/tasks/t001_spec_doc"}}
-    path = view_server._resolve_task_doc(tasks, "t001", "task")
+    path = view_server._resolve_task_doc(tasks, "t001", "task", repo=repo)
     assert path.read_text(encoding="utf-8") == "# task 正文\n"
-    assert view_server._resolve_task_doc(tasks, "t001", "progress").name == "progress.md"
+    assert view_server._resolve_task_doc(tasks, "t001", "progress", repo=repo).name == "progress.md"
 
 
 def test_resolve_task_doc_archived_ok(repo_layout):
+    repo = RepoContext.for_root(repo_layout[0].parent.parent)
     tasks = {"t002": {"dir": "docs/archive/tasks/t002_archived"}}
-    path = view_server._resolve_task_doc(tasks, "t002", "task")
+    path = view_server._resolve_task_doc(tasks, "t002", "task", repo=repo)
     assert path.read_text(encoding="utf-8") == "# 归档 task\n"
 
 
 def test_resolve_task_doc_rejects_unknown_tid(repo_layout):
+    repo = RepoContext.for_root(repo_layout[0].parent.parent)
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc({}, "t999", "task")
+        view_server._resolve_task_doc({}, "t999", "task", repo=repo)
 
 
 def test_resolve_task_doc_rejects_bad_doc(repo_layout):
+    repo = RepoContext.for_root(repo_layout[0].parent.parent)
     tasks = {"t001": {"dir": "docs/tasks/t001_spec_doc"}}
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc(tasks, "t001", "readme")
+        view_server._resolve_task_doc(tasks, "t001", "readme", repo=repo)
 
 
 def test_resolve_task_doc_rejects_missing_file(repo_layout):
     # 目录存在但文件缺失
     tasks_dir = repo_layout[0]
     (tasks_dir / "t003_missing").mkdir()
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
     tasks3 = {"t003": {"dir": "docs/tasks/t003_missing"}}
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc(tasks3, "t003", "task")
+        view_server._resolve_task_doc(tasks3, "t003", "task", repo=repo)
 
 
 def test_resolve_task_doc_rejects_path_traversal(repo_layout):
+    repo = RepoContext.for_root(repo_layout[0].parent.parent)
     tasks = {"t001": {"dir": "../../../etc"}}
     with pytest.raises(ctx.TaskDataError):
-        view_server._resolve_task_doc(tasks, "t001", "task")
+        view_server._resolve_task_doc(tasks, "t001", "task", repo=repo)
 
 
 def test_read_task_doc_from_worktree_source(tmp_path):
@@ -131,7 +135,9 @@ def test_read_task_doc_from_worktree_source(tmp_path):
 
     schedule = {"tasks": {"t001": {"dir": "docs/tasks/t001_x"}}}
     sources = {"t001": {"source": "worktree", "read_at": str(worktree)}}
-    body = view_server._read_task_doc(schedule, sources, "t001", "task")
+    body = view_server._read_task_doc(
+        schedule, sources, "t001", "task", repo=RepoContext.for_root(main)
+    )
     assert body.decode("utf-8") == "# worktree 最新\n"
 
 
@@ -159,13 +165,13 @@ def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     _git(repo, "commit", "-m", "task")
     _git(repo, "checkout", "main")
 
-    monkeypatch.setattr(ctx, "REPO_ROOT", repo)
+    repo_ctx = RepoContext.for_root(repo)
     schedule = {"tasks": {"t001": {"dir": "docs/archive/tasks/t001_x"}}}
     sources = {"t001": {"source": "branch", "read_at": "t001_x"}}
-    body = view_server._read_task_doc(schedule, sources, "t001", "progress")
+    body = view_server._read_task_doc(schedule, sources, "t001", "progress", repo=repo_ctx)
     assert body.decode("utf-8") == "# 分支归档 note\n"
     with pytest.raises(ctx.TaskDataError):
-        view_server._read_task_doc(schedule, sources, "t001", "task")
+        view_server._read_task_doc(schedule, sources, "t001", "task", repo=repo_ctx)
 
 
 def test_handler_maps_system_exit_to_error_response():
@@ -291,7 +297,7 @@ def test_serve_warns_non_loopback(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8765)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
     # RT-013 后非 loopback 须显式 allow_non_loopback 才绑定；绑定后仍打 WARNING
-    view_server.serve(repo=ctx.current_context(), host="0.0.0.0", port=8765, allow_non_loopback=True)
+    view_server.serve(repo=RepoContext.for_root(Path.cwd()), host="0.0.0.0", port=8765, allow_non_loopback=True)
     err = capsys.readouterr().err
     assert "WARNING" in err
     assert "0.0.0.0" in err
@@ -313,7 +319,7 @@ def test_serve_rejects_non_loopback_without_allow(monkeypatch, capsys):
     monkeypatch.setattr(view_server, "_find_free_port", lambda host: 8766)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
     with pytest.raises(SystemExit, match="拒绝绑定非 loopback"):
-        view_server.serve(repo=ctx.current_context(), host="0.0.0.0", port=8766)
+        view_server.serve(repo=RepoContext.for_root(Path.cwd()), host="0.0.0.0", port=8766)
 
 
 def test_build_model_has_no_schedule_status(monkeypatch):
@@ -330,7 +336,7 @@ def test_build_model_has_no_schedule_status(monkeypatch):
         'backlog_tasks': {}, 'ready': ['t001', 't002'],
     }
     monkeypatch.setattr(view_server, 'compute_schedule', lambda **kwargs: schedule)
-    model = view_server._build_model(ctx.current_context())
+    model = view_server._build_model(RepoContext.for_root(Path.cwd()))
     assert {node['id'] for node in model['nodes']} == {'t001', 't002'}
     assert all('schedule_status' not in node for node in model['nodes'])
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
@@ -364,7 +370,9 @@ def test_compute_batch_plan_always_sets_stop_reason(tmp_path, monkeypatch):
         "ready": ["t001"],
         "dependencies": {"t001": []},
     }
-    board = plan_mod.build_board_model(schedule)
+    board = plan_mod.build_board_model(
+        schedule, repo=RepoContext.for_root(Path.cwd())
+    )
     batch = plan_mod.compute_batch_plan(board)
     assert batch["chains"]
     for chain in batch["chains"]:
@@ -378,9 +386,9 @@ def schedule_task(tid):
 def test_serve_rejects_out_of_range_port():
     """验证非法端口在启动前明确拒绝，避免原始 OverflowError 崩溃（Issue #63）。"""
     with pytest.raises(SystemExit, match="看板端口非法：-1；端口必须在 0 到 65535 之间"):
-        view_server.serve(repo=ctx.current_context(), port=-1)
+        view_server.serve(repo=RepoContext.for_root(Path.cwd()), port=-1)
     with pytest.raises(SystemExit, match="看板端口非法：70000；端口必须在 0 到 65535 之间"):
-        view_server.serve(repo=ctx.current_context(), port=70000)
+        view_server.serve(repo=RepoContext.for_root(Path.cwd()), port=70000)
 
 
 def test_render_html_escapes_html_comments_and_separators():
@@ -429,7 +437,7 @@ def test_rendered_html_cache_debounce(monkeypatch):
 
     # 1. 连续 5 次快速请求
     for _ in range(5):
-        html = view_server._get_rendered_html(ctx.current_context())
+        html = view_server._get_rendered_html(RepoContext.for_root(Path.cwd()))
         assert "window.__BOARD__ =" in html
 
     # 只调用了一次全量构建
@@ -452,7 +460,9 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
     class MockHandler:
         def __init__(self, path):
             self.path = path
-            self.server = SimpleNamespace(repo=ctx.current_context())
+            self.server = SimpleNamespace(
+                repo=RepoContext.for_root(tasks_dir.parent.parent)
+            )
         def _send_error_text(self, status, message):
             responses.append((status, message))
         def _send_bytes(self, status, body, ct):
@@ -478,6 +488,7 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
 
 def test_root_requires_session_token_and_does_not_leak_it(repo_layout, monkeypatch):
     """首页也必须校验 token，未持有者无法从 403 响应取得 token（Issue #73）。"""
+    tasks_dir, _ = repo_layout
     monkeypatch.setattr(view_server, "_get_rendered_html", lambda _repo: "<html>board</html>")
     monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
     responses = []
@@ -485,7 +496,9 @@ def test_root_requires_session_token_and_does_not_leak_it(repo_layout, monkeypat
     class MockHandler:
         def __init__(self, path):
             self.path = path
-            self.server = SimpleNamespace(repo=ctx.current_context())
+            self.server = SimpleNamespace(
+                repo=RepoContext.for_root(tasks_dir.parent.parent)
+            )
         def _send_error_text(self, status, message):
             responses.append((status, message))
         def _send_bytes(self, status, body, ct):
@@ -523,7 +536,7 @@ def test_find_free_port_and_serve_ipv6_loopback(monkeypatch):
     monkeypatch.setattr(view_server, "ThreadingHTTPServer", FakeServer)
     monkeypatch.setattr(view_server, "_open_browser", lambda url: None)
 
-    view_server.serve(repo=ctx.current_context(), host="::1", port=port)
+    view_server.serve(repo=RepoContext.for_root(Path.cwd()), host="::1", port=port)
     assert len(started) == 1
     assert started[0][0] == ("::1", port)
 

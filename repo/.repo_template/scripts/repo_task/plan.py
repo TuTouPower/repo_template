@@ -110,7 +110,7 @@ def classify_node(
     return "backlog"
 
 
-def build_board_model(schedule: dict | None = None, *, repo=None) -> dict:
+def build_board_model(schedule: dict | None = None, *, repo) -> dict:
     """调度图 → 看板/plan 共用模型（nodes + edges + summary）。"""
     schedule = schedule if schedule is not None else compute_schedule(repo=repo)
     tasks = schedule["tasks"]
@@ -155,7 +155,7 @@ def build_board_model(schedule: dict | None = None, *, repo=None) -> dict:
     for node in nodes:
         summary[node["category"]] += 1
     return {
-        "project": ctx.REPO_ROOT.name,
+        "project": repo.name,
         "nodes": nodes,
         "edges": edges,
         "summary": summary,
@@ -645,7 +645,7 @@ def _unlock_rows(plan: dict, data: dict) -> list[dict]:
     return rows
 
 
-def build_execution_plan(*, mode: str = "batch", queue: list[str] | None = None, repo=None) -> dict:
+def build_execution_plan(*, mode: str = "batch", queue: list[str] | None = None, repo) -> dict:
     """从当前仓库状态构建完整执行计划。
 
     mode=serial 时附 members / queue_chains（按队列内关系分链并给出各成员 base）；
@@ -662,7 +662,7 @@ def build_execution_plan(*, mode: str = "batch", queue: list[str] | None = None,
         plan.update(compute_queue_topology(
             ordered,
             data["edges"],
-            default_branch=resolve_default_branch(),
+            default_branch=resolve_default_branch(repo=repo),
             branch_of=lambda tid: f"{tid}_{slug_of[tid]}",
         ))
     else:
@@ -782,7 +782,7 @@ def format_plan_text(plan: dict, *, copy_only: bool = False) -> str:
 
 
 def cmd_plan(args: Any) -> None:
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     mode = "serial" if getattr(args, "serial", False) else "batch"
     queue = list(getattr(args, "tids", None) or []) or None
     try:

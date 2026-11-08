@@ -14,7 +14,7 @@ from .file_transaction import FileTransaction
 
 
 def cmd_merge_backlog(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     sources = set(parse_tid_list(args.sources, field="--sources", allow_empty=False))
     group = sources | {args.tid}
@@ -28,7 +28,7 @@ def cmd_merge_backlog(args):
             if tid not in main_tasks or tasks[tid]["status"] != "backlog" or task_effective_state(tid, main_tasks[tid], repo=repo):
                 sys.exit(f"{tid} 必须是尚未执行的 main backlog")
         from .ledger import ledger_read
-        if any(event.get("tid") in group and event.get("attempt") for event in ledger_read()):
+        if any(event.get("tid") in group and event.get("attempt") for event in ledger_read(repo=repo)):
             sys.exit("来源或目标已有执行历史，不可作为 backlog 合并成员")
         dependencies = {tid: set(deps) for tid, deps in schedule["dependencies"].items()}
         conflicts = {tid: set(peers) for tid, peers in schedule["conflicts"].items()}
@@ -57,7 +57,7 @@ def cmd_merge_backlog(args):
             peers = dump_tid_list(sorted(conflicts[tid]))
             if deps == task.get("depends_on", "") and peers == task.get("conflicts_with", ""):
                 continue
-            if tid not in main_tasks or task["status"] != "backlog" or task_effective_state(tid, main_tasks[tid]):
+            if tid not in main_tasks or task["status"] != "backlog" or task_effective_state(tid, main_tasks[tid], repo=repo):
                 sys.exit(f"合并需要改写不可编辑的 {tid}；未写入")
             _, path, fm, body = load_task(tid, repo=repo)
             fm.update(depends_on=deps, conflicts_with=peers)
@@ -107,7 +107,7 @@ def cmd_merge_backlog(args):
 
 
 def cmd_graph_transaction(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     with git_common_lock(repo.root, CONTROL_LOCK_NAME):
         transaction = FileTransaction(repo.root, ".scratch/task_graph_transaction")

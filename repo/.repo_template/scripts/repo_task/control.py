@@ -28,7 +28,7 @@ from .store import discover_effective_sources, discover_effective_tasks, scan_ta
 
 
 def cmd_effective_status(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     """只读输出每个有效 task 的状态与读取来源（worktree / branch / main）。"""
     require_primary_worktree(repo=repo)
     entries = discover_effective_sources(repo=repo)
@@ -49,7 +49,7 @@ def cmd_effective_status(args):
 
 
 def cmd_view(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     if getattr(args, "serve", False):
         from .view_server import serve
         serve(
@@ -125,7 +125,7 @@ def cmd_view(args):
                 + " ".join(unmerged_done) + "）"
             )
         # 本波链摘要：算法权威 = plan.compute_batch_plan
-        board = build_board_model(schedule)
+        board = build_board_model(schedule, repo=repo)
         batch = compute_batch_plan(board)
         n_chains = len(batch.get("chains") or [])
         if n_chains:
@@ -173,14 +173,14 @@ def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str) -> None
 
 @control_locked
 def cmd_attempt_reserve(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     _print_json(reserve_attempt(args.tid, args.model, repo=repo))
 
 
 @control_locked
 def cmd_attempt_claim(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     attempt, execution_id = resolve_identity(
         args.tid, args.attempt, args.execution_id, repo=repo
@@ -192,7 +192,7 @@ def cmd_attempt_claim(args):
 
 @control_locked
 def cmd_attempt_terminal(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     attempt, execution_id = resolve_identity(
         args.tid, args.attempt, args.execution_id, repo=repo
@@ -200,11 +200,13 @@ def cmd_attempt_terminal(args):
     _print_json(terminal_attempt(args.tid, attempt, execution_id, args.status, repo=repo))
 
 
-def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None:
+def require_report_done_ready(
+    tid: str, attempt: int, execution_id: str, *, repo: "ctx.RepoContext"
+) -> None:
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
     suffix = "；先按 recovery 判定（review_repair / review_mismatch）处理后重跑 run-close"
     try:
-        verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id)
+        verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(f"report=done 拒绝：{error}{suffix}")
     if verdict != "ready":
@@ -213,13 +215,13 @@ def require_report_done_ready(tid: str, attempt: int, execution_id: str) -> None
 
 @control_locked
 def cmd_attempt_report(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     attempt, execution_id = resolve_identity(
         args.tid, args.attempt, args.execution_id, repo=repo
     )
     if args.status == "done":
-        require_report_done_ready(args.tid, attempt, execution_id)
+        require_report_done_ready(args.tid, attempt, execution_id, repo=repo)
     _print_json(report_attempt(
         args.tid,
         attempt,
@@ -248,16 +250,18 @@ def _require_fresh_run(tid: str, *, repo: "ctx.RepoContext") -> None:
         sys.exit(f"run-begin 拒绝：{tid} 已有 attempt 记录；{hint}，不做隐式恢复")
     rel = repo.worktree_rel(tid)
     path = (repo.primary_root / rel).resolve()
-    if path.exists() or str(path) in worktree_paths():
+    if path.exists() or str(path) in worktree_paths(repo=repo):
         sys.exit(f"run-begin 拒绝：worktree {rel} 已存在；{hint}，不做隐式恢复")
     branch = f"{tid}_{task['slug']}"
-    if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
+    if _git(
+        ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo=repo
+    ).returncode == 0:
         sys.exit(f"run-begin 拒绝：分支 {branch!r} 已存在；{hint}，不做隐式恢复")
 
 
 @control_locked
 def cmd_run_begin(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     """start → reserve → claim 在同一控制面锁内完成；失败时现场原样保留给 recovery。"""
     require_primary_worktree(repo=repo)
     tid, owner_id = args.tid, (args.owner_id or "").strip()
@@ -304,7 +308,7 @@ _RUN_CLOSE_PLAN = {
 
 @control_locked
 def cmd_run_close(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     """按结果写 terminal + report（done 另 exact cleanup）；已写事件不重复写。"""
     require_primary_worktree(repo=repo)
     tid, owner_id = args.tid, (args.owner_id or "").strip()
@@ -349,7 +353,7 @@ def cmd_run_close(args):
             _, sha = _resolve_integrate_branch(tid, repo=repo)
         except ctx.TaskDataError as error:
             sys.exit(f"report=done 拒绝：{error}；先在 worktree 执行 finish")
-        require_report_done_ready(tid, attempt, execution_id)
+        require_report_done_ready(tid, attempt, execution_id, repo=repo)
     written = []
     step = "terminal"
     try:
@@ -383,7 +387,7 @@ def cmd_run_close(args):
 
 
 def cmd_ledger_tail(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     events = ledger_read(repo=repo)
     if args.tid:
         events = [event for event in events if event.get("tid") == args.tid]
@@ -408,12 +412,12 @@ def cmd_ledger_tail(args):
 
 
 def cmd_ps(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     events = ledger_read(repo=repo)
     effective = discover_effective_tasks(allow_corrupt=True, repo=repo)
     main_statuses = {task["tid"]: task["status"] for task in scan_tasks(repo=repo)}
-    rows = compute_ps_rows(events, effective, main_statuses)
+    rows = compute_ps_rows(events, effective, main_statuses, repo=repo)
     if not args.all:
         rows = [row for row in rows if row["state"] not in ctx.ARCHIVED_STATUSES]
     if not rows:

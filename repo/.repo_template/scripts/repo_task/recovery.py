@@ -11,8 +11,7 @@ from .monitoring import implementation_commit, verify_integrate_ready
 from .store import discover_effective_tasks, git_text_at_ref, load_task_at_ref
 
 
-def recovery_state(tid: str, *, repo=None) -> dict:
-    repo = repo or ctx.current_context()
+def recovery_state(tid: str, *, repo) -> dict:
     require_primary_worktree(repo=repo)
     corrupt_detail = ""
     try:
@@ -160,7 +159,7 @@ def recovery_state(tid: str, *, repo=None) -> dict:
                     "finish-unwind 只处理 running 现场，人工核查"
                 )
                 return state
-            if _tip_has_successor(tip_sha, branch):
+            if _tip_has_successor(tip_sha, branch, repo=repo):
                 state["action"] = (
                     f"停止：实现 commit 内容偏离 review 内容（{gate_detail}）；"
                     f"已有后继分支包含当前 tip {tip_sha[:12]}，撤销会使其悬空，人工核查"
@@ -183,7 +182,7 @@ def recovery_state(tid: str, *, repo=None) -> dict:
                 return state
             action = _review_repair_action(
                 tid, record["attempt"], record["execution_id"],
-                tip_sha, diff_anchor, gate_detail, branch,
+                tip_sha, diff_anchor, gate_detail, branch, repo=repo,
             )
             return phase("review_repair", action)
     if not record.get("report"):
@@ -193,21 +192,24 @@ def recovery_state(tid: str, *, repo=None) -> dict:
     return state
 
 
-def _tip_has_successor(tip_sha: str, current_branch: str) -> bool:
+def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: "ctx.RepoContext") -> bool:
     """tip 是否已被其它本地分支包含（后继分支或已合入）。"""
-    result = _git(["branch", "--format=%(refname:short)"])
+    result = _git(["branch", "--format=%(refname:short)"], repo=repo)
     if result.returncode != 0:
         return False
     for branch in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
         if branch == current_branch:
             continue
-        if _git(["merge-base", "--is-ancestor", tip_sha, branch]).returncode == 0:
+        if _git(["merge-base", "--is-ancestor", tip_sha, branch], repo=repo).returncode == 0:
             return True
     return False
 
 
-def _review_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str, detail: str, branch: str) -> str:
-    if _tip_has_successor(tip_sha, branch):
+def _review_repair_action(
+    tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str,
+    detail: str, branch: str, *, repo: "ctx.RepoContext",
+) -> str:
+    if _tip_has_successor(tip_sha, branch, repo=repo):
         return (
             f"review 修复：review 门禁失败（{detail}）。"
             f"已有后继分支以 tip {tip_sha[:12]} 为 ancestor；停止并报告，不 amend。"
@@ -224,14 +226,14 @@ def _review_repair_action(tid: str, attempt: int, execution_id: str, tip_sha: st
 
 
 def cmd_recovery(args) -> None:
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     print(json.dumps(recovery_state(args.tid, repo=repo), ensure_ascii=False, indent=2))
 
 
 @control_locked
 def cmd_ledger_import(args):
     """Recover only a proven completed execution; never invent a running owner."""
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     if not args.confirm_stopped:
         raise ctx.TaskDataError("导入前须确认原执行会话已停止：--confirm-stopped")
@@ -252,9 +254,9 @@ def cmd_ledger_import(args):
     worktree = (repo.primary_root / repo.worktree_rel(args.tid)).resolve()
     if str(worktree) in worktree_paths(repo=repo):
         from .git_ops import porcelain_entries
-        if porcelain_entries(root=worktree):
+        if porcelain_entries(root=worktree, repo=repo):
             raise ctx.TaskDataError("worktree 有未提交改动；先恢复或保存，不据 Git tip 猜测现场")
-    sha = _git(["rev-parse", branch]).stdout.strip()
+    sha = _git(["rev-parse", branch], repo=repo).stdout.strip()
     from .ledger import ledger_locked_append_many
 
     def build(events):
@@ -266,6 +268,6 @@ def cmd_ledger_import(args):
                 {**identity, "event": "attempt_terminal", "status": "completed"},
                 {**identity, "event": "report", "status": "done", "sha": sha}]
 
-    ledger_locked_append_many(build)
+    ledger_locked_append_many(build, repo=repo)
     print(json.dumps({"tid": args.tid, "attempt": attempt, "execution_id": execution_id,
                       "recovered_from": sha}, ensure_ascii=False))

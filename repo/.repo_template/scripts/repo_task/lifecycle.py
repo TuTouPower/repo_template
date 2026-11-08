@@ -23,8 +23,8 @@ from .worktrees import discard_worktree, remove_worktree
 
 @control_locked
 def cmd_add(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    require_primary_worktree()
+    repo = args.repo
+    require_primary_worktree(repo=repo)
     if not ctx.SLUG_RE.match(args.slug):
         sys.exit(f"slug 须匹配 {ctx.SLUG_RE.pattern}（收到 {args.slug!r}）")
     if not args.title.strip():
@@ -40,13 +40,14 @@ def cmd_add(args):
         template_task.read_text(encoding="utf-8"),
         template_note_body,
         allow_template_placeholders=True,
+        repo=repo,
     )
     if template_problems:
         sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
     # 取号 + 建目录持 git 公共锁，与 pending/findings 取号互斥，防并发撞号（RT-009）
     with git_common_lock(repo.root, TASK_ID_LOCK_NAME):
-        tasks = scan_tasks()
+        tasks = scan_tasks(repo=repo)
         for t in tasks:
             if t["slug"] == args.slug:
                 sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
@@ -84,8 +85,8 @@ def cmd_add(args):
 
 @control_locked
 def cmd_edit(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    require_primary_worktree()
+    repo = args.repo
+    require_primary_worktree(repo=repo)
     field_names = (
         "title", "note", "note_append", "review_level", "depends_on",
         "depends_append", "depends_remove", "conflicts_with",
@@ -110,9 +111,9 @@ def cmd_edit(args):
     if sum(value is not None for value in conflict_actions) > 1:
         sys.exit("--conflicts-with / --conflicts-append / --conflicts-remove 互斥")
 
-    tasks = scan_tasks()
+    tasks = scan_tasks(repo=repo)
     tasks_by_tid = {task["tid"]: task for task in tasks}
-    task, path, fm, body = load_task(args.tid)
+    task, path, fm, body = load_task(args.tid, repo=repo)
     if fm["status"] in ctx.ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已归档（{fm['status']}），不可编辑")
     if fm["status"] != "backlog":
@@ -120,7 +121,7 @@ def cmd_edit(args):
             f"{args.tid} status={fm['status']}；edit 只改 main 中未进入链的 backlog，"
             "active 请在自身 worktree 内编辑"
         )
-    covered = task_effective_state(args.tid, fm)
+    covered = task_effective_state(args.tid, fm, repo=repo)
     if covered:
         sys.exit(
             f"{args.tid} 在 main 中为 backlog，但{covered}；"
@@ -217,7 +218,7 @@ def cmd_edit(args):
             if len(remove_tid) != 1:
                 sys.exit("--conflicts-remove 只接受一个 tid")
             peer_tid = remove_tid[0]
-            _peer_task, peer_path, peer_fm, peer_body = load_task(peer_tid)
+            _peer_task, peer_path, peer_fm, peer_body = load_task(peer_tid, repo=repo)
             peer_conflicts = parse_tid_list(
                 peer_fm.get("conflicts_with", ""), field=f"{peer_tid}.conflicts_with"
             )
@@ -228,7 +229,7 @@ def cmd_edit(args):
             if local_declares:
                 conflicts.remove(peer_tid)
             if peer_declares:
-                if peer_fm["status"] != "backlog" or task_effective_state(peer_tid, peer_fm):
+                if peer_fm["status"] != "backlog" or task_effective_state(peer_tid, peer_fm, repo=repo):
                     sys.exit(
                         f"{peer_tid} 仍声明与 {args.tid} 冲突，但其状态不可安全编辑；"
                         "请先处理该 task 后再移除关系"
@@ -324,15 +325,15 @@ def _missing_testing_sections(text: str) -> list[str]:
 
 
 def cmd_preflight(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     ref_arg = args.ref
     source_ref = ""
     if ref_arg:
-        source_ref, ref_sha = resolve_local_branch(ref_arg)
-        task, fm, task_body = load_task_at_ref(args.tid, ref_sha)
+        source_ref, ref_sha = resolve_local_branch(ref_arg, repo=repo)
+        task, fm, task_body = load_task_at_ref(args.tid, ref_sha, repo=repo)
         task_dir = None
     else:
-        task, _, fm, task_body = load_task(args.tid)
+        task, _, fm, task_body = load_task(args.tid, repo=repo)
         task_dir = repo.root / task["dir"]
     problems, warnings = [], []
 
@@ -346,7 +347,7 @@ def cmd_preflight(args):
     elif fm["status"] == "backlog" and not allow_backlog:
         msg = "status=backlog，须先 start"
         if source_ref:
-            covered = task_effective_state(args.tid, fm)
+            covered = task_effective_state(args.tid, fm, repo=repo)
             if covered:
                 msg += (
                     f"（快照滞后：{covered}；"
@@ -362,7 +363,7 @@ def cmd_preflight(args):
     task_doc_rel = f"{task['dir']}/task.md"
     if source_ref:
         try:
-            text = git_text_at_ref(ref_sha, task_doc_rel)
+            text = git_text_at_ref(ref_sha, task_doc_rel, repo=repo)
         except ctx.TaskDataError:
             text = ""
             problems.append("缺 task.md")
@@ -377,6 +378,7 @@ def cmd_preflight(args):
         document_problems, document_warnings = validate_task_documents(
             text,
             task_body,
+            repo=repo,
             require_verified=args.require_verified,
             creation=creation,
         )
@@ -394,18 +396,18 @@ def cmd_preflight(args):
         warnings.append(f"ref 快照 {source_ref}：未检查 task worktree 与当前脏改动")
     else:
         if fm["status"] == "backlog":
-            covered = task_effective_state(args.tid, fm)
+            covered = task_effective_state(args.tid, fm, repo=repo)
             if covered:
                 warnings.append(
                     f"main 中为 backlog，但{covered}；"
                     "main 副本滞后，不能据此重复 start"
                 )
-        if fm["status"] == "active" and not in_own_task_worktree(fm):
+        if fm["status"] == "active" and not in_own_task_worktree(fm, repo=repo):
             problems.append(
                 f"当前不在 task worktree {repo.effective_worktree(fm)} 的分支 {fm['branch']!r}"
             )
 
-        dirty = porcelain_entries()
+        dirty = porcelain_entries(repo=repo)
         if fm["status"] == "backlog":
             uncommitted = [
                 p for p in dirty
@@ -442,7 +444,7 @@ def cmd_preflight(args):
     from .validation import load_policy, parse_policy, ValidationError
     try:
         if source_ref:
-            parse_policy(git_text_at_ref(ref_sha, "docs/blueprint/testing.md"))
+            parse_policy(git_text_at_ref(ref_sha, "docs/blueprint/testing.md", repo=repo))
         else:
             load_policy(repo.root)
     except (ValidationError, ctx.TaskDataError) as error:
@@ -452,7 +454,10 @@ def cmd_preflight(args):
         from .attempts import current_attempt_record
         from .git_ops import primary_worktree_path
         from .ledger import ledger_read
-        record = current_attempt_record(args.tid, ledger_read(primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"))
+        record = current_attempt_record(
+            args.tid,
+            ledger_read(primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl", repo=repo),
+        )
         if record and record["state"] == "running":
             owner = record.get("owner_id")
             if not owner or owner != getattr(args, "owner_id", None):
@@ -471,11 +476,11 @@ def cmd_preflight(args):
     print(f"\npreflight=PASS{f'（{len(warnings)} 条警告）' if warnings else ''}")
 
 def cmd_limits(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     """Increase persisted execution budgets without changing task status."""
-    task, path, fm, body = load_task(args.tid)
+    task, path, fm, body = load_task(args.tid, repo=repo)
     require_status(fm, "active")
-    require_own_task_worktree(fm)
+    require_own_task_worktree(fm, repo=repo)
     from .review import review_limits
     limits = review_limits(fm)
     changes = []
@@ -499,10 +504,10 @@ def cmd_limits(args):
 
 
 def cmd_review_upgrade(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    _, path, fm, body = load_task(args.tid)
+    repo = args.repo
+    _, path, fm, body = load_task(args.tid, repo=repo)
     require_status(fm, "active")
-    require_own_task_worktree(fm)
+    require_own_task_worktree(fm, repo=repo)
     if not args.reason.strip():
         sys.exit("review 升级必须记录 --reason")
     if fm["review_level"] != "single":
@@ -513,8 +518,7 @@ def cmd_review_upgrade(args):
     print(f"{args.tid} review_level=full；旧 general review 不再满足门禁，须重审 code/test")
 
 
-def _require_acs_checked(task_md_path: Path, *, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _require_acs_checked(task_md_path: Path, *, repo) -> None:
     if not task_md_path.is_file():
         return
     from .documents import extract_ac_statuses
@@ -528,8 +532,7 @@ def _require_acs_checked(task_md_path: Path, *, repo=None) -> None:
         )
 
 
-def _check_done_ready(tid: str, task_dir: Path, *, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _check_done_ready(tid: str, task_dir: Path, *, repo) -> None:
     """done 的写前检查：AC 全勾、finalization 闭环。"""
     _require_acs_checked(task_dir / "task.md", repo=repo)
     from .finalization import check_finalization
@@ -541,16 +544,14 @@ def _check_done_ready(tid: str, task_dir: Path, *, repo=None) -> None:
         sys.exit(f"finish=FAIL：{error}")
 
 
-def _require_archive_target_free(fm: dict, *, repo=None) -> Path:
-    repo = repo or ctx.current_context()
+def _require_archive_target_free(fm: dict, *, repo) -> Path:
     dst = repo.archive_tasks_dir / f"{fm['tid']}_{fm['slug']}"
     if dst.exists():
         sys.exit(f"归档目录已存在：{repo.rel(dst)}（数据冲突，请提示用户）")
     return dst
 
 
-def _close_task(args, status: str, note: str | None, *, prechecked: bool = False, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _close_task(args, status: str, note: str | None, *, prechecked: bool = False, repo) -> None:
     """done / dropped 收尾：先做 git 侧动作，再单次写盘；dropped 最后归档目录。
 
     done 只在原位写 `status: done`，目录留在 `docs/tasks/`，由 integrate 的 merge commit
@@ -560,21 +561,21 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     归档移动失败时回滚 front matter，同理避免上述死锁。
     prechecked=True 表示调用方（finish）已完成 done 的写前检查。
     """
-    task, path, fm, body = load_task(args.tid)
+    task, path, fm, body = load_task(args.tid, repo=repo)
     archive = status != "done"
     if status == "done":
         require_status(fm, "active")
-        require_own_task_worktree(fm)
+        require_own_task_worktree(fm, repo=repo)
         if not prechecked:
-            _check_done_ready(args.tid, path.parent)
+            _check_done_ready(args.tid, path.parent, repo=repo)
     elif fm["status"] in ctx.ARCHIVED_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
-        require_own_task_worktree(fm)
+        require_own_task_worktree(fm, repo=repo)
     else:
-        require_primary_worktree()
+        require_primary_worktree(repo=repo)
         if status == "dropped":
-            covered = task_effective_state(args.tid, fm)
+            covered = task_effective_state(args.tid, fm, repo=repo)
             if covered:
                 sys.exit(
                     f"{args.tid} 在主干中为 backlog，但{covered}；"
@@ -584,14 +585,14 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     src = repo.root / task["dir"]
     dst = _require_archive_target_free(fm, repo=repo) if archive else None
 
-    in_own_worktree = in_own_task_worktree(fm)
+    in_own_worktree = in_own_task_worktree(fm, repo=repo)
     if in_own_worktree:
         removed, wt_msg = False, (
             f"worktree {fm['worktree']} 待主仓 run-close 清理"
         )
     else:
         removed, wt_msg = remove_worktree(
-            repo.effective_worktree(fm), expected_branch=fm.get("branch")
+            repo.effective_worktree(fm), expected_branch=fm.get("branch"), repo=repo
         )
 
     orig_fm = dict(fm)
@@ -630,10 +631,9 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
     if not removed and not in_own_worktree:
         print("WARNING: worktree 未移除，已记入 note；请手动清理", file=sys.stderr)
 
-def _unstaged_outside(task_dirs: tuple[str, ...], *, repo=None) -> list[str]:
-    repo = repo or ctx.current_context()
+def _unstaged_outside(task_dirs: tuple[str, ...], *, repo) -> list[str]:
     """task 目录之外未暂存或未跟踪的非忽略路径；git 失败时 fail-closed。"""
-    result = _git(["status", "--porcelain", "-z", "--untracked-files=all"])
+    result = _git(["status", "--porcelain", "-z", "--untracked-files=all"], repo=repo)
     if result.returncode != 0:
         raise ctx.TaskDataError(f"git status 失败：{result.stderr.strip()}")
     fields, index, found = result.stdout.split("\0"), 0, set()
@@ -660,9 +660,8 @@ def _load_md_format():
     return md_format
 
 
-def _markdown_paths_to_check(md_format, task_dir: Path, *, repo=None) -> list[str]:
-    repo = repo or ctx.current_context()
-    result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"])
+def _markdown_paths_to_check(md_format, task_dir: Path, *, repo) -> list[str]:
+    result = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"], repo=repo)
     if result.returncode != 0:
         sys.exit(f"finish=FAIL：无法列出已暂存 .md：{result.stderr.strip()}；零写入退出")
     rels = {
@@ -676,8 +675,7 @@ def _markdown_paths_to_check(md_format, task_dir: Path, *, repo=None) -> list[st
     return sorted(rels)
 
 
-def _check_markdown_format(task_dir: Path, *, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _check_markdown_format(task_dir: Path, *, repo) -> None:
     md_format = _load_md_format()
     if md_format is None:
         sys.exit("finish=FAIL：缺 md_format.py，无法执行 Markdown 格式检查；零写入退出")
@@ -697,8 +695,7 @@ def _check_markdown_format(task_dir: Path, *, repo=None) -> None:
         )
 
 
-def _task_dir_worktree_paths(task_dir: Path, *, repo=None) -> list[str]:
-    repo = repo or ctx.current_context()
+def _task_dir_worktree_paths(task_dir: Path, *, repo) -> list[str]:
     """当前 task 目录内尚未暂存、但会被 finish 一并纳入提交的文件。"""
     return [
         path.relative_to(repo.root).as_posix()
@@ -707,8 +704,7 @@ def _task_dir_worktree_paths(task_dir: Path, *, repo=None) -> list[str]:
     ]
 
 
-def _check_privacy_leaks(task_dir: Path, *, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _check_privacy_leaks(task_dir: Path, *, repo) -> None:
     """扫描预期提交快照（index 全量 + 当前 task 目录未暂存文件），fail-closed（A07）。"""
     from .privacy import PrivacyScanError, scan_git_index_privacy
 
@@ -726,8 +722,7 @@ def _check_privacy_leaks(task_dir: Path, *, repo=None) -> None:
         )
 
 
-def _verify_committed_privacy(*, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _verify_committed_privacy(*, repo) -> None:
     """提交后核对实际快照（HEAD 全量非归档文本），防止 hook 或外部改写引入泄漏（A07）。"""
     from .privacy import PrivacyScanError, scan_git_tree_privacy
 
@@ -745,7 +740,7 @@ def _verify_committed_privacy(*, repo=None) -> None:
 
 def _finish_prechecks(args) -> dict:
     """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     from .attempts import current_attempt_record, resolve_identity
     from .git_ops import primary_worktree_path
     from .ledger import ledger_read
@@ -760,9 +755,9 @@ def _finish_prechecks(args) -> dict:
         sys.exit(f"finish=FAIL：无法读取 --message-file {args.message_file}（{error}）")
     if not message.strip():
         sys.exit(f"finish=FAIL：--message-file {args.message_file} 为空；写入实现 commit message")
-    task, path, fm, body = load_task(tid)
+    task, path, fm, body = load_task(tid, repo=repo)
     require_status(fm, "active")
-    require_own_task_worktree(fm)
+    require_own_task_worktree(fm, repo=repo)
     task_dir = path.parent
     if message_path.is_relative_to(task_dir.resolve()):
         sys.exit(
@@ -774,7 +769,7 @@ def _finish_prechecks(args) -> dict:
     try:
         cmd_preflight(argparse.Namespace(
             tid=tid, allow_backlog=False, creation=False, ref=None,
-            require_verified=True, owner_id=args.owner_id,
+            require_verified=True, owner_id=args.owner_id, repo=repo,
         ))
     except SystemExit as stop:
         if stop.code not in (0, None):
@@ -783,7 +778,7 @@ def _finish_prechecks(args) -> dict:
 
     # 2. AC 全部打勾 + finalization 闭环；done 归档目标只读占用检查
     _check_done_ready(tid, task_dir, repo=repo)
-    _require_archive_target_free(fm)
+    _require_archive_target_free(fm, repo=repo)
 
     # 3. Markdown 零写入格式检查（含已暂存 .md 与当前 task 目录）
     _check_markdown_format(task_dir, repo=repo)
@@ -797,7 +792,7 @@ def _finish_prechecks(args) -> dict:
             "交付文件先 `git add` 暂存（`git add -N` 不算暂存）；临时文件删除或移入 .scratch/；"
             "message file 放在仓外或 .scratch/。零写入退出"
         )
-    head = _get_head()
+    head = _get_head(repo=repo)
     if head != fm.get("diff_anchor"):
         sys.exit(
             f"finish=FAIL：HEAD {head[:12]} 不是 diff_anchor {str(fm.get('diff_anchor'))[:12]}；"
@@ -805,7 +800,7 @@ def _finish_prechecks(args) -> dict:
         )
 
     # 5. review 门禁
-    scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"])
+    scope = review_scope_fingerprint(fm.get("diff_anchor", ""), task["dir"], repo=repo)
     try:
         review = evaluate_review(task_dir, fm, scope or None)
     except (ReviewDataError, ctx.TaskDataError) as error:
@@ -829,9 +824,9 @@ def _finish_prechecks(args) -> dict:
 
     # 6. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
-        attempt, execution_id = resolve_identity(tid)
-        ledger = primary_worktree_path() / "docs/runtime/dispatch_ledger.jsonl"
-        record = current_attempt_record(tid, ledger_read(ledger, tid=tid))
+        attempt, execution_id = resolve_identity(tid, repo=repo)
+        ledger = primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl"
+        record = current_attempt_record(tid, ledger_read(ledger, tid=tid, repo=repo))
     except ctx.TaskDataError as error:
         sys.exit(f"finish=FAIL：{error}；零写入退出")
     if record["state"] != "running" or record.get("owner_id") != args.owner_id:
@@ -855,14 +850,13 @@ def _finish_prechecks(args) -> dict:
     }
 
 
-def _settle_stale_finish_txn(tid: str, *, repo=None) -> None:
-    repo = repo or ctx.current_context()
+def _settle_stale_finish_txn(tid: str, *, repo) -> None:
     """start/finish 前置：处理遗留提交事务，幂等判定并恢复或阻断（A01）。"""
     from .commit_txn import judge, load, rollback
     from .git_ops import worktree_paths
 
     worktree = repo.root.resolve()
-    if str(worktree) not in worktree_paths():
+    if str(worktree) not in worktree_paths(repo=repo):
         return
     try:
         existing = load(worktree)
@@ -897,8 +891,8 @@ def _settle_stale_finish_txn(tid: str, *, repo=None) -> None:
 
 
 def cmd_finish(args):
+    repo = args.repo
     """active -> done 原子收尾：前置检查零写入，持久提交事务提交；失败按 HEAD 实际状态恢复。"""
-    repo = getattr(args, "repo", None) or ctx.current_context()
     from .commit_txn import (
         begin, finalize, judge, load, mark_phase, mark_staged, rollback, run_git_commit,
     )
@@ -942,7 +936,7 @@ def cmd_finish(args):
 
     try:
         mark_phase(worktree, txn, "writing")
-        _close_task(args, "done", None, prechecked=True)
+        _close_task(args, "done", None, prechecked=True, repo=repo)
     except SystemExit as stop:
         settle_failure(f"done 写入失败：{stop.code}")
     try:
@@ -951,7 +945,7 @@ def cmd_finish(args):
             repo.root / plan["task_rel"] / "handoff.json",
             json.dumps(plan["handoff"], ensure_ascii=False, indent=2) + "\n",
         )
-        staged = _git(["add", "-A", "--", plan["task_rel"]])
+        staged = _git(["add", "-A", "--", plan["task_rel"]], repo=repo)
         if staged.returncode != 0:
             raise ctx.TaskDataError(f"git add 失败：{staged.stderr.strip()}")
         mark_staged(worktree, txn)
@@ -964,7 +958,9 @@ def cmd_finish(args):
     mark_phase(worktree, txn, "committed")
     finalize(worktree)
     from .monitoring import review_scope_fingerprint
-    actual_scope = review_scope_fingerprint(plan["diff_anchor"], plan["task_rel"], ref="HEAD")
+    actual_scope = review_scope_fingerprint(
+        plan["diff_anchor"], plan["task_rel"], ref="HEAD", repo=repo
+    )
     if actual_scope != plan["review_scope"]:
         sys.exit(
             f"finish=FAIL：提交内容与 review 内容不一致（review_scope={plan['review_scope']!r}，"
@@ -972,30 +968,30 @@ def cmd_finish(args):
             f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`：判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
         )
     _verify_committed_privacy(repo=repo)
-    print(f"finish=OK {tid} commit={_get_head()}")
+    print(f"finish=OK {tid} commit={_get_head(repo=repo)}")
 
 @control_locked
 def cmd_drop(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    references = task_schedule_references(args.tid)
+    repo = args.repo
+    references = task_schedule_references(args.tid, repo=repo)
     if references:
         sys.exit(
             f"{args.tid} 仍被调度图引用：{', '.join(references)}；"
             "先清理引用或重跑 task-schedule"
         )
-    _close_task(args, "dropped", f"dropped: {args.reason}")
+    _close_task(args, "dropped", f"dropped: {args.reason}", repo=repo)
 
 @control_locked
 def cmd_rewind(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    task, path, fm, body = load_task(args.tid)
+    repo = args.repo
+    task, path, fm, body = load_task(args.tid, repo=repo)
     primary_fm = dict(fm)
     primary_body = body
     worktree_rel = repo.effective_worktree(fm)
     worktree = (repo.root / worktree_rel).resolve()
 
     # 新 start 不回写 main；从主仓 rewind 时读取登记 worktree 中的 active 状态。
-    if fm["status"] == "backlog" and str(worktree) in worktree_paths():
+    if fm["status"] == "backlog" and str(worktree) in worktree_paths(repo=repo):
         worktree_note = worktree / task["dir"] / ctx.PROGRESS_FILE
         if worktree_note.is_file():
             worktree_fm, _ = parse_front_matter(worktree_note)
@@ -1020,21 +1016,21 @@ def cmd_rewind(args):
 
     wt_msg = ""
     if target == "backlog":
-        require_primary_worktree()
+        require_primary_worktree(repo=repo)
         branch = fm.get("branch", "")
-        registered_branch = worktree_paths().get(str(worktree))
-        if str(worktree) in worktree_paths():
+        registered_branch = worktree_paths(repo=repo).get(str(worktree))
+        if str(worktree) in worktree_paths(repo=repo):
             if branch and registered_branch and registered_branch != branch:
                 sys.exit(
                     f"{worktree_rel} 登记分支为 {registered_branch!r}，"
                     f"与 {args.tid} front matter 分支 {branch!r} 不符；"
                     "拒绝强制移除其他分支的 worktree"
                 )
-        dirty = porcelain_entries(worktree) if worktree.is_dir() else []
+        dirty = porcelain_entries(worktree, repo=repo) if worktree.is_dir() else []
         anchor = fm.get("diff_anchor", "")
         own_commits = False
         if branch and anchor:
-            r = _git(["rev-list", "--count", f"{anchor}..{branch}"])
+            r = _git(["rev-list", "--count", f"{anchor}..{branch}"], repo=repo)
             own_commits = r.returncode != 0 or r.stdout.strip() != "0"
         if (dirty or own_commits) and not args.yes:
             details = []
@@ -1056,11 +1052,11 @@ def cmd_rewind(args):
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
                 sys.exit("rewind aborted by user")
-        removed, wt_msg = discard_worktree(worktree_rel)
+        removed, wt_msg = discard_worktree(worktree_rel, repo=repo)
         if not removed:
             sys.exit(f"{wt_msg}\nrewind 中止：worktree 未清理时不能回到 backlog")
         if branch and not own_commits:
-            result = _git(["branch", "-D", branch])
+            result = _git(["branch", "-D", branch], repo=repo)
             if result.returncode != 0:
                 print(
                     f"WARNING: 删除分支 {branch!r} 失败（{result.stderr.strip()}）；"
@@ -1072,7 +1068,7 @@ def cmd_rewind(args):
         fm["worktree"] = ""
         fm["diff_anchor"] = ""
     else:
-        require_own_task_worktree(fm)
+        require_own_task_worktree(fm, repo=repo)
 
     fm["status"] = target
     if effective == recorded:
@@ -1085,7 +1081,7 @@ def cmd_rewind(args):
     # 审计前移：audit 失败则状态未写（progress.md 仍 active），rewind 可重试。
     # 若先写 front matter 再审计，失败后「状态已迁 + 审计缺失 + 不可重试」（F15）。
     try:
-        append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason)
+        append_audit("rewind", tid=args.tid, fr=effective, to=target, reason=args.reason, repo=repo)
     except ctx.TaskDataError as error:
         append_note(fm, f"rewind audit failed: {error}")
         if recorded == target:
@@ -1109,7 +1105,10 @@ def cmd_rewind(args):
         write_front_matter(path, fm, body)
     except (OSError, ctx.TaskDataError) as error:
         try:
-            append_audit("rewind_failed", tid=args.tid, fr=target, to=effective, reason=f"write_front_matter failed: {error}")
+            append_audit(
+                "rewind_failed", tid=args.tid, fr=target, to=effective,
+                reason=f"write_front_matter failed: {error}", repo=repo,
+            )
         except Exception:
             pass
         sys.exit(
@@ -1119,7 +1118,7 @@ def cmd_rewind(args):
 
 @control_locked
 def cmd_finish_unwind(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     """撤销与 review 内容不一致的实现 commit：分支退回 diff_anchor，progress 还原 active。
 
     只处理 recovery `review_mismatch` 现场：attempt 为 running、恰好一个实现 commit、
@@ -1130,13 +1129,13 @@ def cmd_finish_unwind(args):
     from .ledger import ledger_read
     from .monitoring import implementation_commit, verify_integrate_ready
     from .store import discover_effective_tasks
-    require_primary_worktree()
+    require_primary_worktree(repo=repo)
     tid = args.tid
     try:
-        attempt, execution_id = resolve_identity(tid, args.attempt, args.execution_id)
+        attempt, execution_id = resolve_identity(tid, args.attempt, args.execution_id, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(str(error))
-    record = current_attempt_record(tid, ledger_read())
+    record = current_attempt_record(tid, ledger_read(repo=repo))
     if record is None:
         sys.exit(f"{tid} 无 attempt 记录；按 recovery 判定处理，不撤销")
     report = (record.get("report") or {})
@@ -1146,12 +1145,12 @@ def cmd_finish_unwind(args):
     # 手工 attempt terminal，撤销后 task 回 active 将无路可走，此处直接拒绝。
     if record["state"] != "running":
         sys.exit(f"{tid} attempt state={record['state']!r}；finish-unwind 只处理 running 现场，停止并人工核查")
-    effective = discover_effective_tasks().get(tid)
+    effective = discover_effective_tasks(repo=repo).get(tid)
     if effective is None:
         sys.exit(f"{tid} 不存在")
     branch = effective.get("branch") or f"{tid}_{effective['slug']}"
     worktree = (repo.root / repo.worktree_rel(tid)).resolve()
-    registered = worktree_paths().get(str(worktree))
+    registered = worktree_paths(repo=repo).get(str(worktree))
     if registered is None:
         sys.exit(f"{tid} 无登记 worktree；按 recovery 判定处理，不撤销")
     if registered != branch:
@@ -1171,12 +1170,12 @@ def cmd_finish_unwind(args):
     if tip_sha == diff_anchor:
         sys.exit(f"{tid} 分支 tip 已在 diff_anchor，无实现 commit 可撤销；按 recovery 判定处理")
     try:
-        implementation_commit(tip_sha, diff_anchor)
+        implementation_commit(tip_sha, diff_anchor, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(f"{tid} 分支形状不符（{error}）；只有恰好一个实现 commit 时可撤销")
     try:
-        _, committed_fm, _ = load_task_at_ref(tid, tip_sha)
-        committed = json.loads(git_text_at_ref(tip_sha, f"{effective['dir']}/handoff.json"))
+        _, committed_fm, _ = load_task_at_ref(tid, tip_sha, repo=repo)
+        committed = json.loads(git_text_at_ref(tip_sha, f"{effective['dir']}/handoff.json", repo=repo))
         handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, TypeError, ctx.TaskDataError) as error:
         sys.exit(f"{tid} tip 执行回执无法核验（{error}）；停止并人工核查")
@@ -1187,20 +1186,20 @@ def cmd_finish_unwind(args):
         or committed != handoff or committed_fm.get("status") != "done"
     ):
         sys.exit(f"{tid} tip 未包含当前 handoff；现场与 ledger 不一致，停止并人工核查")
-    verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id)
+    verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
     if verdict == "ready":
         sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
     if kind != "review_scope_mismatch":
         sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
-    listing = _git(["branch", "--format=%(refname:short)"])
+    listing = _git(["branch", "--format=%(refname:short)"], repo=repo)
     if listing.returncode != 0:
         sys.exit(f"无法列出分支：{listing.stderr.strip()}")
     for other in [name.strip() for name in listing.stdout.splitlines() if name.strip()]:
         if other == branch:
             continue
-        if _git(["merge-base", "--is-ancestor", tip_sha, other]).returncode == 0:
+        if _git(["merge-base", "--is-ancestor", tip_sha, other], repo=repo).returncode == 0:
             sys.exit(f"已有后继分支 {other!r} 包含当前 tip；撤销会使其悬空，停止并报告")
-    dirty = porcelain_entries(worktree)
+    dirty = porcelain_entries(worktree, repo=repo)
     if dirty:
         sys.exit(f"worktree 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先恢复干净再撤销")
     reset = _git(["reset", "--soft", diff_anchor], root=worktree)
@@ -1220,7 +1219,7 @@ def cmd_finish_unwind(args):
             "手动把 status 改回 active 后重新 review 再 finish"
         )
     try:
-        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason)
+        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(
             f"{tid} 已撤销且进展已回 active，仅审计缺失（{error}）；"
@@ -1234,26 +1233,26 @@ def cmd_finish_unwind(args):
 
 @control_locked
 def cmd_purge(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
-    require_primary_worktree()
-    references = task_schedule_references(args.tid)
+    repo = args.repo
+    require_primary_worktree(repo=repo)
+    references = task_schedule_references(args.tid, repo=repo)
     if references:
         sys.exit(
             f"{args.tid} 仍被调度图引用：{', '.join(references)}；"
             "先清理引用后再 purge"
         )
-    task, path, fm, body = load_task(args.tid)
+    task, path, fm, body = load_task(args.tid, repo=repo)
     require_status(fm, "backlog")
     task_dir = repo.root / task["dir"]
-    if tracked_anywhere(task["dir"]):
+    if tracked_anywhere(task["dir"], repo=repo):
         sys.exit(
             f"{args.tid} 的 task 目录已被任一分支跟踪；"
             "purge 只用于从未提交的误建，请改用 drop 归档"
         )
-    if fm.get("branch") and has_unmerged_commits(fm["branch"]):
+    if fm.get("branch") and has_unmerged_commits(fm["branch"], repo=repo):
         sys.exit(f"{args.tid} 分支 {fm['branch']!r} 有未合并 commit；purge 拒绝（请用 drop）")
     removed, wt_msg = remove_worktree(
-        fm.get("worktree", ""), expected_branch=fm.get("branch")
+        fm.get("worktree", ""), expected_branch=fm.get("branch"), repo=repo
     )
     if not removed:
         sys.exit(f"{wt_msg}\npurge 中止：worktree 未清理时删除 task 目录会留下无主工作区")
@@ -1268,7 +1267,7 @@ def cmd_purge(args):
     try:
         append_audit(
             "purge", tid=fm["tid"], fr="backlog", to="deleted", reason=args.reason,
-            slug=fm.get("slug", ""), title=fm.get("title", ""),
+            slug=fm.get("slug", ""), title=fm.get("title", ""), repo=repo,
         )
     except (OSError, ctx.TaskDataError) as error:
         restored = False
@@ -1292,16 +1291,16 @@ def cmd_purge(args):
     print(f"{args.tid} purged（tid 已释放；审计见 {repo.rel(repo.audit_path)}）")
 
 def cmd_list(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     if args.status and args.status not in ctx.VALID_STATUSES:
         sys.exit(f"status {args.status!r} 非法；可选 {ctx.VALID_STATUSES}")
     ref_arg = args.ref
     if ref_arg:
-        ref_name, ref_sha = resolve_local_branch(ref_arg)
-        tasks = scan_tasks_at_ref(ref_sha)
+        ref_name, ref_sha = resolve_local_branch(ref_arg, repo=repo)
+        tasks = scan_tasks_at_ref(ref_sha, repo=repo)
         source = f"ref={ref_name}@{ref_sha[:12]}"
     else:
-        tasks = scan_tasks()  # 唯一权威 = task 文件；不落盘任何缓存
+        tasks = scan_tasks(repo=repo)  # 唯一权威 = task 文件；不落盘任何缓存
         source = ""
     rows = [t for t in tasks if not args.status or t["status"] == args.status]
     if getattr(args, "json", False):
@@ -1321,18 +1320,18 @@ def cmd_list(args):
         )
 
 def cmd_show(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     ref_arg = args.ref
     if ref_arg:
-        ref_name, ref_sha = resolve_local_branch(ref_arg)
-        task, fm, _ = load_task_at_ref(args.tid, ref_sha)
+        ref_name, ref_sha = resolve_local_branch(ref_arg, repo=repo)
+        task, fm, _ = load_task_at_ref(args.tid, ref_sha, repo=repo)
         fields = dict(fm)
         fields["source_ref"] = f"{ref_name}@{ref_sha[:12]}"
         fields["dir"] = task["dir"]
         fields["progress_md"] = f"{ref_name}:{task['dir']}/{ctx.PROGRESS_FILE}"
         fields["task_md"] = f"{ref_name}:{task['dir']}/task.md"
     else:
-        task, path, fm, body = load_task(args.tid)
+        task, path, fm, body = load_task(args.tid, repo=repo)
         fields = dict(fm)
         fields["dir"] = task["dir"]
         fields["progress_md"] = repo.rel(path)

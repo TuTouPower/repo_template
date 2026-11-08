@@ -9,9 +9,11 @@ REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task.documents import parse_front_matter, validate_task_documents
+from repo_task.context import RepoContext
 from review_support import fill_spec_text
 
 pytestmark = pytest.mark.contract
+REPO_CTX = RepoContext.for_root(REPO_ROOT)
 
 SPEC_TEMPLATE = (REPO_ROOT / ".repo_template/docs/task_template/task.md").read_text(encoding="utf-8")
 _, TASK_BODY_TEMPLATE = parse_front_matter(REPO_ROOT / ".repo_template/docs/task_template/progress.md")
@@ -30,6 +32,7 @@ def test_template_documents_pass_with_placeholders_allowed():
         SPEC_TEMPLATE,
         TASK_BODY_TEMPLATE,
         allow_template_placeholders=True,
+        repo=REPO_CTX,
     )
 
     assert problems == []
@@ -37,7 +40,7 @@ def test_template_documents_pass_with_placeholders_allowed():
 
 
 def test_filled_documents_pass():
-    problems, warnings = validate_task_documents(_filled_spec(), TASK_BODY_TEMPLATE)
+    problems, warnings = validate_task_documents(_filled_spec(), TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert problems == []
     assert warnings == []
@@ -50,7 +53,7 @@ def test_acceptance_missing_ac_id_fails():
         1,
     )
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert any("缺 AC 编号" in problem for problem in problems)
 
@@ -62,7 +65,7 @@ def test_acceptance_duplicate_ac_id_fails():
         1,
     )
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert any("AC 编号重复" in problem for problem in problems)
 
@@ -74,7 +77,7 @@ def test_acceptance_deploy_ac_id_passes():
         1,
     )
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert problems == []
 
@@ -91,6 +94,7 @@ def test_missing_or_wrong_level_heading_fails(old, new, expected):
     problems, _ = validate_task_documents(
         _filled_spec().replace(old, new, 1),
         TASK_BODY_TEMPLATE,
+        repo=REPO_CTX,
     )
 
     assert any(expected in problem for problem in problems)
@@ -105,7 +109,7 @@ def test_heading_order_change_fails():
     non_scope_block = spec[non_scope:acceptance]
     spec = spec[:scope] + non_scope_block + scope_block + spec[acceptance:]
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert any("顺序错误" in problem for problem in problems)
 
@@ -126,7 +130,7 @@ def test_missing_fixed_guidance_fails():
         out.append(line)
     spec = _fill_spec_text("\n".join(out))
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert any("规范块" in problem for problem in problems)
 
@@ -139,13 +143,13 @@ def test_guide_block_blank_line_insensitive():
         "<!-- 规范（门禁必留，不得删除） -->\n",
     )
 
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert problems == []
 
 
 def test_template_placeholder_fails_after_creation():
-    problems, _ = validate_task_documents(SPEC_TEMPLATE, TASK_BODY_TEMPLATE)
+    problems, _ = validate_task_documents(SPEC_TEMPLATE, TASK_BODY_TEMPLATE, repo=REPO_CTX)
 
     assert any("模板占位符" in problem for problem in problems)
 
@@ -153,7 +157,7 @@ def test_template_placeholder_fails_after_creation():
 def test_empty_implementation_note_fails():
     task_body = TASK_BODY_TEMPLATE.replace("\n无\n\n## Review 处置", "\n## Review 处置", 1)
 
-    problems, _ = validate_task_documents(_filled_spec(), task_body)
+    problems, _ = validate_task_documents(_filled_spec(), task_body, repo=REPO_CTX)
 
     assert any("实施笔记为空" in problem for problem in problems)
 
@@ -165,7 +169,7 @@ def test_actual_implementation_note_can_replace_default_none():
         1,
     )
 
-    problems, _ = validate_task_documents(_filled_spec(), task_body)
+    problems, _ = validate_task_documents(_filled_spec(), task_body, repo=REPO_CTX)
 
     assert problems == []
 
@@ -223,7 +227,7 @@ def test_acceptance_checked_ac_allowed_in_implementation():
         "- [x] AC-001：可验证行为。",
         1,
     )
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=False)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=False, repo=REPO_CTX)
     assert problems == []
 
 
@@ -234,6 +238,6 @@ def test_acceptance_checked_ac_fails_during_creation():
         "- [x] AC-001：可验证行为。",
         1,
     )
-    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=True)
+    problems, _ = validate_task_documents(spec, TASK_BODY_TEMPLATE, creation=True, repo=REPO_CTX)
     assert any("创建期不得提前勾选" in p and "AC-001" in p for p in problems)
 

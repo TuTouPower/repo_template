@@ -122,11 +122,8 @@ def parse_front_matter(
     本模块是唯一真相源；render_review_prompts.py / repo_task.review_status 直接
     委托本实现，各自只在 CLI 边界转换错误语义。
     """
-    repo = repo or ctx.current_context()
-    return parse_front_matter_text(
-        path.read_text(encoding="utf-8"),
-        source=repo.rel(path),
-    )
+    source = repo.rel(path) if repo is not None else path.as_posix()
+    return parse_front_matter_text(path.read_text(encoding="utf-8"), source=source)
 
 def dump_front_matter(fm: dict) -> str:
     """所有值一律双引号包裹并转义，避免特殊字符破坏 YAML。"""
@@ -525,7 +522,7 @@ def validate_task_documents(
     require_verified: bool = False,
     allow_template_placeholders: bool = False,
     creation: bool = False,
-    repo: "ctx.RepoContext | None" = None,
+    repo: "ctx.RepoContext",
 ) -> tuple[list[str], list[str]]:
     """校验 task 创建骨架与未知契约门禁，返回 (阻塞项, 警告项)。"""
     problems, warnings = [], []
@@ -538,8 +535,8 @@ def validate_task_documents(
         )
 
     # 规范块属于严格模板契约；repo-template-sync 负责先强制迁移存量 task。
-    template_spec_path = (repo or ctx.current_context()).template_dir / "task.md"
-    if template_spec_path.is_file():
+    template_spec_path = (repo.template_dir / "task.md") if repo is not None else None
+    if template_spec_path is not None and template_spec_path.is_file():
         template_blocks = _extract_guide_blocks(
             template_spec_path.read_text(encoding="utf-8")
         )

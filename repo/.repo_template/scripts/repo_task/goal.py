@@ -77,9 +77,9 @@ def _compute_queue(args, repo) -> list[str]:
             if status in ctx.ARCHIVED_STATUSES:
                 raise ctx.TaskDataError(f"{tid} 已是终态（{status}）；done/dropped 永不入队")
             queue.append(tid)
-        build_execution_plan(mode="serial", queue=queue)
+        build_execution_plan(mode="serial", queue=queue, repo=repo)
         return queue
-    plan = build_execution_plan(mode="serial")
+    plan = build_execution_plan(mode="serial", repo=repo)
     return [tid for chain in plan["chains"] for tid in chain["taskIds"]]
 
 
@@ -173,7 +173,7 @@ def _clear_snapshot(repo) -> None:
 
 @control_locked
 def cmd_goal(args) -> None:
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     reset = bool(getattr(args, "reset", False))
     yes = bool(getattr(args, "yes", False))
@@ -384,7 +384,7 @@ def _stops_with_skipped(
 
 
 def cmd_goal_check(args) -> None:
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     try:
         snapshot = _load_snapshot(repo)

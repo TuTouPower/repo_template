@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from repo_task.context import PROGRESS_FILE, TaskDataError
+from repo_task.context import PROGRESS_FILE, RepoContext, TaskDataError
 from repo_task.documents import (
     atomic_write_text,
     parse_front_matter as _parse_front_matter,
@@ -169,7 +169,7 @@ def contract_drift_notice(
     """
     try:
         anchored_text, source_sha = resolve_baseline_spec_text(
-            tid, spec_rel, diff_anchor, root=REPO_ROOT
+            tid, spec_rel, diff_anchor, root=REPO_ROOT, repo=RepoContext.for_root(REPO_ROOT),
         )
     except (OSError, subprocess.SubprocessError, TaskDataError) as e:
         sys.exit(f"契约区 drift 基线读取失败（{diff_anchor}:{spec_rel}）：{e}")

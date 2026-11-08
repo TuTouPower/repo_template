@@ -60,7 +60,7 @@ REVIEW_PROCESS_FILES = (
 ) + tuple(name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names)
 
 
-def implementation_commit(ref: str, base_sha: str, *, repo=None) -> str:
+def implementation_commit(ref: str, base_sha: str, *, repo) -> str:
     """校验执行分支形状：base_sha..ref 恰好一个非 merge 实现 commit，first parent 等于 base_sha。"""
     resolved = []
     for name, value in (("ref", ref), ("base", base_sha)):
@@ -166,7 +166,7 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
 
 def review_scope_fingerprint(
     diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None,
-    ref: str | None = None,
+    ref: str | None = None, repo: "ctx.RepoContext | None" = None,
 ) -> str:
     """Hash the delivered content delta, independent of staging/commit.
 
@@ -175,7 +175,11 @@ def review_scope_fingerprint(
     of the scope. Process files are excluded, never the current task's spec.
     Old diff-serialization fingerprints deliberately require a fresh review.
     """
-    root = (repo_root or ctx.REPO_ROOT).resolve()
+    root = (
+        (repo.root if repo else None)
+        or (Path(repo_root) if repo_root else None)
+        or Path.cwd()
+    ).resolve()
     task_name = Path(rel_task_dir).name
     try:
         before = _review_tree(root, diff_anchor, task_name)
@@ -420,7 +424,7 @@ def verify_integrate_ready(
     tid: str,
     attempt: int,
     execution_id: str,
-    *, repo=None,
+    *, repo,
 ) -> tuple[str, str, str]:
     """Verify one execution commit and exact handoff provenance.
 
@@ -438,7 +442,6 @@ def verify_integrate_ready(
         or not execution_id
     ):
         return "contract", "identity", "verify 必须提供正整数 attempt 与非空 execution_id"
-    repo = repo or ctx.current_context()
     branches = _task_branch_names(tid, repo=repo)
     if not branches:
         return "incomplete", "incomplete", "无本地 task 分支"
@@ -535,7 +538,7 @@ def verify_integrate_ready(
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
             f"{diff_anchor!r} 与实现 commit 的 first parent {base!r} 不一致；{shape}"
         )
-    scope = review_scope_fingerprint(base, task["dir"], ref=tip)
+    scope = review_scope_fingerprint(base, task["dir"], ref=tip, repo=repo)
     if not scope:
         return "contract", "provenance", f"无法计算分支 {branch!r} tip 的 review scope；{shape}"
     if handoff["review_scope"] != scope:
@@ -576,7 +579,7 @@ def verify_integrate_ready(
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:
             return "contract", "review_gate", f"review gate：{error}"
     detail = "分支 tip terminal + exact handoff + 恰好一个实现 commit + review_scope 一致"
-    if not has_unmerged_commits(branch):
+    if not has_unmerged_commits(branch, repo=repo):
         detail += "（已合入）"
     return "ready", "ready", detail
 
@@ -586,9 +589,15 @@ def compute_ps_rows(
     effective: dict[str, dict],
     main_statuses: dict[str, str],
     *,
-    verifier=verify_integrate_ready,
+    repo: "ctx.RepoContext | None" = None,
+    verifier=None,
 ) -> list[dict]:
     # verifier 协议与 verify_integrate_ready 同形：(tid, attempt, execution_id) -> (verdict, kind, detail)。
+    if verifier is None:
+        def verifier(tid: str, attempt: int, execution_id: str):
+            if repo is None:
+                raise ctx.TaskDataError("compute_ps_rows 需要显式传入 repo 或 verifier")
+            return verify_integrate_ready(tid, attempt, execution_id, repo=repo)
     records = project_attempts(events)
     ledger_tids = {record["tid"] for record in records.values()}
     # 合并 effective 中 active 的 tid：frontmatter 被手工改状态但未走

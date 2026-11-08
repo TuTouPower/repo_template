@@ -130,12 +130,13 @@ def validation_environment(repo_root: Path):
 
 
 def _repo_from_call(args, kwargs):
-    from . import context as ctx
-
     repo = kwargs.get("repo")
     if repo is None and args:
         repo = getattr(args[0], "repo", None)
-    return repo or ctx.current_context()
+    if repo is None:
+        from . import context as ctx
+        raise ctx.TaskDataError("控制面命令必须显式携带 repo 上下文")
+    return repo
 
 
 def control_locked(function):

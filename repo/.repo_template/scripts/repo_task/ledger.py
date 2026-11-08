@@ -24,9 +24,8 @@ def _sanitize(event: dict) -> dict:
 
 
 def _read_unlocked(
-    path=None, *, tid: str | None = None, repo: "ctx.RepoContext | None" = None,
+    path=None, *, tid: str | None = None, repo: "ctx.RepoContext",
 ) -> list[dict]:
-    repo = repo or ctx.current_context()
     path = path or repo.ledger_path
     try:
         stream = path.open("r", encoding="utf-8")
@@ -75,9 +74,8 @@ def _read_unlocked(
 
 
 def _append_many_unlocked(
-    events: list[dict], *, repo: "ctx.RepoContext | None" = None,
+    events: list[dict], *, repo: "ctx.RepoContext",
 ) -> list[dict]:
-    repo = repo or ctx.current_context()
     finals = [_sanitize(event) for event in events]
     if not finals:
         return []
@@ -99,12 +97,11 @@ def _append_many_unlocked(
     return finals
 
 
-def _append_unlocked(event: dict, *, repo: "ctx.RepoContext | None" = None) -> dict:
+def _append_unlocked(event: dict, *, repo: "ctx.RepoContext") -> dict:
     return _append_many_unlocked([event], repo=repo)[0]
 
 
-def _with_lock(callback, path=None, *, repo: "ctx.RepoContext | None" = None):
-    repo = repo or ctx.current_context()
+def _with_lock(callback, path=None, *, repo: "ctx.RepoContext"):
     path = path or repo.ledger_path
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(".lock")
@@ -113,24 +110,21 @@ def _with_lock(callback, path=None, *, repo: "ctx.RepoContext | None" = None):
 
 
 def ledger_read(
-    path=None, *, tid: str | None = None, repo: "ctx.RepoContext | None" = None,
+    path=None, *, tid: str | None = None, repo: "ctx.RepoContext",
 ) -> list[dict]:
     """Read all valid JSON object events while holding the ledger lock."""
-    repo = repo or ctx.current_context()
     return _with_lock(lambda: _read_unlocked(path, tid=tid, repo=repo), path, repo=repo)
 
 
-def ledger_append(event: dict, *, repo: "ctx.RepoContext | None" = None) -> dict:
+def ledger_append(event: dict, *, repo: "ctx.RepoContext") -> dict:
     """Append one sanitized event while holding the ledger lock."""
-    repo = repo or ctx.current_context()
     return _with_lock(lambda: _append_unlocked(event, repo=repo), repo=repo)
 
 
 def ledger_locked_append(
-    builder: Callable[[list[dict]], dict], *, repo: "ctx.RepoContext | None" = None,
+    builder: Callable[[list[dict]], dict], *, repo: "ctx.RepoContext",
 ) -> dict:
     """Build and append one event against a fresh locked ledger snapshot."""
-    repo = repo or ctx.current_context()
 
     def update():
         events = _read_unlocked(repo=repo)
@@ -140,10 +134,9 @@ def ledger_locked_append(
 
 
 def ledger_locked_append_many(
-    builder: Callable[[list[dict]], list[dict]], *, repo: "ctx.RepoContext | None" = None,
+    builder: Callable[[list[dict]], list[dict]], *, repo: "ctx.RepoContext",
 ) -> list[dict]:
     """Preflight and append a complete event batch under one ledger lock."""
-    repo = repo or ctx.current_context()
 
     def update():
         events = _read_unlocked(repo=repo)
@@ -166,10 +159,9 @@ def ledger_next_attempt(tid: str, events: list[dict]) -> int:
 def ledger_allocate_attempt(
     tid: str,
     builder: Callable[[int, list[dict]], dict],
-    *, repo: "ctx.RepoContext | None" = None,
+    *, repo: "ctx.RepoContext",
 ) -> dict:
     """Atomically allocate the next integer attempt and append its event."""
-    repo = repo or ctx.current_context()
 
     def allocate():
         events = _read_unlocked(tid=tid, repo=repo)
@@ -183,10 +175,9 @@ def ledger_allocate_attempt(
 
 
 def _ledger_append_safely(
-    event: dict, *, repo: "ctx.RepoContext | None" = None,
+    event: dict, *, repo: "ctx.RepoContext",
 ) -> None:
     """Best-effort append for topology and integration events."""
-    repo = repo or ctx.current_context()
     try:
         ledger_append(event, repo=repo)
     except (OSError, ctx.TaskDataError) as error:

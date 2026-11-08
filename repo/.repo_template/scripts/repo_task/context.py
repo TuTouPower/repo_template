@@ -55,9 +55,13 @@ class RepoContext:
         return cls(root=current, primary_root=primary)
 
     @classmethod
-    def from_code_location(cls, code_file: Path) -> "RepoContext":
+    def from_code_location(cls, code_file: Path | str) -> "RepoContext":
         """入口脚本/模块所在工作区：自动识别主工作区。"""
-        return cls.for_root(Path(code_file).resolve().parents[3])
+        resolved = Path(code_file).resolve()
+        for parent in (resolved, *resolved.parents):
+            if parent.name == ".repo_template":
+                return cls.for_root(parent.parent)
+        return cls.for_root(resolved.parents[3] if len(resolved.parents) > 3 else resolved.parent)
 
     @property
     def name(self) -> str:
@@ -106,24 +110,6 @@ class RepoContext:
         """front matter 优先；主仓副本按命名约定推导。"""
         return fm.get("worktree") or self.worktree_rel(fm["tid"])
 
-
-def current_context() -> "RepoContext":
-    """过渡期默认身份：读取可被测试替换的模块级路径。A15 收尾时删除。"""
-    return RepoContext.for_root(REPO_ROOT)
-
-
-# 过渡期默认上下文：入口（task.py）会构造并显式传递；旧调用点在迁移完成前
-# 仍可省略参数。A15 收尾时删除该默认值与同名模块级路径。
-DEFAULT_CONTEXT = RepoContext.from_code_location(Path(__file__))
-SCRIPT_DIR = DEFAULT_CONTEXT.toolkit_root / "scripts"
-TOOLKIT_ROOT = DEFAULT_CONTEXT.toolkit_root
-REPO_ROOT = DEFAULT_CONTEXT.root
-AUDIT_PATH = DEFAULT_CONTEXT.audit_path
-TASKS_DIR = DEFAULT_CONTEXT.tasks_dir
-ARCHIVE_TASKS_DIR = DEFAULT_CONTEXT.archive_tasks_dir
-TEMPLATE_DIR = DEFAULT_CONTEXT.template_dir
-RUNTIME_DIR = DEFAULT_CONTEXT.runtime_dir
-LEDGER_PATH = DEFAULT_CONTEXT.ledger_path
 
 VALID_STATUSES = ("backlog", "active", "done", "dropped")
 ARCHIVED_STATUSES = ("done", "dropped")
@@ -194,15 +180,3 @@ class TaskDataError(Exception):
 
 class TaskNotFoundError(TaskDataError):
     """指定 ref 或目录中不存在目标 task。"""
-
-
-def _rel(path: Path) -> str:
-    return DEFAULT_CONTEXT.rel(path)
-
-
-def worktree_rel_path(tid: str) -> str:
-    return DEFAULT_CONTEXT.worktree_rel(tid)
-
-
-def effective_worktree(fm: dict) -> str:
-    return DEFAULT_CONTEXT.effective_worktree(fm)

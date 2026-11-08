@@ -215,7 +215,7 @@ def _load_validated_start_task(
         spec_text = git_text_at_ref(source_ref, spec_path, repo=repo)
     except ctx.TaskDataError:
         sys.exit("start=FAIL：缺 task.md")
-    problems, _ = validate_task_documents(spec_text, ref_task_body)
+    problems, _ = validate_task_documents(spec_text, ref_task_body, repo=repo)
     if problems:
         sys.exit("start=FAIL：" + "；".join(problems))
     current = effective.get(tid)
@@ -255,7 +255,7 @@ def _materialize_task_dir_from_ref(
 
 @control_locked
 def cmd_start(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     from .validation import load_policy, ValidationError
     try:
@@ -264,7 +264,7 @@ def cmd_start(args):
         sys.exit(f"start=FAIL：{error}")
     # 前置验证 ledger 可读：创建 branch/worktree 后再追加 ledger 若因损坏
     # fail-closed 抛错，会留下完整副作用却返回非零。提前校验，失败即无副作用。
-    ledger_read()
+    ledger_read(repo=repo)
     base_arg = getattr(args, "base", None)
     base_branch, base_sha = resolve_start_base(base_arg, repo=repo)
     effective = discover_effective_tasks(repo=repo)
@@ -302,15 +302,15 @@ def cmd_start(args):
     if base_arg is None and depends_on:
         unmerged_dep_branches = []
         for dep in depends_on:
-            for branch in _task_branch_names(dep):
-                if has_unmerged_commits(branch):
+            for branch in _task_branch_names(dep, repo=repo):
+                if has_unmerged_commits(branch, repo=repo):
                     unmerged_dep_branches.append(branch)
         if unmerged_dep_branches:
             chosen_branch = None
             if len(unmerged_dep_branches) == 1:
                 chosen_branch = unmerged_dep_branches[0]
             else:
-                ordered = _order_by_ancestry(unmerged_dep_branches)
+                ordered = _order_by_ancestry(unmerged_dep_branches, repo=repo)
                 if ordered is None:
                     sys.exit(
                         f"start=FAIL：{args.tid} 多个未合并依赖分支不构成单条祖先链："
@@ -436,9 +436,10 @@ def _resolve_integrate_branch(
 
 
 def _require_execution_gate(
-    tid: str, attempt: int, execution_id: str, *, allow_integrated: bool = False
+    tid: str, attempt: int, execution_id: str, *, allow_integrated: bool = False,
+    repo: "ctx.RepoContext",
 ) -> tuple[dict, list[dict]]:
-    events = ledger_read()
+    events = ledger_read(repo=repo)
     record = require_exact_terminal(
         tid, attempt, execution_id, events,
         allow_integrated=allow_integrated,
@@ -458,8 +459,12 @@ def _require_execution_gate(
     return record, events
 
 
-def _verify_exact_handoff(tid: str, attempt: int, execution_id: str) -> None:
-    verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id)
+def _verify_exact_handoff(
+    tid: str, attempt: int, execution_id: str, *, repo,
+) -> None:
+    verdict, _kind, detail = verify_integrate_ready(
+        tid, attempt, execution_id, repo=repo
+    )
     if verdict != "ready":
         raise ctx.TaskDataError(
             f"{tid} attempt={attempt} execution_id={execution_id!r} refs/handoff 验证失败：{detail}"
@@ -488,9 +493,9 @@ def _cleanup_worktree(
 ) -> str:
     """Exact cleanup of one terminal attempt's worktree; returns the result line."""
     try:
-        _require_execution_gate(tid, attempt, execution_id)
+        _require_execution_gate(tid, attempt, execution_id, repo=repo)
         branch, _ = _resolve_integrate_branch(tid, repo=repo)
-        _verify_exact_handoff(tid, attempt, execution_id)
+        _verify_exact_handoff(tid, attempt, execution_id, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(str(error))
     rel = repo.worktree_rel(tid)
@@ -521,7 +526,7 @@ def _cleanup_worktree(
 
 @control_locked
 def cmd_cleanup_worktree(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     if not ctx.TID_RE.fullmatch(args.tid):
         sys.exit(f"tid 非法：{args.tid!r}")
@@ -640,18 +645,27 @@ def _merge_head(*, repo: "ctx.RepoContext") -> str:
     return result.stdout.strip()
 
 
-def _integration_lock_path() -> Path:
-    result = _git(["rev-parse", "--absolute-git-dir"])
+def _integration_lock_path(repo) -> Path:
+    result = _git(["rev-parse", "--absolute-git-dir"], repo=repo)
     if result.returncode != 0 or not result.stdout.strip():
         raise ctx.TaskDataError("无法解析 git 目录")
     return Path(result.stdout.strip()) / "repo-task" / "integrate.lock"
+
+
+def _repo_from_decorator(args, kwargs):
+    repo = kwargs.get("repo")
+    if repo is None and args:
+        repo = getattr(args[0], "repo", None)
+    if repo is None:
+        raise ctx.TaskDataError("命令必须显式携带 repo 上下文")
+    return repo
 
 
 def _chain_locked(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
-            lock_path = _integration_lock_path()
+            lock_path = _integration_lock_path(_repo_from_decorator(args, kwargs))
         except ctx.TaskDataError as error:
             sys.exit(str(error))
         with file_lock(lock_path):
@@ -805,9 +819,9 @@ def _resolve_backlog_member_conflicts(
         if path in remaining:
             continue
         if _is_pure_backlog_to_done_member_conflict(branch, names, path, repo=repo):
-            checkout = _git(["checkout", "--theirs", "--", path])
+            checkout = _git(["checkout", "--theirs", "--", path], repo=repo)
             if checkout.returncode == 0:
-                _git(["add", "--", path])
+                _git(["add", "--", path], repo=repo)
         else:
             remaining.add(path)
     return sorted(remaining)
@@ -1004,7 +1018,7 @@ def _commit_native_merge(
         result = _git(["commit", "--no-edit"], timeout=120, repo=repo)
         if result.returncode != 0:
             raise ctx.TaskDataError(f"merge commit 失败：{result.stderr.strip()}")
-        return _get_head()
+        return _get_head(repo=repo)
     existing = _find_merge_commit(expected_head, subject_prefix, repo=repo)
     if existing is None:
         raise ctx.TaskDataError("当前无对应 pending merge 或已完成 merge commit；无法安全继续")
@@ -1014,20 +1028,20 @@ def _commit_native_merge(
 @_chain_locked
 @control_locked
 def cmd_integrate(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     try:
         attempt, execution_id = resolve_identity(
             args.tid, args.attempt, args.execution_id, repo=repo
         )
         record, _ = _require_execution_gate(
-            args.tid, attempt, execution_id, allow_integrated=True
+            args.tid, attempt, execution_id, allow_integrated=True, repo=repo
         )
         if record["state"] == "integrated" and not _task_branch_names(args.tid, repo=repo):
             print(f"{args.tid} 已 integrated，分支已清理（幂等）")
             return
         branch, sha = _resolve_integrate_branch(args.tid, repo=repo)
-        _verify_exact_handoff(args.tid, attempt, execution_id)
+        _verify_exact_handoff(args.tid, attempt, execution_id, repo=repo)
         registered = _registered_for_branch(branch, repo=repo)
         if registered:
             raise ctx.TaskDataError(
@@ -1071,7 +1085,7 @@ def cmd_integrate(args):
             )
         try:
             _sync_archive_after_existing_merge([branch], repo=repo)
-            append_integrated(args.tid, attempt, execution_id, merge_sha)
+            append_integrated(args.tid, attempt, execution_id, merge_sha, repo=repo)
             if not args.keep_branch:
                 _delete_branches([branch], repo=repo)
         except ctx.TaskDataError as error:
@@ -1163,9 +1177,11 @@ def _preflight_chain(
         # Continue may re-enter after ledger write but before branch delete.
         _require_execution_gate(
             tid, current["attempt"], current["execution_id"],
-            allow_integrated=continue_merge,
+            allow_integrated=continue_merge, repo=repo,
         )
-        _verify_exact_handoff(tid, current["attempt"], current["execution_id"])
+        _verify_exact_handoff(
+            tid, current["attempt"], current["execution_id"], repo=repo
+        )
         registered = _registered_for_branch(branch, repo=repo)
         if registered:
             raise ctx.TaskDataError(f"链成员 {branch!r} 仍登记 worktree：{', '.join(registered)}")
@@ -1179,7 +1195,7 @@ def _preflight_chain(
 @_chain_locked
 @control_locked
 def cmd_integrate_chain(args):
-    repo = getattr(args, "repo", None) or ctx.current_context()
+    repo = args.repo
     require_primary_worktree(repo=repo)
     try:
         members = _preflight_chain(

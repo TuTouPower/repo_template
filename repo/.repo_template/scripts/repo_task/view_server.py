@@ -92,17 +92,17 @@ def _get_rendered_html(repo) -> str:
         return _CACHED_HTML
 
 
-def _allowed_doc_roots(base: Path) -> tuple[Path, ...]:
-    """任务文档允许的根：主仓用 ctx 常量（测试可 monkeypatch），worktree 用其自身路径。"""
-    if base.resolve() == ctx.REPO_ROOT.resolve():
-        return (ctx.TASKS_DIR.resolve(), ctx.ARCHIVE_TASKS_DIR.resolve())
+def _allowed_doc_roots(base: Path, repo) -> tuple[Path, ...]:
+    """任务文档允许的根：主仓用上下文派生路径，worktree 用其自身路径。"""
+    if base.resolve() == repo.root.resolve():
+        return (repo.tasks_dir.resolve(), repo.archive_tasks_dir.resolve())
     return (
         (base / "docs" / "tasks").resolve(),
         (base / "docs" / "archive" / "tasks").resolve(),
     )
 
 
-def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str) -> Path:
+def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str, *, repo) -> Path:
     """在给定工作区根下校验并解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
     if tid not in tasks:
         raise ctx.TaskDataError(f"未知任务 {tid!r}")
@@ -112,19 +112,19 @@ def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str)
     directory = tasks[tid].get("dir", "")
     root = base.resolve()
     path = (root / directory / filename).resolve()
-    if not any(path.is_relative_to(allowed) for allowed in _allowed_doc_roots(root)):
+    if not any(path.is_relative_to(allowed) for allowed in _allowed_doc_roots(root, repo)):
         raise ctx.TaskDataError(f"任务 {tid} 文档路径越界：{path}")
     if not path.is_file():
         raise ctx.TaskDataError(f"任务 {tid} 无 {filename}")
     return path
 
 
-def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str) -> Path:
+def _resolve_task_doc(tasks: dict[str, dict], tid: str, doc: str, *, repo) -> Path:
     """主仓内解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
-    return _resolve_task_doc_in(ctx.REPO_ROOT, tasks, tid, doc)
+    return _resolve_task_doc_in(repo.root, tasks, tid, doc, repo=repo)
 
 
-def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str) -> bytes:
+def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str, *, repo) -> bytes:
     """按有效状态来源读取任务文档：worktree 读该 worktree 文件、branch 用 git show、main 读主仓。
 
     task 状态权威在其 worktree/未合并分支：主仓副本可能是过期 backlog，归档路径甚至不存在。
@@ -138,13 +138,13 @@ def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str) -> bytes:
         if filename is None:
             raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/progress）")
         rel = f"{tasks[tid].get('dir', '')}/{filename}"
-        return git_text_at_ref(entry["read_at"], rel).encode("utf-8")
+        return git_text_at_ref(entry["read_at"], rel, repo=repo).encode("utf-8")
     base = (
         Path(entry["read_at"])
         if entry.get("source") == "worktree" and entry.get("read_at")
-        else ctx.REPO_ROOT
+        else repo.root
     )
-    return _resolve_task_doc_in(base, tasks, tid, doc).read_bytes()
+    return _resolve_task_doc_in(base, tasks, tid, doc, repo=repo).read_bytes()
 
 
 def _is_wsl() -> bool:
@@ -308,7 +308,7 @@ class _Handler(BaseHTTPRequestHandler):
                 repo_ctx = self.server.repo
                 tasks, sources = discover_effective_bundle(repo=repo_ctx)
                 body = _read_task_doc(
-                    compute_schedule(tasks, repo=repo_ctx), sources, tid, doc
+                    compute_schedule(tasks, repo=repo_ctx), sources, tid, doc, repo=repo_ctx
                 )
             except ctx.TaskDataError as e:
                 self._send_error_text(404, str(e))
