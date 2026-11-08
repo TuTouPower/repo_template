@@ -2,18 +2,69 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import repo_task.context as ctx
 
 from .documents import atomic_write_text, parse_front_matter, parse_front_matter_text, parse_tid_list
-from .git_ops import _get_head_short, _git, default_branch, has_unmerged_commits, primary_worktree_path, require_primary_worktree, worktree_paths
+from .git_ops import (
+    _get_head_short,
+    _git,
+    batch_cat_file,
+    default_branch,
+    has_unmerged_commits,
+    primary_worktree_path,
+    require_primary_worktree,
+    worktree_paths,
+)
+
+
+@dataclass(frozen=True)
+class CommitTaskSnapshot:
+    commit_sha: str
+    tasks: tuple[dict, ...]
+    task_by_tid: dict[str, dict]
+    document_by_tid: dict[str, tuple[dict, str]]
+
+
+class CommitSnapshotCache:
+    """操作内确定 commit 只读解析结果缓存。"""
+
+    def __init__(self) -> None:
+        self._commit_cache: dict[tuple[str, str], CommitTaskSnapshot] = {}
+        self._owner_cache: dict[tuple[str, str, str], tuple[dict, dict, str]] = {}
+
+    def get_commit(self, repo_key: str, sha: str) -> CommitTaskSnapshot | None:
+        return self._commit_cache.get((repo_key, sha))
+
+    def set_commit(self, repo_key: str, sha: str, snapshot: CommitTaskSnapshot) -> None:
+        self._commit_cache[(repo_key, sha)] = snapshot
+
+    def get_owner(self, repo_key: str, sha: str, tid: str) -> tuple[dict, dict, str] | None:
+        return self._owner_cache.get((repo_key, sha, tid))
+
+    def set_owner(self, repo_key: str, sha: str, tid: str, bundle: tuple[dict, dict, str]) -> None:
+        self._owner_cache[(repo_key, sha, tid)] = bundle
+
+    def clear(self) -> None:
+        self._commit_cache.clear()
+        self._owner_cache.clear()
+
+
+_GLOBAL_SNAPSHOT_CACHE = CommitSnapshotCache()
+
+
+def clear_commit_snapshot_cache() -> None:
+    """清理全局操作快照缓存。"""
+    _GLOBAL_SNAPSHOT_CACHE.clear()
 
 def task_schedule_references(
     target_tid: str, tasks: list[dict] | None = None, *, repo: "ctx.RepoContext | None" = None,
@@ -118,64 +169,141 @@ def git_text_at_ref(
         raise ctx.TaskDataError(f"{ref}:{path} 不存在或无法读取")
     return r.stdout
 
+def _load_tasks_at_commit(
+    commit_sha: str,
+    *,
+    ref_label: str | None = None,
+    root: Path | None = None,
+    repo: "ctx.RepoContext | None" = None,
+    template_name: str | None = None,
+    cache: CommitSnapshotCache | None = None,
+) -> CommitTaskSnapshot:
+    target = root or (repo.root if repo is not None else None)
+    if target is None:
+        raise ctx.TaskDataError("读取 commit tasks 需要显式 repo 或 root")
+    repo_key = str(target.resolve())
+    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
+
+    cached = cache_store.get_commit(repo_key, commit_sha)
+    if cached is not None:
+        return cached
+
+    if template_name is None:
+        if repo is None:
+            raise ctx.TaskDataError("扫描 ref 需要显式 repo 或 template_name")
+        template_name = repo.template_dir.name
+
+    display_ref = ref_label or commit_sha
+    r = _git(
+        [
+            "ls-tree", "-r", "-z", "--end-of-options", commit_sha, "--",
+            "docs/tasks", "docs/archive/tasks",
+        ],
+        root=root, repo=repo,
+    )
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 ref {display_ref!r}：{r.stderr.strip()}")
+
+    tree_blobs: dict[str, str] = {}
+    discovered_dirs: set[tuple[str, str, bool]] = set()
+
+    for item in r.stdout.split("\0"):
+        if not item:
+            continue
+        meta, path = item.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3 and parts[1] == "blob":
+            tree_blobs[path] = parts[2]
+
+        if path.startswith("docs/tasks/"):
+            archived = False
+            rel_base = "docs/tasks"
+            rest = path[len("docs/tasks/") :]
+        elif path.startswith("docs/archive/tasks/"):
+            archived = True
+            rel_base = "docs/archive/tasks"
+            rest = path[len("docs/archive/tasks/") :]
+        else:
+            continue
+
+        if "/" in rest:
+            name = rest.split("/", 1)[0]
+            discovered_dirs.add((rel_base, name, archived))
+
+    needed_notes: list[tuple[str, str, str, bool]] = []
+    for rel_base, name, archived in sorted(discovered_dirs):
+        if not archived and name == template_name:
+            continue
+        directory = f"{rel_base}/{name}"
+        progress_path = f"{directory}/{ctx.PROGRESS_FILE}"
+        oid = tree_blobs.get(progress_path)
+        if not oid:
+            raise ctx.TaskDataError(f"{display_ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+        needed_notes.append((directory, progress_path, oid, archived))
+
+    oids = [oid for _, _, oid, _ in needed_notes]
+    blob_map = batch_cat_file(oids, root=root, repo=repo)
+
+    tasks: list[dict] = []
+    task_by_tid: dict[str, dict] = {}
+    document_by_tid: dict[str, tuple[dict, str]] = {}
+
+    for directory, progress_path, oid, archived in needed_notes:
+        raw_content = blob_map.get(oid)
+        if raw_content is None:
+            raise ctx.TaskDataError(f"{display_ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+        text = raw_content.decode("utf-8", errors="replace")
+        fm, body = parse_front_matter_text(text, source=f"{display_ref}:{progress_path}")
+        record = _task_record(
+            fm,
+            directory=directory,
+            source=f"{display_ref}:{progress_path}",
+            archived=archived,
+        )
+        tid = record["tid"]
+        tasks.append(record)
+        task_by_tid[tid] = record
+        document_by_tid[tid] = (fm, body)
+
+    validated_tasks = _validate_task_records(tasks)
+    snapshot = CommitTaskSnapshot(
+        commit_sha=commit_sha,
+        tasks=tuple(validated_tasks),
+        task_by_tid={t["tid"]: t for t in validated_tasks},
+        document_by_tid=document_by_tid,
+    )
+    cache_store.set_commit(repo_key, commit_sha, snapshot)
+    return snapshot
+
+
 def scan_tasks_at_ref(
     ref: str, *, root: Path | None = None, repo: "ctx.RepoContext",
     template_name: str | None = None,
+    cache: CommitSnapshotCache | None = None,
 ) -> list[dict]:
     """扫描指定 commit/ref 中的 task，不签出、不写工作区。
 
     与 scan_tasks() 一致：只枚举 docs/tasks 与 docs/archive/tasks 下一级目录，
     每个目录必须存在根 progress.md；嵌套 progress.md 忽略，缺根 progress.md 报数据损坏。
     """
-    r = _git([
-        "ls-tree", "-r", "--name-only", "--end-of-options", ref, "--",
-        "docs/tasks", "docs/archive/tasks",
-    ], root=root, repo=repo)
-    if template_name is None:
-        if repo is None:
-            raise ctx.TaskDataError("扫描 ref 需要显式 repo 或 template_name")
-        template_name = repo.template_dir.name
-    if r.returncode != 0:
-        raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
-    discovered_dirs: set[tuple[str, str, bool]] = set()
-    for path in sorted(r.stdout.splitlines()):
-        if path.startswith("docs/tasks/"):
-            archived = False
-            rel_base = "docs/tasks"
-            rest = path[len("docs/tasks/"):]
-        elif path.startswith("docs/archive/tasks/"):
-            archived = True
-            rel_base = "docs/archive/tasks"
-            rest = path[len("docs/archive/tasks/"):]
-        else:
-            continue
-        if "/" in rest:
-            name = rest.split("/", 1)[0]
-            discovered_dirs.add((rel_base, name, archived))
-    tasks = []
-    for rel_base, name, archived in sorted(discovered_dirs):
-        if not archived and name == template_name:
-            continue
-        directory = f"{rel_base}/{name}"
-        path = f"{directory}/{ctx.PROGRESS_FILE}"
-        try:
-            text = git_text_at_ref(ref, path, root=root, repo=repo)
-        except ctx.TaskDataError:
-            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}") from None
-        fm, _ = parse_front_matter_text(text, source=f"{ref}:{path}")
-        tasks.append(_task_record(
-            fm,
-            directory=directory,
-            source=f"{ref}:{path}",
-            archived=archived,
-        ))
-    return _validate_task_records(tasks)
+    commit_sha = _resolve_commit_sha(ref, label=f"ref {ref!r}", root=root, repo=repo)
+    snapshot = _load_tasks_at_commit(
+        commit_sha,
+        ref_label=ref,
+        root=root,
+        repo=repo,
+        template_name=template_name,
+        cache=cache,
+    )
+    return [copy.deepcopy(t) for t in snapshot.tasks]
+
 
 def find_task(tid: str, tasks: list[dict] | None = None) -> dict | None:
     for t in (scan_tasks() if tasks is None else tasks):
         if t["tid"] == tid:
             return t
     return None
+
 
 def _task_branch_names(tid: str, *, repo: "ctx.RepoContext") -> list[str]:
     """本地属于该 tid 的 task 分支名列表（形如 {tid}_{slug}）。"""
@@ -184,21 +312,58 @@ def _task_branch_names(tid: str, *, repo: "ctx.RepoContext") -> list[str]:
         return []
     return [b.strip() for b in r.stdout.splitlines() if ctx.TASK_BRANCH_RE.fullmatch(b.strip())]
 
+
 def load_owner_task_at_ref(
     tid: str, ref: str, *, root: Path | None = None,
     repo: "ctx.RepoContext",
+    cache: CommitSnapshotCache | None = None,
 ) -> dict:
     """只读 ref 中该 tid 自身的 task，避免为一条分支扫描全部 task（Issue #77）。"""
-    r = _git([
-        "ls-tree", "-r", "--name-only", "--end-of-options", ref, "--",
-        "docs/tasks", "docs/archive/tasks",
-    ], root=root, repo=repo)
     if repo is None:
         raise ctx.TaskDataError("读取 owner task 需要显式 repo")
+    target = root or repo.root
+    repo_key = str(target.resolve())
+    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
     template_name = repo.template_dir.name
+
+    commit_sha = None
+    if ref and not ref.startswith("-"):
+        r_sha = _git(
+            ["rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"],
+            root=root, repo=repo,
+        )
+        if r_sha.returncode == 0 and r_sha.stdout.strip():
+            commit_sha = r_sha.stdout.strip()
+
+    if commit_sha is not None:
+        snap = cache_store.get_commit(repo_key, commit_sha)
+        if snap is not None:
+            task = snap.task_by_tid.get(tid)
+            if task is not None:
+                return copy.deepcopy(task)
+            raise ctx.TaskNotFoundError(f"{ref}: 缺自身 task {tid}")
+
+        owner_bundle = cache_store.get_owner(repo_key, commit_sha, tid)
+        if owner_bundle is not None:
+            return copy.deepcopy(owner_bundle[0])
+
+    r = _git([
+        "ls-tree", "-r", "-z", "--end-of-options", ref, "--",
+        "docs/tasks", "docs/archive/tasks",
+    ], root=root, repo=repo)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
-    paths = set(r.stdout.splitlines())
+    tree_blobs: dict[str, str] = {}
+    paths: set[str] = set()
+    for item in r.stdout.split("\0"):
+        if not item:
+            continue
+        meta, p = item.split("\t", 1)
+        paths.add(p)
+        parts = meta.split()
+        if len(parts) >= 3 and parts[1] == "blob":
+            tree_blobs[p] = parts[2]
+
     for rel_base, archived in (
         ("docs/tasks", False),
         ("docs/archive/tasks", True),
@@ -219,13 +384,23 @@ def load_owner_task_at_ref(
             note_path = f"{directory}/{ctx.PROGRESS_FILE}"
             if note_path not in paths:
                 raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-            text = git_text_at_ref(ref, note_path, root=root, repo=repo)
-            fm, _ = parse_front_matter_text(
+            oid = tree_blobs.get(note_path)
+            if not oid:
+                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+            raw_map = batch_cat_file([oid], root=root, repo=repo)
+            raw = raw_map.get(oid)
+            if raw is None:
+                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+            text = raw.decode("utf-8", errors="replace")
+            fm, body = parse_front_matter_text(
                 text, source=f"{ref}:{note_path}"
             )
-            return _task_record(
+            record = _task_record(
                 fm, directory=directory, source=f"{ref}:{note_path}", archived=archived
             )
+            if commit_sha is not None:
+                cache_store.set_owner(repo_key, commit_sha, tid, (record, fm, body))
+            return record
     raise ctx.TaskNotFoundError(f"{ref}: 缺自身 task {tid}")
 
 
@@ -437,17 +612,22 @@ def load_task(
 def load_task_at_ref(
     tid: str, ref: str, *, root: Path | None = None,
     repo: "ctx.RepoContext",
+    cache: CommitSnapshotCache | None = None,
 ) -> tuple[dict, dict, str]:
     """返回指定 ref 中的 (索引记录, front matter, 正文)。"""
-    task = find_task(tid, scan_tasks_at_ref(ref, root=root, repo=repo))
+    commit_sha = _resolve_commit_sha(ref, label=f"ref {ref!r}", root=root, repo=repo)
+    snapshot = _load_tasks_at_commit(
+        commit_sha,
+        ref_label=ref,
+        root=root,
+        repo=repo,
+        cache=cache,
+    )
+    task = snapshot.task_by_tid.get(tid)
     if not task:
         raise ctx.TaskNotFoundError(f"{tid} 不存在于 ref {ref!r}")
-    path = f"{task['dir']}/{ctx.PROGRESS_FILE}"
-    fm, body = parse_front_matter_text(
-        git_text_at_ref(ref, path, root=root, repo=repo),
-        source=f"{ref}:{path}",
-    )
-    return task, fm, body
+    fm, body = snapshot.document_by_tid[tid]
+    return copy.deepcopy(task), copy.deepcopy(fm), body
 
 
 def _resolve_commit_sha(
@@ -478,13 +658,37 @@ def _resolve_primary_commit(
 def _owner_bundle_at_ref(
     tid: str, ref_sha: str, *, root: Path | None = None,
     repo: "ctx.RepoContext",
+    cache: CommitSnapshotCache | None = None,
 ) -> tuple[dict, dict, str]:
-    record = load_owner_task_at_ref(tid, ref_sha, root=root, repo=repo)
+    target = root or repo.root
+    repo_key = str(target.resolve())
+    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
+
+    snap = cache_store.get_commit(repo_key, ref_sha)
+    if snap is not None:
+        task = snap.task_by_tid.get(tid)
+        if task is not None and tid in snap.document_by_tid:
+            fm, body = snap.document_by_tid[tid]
+            return copy.deepcopy(task), copy.deepcopy(fm), body
+        raise ctx.TaskNotFoundError(f"{ref_sha}: 缺自身 task {tid}")
+
+    owner_bundle = cache_store.get_owner(repo_key, ref_sha, tid)
+    if owner_bundle is not None:
+        record, fm, body = owner_bundle
+        return copy.deepcopy(record), copy.deepcopy(fm), body
+
+    record = load_owner_task_at_ref(tid, ref_sha, root=root, repo=repo, cache=cache)
+    owner_bundle = cache_store.get_owner(repo_key, ref_sha, tid)
+    if owner_bundle is not None:
+        r, f, b = owner_bundle
+        return copy.deepcopy(r), copy.deepcopy(f), b
+
     path = f"{record['dir']}/{ctx.PROGRESS_FILE}"
     fm, body = parse_front_matter_text(
         git_text_at_ref(ref_sha, path, root=root, repo=repo),
         source=f"{ref_sha}:{path}",
     )
+    cache_store.set_owner(repo_key, ref_sha, tid, (record, fm, body))
     return record, fm, body
 
 
@@ -536,17 +740,49 @@ def resolve_baseline_spec_text(
         raise ctx.TaskDataError(f"spec_source_sha 缺失或为空（got {spec_source_sha!r}）")
     source_sha = _resolve_commit_sha(spec_source_sha, label="spec_source_sha", root=root, repo=repo)
     progress_path = f"{Path(spec_rel).parent.as_posix()}/{ctx.PROGRESS_FILE}"
-    if not _path_exists_in_tree(source_sha, progress_path, root=root, repo=repo):
+
+    r = _git(
+        ["ls-tree", "-z", "--end-of-options", source_sha, "--", progress_path, spec_rel],
+        root=root, repo=repo,
+    )
+    if r.returncode != 0:
+        raise ctx.TaskDataError(f"无法读取 {source_sha}:{progress_path}：{r.stderr.strip()}")
+
+    blobs: dict[str, str] = {}
+    for item in r.stdout.split("\0"):
+        if not item:
+            continue
+        meta, p = item.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3 and parts[1] == "blob":
+            blobs[p] = parts[2]
+
+    if progress_path not in blobs:
         raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{progress_path} 不存在或无法读取")
-    source_text = git_text_at_ref(source_sha, progress_path, root=root, repo=repo)
+
+    needed_oids = [blobs[progress_path]]
+    if spec_rel in blobs:
+        needed_oids.append(blobs[spec_rel])
+
+    cat_map = batch_cat_file(needed_oids, root=root, repo=repo)
+    prog_bytes = cat_map.get(blobs[progress_path])
+    if prog_bytes is None:
+        raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{progress_path} 不存在或无法读取")
+
+    source_text = prog_bytes.decode("utf-8", errors="replace")
     source_fm, _ = parse_front_matter_text(source_text, source=f"{source_sha}:{progress_path}")
     if source_fm.get("status") != "backlog":
         raise ctx.TaskDataError(
             f"spec_source_sha {source_sha[:12]} 处 {tid} status={source_fm.get('status')!r} 非 backlog"
         )
-    if not _path_exists_in_tree(source_sha, spec_rel, root=root, repo=repo):
+
+    if spec_rel not in blobs:
         raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{spec_rel} 不存在或无法读取")
-    return git_text_at_ref(source_sha, spec_rel, root=root, repo=repo), source_sha
+    spec_bytes = cat_map.get(blobs[spec_rel])
+    if spec_bytes is None:
+        raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{spec_rel} 不存在或无法读取")
+
+    return spec_bytes.decode("utf-8", errors="replace"), source_sha
 
 def require_status(fm: dict, *allowed: str) -> None:
     if fm["status"] not in allowed:

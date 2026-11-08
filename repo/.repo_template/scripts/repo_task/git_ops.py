@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import repo_task.context as ctx
@@ -30,7 +31,7 @@ def _git(
 
 
 def _git_bytes(
-    args: list[str], *, repo: "ctx.RepoContext | None" = None, root: Path | None = None,
+    args: list[str], *, input: bytes | None = None, repo: "ctx.RepoContext | None" = None, root: Path | None = None,
     timeout: int = 60,
 ) -> subprocess.CompletedProcess:
     """Run Git without text decoding for binary-safe snapshots and diffs."""
@@ -40,11 +41,126 @@ def _git_bytes(
     try:
         return subprocess.run(
             ["git", "-C", str(target), *args],
+            input=input,
             capture_output=True,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as error:
         raise ctx.TaskDataError(f"git {' '.join(args)} 超时（{timeout}s）") from error
+
+
+def _parse_cat_file_batch_output(
+    stdout: bytes, expected_oids: Sequence[str]
+) -> dict[str, bytes | None]:
+    results: dict[str, bytes | None] = {}
+    pos = 0
+    total_len = len(stdout)
+    num_expected = len(expected_oids)
+
+    for idx, expected_oid in enumerate(expected_oids):
+        if pos >= total_len:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 输出截断：预期 {num_expected} 项，第 {idx + 1} 项处 EOF"
+            )
+        newline_idx = stdout.find(b"\n", pos)
+        if newline_idx == -1:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 输出截断：第 {idx + 1} 项头部缺少换行符"
+            )
+        header = stdout[pos:newline_idx]
+        pos = newline_idx + 1
+
+        if header.endswith(b" missing"):
+            results[expected_oid] = None
+            continue
+
+        parts = header.split()
+        if len(parts) != 3:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 头部格式非法：{header.decode('utf-8', errors='replace')!r}"
+            )
+        _sha_bytes, _type_bytes, size_bytes = parts
+        try:
+            size = int(size_bytes)
+            if size < 0:
+                raise ValueError
+        except ValueError:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 头部 size 非法：{header.decode('utf-8', errors='replace')!r}"
+            )
+
+        if pos + size > total_len:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 输出截断：预期内容 {size} 字节，剩余 {total_len - pos} 字节"
+            )
+        content = stdout[pos : pos + size]
+        pos += size
+
+        if pos >= total_len or stdout[pos : pos + 1] != b"\n":
+            raise ctx.TaskDataError(
+                "git cat-file --batch 输出截断或格式错误：内容末尾缺少换行符"
+            )
+        pos += 1
+
+        results[expected_oid] = content
+
+    if pos < total_len:
+        raise ctx.TaskDataError(
+            f"git cat-file --batch 产生多余未解析数据：剩余 {total_len - pos} 字节"
+        )
+
+    return results
+
+
+def batch_cat_file(
+    oids: Sequence[str],
+    *,
+    root: Path | None = None,
+    repo: "ctx.RepoContext | None" = None,
+    timeout: int = 60,
+    batch_size: int = 1000,
+) -> dict[str, bytes | None]:
+    """基于 git cat-file --batch 的单次非交互式批量 blob 读取。
+
+    使用 subprocess.run(..., input=..., capture_output=True, timeout=...) 执行，
+    由内部 communicate 处理，不可交互挂起。
+    严格按照 git cat-file --batch 协议解析（<oid> <type> <size>\\n<content>\\n 与 <oid> missing\\n），
+    处理 size 校验与截断检查。
+    """
+    if root is None and repo is None:
+        raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
+    oid_list = list(oids)
+    if not oid_list:
+        return {}
+
+    for oid in oid_list:
+        if "\n" in oid or "\r" in oid:
+            raise ctx.TaskDataError(f"非法对象 ID：{oid!r}")
+
+    unique_oids = list(dict.fromkeys(oid_list))
+    parsed_all: dict[str, bytes | None] = {}
+
+    for i in range(0, len(unique_oids), batch_size):
+        chunk = unique_oids[i : i + batch_size]
+        input_bytes = b"".join(
+            (oid.encode("utf-8") if isinstance(oid, str) else oid).rstrip(b"\r\n") + b"\n"
+            for oid in chunk
+        )
+        r = _git_bytes(
+            ["cat-file", "--batch"],
+            input=input_bytes,
+            root=root,
+            repo=repo,
+            timeout=timeout,
+        )
+        if r.returncode != 0:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch 失败：{r.stderr.decode('utf-8', errors='replace').strip()}"
+            )
+        parsed = _parse_cat_file_batch_output(r.stdout, chunk)
+        parsed_all.update(parsed)
+
+    return {oid: parsed_all[oid] for oid in oid_list}
 
 def default_branch(
     root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
