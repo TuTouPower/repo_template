@@ -1,4 +1,4 @@
-"""_id_scan.py 跨分支/跨 worktree 编号扫描、互斥分配与 pending/findings CLI。
+"""test_id_scan.py - _id_scan.py 跨分支/跨 worktree 编号扫描、互斥分配与 pending/findings CLI。
 
 条目为「一条目一文件」，编号来自文件名。测试用临时 git 仓库（tmp_path 下 init）
 模拟多分支、多 worktree 与未提交条目，覆盖扫描、并发取号、状态迁移与 CLI 行为。
@@ -398,6 +398,31 @@ def test_close_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch):
             ["close", "p001", "--reason", "已核实处理结果", "--write"]
         )
     assert moved.exists()
+
+
+def test_close_rejects_entry_concurrently_modified_before_write_lock(tmp_path, monkeypatch):
+    """锁外读取后条目正文在加锁前被修改，摘要比对失败拒绝落盘。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    pending_mod.main(["new", "--slug", "one"])
+    one = repo / "docs/pending/p001_one.md"
+
+    real_find = pending_mod.find_entry
+    calls = {"n": 0}
+
+    def find_then_modify(number):
+        calls["n"] += 1
+        state, path = real_find(number)
+        if calls["n"] == 2:
+            with path.open("a", encoding="utf-8") as f:
+                f.write("\n- 外部追加说明\n")
+        return state, path
+
+    monkeypatch.setattr(pending_mod, "find_entry", find_then_modify)
+    with pytest.raises(SystemExit, match="内容已被并发修改|内容摘要不一致"):
+        pending_mod.main(
+            ["close", "p001", "--reason", "已核实处理结果", "--write"]
+        )
 
 
 def test_close_and_park_reject_multiline_inputs(tmp_path, monkeypatch):

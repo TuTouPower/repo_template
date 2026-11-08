@@ -111,9 +111,9 @@ def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
         (root / "src").mkdir()
         (root / "src/new.txt").write_text("delivered\n", encoding="utf-8")
         for rel in (
-            "docs/pending/todo/p001_new_item.md",
-            "docs/pending/parked/p003_parked_item.md",
-            "docs/archive/pending/p002_closed_item.md",
+            "docs/pending/p001_new_item.md",
+            "docs/pending/p003_parked_item.md",
+            "docs/pending/p002_closed_item.md",
             "docs/findings/d001_verified_fact.md",
         ):
             path = root / rel
@@ -161,7 +161,7 @@ def test_finish_commits_once_with_machine_generated_handoff_in_place(git_repo):
 
 
 def test_finish_handoff_lists_only_entries_added_after_base(git_repo):
-    for rel in ("docs/pending/todo/p005_old.md", "docs/findings/d009_old.md"):
+    for rel in ("docs/pending/p005_old.md", "docs/findings/d009_old.md"):
         path = git_repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# old\n", encoding="utf-8")
@@ -172,9 +172,9 @@ def test_finish_handoff_lists_only_entries_added_after_base(git_repo):
 
     def touch(root):
         # base 已存在的条目只被修改或归档迁移：不算本 task 新增
-        (root / "docs/pending/todo/p005_old.md").write_text("# edited\n", encoding="utf-8")
+        (root / "docs/pending/p005_old.md").write_text("# edited\n", encoding="utf-8")
         (root / "docs/findings/d009_old.md").write_text("# edited\n", encoding="utf-8")
-        (root / "docs/pending/todo/p006_new.md").write_text("# new\n", encoding="utf-8")
+        (root / "docs/pending/p006_new.md").write_text("# new\n", encoding="utf-8")
 
     message = prepare_finish(worktree, "t001", "alpha", mutate=touch)
     result = finish_cli(worktree, "t001", OWNER, message)

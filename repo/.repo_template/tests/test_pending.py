@@ -419,3 +419,33 @@ def test_removed_commands_not_available() -> None:
 
     with pytest.raises(SystemExit):
         pending_mod.main(["list", "--state", "archived"])
+
+
+def test_list_corrupted_metadata_fails_closed(repo: Path) -> None:
+    pending_mod.main(["new", "valid_entry"])
+    corrupt_file = repo / "docs/pending/p002_corrupt.md"
+    corrupt_file.write_text("---\npid: p002\ninvalid: true\n---\n# Corrupted\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="未知 front matter 字段|解析 front matter 失败"):
+        pending_mod.main(["list"])
+
+
+def test_concurrent_modification_rejected_by_sha256(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pending_mod.main(["new", "race_entry"])
+    entry = repo / "docs/pending/p001_race_entry.md"
+
+    real_find = pending_mod.find_entry
+    calls = {"n": 0}
+
+    def modify_on_second_find(number: int) -> tuple[str, Path]:
+        calls["n"] += 1
+        state, path = real_find(number)
+        if calls["n"] == 2:
+            # 锁外读取完成，锁内定位时外部写入了新内容
+            path.write_text(path.read_text(encoding="utf-8") + "\n- 并发写入\n", encoding="utf-8")
+        return state, path
+
+    monkeypatch.setattr(pending_mod, "find_entry", modify_on_second_find)
+    with pytest.raises(SystemExit, match="内容已被并发修改|内容摘要不一致"):
+        pending_mod.main(["close", "p001", "--reason", "完成", "--write"])
+

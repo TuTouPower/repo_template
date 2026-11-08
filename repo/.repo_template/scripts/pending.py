@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -183,16 +184,27 @@ def dump_pending_front_matter(fm: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def parse_pending_file(path: Path) -> tuple[dict[str, str], str]:
-    """读取并解析 pending 文件的 front matter 与正文，校验严格字段。"""
+def _read_and_parse_entry(path: Path) -> tuple[dict[str, str], str, str]:
+    """读取并解析 pending 文件的 front matter 与正文，校验严格字段，并返回内容 SHA256。"""
     if not path.is_file():
         raise IdScanError(f"文件不存在：{_rel(path)}")
-    text = path.read_text(encoding="utf-8")
     try:
+        raw = path.read_bytes()
+    except OSError as e:
+        raise IdScanError(f"读取文件失败（{_rel(path)}）：{e}") from e
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        text = raw.decode("utf-8")
         fm, body = parse_front_matter_text(text, source=_rel(path))
     except Exception as e:
         raise IdScanError(f"解析 front matter 失败（{_rel(path)}）：{e}") from e
     validate_pending_front_matter(fm, filename=path.name, source=_rel(path))
+    return fm, body, digest
+
+
+def parse_pending_file(path: Path) -> tuple[dict[str, str], str]:
+    """读取并解析 pending 文件的 front matter 与正文，校验严格字段。"""
+    fm, body, _ = _read_and_parse_entry(path)
     return fm, body
 
 
@@ -258,10 +270,7 @@ def cmd_list(args: argparse.Namespace) -> None:
     for path in sorted(PENDING_DIR.glob("*.md")):
         if not ENTRY_FILE_RE.match(path.name):
             continue
-        try:
-            fm, body = parse_pending_file(path)
-        except Exception:
-            continue
+        fm, body = parse_pending_file(path)
         status = fm["status"]
         if args.state != "all" and status != args.state:
             continue
@@ -280,12 +289,12 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 def _apply_state_updates(
     write: bool,
-    plan: list[tuple[int, Path, dict[str, str], str]],
+    plan: list[tuple[int, Path, dict[str, str], str, str]],
     note: str,
 ) -> None:
     if not write:
         sys.stderr.write("dry-run；以下为拟定改动，加 --write 落盘。\n")
-        for _num, path, new_fm, _new_body in plan:
+        for _num, path, new_fm, _new_body, _expected_sha in plan:
             target_status = new_fm["status"]
             sys.stderr.write(f"  {_rel(path)} → status: {target_status}  {note}\n")
         return
@@ -294,14 +303,19 @@ def _apply_state_updates(
     try:
         with id_lock(REPO_ROOT):
             snapshots: list[tuple[Path, str, bytes]] = []
-            for number, path, new_fm, new_body in plan:
+            for number, path, new_fm, new_body, expected_sha in plan:
                 curr_status, curr_path = find_entry(number)
                 if curr_path.resolve() != path.resolve():
                     raise IdScanError(
                         f"p{number:03d} 在加锁前路径已变（当前 {_rel(curr_path)}）；请重试"
                     )
-                validate_pending_front_matter(new_fm, filename=path.name, source=_rel(path))
                 raw = path.read_bytes()
+                curr_sha = hashlib.sha256(raw).hexdigest()
+                if curr_sha != expected_sha:
+                    raise IdScanError(
+                        f"p{number:03d} 在加锁前内容已被并发修改（内容摘要不一致）；请重试"
+                    )
+                validate_pending_front_matter(new_fm, filename=path.name, source=_rel(path))
                 new_text = dump_pending_front_matter(new_fm) + new_body
                 snapshots.append((path, new_text, raw))
 
@@ -342,7 +356,7 @@ def cmd_park(args: argparse.Namespace) -> None:
     if "\n" in reason or "\r" in reason:
         raise IdScanError("reason 不能包含换行符（收到多行输入）")
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
     for number in numbers:
         state, path = find_entry(number)
         if state != "todo":
@@ -351,7 +365,7 @@ def cmd_park(args: argparse.Namespace) -> None:
             if state == "closed":
                 raise IdScanError(f"p{number:03d} 当前在 closed（终态）；禁止暂搁")
             raise IdScanError(f"p{number:03d} 当前在 {state}；只有 todo 可暂搁")
-        fm, body = parse_pending_file(path)
+        fm, body, expected_sha = _read_and_parse_entry(path)
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
@@ -360,14 +374,14 @@ def cmd_park(args: argparse.Namespace) -> None:
         }
         new_body = set_field_text(body, PARKED_RE, f"- 暂搁：{reason}")
         new_body = set_field_text(new_body, HANDLE_RE, "- 处理：不办")
-        plan.append((number, path, new_fm, new_body))
+        plan.append((number, path, new_fm, new_body, expected_sha))
 
     _apply_state_updates(args.write, plan, note=f"暂搁：{reason}")
 
 
 def cmd_revive(args: argparse.Namespace) -> None:
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
     for number in numbers:
         state, path = find_entry(number)
         if state != "parked":
@@ -376,14 +390,14 @@ def cmd_revive(args: argparse.Namespace) -> None:
             if state == "closed":
                 raise IdScanError(f"p{number:03d} 当前在 closed（终态）；禁止复活")
             raise IdScanError(f"p{number:03d} 当前在 {state}；只有 parked 可复活")
-        fm, body = parse_pending_file(path)
+        fm, body, expected_sha = _read_and_parse_entry(path)
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
             "status": "todo",
         }
         new_body = set_field_text(body, HANDLE_RE, "- 处理：未开")
-        plan.append((number, path, new_fm, new_body))
+        plan.append((number, path, new_fm, new_body, expected_sha))
 
     _apply_state_updates(args.write, plan, note="revive")
 
@@ -404,7 +418,7 @@ def cmd_close(args: argparse.Namespace) -> None:
     note = f"处理：{ref_part}resolution={resolution}；reason={reason}"
 
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
     for number in numbers:
         state, path = find_entry(number)
         if state != "todo":
@@ -413,7 +427,7 @@ def cmd_close(args: argparse.Namespace) -> None:
             if state == "parked":
                 raise IdScanError(f"p{number:03d} 在 parked（暂搁而非闭环）；如需闭环请先 revive")
             raise IdScanError(f"p{number:03d} 当前在 {state}；只有 todo 可闭环")
-        fm, body = parse_pending_file(path)
+        fm, body, expected_sha = _read_and_parse_entry(path)
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
@@ -424,7 +438,7 @@ def cmd_close(args: argparse.Namespace) -> None:
         if fix_ref:
             new_fm["fix_ref"] = fix_ref
         new_body = set_field_text(body, HANDLE_RE, f"- {note}")
-        plan.append((number, path, new_fm, new_body))
+        plan.append((number, path, new_fm, new_body, expected_sha))
 
     _apply_state_updates(args.write, plan, note=note)
 
