@@ -240,7 +240,9 @@ def allocate(
         target_dir.mkdir(parents=True, exist_ok=True)
         tmp_path = target_dir / f".tmp_{entry_id}_{slug}.md"
         try:
-            tmp_path.write_bytes(body.replace("{id}", entry_id).encode("utf-8"))
+            tmp_path.write_bytes(
+                body.replace("{id}", entry_id).replace("{slug}", slug).encode("utf-8")
+            )
             if formatter is not None:
                 formatter(tmp_path)
             if not tmp_path.read_text(encoding="utf-8").strip():

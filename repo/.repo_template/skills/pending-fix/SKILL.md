@@ -8,7 +8,7 @@ metadata:
 
 # pending-fix
 
-在主仓 main 直修小而低风险的 `docs/pending/todo/` 条目，每条一个修复 commit。不建 task、不 start、不进 attempt 与 review 流程；超出准入的条目转回 task 流程。
+在主仓 main 直修小而低风险的 `docs/pending/` 条目，每条一个修复 commit。不建 task、不 start、不进 attempt 与 review 流程；超出准入的条目转回 task 流程。
 
 ## 组合契约
 
@@ -38,7 +38,7 @@ metadata:
 2. 可测行为先写失败测试，再修复。测试须触达生产逻辑；不弱化断言、不 mock 被测逻辑、不就地把旧测试预期改成当前输出。
 3. 运行 `docs/blueprint/testing.md` 中与改动相关的 `test_cmd`；改动触及用户或调用方可观察行为且 `blackbox_verify` 不是「无」时一并执行。`verification_policy` 不是 `project_configured` 时停止。
 4. 检查新增调试输出与临时文件，运行项目 lint/format，`git diff --check`，Markdown 用 `md_format.py --changed`。
-5. `pending.py archive {pNNN} --resolution resolved --fix-ref main --reason "{修复要点；验证命令与结果}" --write`。
+5. `pending.py close {pNNN} --resolution resolved --fix-ref main --reason "{修复要点；验证命令与结果}" --write`。
 6. 只暂存本条修复、测试与 pending 迁移的明确路径，提交一个 commit：`fix: {摘要} ({pNNN})`。核对 commit 未混入无关改动。
 
 ## 停止
