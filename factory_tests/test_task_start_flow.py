@@ -39,60 +39,14 @@ def _valid_task_body():
     return body
 
 
+from git_repo_support import fast_copy_repo
+
+
 @pytest.fixture
-def git_repo(tmp_path, monkeypatch):
-    """真实 git 主仓 + 三个 backlog task。"""
+def git_repo(tmp_path, workflow_three_tasks_seed, monkeypatch):
+    """真实 git 主仓 + 三个 backlog task（高速种子独立副本）。"""
     repo = tmp_path / "repo"
-    tasks = repo / "docs" / "tasks"
-    archive = repo / "docs" / "archive" / "tasks"
-    template = tasks / "task_template"
-    scripts = repo / ".repo_template" / "scripts"
-    tasks.mkdir(parents=True)
-    archive.mkdir(parents=True)
-    scripts.mkdir(parents=True)
-    shutil.copy2(SCRIPTS_DIR / "task.py", scripts / "task.py")
-    shutil.copy2(SCRIPTS_DIR / "md_format.py", scripts / "md_format.py")
-    shutil.copytree(
-        SCRIPTS_DIR / "repo_task",
-        scripts / "repo_task",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
-    shutil.copytree(TASK_TEMPLATE_DIR, repo / ".repo_template" / "docs" / "task_template")
-    shutil.copytree(TASK_TEMPLATE_DIR, template)
-    for tid, slug in (("t001", "alpha"), ("t002", "beta"), ("t003", "gamma")):
-        task_dir = tasks / f"{tid}_{slug}"
-        shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
-        write_front_matter(
-            task_dir / "progress.md",
-            {
-                "tid": tid,
-                "slug": slug,
-                "title": slug,
-                "status": "backlog",
-                "branch": "",
-                "worktree": "",
-                "review_level": "full",
-                "diff_anchor": "",
-                "note": "",
-            },
-            _valid_task_body(),
-        )
-        (task_dir / "task.md").write_text(_valid_spec(), encoding="utf-8")
-    # 测试边界注入恒等 md_kx 替身：格式检查契约不依赖宿主机是否安装。
-    fake_bin = tmp_path / "bin_md"
-    fake_bin.mkdir(exist_ok=True)
-    fake_md = fake_bin / "md_kx"
-    fake_md.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8")
-    fake_md.chmod(0o755)
-    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", ""))
-    (repo / ".gitignore").write_text("__pycache__/\n*.py[cod]\ndocs/runtime/\n", encoding="utf-8")
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "test")
-    configure_project_verification(repo)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "init")
-    return repo
+    return fast_copy_repo(workflow_three_tasks_seed, repo, tmp_path, monkeypatch)
 
 
 def _start(repo, tid="t001", base=None):
