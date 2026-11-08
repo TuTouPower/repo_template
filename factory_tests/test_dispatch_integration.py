@@ -618,18 +618,19 @@ def test_porcelain_entries_fails_closed_on_git_error(git_repo, monkeypatch):
         git_ops.tracked_dirty_entries(repo=repo_ctx)
 
 
-def test_review_scope_fingerprint_includes_untracked(git_repo, monkeypatch):
+def test_review_scope_fingerprint_includes_untracked(git_repo):
     """RT-002：未跟踪文件（未 git add -N）加入后 scope 指纹必须变，防静默绕过 review 门禁。"""
     from repo_task import review_status as crs
+    from repo_task.context import RepoContext
 
-    monkeypatch.setattr(crs, "REPO_ROOT", git_repo)
+    repo = RepoContext.for_root(git_repo)
     anchor = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
     task_dir = git_repo / "docs" / "tasks" / "t001_alpha"
-    before = crs.current_scope_fingerprint(task_dir, anchor)
+    before = crs.current_scope_fingerprint(task_dir, anchor, repo=repo)
     assert before is not None
     (git_repo / "src").mkdir(parents=True, exist_ok=True)
     (git_repo / "src" / "new_impl.py").write_text("x = 1\n", encoding="utf-8")
-    after = crs.current_scope_fingerprint(task_dir, anchor)
+    after = crs.current_scope_fingerprint(task_dir, anchor, repo=repo)
     assert after is not None
     assert after != before
 
