@@ -50,13 +50,20 @@ def repo(tmp_path: Path) -> Path:
     [
         _joined("", "Users", "alice"),
         _joined("", "Users", "alice", "proj"),
+        _joined("", "Users", "张三"),
         _joined("", "home", "bob"),
         _joined("", "home", "bob", "work"),
+        _joined("", "home", "李四"),
         _joined("", "root"),
         _joined("", "root", "srv", "app"),
         "C:" + _joined("", "Users", "carol"),
+        "C:" + _joined("", "Users", "王五"),
         "C:\\" + "\\".join(("Users", "dave")),
+        "C:\\" + "\\".join(("Users", "赵六")),
+        "C:\\\\" + "\\\\".join(("Users", "zack")),
         "C:" + _joined("", "Users", "erin", "proj"),
+        "file:///Users/alice",
+        "file:///Users/张三/repo",
     ],
 )
 def test_home_tokens_are_detected(text):
@@ -71,8 +78,14 @@ def test_home_tokens_are_detected(text):
         "/rooster/data",
         "/Users2/alice",
         _joined("", "homepage", "bob"),
+        "C:/Users/Public",
+        "C:/Users/Public/shared",
+        "C:\\" + "\\".join(("Users", "Public")),
         "C:\\" + "\\".join(("Users", "Public", "shared")),
+        "C:\\\\" + "\\\\".join(("Users", "Public")),
+        "C:\\\\" + "\\\\".join(("Users", "Public", "shared")),
         "C:\\" + "\\".join(("Users", "Default", "x")),
+        "C:/Users/Default User",
         "relative/path/Users/alice",
     ],
 )
@@ -82,6 +95,28 @@ def test_non_home_tokens_are_not_reported(text):
         assert leaks == [_joined("", "home", "root")]
     else:
         assert leaks == []
+
+
+def test_unicode_and_json_escaped_and_uri_leaks():
+    assert find_developer_path_leaks(_joined("", "Users", "张三")) == [_joined("", "Users", "张三")]
+    assert find_developer_path_leaks(_joined("", "home", "李四")) == [_joined("", "home", "李四")]
+    assert find_developer_path_leaks("C:" + _joined("", "Users", "王五")) == ["C:" + _joined("", "Users", "王五")]
+    assert find_developer_path_leaks(r"C:\Users\赵六") == [r"C:\Users\赵六"]
+    assert find_developer_path_leaks(r"C:\\Users\\alice") == [r"C:\\Users\\alice"]
+    assert find_developer_path_leaks('{"p": "C:\\\\Users\\\\carol\\\\proj"}') == [r"C:\\Users\\carol"]
+    assert find_developer_path_leaks("file:///Users/alice/proj") == ["file:///Users/alice"]
+    assert find_developer_path_leaks("file:///Users/张三") == ["file:///Users/张三"]
+
+
+def test_windows_public_profiles_are_exempt_across_separator_styles():
+    assert find_developer_path_leaks("C:/Users/Public") == []
+    assert find_developer_path_leaks(r"C:\Users\Public") == []
+    assert find_developer_path_leaks(r"C:\\Users\\Public") == []
+    assert find_developer_path_leaks("C:/Users/Public/shared") == []
+    assert find_developer_path_leaks(r"C:\Users\Public\shared") == []
+    assert find_developer_path_leaks(r"C:\\Users\\Public\\shared") == []
+    assert find_developer_path_leaks("C:/Users/Default User") == []
+    assert find_developer_path_leaks(r"C:\Users\Default User\data") == []
 
 
 def test_root_rule_does_not_start_mid_path():

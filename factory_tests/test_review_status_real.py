@@ -10,6 +10,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task import review_status as crs
+from repo_task.context import RepoContext
 from review_support import ac_review_section
 from test_dispatch_integration import git_repo, _task_cli  # noqa: F401  (fixture + CLI helper)
 
@@ -40,8 +41,8 @@ def test_main_real_fingerprint_pass_then_stale(tmp_path, monkeypatch, capsys):
         + anchor + "\n---\n## Review 处置\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(crs, "REPO_ROOT", repo)
-    scope = crs.current_scope_fingerprint(task_dir, anchor)
+    repo_ctx = RepoContext.for_root(repo)
+    scope = crs.current_scope_fingerprint(task_dir, anchor, repo=repo_ctx)
     assert scope
     (task_dir / "review_general.md").write_text(
         f"verdict: PASS\n\nreviewed_scope: {scope}\n\n{ac_review_section(SPEC)}", encoding="utf-8"

@@ -35,6 +35,7 @@ from .git_ops import (
     batch_cat_file,
     default_branch,
     has_unmerged_commits,
+    is_ancestor,
     porcelain_entries,
     require_primary_worktree,
     resolve_local_branch,
@@ -100,11 +101,7 @@ def _order_by_ancestry(
     return ordered
 
 
-def _is_ancestor(
-    maybe_ancestor: str, descendant: str, *, repo: "ctx.RepoContext",
-) -> bool:
-    r = _git(["merge-base", "--is-ancestor", maybe_ancestor, descendant], repo=repo)
-    return r.returncode == 0
+_is_ancestor = is_ancestor
 
 
 def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[str]:
@@ -386,7 +383,7 @@ def cmd_start(args):
         missing_in_base = []
         for dep in depends_on:
             for ref in _dependency_implementations(dep, repo=repo):
-                if _git(["merge-base", "--is-ancestor", ref, base_sha], repo=repo).returncode != 0:
+                if not is_ancestor(ref, base_sha, repo=repo):
                     missing_in_base.append(f"{dep}（实现 {ref[:12]} 不在 base {base_branch!r}）")
         if missing_in_base:
             sys.exit(
@@ -530,7 +527,7 @@ def _require_handoff_base_merged(
         base_sha = handoff["base_sha"]
     except (ctx.TaskDataError, ValueError, KeyError, TypeError) as error:
         raise ctx.TaskDataError(f"{tid} 的 handoff.base_sha 无法读取：{error}") from error
-    if _git(["merge-base", "--is-ancestor", base_sha, base_ref], repo=repo).returncode != 0:
+    if not is_ancestor(base_sha, base_ref, repo=repo):
         raise ctx.TaskDataError(
             f"{tid} 的 handoff.base_sha {base_sha[:12]} 不是 {base_ref} 的祖先；"
             "先 integrate 前驱，或用 integrate-chain 整链合并"
@@ -620,7 +617,7 @@ def _delete_branches(branches: list[str], *, repo: "ctx.RepoContext") -> None:
     for branch in branches:
         if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo=repo).returncode != 0:
             continue
-        if _git(["merge-base", "--is-ancestor", f"refs/heads/{branch}", "HEAD"], repo=repo).returncode != 0:
+        if not is_ancestor(f"refs/heads/{branch}", "HEAD", repo=repo):
             raise ctx.TaskDataError(f"分支 {branch!r} 未完全合入 {base}；保留分支")
     # Delete the tail last so an interrupted cleanup can be re-entered by tail tid.
     for branch in branches:
@@ -1040,7 +1037,7 @@ def cmd_integrate(args):
     except ctx.TaskDataError as error:
         sys.exit(str(error))
     subject = f"merge({args.tid}):"
-    already_merged = _git(["merge-base", "--is-ancestor", sha, "HEAD"], repo=repo).returncode == 0
+    already_merged = is_ancestor(sha, "HEAD", repo=repo)
     if args.keep_branch and not args.continue_merge and not already_merged and record["state"] != "integrated":
         sys.exit("--keep-branch 只在 --continue 收尾或已合入幂等清理时生效；准备 merge 时不持久化该选项")
     if args.continue_merge:
@@ -1098,12 +1095,12 @@ def _collect_chain(
     candidates = []
     for branch in _local_task_branches(repo=repo):
         _, sha = resolve_local_branch(branch, repo=repo)
-        if _git(["merge-base", "--is-ancestor", sha, tail_sha], repo=repo).returncode != 0:
+        if not is_ancestor(sha, tail_sha, repo=repo):
             continue
         # A chain merge covers only commits added relative to its first parent.
         # Retained branches integrated by an older merge are ancestors of
         # base_ref and must never be claimed by the current batch.
-        if _git(["merge-base", "--is-ancestor", sha, base_ref], repo=repo).returncode == 0:
+        if is_ancestor(sha, base_ref, repo=repo):
             continue
         match = ctx.TASK_BRANCH_RE.fullmatch(branch)
         if match:

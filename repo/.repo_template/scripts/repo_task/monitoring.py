@@ -195,9 +195,11 @@ def git_worktree_entries(
             git_mode = "160000"
             try:
                 oid = _required_git_bytes(["rev-parse", "HEAD"], source).decode().strip()
-                entries[p] = (git_mode, oid)
-            except Exception:
-                pass
+            except Exception as error:
+                if isinstance(error, ctx.TaskDataError):
+                    raise
+                raise ctx.TaskDataError(f"解析 gitlink {p} HEAD 失败：{error}") from error
+            entries[p] = (git_mode, oid)
         else:
             raise ctx.TaskDataError(f"不支持的文件类型：{p}")
     return entries

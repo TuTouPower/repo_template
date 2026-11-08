@@ -494,7 +494,7 @@ def test_spikes_supersede_lifecycle_and_constraints(tmp_path, monkeypatch, capsy
     assert "docs/spikes/s001_probe_old/report.md" not in staged
 
     # 7. 循环替代拦截（如 s002 试图反向替代 s001）
-    with pytest.raises(SystemExit, match="替代目标 s001 状态必须为 completed"):
+    with pytest.raises(SystemExit, match="严禁循环引用|替代目标 s001 状态必须为 completed"):
         spikes_mod.main(["supersede", "s002", "--by", "s001", "--reason", "循环", "--write"])
 
 

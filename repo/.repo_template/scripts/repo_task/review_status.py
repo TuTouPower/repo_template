@@ -37,7 +37,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from repo_task.context import PROGRESS_FILE, TaskDataError
+from repo_task import context as ctx
+from repo_task.context import PROGRESS_FILE, RepoContext, TaskDataError
 from repo_task.monitoring import review_scope_fingerprint as monitoring_scope_fingerprint
 from repo_task.review import (
     ReviewDataError,
@@ -47,20 +48,18 @@ from repo_task.review import (
     review_limits,
 )
 
-# 与 repo_task.context 的仓库根保持一致；测试可替换本模块属性隔离真实仓库。
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
+def current_scope_fingerprint(
+    task_dir: Path, diff_anchor: str, *, repo: ctx.RepoContext,
+) -> str | None:
     """当前被审 diff 指纹；缺 diff_anchor 或 git 失败返回 None（不可验证）。"""
     if not diff_anchor:
         return None
     try:
-        rel = task_dir.resolve().relative_to(REPO_ROOT.resolve())
+        rel = task_dir.resolve().relative_to(repo.root.resolve())
     except ValueError:
         return None
     fingerprint = monitoring_scope_fingerprint(
-        diff_anchor, rel.as_posix(), repo_root=REPO_ROOT
+        diff_anchor, rel.as_posix(), repo_root=repo.root
     )
     if not fingerprint:
         print(
@@ -71,8 +70,8 @@ def current_scope_fingerprint(task_dir: Path, diff_anchor: str) -> str | None:
     return fingerprint
 
 
-def resolve_task_dir(value: str) -> Path:
-    root = REPO_ROOT.resolve()
+def resolve_task_dir(value: str, *, repo: ctx.RepoContext) -> Path:
+    root = repo.root.resolve()
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = root / candidate
@@ -88,20 +87,23 @@ def resolve_task_dir(value: str) -> Path:
     return candidate
 
 
-def run_review_status(task_dir: str) -> tuple[dict, dict[str, int]]:
+def run_review_status(task_dir: str, *, repo: ctx.RepoContext) -> tuple[dict, dict[str, int]]:
     """评估指定 task 目录，返回 (评估结果, 持久化 limits)。"""
-    resolved = resolve_task_dir(task_dir)
+    resolved = resolve_task_dir(task_dir, repo=repo)
     fm = parse_front_matter(resolved / PROGRESS_FILE)
     if fm.get("review_level", "full") not in VALID_REVIEW_LEVELS:
         raise ReviewDataError(f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)}")
     limits = review_limits(fm)
-    scope = current_scope_fingerprint(resolved, fm.get("diff_anchor", ""))
+    scope = current_scope_fingerprint(resolved, fm.get("diff_anchor", ""), repo=repo)
     return evaluate_review(resolved, fm, scope), limits
 
 
 def cmd_review_status(args: argparse.Namespace) -> None:
+    repo = getattr(args, "repo", None)
+    if repo is None:
+        repo = ctx.RepoContext.from_code_location(Path(__file__))
     try:
-        result, limits = run_review_status(args.task_dir)
+        result, limits = run_review_status(args.task_dir, repo=repo)
     except (ReviewDataError, TaskDataError, OSError) as error:
         print(f"review-status=FAIL：{error}", file=sys.stderr)
         sys.exit(1)
@@ -112,10 +114,23 @@ def cmd_review_status(args: argparse.Namespace) -> None:
     print(f"max_verify_round={limits['verify_limit']}")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, repo: ctx.RepoContext | None = None) -> None:
     parser = argparse.ArgumentParser(description="review 状态门禁（与 finish/integrate 同源）")
     parser.add_argument("--task-dir", required=True)
-    cmd_review_status(parser.parse_args(argv))
+    args = parser.parse_args(argv)
+    if repo is None:
+        cand = Path(args.task_dir)
+        if not cand.is_absolute():
+            cand = Path.cwd() / cand
+        cand = cand.resolve()
+        root = None
+        for p in (cand, *cand.parents):
+            if (p / "docs" / "tasks").is_dir():
+                root = p
+                break
+        repo = ctx.RepoContext.for_root(root or Path.cwd().resolve())
+    args.repo = repo
+    cmd_review_status(args)
 
 
 if __name__ == "__main__":
