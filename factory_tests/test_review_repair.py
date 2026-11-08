@@ -127,8 +127,8 @@ def test_amend_then_integrate_archives_single_commit(git_repo):
 
     assert finished.returncode == 0, finished.stderr
     assert _git(git_repo, "merge-base", "--is-ancestor", tip, "main", check=False).returncode == 0
-    assert (git_repo / "docs/archive/tasks/t001_alpha/review_code.md").is_file()
-    assert not (git_repo / REL).exists()
+    assert (git_repo / REL / "review_code.md").is_file()
+    assert (git_repo / REL).is_dir()
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
 
@@ -584,7 +584,7 @@ def test_finish_unwind_audit_failure_leaves_consistent_state(git_repo):
     anchor = _git(worktree, "rev-parse", "HEAD^1").stdout.strip()
     (worktree / "README.md").write_text("changed after review\n", encoding="utf-8")
     _amend(worktree)
-    audit = git_repo / "docs/archive/tasks_audit.log"
+    audit = git_repo / "docs/runtime/tasks_audit.log"
     audit.unlink(missing_ok=True)
     audit.mkdir()
 

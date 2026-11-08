@@ -203,7 +203,7 @@ def test_full_main_path_begin_finish_close_integrate_uses_only_tid_and_owner(git
         (identity["attempt"], identity["execution_id"])
     ]
     assert not _git(git_repo, "branch", "--list", "t001_alpha").stdout.strip()
-    assert (git_repo / "docs/archive/tasks/t001_alpha/handoff.json").is_file()
+    assert (git_repo / "docs/tasks/t001_alpha/handoff.json").is_file()
 
 
 def test_main_path_with_worktree_include_links_keeps_links_out_of_commit(git_repo):
@@ -672,16 +672,17 @@ def test_finish_reports_fail_when_hook_rewrites_delivered_markdown(git_repo):
 
 
 def test_finish_done_rejects_occupied_archive_target_with_zero_writes(git_repo):
+    """拦截对其他 task 核心资产的篡改，零写入退出。"""
     _, worktree, message = _ready(git_repo)
-    target = worktree / "docs/archive/tasks/t001_alpha"
-    target.parent.mkdir(parents=True)
-    target.write_text("occupied\n", encoding="utf-8")
+    other_task_md = worktree / "docs/tasks/t002_beta/task.md"
+    other_task_md.write_text("# tampered\n", encoding="utf-8")
+    _git(worktree, "add", "docs/tasks/t002_beta/task.md")
     before = _snapshot(git_repo, worktree)
 
     result = finish_cli(worktree, "t001", OWNER, message)
 
     assert result.returncode != 0
-    assert "归档目录已存在" in result.stderr
+    assert "禁止修改其他 task 核心资产" in result.stderr
     assert _snapshot(git_repo, worktree) == before
 
 

@@ -91,7 +91,7 @@ def task_schedule_references(
     return references
 
 
-def _task_record(fm: dict, *, directory: str, source: str, archived: bool) -> dict:
+def _task_record(fm: dict, *, directory: str, source: str) -> dict:
     tid = fm.get("tid", "")
     if not ctx.TID_RE.match(tid):
         raise ctx.TaskDataError(f"{source}: front matter tid 非法（{tid!r}）")
@@ -101,14 +101,6 @@ def _task_record(fm: dict, *, directory: str, source: str, archived: bool) -> di
     status = fm.get("status", "")
     if status not in ctx.VALID_STATUSES:
         raise ctx.TaskDataError(f"{source}: status 非法（{status!r}）")
-    # 归档目录只容纳 done/dropped。done 也可停在活跃目录（已 finish、未 integrate，
-    # 目录由 integrate 的 merge commit 归档）；dropped 由 drop 脚本直接移入归档目录。
-    misplaced = status not in ctx.ARCHIVED_STATUSES if archived else status == "dropped"
-    if misplaced:
-        raise ctx.TaskDataError(
-            f"{source}: status={status} 与所在目录不符"
-            f"（位于{'归档' if archived else '活跃'}目录）"
-        )
     record = {k: fm.get(k, "") for k in ctx.FRONT_MATTER_KEYS}
     record["dir"] = directory
     return record
@@ -120,44 +112,38 @@ def _validate_task_records(tasks: list[dict]) -> list[dict]:
     tasks.sort(key=lambda t: int(ctx.TID_RE.match(t["tid"]).group(1)))
     return tasks
 
-def _scan_tasks_in_directories(
-    tasks_dir: Path, archive_dir: Path, *, template_name: str = "task_template",
+def _scan_tasks_in_directory(
+    tasks_dir: Path, *, template_name: str = "task_template",
 ) -> list[dict]:
     tasks = []
-    for base, archived, rel_base in (
-        (tasks_dir, False, "docs/tasks"),
-        (archive_dir, True, "docs/archive/tasks"),
-    ):
-        if not base.is_dir():
+    if not tasks_dir.is_dir():
+        return []
+    for directory in sorted(tasks_dir.iterdir()):
+        if not directory.is_dir() or directory.name == template_name:
             continue
-        for directory in sorted(base.iterdir()):
-            if not directory.is_dir() or (not archived and directory.name == template_name):
-                continue
-            note_md = directory / ctx.PROGRESS_FILE
-            if not note_md.is_file():
-                raise ctx.TaskDataError(f"{note_md.parent}: 缺 {ctx.PROGRESS_FILE}")
-            fm, _ = parse_front_matter_text(
-                note_md.read_text(encoding="utf-8"), source=str(note_md)
-            )
-            tasks.append(_task_record(
-                fm,
-                directory=f"{rel_base}/{directory.name}",
-                source=str(note_md),
-                archived=archived,
-            ))
+        note_md = directory / ctx.PROGRESS_FILE
+        if not note_md.is_file():
+            raise ctx.TaskDataError(f"{note_md.parent}: 缺 {ctx.PROGRESS_FILE}")
+        fm, _ = parse_front_matter_text(
+            note_md.read_text(encoding="utf-8"), source=str(note_md)
+        )
+        tasks.append(_task_record(
+            fm,
+            directory=f"docs/tasks/{directory.name}",
+            source=str(note_md),
+        ))
     return _validate_task_records(tasks)
 
 def scan_tasks(*, repo: "ctx.RepoContext") -> list[dict]:
     """扫描当前工作区 task，按 tid 升序返回状态记录。"""
-    return _scan_tasks_in_directories(
-        repo.tasks_dir, repo.archive_tasks_dir, template_name=repo.template_dir.name
+    return _scan_tasks_in_directory(
+        repo.tasks_dir, template_name=repo.template_dir.name
     )
 
 def scan_tasks_in_worktree(root: Path) -> list[dict]:
     """扫描另一登记 worktree 的 task 状态，不修改 task.py 全局路径。"""
-    return _scan_tasks_in_directories(
+    return _scan_tasks_in_directory(
         root / "docs" / "tasks",
-        root / "docs" / "archive" / "tasks",
     )
 
 def git_text_at_ref(
@@ -197,7 +183,7 @@ def _load_tasks_at_commit(
     r = _git(
         [
             "ls-tree", "-r", "-z", "--end-of-options", commit_sha, "--",
-            "docs/tasks", "docs/archive/tasks",
+            "docs/tasks",
         ],
         root=root, repo=repo,
     )
@@ -205,7 +191,7 @@ def _load_tasks_at_commit(
         raise ctx.TaskDataError(f"无法读取 ref {display_ref!r}：{r.stderr.strip()}")
 
     tree_blobs: dict[str, str] = {}
-    discovered_dirs: set[tuple[str, str, bool]] = set()
+    discovered_dirs: set[str] = set()
 
     for item in r.stdout.split("\0"):
         if not item:
@@ -216,39 +202,30 @@ def _load_tasks_at_commit(
             tree_blobs[path] = parts[2]
 
         if path.startswith("docs/tasks/"):
-            archived = False
-            rel_base = "docs/tasks"
             rest = path[len("docs/tasks/") :]
-        elif path.startswith("docs/archive/tasks/"):
-            archived = True
-            rel_base = "docs/archive/tasks"
-            rest = path[len("docs/archive/tasks/") :]
-        else:
-            continue
+            if "/" in rest:
+                name = rest.split("/", 1)[0]
+                discovered_dirs.add(name)
 
-        if "/" in rest:
-            name = rest.split("/", 1)[0]
-            discovered_dirs.add((rel_base, name, archived))
-
-    needed_notes: list[tuple[str, str, str, bool]] = []
-    for rel_base, name, archived in sorted(discovered_dirs):
-        if not archived and name == template_name:
+    needed_notes: list[tuple[str, str, str]] = []
+    for name in sorted(discovered_dirs):
+        if name == template_name:
             continue
-        directory = f"{rel_base}/{name}"
+        directory = f"docs/tasks/{name}"
         progress_path = f"{directory}/{ctx.PROGRESS_FILE}"
         oid = tree_blobs.get(progress_path)
         if not oid:
             raise ctx.TaskDataError(f"{display_ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-        needed_notes.append((directory, progress_path, oid, archived))
+        needed_notes.append((directory, progress_path, oid))
 
-    oids = [oid for _, _, oid, _ in needed_notes]
+    oids = [oid for _, _, oid in needed_notes]
     blob_map = batch_cat_file(oids, root=root, repo=repo)
 
     tasks: list[dict] = []
     task_by_tid: dict[str, dict] = {}
     document_by_tid: dict[str, tuple[dict, str]] = {}
 
-    for directory, progress_path, oid, archived in needed_notes:
+    for directory, progress_path, oid in needed_notes:
         raw_content = blob_map.get(oid)
         if raw_content is None:
             raise ctx.TaskDataError(f"{display_ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
@@ -258,7 +235,6 @@ def _load_tasks_at_commit(
             fm,
             directory=directory,
             source=f"{display_ref}:{progress_path}",
-            archived=archived,
         )
         tid = record["tid"]
         tasks.append(record)
@@ -283,7 +259,7 @@ def scan_tasks_at_ref(
 ) -> list[dict]:
     """扫描指定 commit/ref 中的 task，不签出、不写工作区。
 
-    与 scan_tasks() 一致：只枚举 docs/tasks 与 docs/archive/tasks 下一级目录，
+    与 scan_tasks() 一致：只枚举 docs/tasks 下一级目录，
     每个目录必须存在根 progress.md；嵌套 progress.md 忽略，缺根 progress.md 报数据损坏。
     """
     commit_sha = _resolve_commit_sha(ref, label=f"ref {ref!r}", root=root, repo=repo)
@@ -349,7 +325,7 @@ def load_owner_task_at_ref(
 
     r = _git([
         "ls-tree", "-r", "-z", "--end-of-options", ref, "--",
-        "docs/tasks", "docs/archive/tasks",
+        "docs/tasks",
     ], root=root, repo=repo)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 ref {ref!r}：{r.stderr.strip()}")
@@ -364,43 +340,39 @@ def load_owner_task_at_ref(
         if len(parts) >= 3 and parts[1] == "blob":
             tree_blobs[p] = parts[2]
 
-    for rel_base, archived in (
-        ("docs/tasks", False),
-        ("docs/archive/tasks", True),
-    ):
-        prefix = rel_base + "/"
-        for path in sorted(paths):
-            if not path.startswith(prefix):
-                continue
-            rest = path[len(prefix):]
-            if "/" not in rest:
-                continue
-            name = rest.split("/", 1)[0]
-            if rel_base == "docs/tasks" and name == template_name:
-                continue
-            if not name.startswith(f"{tid}_"):
-                continue
-            directory = f"{rel_base}/{name}"
-            note_path = f"{directory}/{ctx.PROGRESS_FILE}"
-            if note_path not in paths:
-                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-            oid = tree_blobs.get(note_path)
-            if not oid:
-                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-            raw_map = batch_cat_file([oid], root=root, repo=repo)
-            raw = raw_map.get(oid)
-            if raw is None:
-                raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
-            text = raw.decode("utf-8", errors="replace")
-            fm, body = parse_front_matter_text(
-                text, source=f"{ref}:{note_path}"
-            )
-            record = _task_record(
-                fm, directory=directory, source=f"{ref}:{note_path}", archived=archived
-            )
-            if commit_sha is not None:
-                cache_store.set_owner(repo_key, commit_sha, tid, (record, fm, body))
-            return record
+    prefix = "docs/tasks/"
+    for path in sorted(paths):
+        if not path.startswith(prefix):
+            continue
+        rest = path[len(prefix):]
+        if "/" not in rest:
+            continue
+        name = rest.split("/", 1)[0]
+        if name == template_name:
+            continue
+        if not name.startswith(f"{tid}_"):
+            continue
+        directory = f"docs/tasks/{name}"
+        note_path = f"{directory}/{ctx.PROGRESS_FILE}"
+        if note_path not in paths:
+            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+        oid = tree_blobs.get(note_path)
+        if not oid:
+            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+        raw_map = batch_cat_file([oid], root=root, repo=repo)
+        raw = raw_map.get(oid)
+        if raw is None:
+            raise ctx.TaskDataError(f"{ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
+        text = raw.decode("utf-8", errors="replace")
+        fm, body = parse_front_matter_text(
+            text, source=f"{ref}:{note_path}"
+        )
+        record = _task_record(
+            fm, directory=directory, source=f"{ref}:{note_path}"
+        )
+        if commit_sha is not None:
+            cache_store.set_owner(repo_key, commit_sha, tid, (record, fm, body))
+        return record
     raise ctx.TaskNotFoundError(f"{ref}: 缺自身 task {tid}")
 
 

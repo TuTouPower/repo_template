@@ -1682,7 +1682,7 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     # 迁移前：store.py 扫描会因为缺少 progress.md 拒绝扫描
     from repo_task import store as task_store, context as task_ctx
     with pytest.raises(task_ctx.TaskDataError, match="缺 progress.md"):
-        task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
+        task_store._scan_tasks_in_directory(consumer / 'docs/tasks')
 
     # 迁移状态应检出活跃和归档下的旧文件
     migrations, worktrees, errors = workflow_migration_status(env['src'])
@@ -1734,11 +1734,10 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     migrations, worktrees, errors = workflow_migration_status(env['src'])
     assert migrations == [] and worktrees == [] and errors == []
 
-    # 迁移后：store.py 扫描正常解析活跃与归档任务
-    tasks = task_store._scan_tasks_in_directories(consumer / 'docs/tasks', consumer / 'docs/archive/tasks')
-    assert [t['tid'] for t in tasks] == ['t001', 't002']
+    # 迁移后：store.py 扫描正常解析任务
+    tasks = task_store._scan_tasks_in_directory(consumer / 'docs/tasks')
+    assert [t['tid'] for t in tasks] == ['t001']
     assert tasks[0]['status'] == 'active' and tasks[0]['dir'] == 'docs/tasks/t001_old'
-    assert tasks[1]['status'] == 'done' and tasks[1]['dir'] == 'docs/archive/tasks/t002_archived_old'
 
 
 def test_apply_refuses_old_workflow_layout_until_explicit_migration(env, capsys):

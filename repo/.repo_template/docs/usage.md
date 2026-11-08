@@ -9,7 +9,7 @@
 |路径|用途|写权归属|
 |---|---|---|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/archive/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
+|`docs/runtime/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
 |`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
 |`.repo_template/docs/review_prompts/`|review prompt 模板|改审查标准时更新|
@@ -18,7 +18,7 @@
 |`.claude/skills/` / `.agents/skills/`|指向 `.repo_template/skills/` 的软链|只维护软链|
 |`.opencode/commands/`|各 skill 的 opencode `/` 触发器（由 SKILL.md description 生成，调 `skill` 工具执行）|只读（改 SKILL.md 后重跑 `link-skills`）；手写命令保留|
 |`.repo_template/scripts/`|模板自带 task 工具链：`task.py` 是 CLI 入口，业务实现位于 `repo_task/`，另含 pending.py/findings.py/spikes.py 等|仅模板演进时修改；复制或维护必须保留 `task.py` 与完整 `repo_task/`，并随模板复制进新项目|
-|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`run-begin`（内含 start）在主仓默认分支执行，保留主仓未提交改动；实施、测试、review、finish/drop 只在自身 worktree 执行。`finish` 机器生成 `handoff.json`（不手写）并提交实现 commit；`run-close` 在主仓收尾与清理，`integrate` 负责归档；本地 `.env` 与 `.worktreeinclude` 命中的忽略路径软链回主仓|
+|`../{repo}_{tid}/`（仓库外）|task 工作副本（git worktree）|`run-begin`（内含 start）在主仓默认分支执行，保留主仓未提交改动；实施、测试、review、finish/drop 只在自身 worktree 执行。`finish` 机器生成 `handoff.json`（不手写）并提交实现 commit；`run-close` 在主仓收尾与清理，`integrate` 负责合并；本地 `.env` 与 `.worktreeinclude` 命中的忽略路径软链回主仓|
 |`.worktreeinclude`|task worktree 本地文件接管清单（gitignore 语法）|消费仓自有；初始化时随模板复制示例，同步不覆盖|
 
 ## 命令执行约定

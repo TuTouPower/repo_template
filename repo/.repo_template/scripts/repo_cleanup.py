@@ -44,6 +44,7 @@ HARD_PROTECTED = {
     "AGENTS.md",
     "README.md",
     ".gitignore",
+    "docs/runtime/tasks_audit.log",
     "docs/archive/tasks_audit.log",
 }
 

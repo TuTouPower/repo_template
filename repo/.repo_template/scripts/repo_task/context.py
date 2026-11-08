@@ -76,10 +76,6 @@ class RepoContext:
         return self.root / "docs" / "tasks"
 
     @property
-    def archive_tasks_dir(self) -> Path:
-        return self.root / "docs" / "archive" / "tasks"
-
-    @property
     def template_dir(self) -> Path:
         return self.toolkit_root / "docs" / "task_template"
 
@@ -93,7 +89,7 @@ class RepoContext:
 
     @property
     def audit_path(self) -> Path:
-        return self.primary_root / "docs" / "archive" / "tasks_audit.log"
+        return self.primary_root / "docs" / "runtime" / "tasks_audit.log"
 
     def rel(self, path: Path) -> str:
         for base in (self.root, self.primary_root):
@@ -112,8 +108,9 @@ class RepoContext:
 
 
 VALID_STATUSES = ("backlog", "active", "done", "dropped")
-ARCHIVED_STATUSES = ("done", "dropped")
-# 仅活跃目录内可 rewind 的状态及其顺序（防 forward）
+TERMINAL_STATUSES = ("done", "dropped")
+ARCHIVED_STATUSES = TERMINAL_STATUSES  # 终态集合（done / dropped），严禁与物理存储目录绑定
+# 仅活跃状态可 rewind 及其顺序（防 forward）
 STATUS_ORDER = ("backlog", "active")
 DEFAULT_REWIND = {"active": "backlog"}  # 撤一步映射
 REVIEW_LEVELS = ("full", "single")

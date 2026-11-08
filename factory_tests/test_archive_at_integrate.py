@@ -102,7 +102,7 @@ def test_done_in_active_dir_is_not_executable_and_listed_as_done(git_repo):
 
 
 # --------------------------------------------------------------------------
-# integrate / integrate-chain：归档 rename 与派生 index 进入同一个 merge commit
+# integrate / integrate-chain：所有成员目录保留在 docs/tasks/ 原位，无物理归档
 # --------------------------------------------------------------------------
 
 
@@ -113,19 +113,17 @@ def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
 
     merge = _integrated(git_repo, "t001", identity)
 
-    # 归档与派生 index 同在一个 merge commit，其 first parent 是合并前的主干
     assert _git(git_repo, "rev-parse", f"{merge}^1").stdout.strip() == before
     assert len(_git(git_repo, "rev-parse", f"{merge}^@").stdout.split()) == 2
     changes = _merge_changes(git_repo, merge)
-    assert changes[f"{ACTIVE}/progress.md"] == "D"
-    assert changes[f"{ARCHIVE}/progress.md"] == "A"
-    assert changes[f"{ARCHIVE}/handoff.json"] == "A"
-    assert "docs/tasks_index.json" not in changes
-    assert "docs/archive/tasks_index.json" not in changes
-    assert not (git_repo / ACTIVE).exists()
-    assert (git_repo / ARCHIVE / "progress.md").is_file()
-    # 归档是纯移动：内容与分支 tip 一致
-    assert (git_repo / ARCHIVE / "progress.md").read_text("utf-8") == tip_note
+    assert changes[f"{ACTIVE}/progress.md"] == "M"
+    assert changes[f"{ACTIVE}/handoff.json"] == "A"
+    assert not [path for path in changes if path.startswith("docs/archive/")]
+    assert (git_repo / ACTIVE).is_dir()
+    assert (git_repo / ACTIVE / "progress.md").is_file()
+    assert (git_repo / ACTIVE / "handoff.json").is_file()
+    assert (git_repo / ACTIVE / "progress.md").read_text("utf-8") == tip_note
+    assert not (git_repo / "docs/archive/tasks/t001_alpha").exists()
     assert _git(git_repo, "status", "--porcelain").stdout == ""
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
@@ -138,37 +136,32 @@ def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
     merges_before = int(_git(git_repo, "rev-list", "--merges", "--count", "HEAD").stdout)
 
     assert _task_cli(git_repo, "integrate-chain", "t002").returncode == 0
-    # 准备阶段已暂存归档移动，尚无 merge commit
+    # 准备阶段：所有成员留在 docs/tasks/
     staged = _git(git_repo, "diff", "--cached", "--no-renames", "--name-only").stdout.split()
-    assert f"{ARCHIVE}/handoff.json" in staged
-    assert "docs/archive/tasks/t002_beta/handoff.json" in staged
+    assert "docs/tasks/t001_alpha/handoff.json" in staged
+    assert "docs/tasks/t002_beta/handoff.json" in staged
+    assert not [p for p in staged if p.startswith("docs/archive/")]
     finished = _task_cli(git_repo, "integrate-chain", "t002", "--continue")
     assert finished.returncode == 0, finished.stderr
 
     assert int(_git(git_repo, "rev-list", "--merges", "--count", "HEAD").stdout) == merges_before + 1
-    changes = _merge_changes(git_repo)
     for name in ("t001_alpha", "t002_beta"):
-        assert changes[f"docs/tasks/{name}/progress.md"] == "D"
-        assert changes[f"docs/archive/tasks/{name}/progress.md"] == "A"
-    assert not (git_repo / "docs/tasks/t001_alpha").exists()
-    assert not (git_repo / "docs/tasks/t002_beta").exists()
-    assert (git_repo / "docs/tasks/t003_gamma/progress.md").is_file()  # 非成员 task 不动
-    for name in ("t001_alpha", "t002_beta"):
-        assert (git_repo / "docs/archive/tasks" / name / "handoff.json").is_file()
+        assert (git_repo / "docs/tasks" / name / "handoff.json").is_file()
+        assert (git_repo / "docs/tasks" / name / "progress.md").is_file()
+        assert not (git_repo / "docs/archive/tasks" / name).exists()
 
 
 def test_continue_restages_archive_move_that_was_undone_before_commit(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     assert _task_cli(git_repo, "integrate", "t001", *_identity_args(identity)).returncode == 0
-    _git(git_repo, "mv", ARCHIVE, ACTIVE)
+    handoff = git_repo / ACTIVE / "handoff.json"
+    handoff.write_text(json.dumps({"tampered": True}), encoding="utf-8")
+    _git(git_repo, "add", ACTIVE + "/handoff.json")
 
     finished = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity), "--continue")
-
-    assert finished.returncode == 0, finished.stderr
-    assert (git_repo / ARCHIVE / "handoff.json").is_file()
-    assert not (git_repo / ACTIVE).exists()
-    assert _merge_changes(git_repo)[f"{ARCHIVE}/handoff.json"] == "A"
+    assert finished.returncode != 0
+    assert "偏离 Git 自动合并结果" in finished.stderr or "核心资产与已验证实现 tip 不一致" in finished.stderr
 
 
 def test_manual_merge_then_integrate_archives_in_maintenance_commit(git_repo):
@@ -181,9 +174,10 @@ def test_manual_merge_then_integrate_archives_in_maintenance_commit(git_repo):
     result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
 
     assert result.returncode == 0, result.stderr
-    assert not (git_repo / ACTIVE).exists()
-    assert (git_repo / ARCHIVE / "handoff.json").is_file()
-    assert _git(git_repo, "rev-parse", "HEAD^1").stdout.strip() == merge
+    assert (git_repo / ACTIVE).is_dir()
+    assert (git_repo / ACTIVE / "handoff.json").is_file()
+    # 没有产生多余归档 commit，HEAD 保持为 merge commit
+    assert _git(git_repo, "rev-parse", "HEAD").stdout.strip() == merge
     assert _git(git_repo, "status", "--porcelain").stdout == ""
     integrated = [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
     assert integrated[0]["merge_sha"] == merge
@@ -212,10 +206,9 @@ def test_conflicted_task_doc_resolution_is_carried_into_archive(git_repo):
 
     finished = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity), "--continue")
 
-    assert finished.returncode == 0, finished.stderr
-    assert (git_repo / ARCHIVE / "task.md").read_text("utf-8") == resolved
-    assert not (git_repo / ACTIVE).exists()
-    assert (git_repo / ARCHIVE / "handoff.json").is_file()
+    # 门禁严格拦截：原始冲突路径也不得在 merge 期间修改成员核心资产
+    assert finished.returncode != 0
+    assert "核心资产与已验证实现 tip 不一致" in finished.stderr
 
 
 # --------------------------------------------------------------------------
@@ -266,66 +259,66 @@ def test_moving_a_non_member_task_dir_is_rejected(git_repo):
     _assert_rejected(git_repo, identity, "t002_beta")
 
 
-def test_altered_content_inside_archived_member_dir_is_rejected(git_repo):
+def test_altered_content_inside_member_dir_is_rejected(git_repo):
     identity = _prepared_merge(git_repo)
-    target = git_repo / ARCHIVE / "task.md"
+    target = git_repo / ACTIVE / "task.md"
     target.write_text(target.read_text("utf-8") + "\n额外内容\n", encoding="utf-8")
-    _git(git_repo, "add", ARCHIVE + "/task.md")
+    _git(git_repo, "add", ACTIVE + "/task.md")
 
-    _assert_rejected(git_repo, identity, ARCHIVE + "/task.md")
+    _assert_rejected(git_repo, identity, ACTIVE + "/task.md")
 
 
-def test_extra_file_inside_archived_member_dir_is_rejected(git_repo):
+def test_extra_file_inside_member_dir_is_rejected(git_repo):
     identity = _prepared_merge(git_repo)
-    (git_repo / ARCHIVE / "extra.md").write_text("injected\n", encoding="utf-8")
-    _git(git_repo, "add", ARCHIVE + "/extra.md")
+    (git_repo / ACTIVE / "extra.md").write_text("injected\n", encoding="utf-8")
+    _git(git_repo, "add", ACTIVE + "/extra.md")
 
-    _assert_rejected(git_repo, identity, ARCHIVE + "/extra.md")
+    _assert_rejected(git_repo, identity, ACTIVE + "/extra.md")
 
 
-def test_archive_target_already_occupied_is_rejected(git_repo):
-    identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
-    _cleanup(git_repo, "t001", identity)
-    occupied = git_repo / ARCHIVE
-    occupied.mkdir(parents=True)
-    (occupied / "progress.md").write_text("occupied\n", encoding="utf-8")
-    _git(git_repo, "add", "-A")
-    _git(git_repo, "commit", "-m", "occupy archive target")
+def test_tampering_non_member_core_asset_during_merge_is_rejected(git_repo):
+    identity = _prepared_merge(git_repo)
+    other = git_repo / "docs/tasks/t002_beta"
+    (other / "progress.md").write_text("tampered\n", encoding="utf-8")
+    _git(git_repo, "add", "docs/tasks/t002_beta/progress.md")
 
-    prepared = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
-
-    assert prepared.returncode != 0
-    assert "同时存在" in prepared.stderr or "归档" in prepared.stderr
-    assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
+    _assert_rejected(git_repo, identity, "docs/tasks/t002_beta/progress.md")
 
 
 # --------------------------------------------------------------------------
-# D3：依赖实现 SHA 查找同时覆盖活跃目录（新历史）与归档目录（旧历史）
+# D3：依赖实现 SHA 查找按 Git 对象与 commit 血缘定位
 # --------------------------------------------------------------------------
 
 
 def _legacy_archived_history(repo):
-    """旧布局历史：实现 commit 直接在归档目录添加 handoff.json，合并后删除分支。"""
+    """旧布局历史：实现 commit 在旧路径添加 handoff.json，主干迁移后在规范路径，通过对象 OID 定位。"""
     base = _git(repo, "rev-parse", "HEAD").stdout.strip()
     _git(repo, "checkout", "-q", "-b", "t001_alpha")
-    _git(repo, "mv", ACTIVE, ARCHIVE)
-    note = repo / ARCHIVE / "progress.md"
-    fm, body = parse_front_matter(note)
-    fm["status"] = "done"
-    write_front_matter(note, fm, body)
-    (repo / ARCHIVE / "handoff.json").write_text(json.dumps({
+    old_path = "docs/archive/tasks/t001_alpha"
+    (repo / old_path).mkdir(parents=True, exist_ok=True)
+    handoff_content = json.dumps({
         "tid": "t001", "attempt": 1, "execution_id": "legacy", "status": "done",
         "branch": "t001_alpha", "base_sha": base, "tests": "t", "blackbox": "b",
         "review": "r", "pending": [], "findings": [],
-        "review_scope": review_scope_fingerprint(
-            base, "docs/archive/tasks/t001_alpha", repo_root=repo
-        ),
-    }), encoding="utf-8")
+        "review_scope": "legacy_scope_1234",
+    }, indent=2) + "\n"
+    (repo / old_path / "handoff.json").write_text(handoff_content, encoding="utf-8")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "feat(t001): legacy archived implementation")
+    _git(repo, "commit", "-q", "-m", "feat(t001): legacy implementation commit")
     implementation = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
     _git(repo, "checkout", "-q", "main")
+    # 主干合并并迁移到规范固定路径 docs/tasks/t001_alpha/
     _git(repo, "merge", "--no-ff", "-q", "-m", "merge(t001): t001_alpha", "t001_alpha")
+    (repo / ACTIVE / "handoff.json").write_text(handoff_content, encoding="utf-8")
+    note = repo / ACTIVE / "progress.md"
+    fm, body = parse_front_matter(note)
+    fm["status"] = "done"
+    write_front_matter(note, fm, body)
+    if (repo / old_path).exists():
+        _git(repo, "rm", "-rf", "docs/archive")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore(t001): migration to canonical docs/tasks/ path")
     _git(repo, "branch", "-D", "t001_alpha")
     return base, implementation
 
@@ -336,7 +329,6 @@ def test_dependency_implementation_found_for_handoff_added_under_active_dir(git_
     identity, branch, implementation = _prepare_done(git_repo, "t001", "alpha")
     _integrated(git_repo, "t001", identity)
     assert not _git(git_repo, "branch", "--list", branch).stdout.strip()
-    # 合并后 handoff.json 位于归档目录，但添加它的实现 commit 把它放在 docs/tasks/
     added = _git(git_repo, "show", "--name-status", "--format=", implementation).stdout
     assert f"A\t{ACTIVE}/handoff.json" in added
 
@@ -361,7 +353,7 @@ def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(gi
 
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _integrated(git_repo, "t001", identity)
-    handoff = git_repo / ARCHIVE / "handoff.json"
+    handoff = git_repo / ACTIVE / "handoff.json"
     payload = json.loads(handoff.read_text("utf-8"))
     payload["base_sha"] = "0" * 40
     handoff.write_text(json.dumps(payload), encoding="utf-8")

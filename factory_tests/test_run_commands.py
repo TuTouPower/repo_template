@@ -457,7 +457,7 @@ def test_run_begin_supports_task_added_and_scheduled_on_main_after_unmerged_chai
     assert cont.returncode == 0, cont.stderr
 
     for name in ("t001_alpha", "t002_beta", "t004_delta", "t003_gamma"):
-        assert not (git_repo / "docs/tasks" / name).exists()
-        assert (git_repo / "docs/archive/tasks" / name / "handoff.json").is_file()
+        assert (git_repo / "docs/tasks" / name / "handoff.json").is_file()
+        assert not (git_repo / "docs/archive/tasks" / name).exists()
     for fname in ("chain_1.txt", "chain_2.txt", "chain_4.txt", "chain_3.txt"):
         assert (git_repo / fname).is_file()

@@ -95,10 +95,9 @@ def _get_rendered_html(repo) -> str:
 def _allowed_doc_roots(base: Path, repo) -> tuple[Path, ...]:
     """任务文档允许的根：主仓用上下文派生路径，worktree 用其自身路径。"""
     if base.resolve() == repo.root.resolve():
-        return (repo.tasks_dir.resolve(), repo.archive_tasks_dir.resolve())
+        return (repo.tasks_dir.resolve(),)
     return (
         (base / "docs" / "tasks").resolve(),
-        (base / "docs" / "archive" / "tasks").resolve(),
     )
 
 

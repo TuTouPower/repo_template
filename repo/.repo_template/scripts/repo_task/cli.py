@@ -75,7 +75,7 @@ def main():
     edit.add_argument("--conflicts-remove")
     edit.set_defaults(func=cmd_edit)
 
-    merge_backlog = sub.add_parser("merge-backlog", help="原子合并 backlog 图并归档来源；保留硬依赖并拒绝环")
+    merge_backlog = sub.add_parser("merge-backlog", help="原子合并 backlog 图并将来源标为 dropped；保留硬依赖并拒绝环")
     merge_backlog.add_argument("tid", help="保留或新建的目标 tid")
     merge_backlog.add_argument("--sources", required=True, help="逗号分隔来源 tid")
     merge_backlog.set_defaults(func=cmd_merge_backlog)
@@ -120,7 +120,7 @@ def main():
 
     finish = sub.add_parser(
         "finish",
-        help="active -> done：严格校验后原位写 done、生成 handoff.json 并提交实现 commit（归档由 integrate 完成）；提交失败整体回滚",
+        help="active -> done：严格校验后原位写 done、生成 handoff.json 并提交实现 commit；提交失败整体回滚",
     )
     finish.add_argument("tid")
     finish.add_argument("--owner-id", required=True, help="当前会话执行权，须与 ledger claim 一致")

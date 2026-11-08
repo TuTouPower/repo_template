@@ -64,10 +64,9 @@ def cmd_merge_backlog(args):
             updates.append((path, fm, body))
         transaction = FileTransaction(repo.root, ".scratch/task_graph_transaction")
         retired = sorted(group - {args.tid})
-        source_dirs = [main_tasks[tid]["dir"] for tid in retired]
-        paths = source_dirs + [(Path("docs/archive/tasks") / Path(directory).name).as_posix() for directory in source_dirs]
-        paths += [str(path.relative_to(repo.root)) for path, _, _ in updates
-                  if not any(path.is_relative_to(repo.root / directory) for directory in source_dirs)]
+        retired_paths = [f"{main_tasks[tid]['dir']}/{ctx.PROGRESS_FILE}" for tid in retired]
+        update_paths = [str(path.relative_to(repo.root)) for path, _, _ in updates]
+        paths = sorted(set(retired_paths + update_paths))
         try:
             transaction.begin(paths)
         except ValueError as error:
@@ -80,8 +79,6 @@ def cmd_merge_backlog(args):
                     Namespace(tid=tid), "dropped", f"merged into {args.tid}", repo=repo
                 )
             for path, fm, _body in updates:
-                if any(path.is_relative_to(repo.root / d) for d in source_dirs):
-                    continue
                 actual, _ = parse_front_matter(path)
                 if (
                     actual.get("depends_on", "") != fm["depends_on"]
@@ -90,20 +87,21 @@ def cmd_merge_backlog(args):
                     raise ctx.TaskDataError(
                         f"合并后校验失败：{repo.rel(path)} 依赖/冲突与预期不符"
                     )
-            for directory in source_dirs:
-                name = Path(directory).name
-                if (repo.tasks_dir / name).exists():
-                    raise ctx.TaskDataError(f"合并后校验失败：docs/tasks/{name} 仍存在")
-                if not (repo.archive_tasks_dir / name).is_dir():
+            for tid in retired:
+                progress_file = repo.root / main_tasks[tid]["dir"] / ctx.PROGRESS_FILE
+                if not progress_file.is_file():
+                    raise ctx.TaskDataError(f"合并后校验失败：{main_tasks[tid]['dir']}/{ctx.PROGRESS_FILE} 不存在")
+                actual_fm, _ = parse_front_matter(progress_file)
+                if actual_fm.get("status") != "dropped":
                     raise ctx.TaskDataError(
-                        f"合并后校验失败：docs/archive/tasks/{name} 不存在"
+                        f"合并后校验失败：{tid} status 应为 dropped（实际为 {actual_fm.get('status')}）"
                     )
             transaction.applied()
             transaction.accept()
         except (OSError, ctx.TaskDataError, SystemExit) as error:
             transaction.rollback(automatic=True)
-            raise ctx.TaskDataError(f"backlog 合并失败，已恢复图与来源目录：{error}") from error
-    print(f"graph merged into {args.tid}: {', '.join(sorted(group))}；依赖与冲突已改指，来源已归档")
+            raise ctx.TaskDataError(f"backlog 合并失败，已恢复图与来源元数据：{error}") from error
+    print(f"graph merged into {args.tid}: {', '.join(sorted(group))}；依赖与冲突已改指，来源已标记 dropped")
 
 
 def cmd_graph_transaction(args):
