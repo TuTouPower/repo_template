@@ -271,7 +271,8 @@ def test_disposition_stats_ignores_fenced_table(tmp_path):
     assert sum(disposition_stats(p).values()) == 0
 
 
-def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
+def test_main_rejects_invalid_review_level(tmp_path, monkeypatch, capsys):
+    """progress.md 中 review_level 非法时，review-status 拦截并以非零码退出。"""
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     task_dir = tmp_path / "docs" / "tasks" / "t001_x"
     task_dir.mkdir(parents=True)
@@ -286,9 +287,11 @@ def test_main_rejects_invalid_inputs(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         crs.main()
     assert exc.value.code == 1
+    assert "review_level must be one of" in capsys.readouterr().err
 
 
-def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
+def test_main_rejects_missing_task_directory(tmp_path, monkeypatch, capsys):
+    """--task-dir 指向不存在的目录时，review-status 拦截并以非零码退出。"""
     monkeypatch.setattr(crs, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(
         sys,
@@ -298,6 +301,7 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         crs.main()
     assert exc.value.code == 1
+    assert "task directory does not exist" in capsys.readouterr().err
 
 
 def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):

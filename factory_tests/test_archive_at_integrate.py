@@ -1,8 +1,7 @@
-"""D1：归档从 finish 移到 integrate。
+"""D1：原位保留与集成验证。
 
-finish 只在原位（docs/tasks/）写 done、生成 handoff.json 并提交；integrate /
-integrate-chain 在 `git merge --no-ff --no-commit` 之后把成员目录 git mv 进归档，
-与派生 index 一起进入同一个 merge commit。
+finish 在原位（docs/tasks/）写 done、生成 handoff.json 并提交；integrate /
+integrate-chain 在 `git merge --no-ff` 之后保持成员目录在 docs/tasks/ 原位，杜绝归档搬移与派生 index。
 """
 
 import json
@@ -106,7 +105,7 @@ def test_done_in_active_dir_is_not_executable_and_listed_as_done(git_repo):
 # --------------------------------------------------------------------------
 
 
-def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
+def test_integrate_merge_commit_keeps_task_in_place_without_archive(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
     before = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
     tip_note = _git(git_repo, "show", f"{branch}:{ACTIVE}/progress.md").stdout
@@ -128,7 +127,7 @@ def test_integrate_merge_commit_holds_archive_rename_and_indexes(git_repo):
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
 
-def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
+def test_integrate_chain_keeps_all_members_in_place_without_archive(git_repo):
     first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", first)
     second, _, _ = _prepare_done(git_repo, "t002", "beta", base=first_branch)
@@ -151,7 +150,7 @@ def test_integrate_chain_archives_every_member_in_one_merge_commit(git_repo):
         assert not (git_repo / "docs/archive/tasks" / name).exists()
 
 
-def test_continue_restages_archive_move_that_was_undone_before_commit(git_repo):
+def test_integrate_continue_rejects_tampered_core_asset_before_commit(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     assert _task_cli(git_repo, "integrate", "t001", *_identity_args(identity)).returncode == 0
@@ -164,7 +163,7 @@ def test_continue_restages_archive_move_that_was_undone_before_commit(git_repo):
     assert "偏离 Git 自动合并结果" in finished.stderr or "核心资产与已验证实现 tip 不一致" in finished.stderr
 
 
-def test_manual_merge_then_integrate_archives_in_maintenance_commit(git_repo):
+def test_manual_merge_then_integrate_keeps_in_place_without_extra_commit(git_repo):
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     assert _git(git_repo, "merge", "--no-ff", "-m", "merge(t001): t001_alpha", branch).returncode == 0
@@ -183,7 +182,7 @@ def test_manual_merge_then_integrate_archives_in_maintenance_commit(git_repo):
     assert integrated[0]["merge_sha"] == merge
 
 
-def test_conflicted_task_doc_resolution_is_carried_into_archive(git_repo):
+def test_conflicted_task_doc_resolution_diverging_from_tip_is_rejected(git_repo):
     identity, _, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     # 主干在 task 运行期间改写分支打勾的同一行，制造 task.md 的 modify/modify 冲突
@@ -212,7 +211,7 @@ def test_conflicted_task_doc_resolution_is_carried_into_archive(git_repo):
 
 
 # --------------------------------------------------------------------------
-# 校验边界：只豁免「派生 index + 成员目录的纯移动」，其余仍严格拒绝
+# 校验边界：除集成必需的核心资产与合并变更外，其余非预期改动严格拒绝
 # --------------------------------------------------------------------------
 
 

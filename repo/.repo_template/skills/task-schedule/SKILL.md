@@ -22,9 +22,9 @@ metadata:
     - `depends_on` 只表达必须先获得的行为、接口或产物；
     - `conflicts_with` 只表达不宜并发的重叠改动面；
     - 不确定或 spec 太粗时报告待澄清，不猜边。
-4. 只用 `task.py edit` 修改调度字段，不手改 front matter 或 index。
+4. 只用 `task.py edit` 修改调度字段，不手改 front matter。
 5. 运行 `task.py view` 和 `task.py plan`。依赖环、缺失引用等错误必须修正；冲突只影响并发建议，不影响明确的串行队列。
-6. 汇报写图结果和本波计划，询问是否提交调度改动；同意后提交 task 文档和派生 index。
+6. 汇报写图结果和本波计划，询问是否提交调度改动；同意后提交 task 调度改动。
 
 ## 边界
 

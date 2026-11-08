@@ -650,13 +650,13 @@ def test_prettierignore_new_header_presence_matches_stripped_line(env):
         assert rule in lines
 
 
-def test_prettierignore_covers_generated_artifacts(env):
-    # 同步状态与任务产物需豁免；派生索引已退出 Git，不再列出
+def test_prettierignore_covers_sync_state_and_handoff_without_derived_indexes(env):
+    """prettierignore 包含 sync_state 与 handoff.json，不再包含已废除的派生 index 规则。"""
     rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
     assert ".repo_template/sync_state.json" in rules
+    assert "docs/**/handoff.json" in rules
     assert "docs/tasks_index.json" not in rules
     assert "docs/archive/tasks_index.json" not in rules
-    assert "docs/**/handoff.json" in rules
 
 
 def test_prettierignore_omits_undistributed_test_paths(env):

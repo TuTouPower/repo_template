@@ -61,7 +61,7 @@
 | L43 | 执行分支归档与 amend 例外 | 宏观方案 D-04，用户批准；修订 L14 | 归档由 integrate 的 merge commit 完成；执行历史为一个实现 commit 加零到多个仅含 review 过程文件的证据 commit，禁止改写实现历史 | `repo_task/{integration,monitoring}.py`、`recovery.md` | 已落地；证据 commit 部分被 L53 取代 |
 | L44 | 阻塞传播到无关队列成员 | 宏观方案 D-05，用户批准 E1/E2 | 按依赖与冲突关系分链，无关成员从主干起步；阻塞只停止所在链，无可继续成员才判 STOPPED | `repo_task/{plan,goal}.py`、`task-run` | 已落地 |
 | L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、`testing.md` | 已落地 |
-| L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json；需要时显式 install-hooks --statusline，保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
+| L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json，状态行改由 run-begin 写入会话工作目录；保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
 | L47 | 看板 mock demo 与现行实现重复 | 宏观方案 D-08，用户批准 | 删除 demo 源码与 zip，保留 Git 历史；设计计划移入 archive 并注明现行实现 | `docs_repo/archive/plan_board_v2_chain_panel_demo.md` | 已落地 |
 | L48 | 工厂历史 basetemp 占用工作区 | 宏观方案 D-09，用户批准 | 历史测试残留清理；全量 basetemp 使用系统临时目录，缓存与运行产物不提交 | 工厂 `AGENTS.md` | 已落地；当前开发环境仍可使用忽略的 .scratch |
 | L50 | note.md 文件名与状态、进展职责不符 | 宏观方案 D-12，用户批准 | 当前过程文件统一 progress.md，标题为 Task 进展；同步事务一次迁移活跃与归档旧布局，两名并存拒绝，失败回滚 | `repo_task/context.py`、`template_sync/workflow_migration.py` | 已落地 |

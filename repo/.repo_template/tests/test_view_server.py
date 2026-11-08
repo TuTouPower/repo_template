@@ -341,15 +341,13 @@ def test_build_model_has_no_schedule_status(monkeypatch):
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
 
 
-def test_board_renders_server_stop_reason_without_client_algorithm():
-    """A17：链停止原因只由服务端提供；前端缺字段报接口错误，空字符串正常渲染。"""
+def test_board_renders_server_provided_stop_reason():
+    """前端直接使用服务端提供的 stop_reason，字段缺失时提示接口错误。"""
     static = Path(__file__).resolve().parents[1] / "scripts/repo_task/view_static"
     board = (static / "board.js").read_text(encoding="utf-8")
-    chain_plan = (static / "chain_plan.js").read_text(encoding="utf-8")
-    assert "chainStopInfo" not in board
-    assert "chainStopInfo" not in chain_plan
     assert "接口错误：链缺少 stop_reason 字段" in board
     assert "hasOwnProperty.call(chain, 'stop_reason')" in board
+    assert "chain.stop_reason" in board
 
 
 def test_compute_batch_plan_always_sets_stop_reason(tmp_path, monkeypatch):

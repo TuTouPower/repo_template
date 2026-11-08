@@ -46,7 +46,6 @@ git merge --no-ff --no-commit <branch-or-tail>
 
 - blueprint：合成一致语义，不机械拼接。
 - task 目录内文件冲突：只解决冲突路径并保留在 `docs/tasks/{tid}_{slug}/` 原位，不移动目录。
-- 派生 index：由脚本重建。
 - 源码和测试：理解双方意图；不确定则停止。
 - pending/finding 同号冲突：说明 ID 锁被绕过，停止。
 
