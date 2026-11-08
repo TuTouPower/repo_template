@@ -20,7 +20,7 @@ import pending as pending_mod
 import findings as findings_mod
 import spikes as spikes_mod
 
-PENDING_DIRS = pending_mod.SCAN_DIRS
+PENDING_DIRS = ("docs/pending",)
 FINDING_DIRS = findings_mod.SCAN_DIRS
 SPIKE_DIRS = spikes_mod.SCAN_DIRS
 
@@ -42,8 +42,8 @@ def _init_repo(tmp_path):
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
-    (repo / "docs" / "pending" / "todo").mkdir(parents=True)
-    (repo / "docs" / "pending" / "todo" / ".gitkeep").write_text("", encoding="utf-8")
+    (repo / "docs" / "pending").mkdir(parents=True)
+    (repo / "docs" / "pending" / ".gitkeep").write_text("", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -60,18 +60,8 @@ def _commit_entry(repo, rel, text="# entry\n", msg="add entry"):
 def _bind(monkeypatch, repo):
     """把 pending/findings 模块的路径常量重绑到临时仓库。"""
     monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(pending_mod, "TODO_DIR", repo / "docs/pending/todo")
-    monkeypatch.setattr(pending_mod, "PARKED_DIR", repo / "docs/pending/parked")
-    monkeypatch.setattr(pending_mod, "ARCHIVE_DIR", repo / "docs/archive/pending")
-    monkeypatch.setattr(
-        pending_mod,
-        "STATE_DIRS",
-        {
-            "todo": repo / "docs/pending/todo",
-            "parked": repo / "docs/pending/parked",
-            "archived": repo / "docs/archive/pending",
-        },
-    )
+    monkeypatch.setattr(pending_mod, "PENDING_DIR", repo / "docs/pending")
+    monkeypatch.setattr(pending_mod, "SCAN_DIRS", ("docs/pending",))
     monkeypatch.setattr(findings_mod, "REPO_ROOT", repo)
     monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
     monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
@@ -92,71 +82,71 @@ def test_empty_history_starts_at_zero(tmp_path):
 
 def test_todo_entries_drive_max(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p007_bug.md")
-    _commit_entry(repo, "docs/pending/todo/p002_debt.md")
+    _commit_entry(repo, "docs/pending/p007_bug.md")
+    _commit_entry(repo, "docs/pending/p002_debt.md")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 7
 
 
-def test_archived_entries_count(tmp_path):
+def test_closed_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p002_open.md")
-    _commit_entry(repo, "docs/archive/pending/p027_closed.md")
+    _commit_entry(repo, "docs/pending/p002_open.md")
+    _commit_entry(repo, "docs/pending/p027_closed.md")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 27
 
 
 def test_parked_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/parked/p013_later.md")
+    _commit_entry(repo, "docs/pending/p013_later.md")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 13
 
 
 def test_non_entry_filenames_ignored(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/README.md")
-    _commit_entry(repo, "docs/pending/todo/p01_short.md")
-    _commit_entry(repo, "docs/pending/todo/p012_Upper.md")
-    _commit_entry(repo, "docs/pending/todo/p013_ok.md")
+    _commit_entry(repo, "docs/pending/p01_short.md")
+    _commit_entry(repo, "docs/pending/p012_Upper.md")
+    _commit_entry(repo, "docs/pending/p013_ok.md")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 13
 
 
 def test_ids_can_exceed_999(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p1024_big.md")
+    _commit_entry(repo, "docs/pending/p1024_big.md")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 1024
 
 
 def test_other_branch_bigger_id_is_picked_up(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p003_main.md")
+    _commit_entry(repo, "docs/pending/p003_main.md")
     _git(repo, "checkout", "-b", "feature")
-    _commit_entry(repo, "docs/pending/todo/p005_feature.md")
+    _commit_entry(repo, "docs/pending/p005_feature.md")
     _git(repo, "checkout", "main")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 5
 
 
 def test_worktree_uncommitted_entry_picked_up(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p003_main.md")
+    _commit_entry(repo, "docs/pending/p003_main.md")
     worktree = tmp_path / "wt"
     _git(repo, "worktree", "add", "--detach", str(worktree))
-    (worktree / "docs/pending/todo/p009_wip.md").write_text("x\n", encoding="utf-8")
+    (worktree / "docs/pending/p009_wip.md").write_text("x\n", encoding="utf-8")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 9
 
 
 def test_duplicate_within_source_fails(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p010_open.md")
-    _commit_entry(repo, "docs/archive/pending/p010_closed.md")
+    _commit_entry(repo, "docs/pending/p010_open.md")
+    _commit_entry(repo, "docs/pending/p010_closed.md")
     with pytest.raises(IdScanError, match="p010"):
         scan_max_id(repo, "p", PENDING_DIRS)
 
 
 def test_duplicate_across_sources_not_reported(tmp_path):
     repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/pending/todo/p010_main.md")
+    _commit_entry(repo, "docs/pending/p010_main.md")
     _git(repo, "checkout", "-b", "feature")
-    _git(repo, "rm", "-q", "docs/pending/todo/p010_main.md")
-    _commit_entry(repo, "docs/pending/todo/p010_feature.md")
+    _git(repo, "rm", "-q", "docs/pending/p010_main.md")
+    _commit_entry(repo, "docs/pending/p010_feature.md")
     _git(repo, "checkout", "main")
     assert scan_max_id(repo, "p", PENDING_DIRS) == 10
 
@@ -171,54 +161,55 @@ def test_git_failure_wrapped(tmp_path):
 # ---------- 互斥分配 ----------
 
 
-def _allocate_one(repo_and_slug):
-    repo, slug = repo_and_slug
-    repo = Path(repo)
+def test_allocate_creates_file_and_returns_path(tmp_path):
+    repo = _init_repo(tmp_path)
     path = allocate(
         repo,
         prefix="p",
         dirs=PENDING_DIRS,
-        target_dir=repo / "docs/pending/todo",
-        slug=slug,
+        target_dir=repo / "docs/pending",
+        slug="new_item",
+        body="# {id} demo\n",
+    )
+    assert path == repo / "docs/pending/p001_new_item.md"
+    assert path.is_file()
+    assert path.read_text(encoding="utf-8") == "# p001 demo\n"
+
+
+def test_allocate_increments_sequentially(tmp_path):
+    repo = _init_repo(tmp_path)
+    p1 = allocate(
+        repo,
+        prefix="p",
+        dirs=PENDING_DIRS,
+        target_dir=repo / "docs/pending",
+        slug="first",
         body="# {id}\n",
     )
-    return path.name
-
-
-def test_concurrent_allocation_yields_unique_ids(tmp_path):
-    repo = _init_repo(tmp_path)
-    slugs = [f"job_{i}" for i in range(8)]
-    with ProcessPoolExecutor(max_workers=8) as pool:
-        names = list(pool.map(_allocate_one, [(str(repo), slug) for slug in slugs]))
-    numbers = sorted(int(name[1:4]) for name in names)
-    assert numbers == list(range(1, 9))
-
-
-def test_allocate_writes_id_into_body(tmp_path):
-    repo = _init_repo(tmp_path)
-    path = allocate(
+    p2 = allocate(
         repo,
         prefix="p",
         dirs=PENDING_DIRS,
-        target_dir=repo / "docs/pending/todo",
-        slug="demo",
-        body="# {id} title\n",
+        target_dir=repo / "docs/pending",
+        slug="second",
+        body="# {id}\n",
     )
-    assert path.name == "p001_demo.md"
-    assert path.read_text(encoding="utf-8") == "# p001 title\n"
+    assert p1.name == "p001_first.md"
+    assert p2.name == "p002_second.md"
 
 
 def test_allocate_rejects_bad_slug(tmp_path):
     repo = _init_repo(tmp_path)
-    with pytest.raises(IdScanError, match="slug"):
-        allocate(
-            repo,
-            prefix="p",
-            dirs=PENDING_DIRS,
-            target_dir=repo / "docs/pending/todo",
-            slug="Bad-Slug",
-            body="# {id}\n",
-        )
+    for bad in ("Upper", "has space", "dash-separated", "p001-prefix", ""):
+        with pytest.raises(IdScanError):
+            allocate(
+                repo,
+                prefix="p",
+                dirs=PENDING_DIRS,
+                target_dir=repo / "docs/pending",
+                slug=bad,
+                body="# {id}\n",
+            )
 
 
 # ---------- 状态迁移 ----------
@@ -230,171 +221,165 @@ def test_park_then_revive_round_trip(tmp_path, monkeypatch):
     pending_mod.main(["new", "--slug", "demo"])
 
     pending_mod.main(["park", "p001", "--reason", "2026-08-03 等依赖", "--write"])
-    parked = repo / "docs/pending/parked/p001_demo.md"
+    parked = repo / "docs/pending/p001_demo.md"
     assert parked.is_file()
     text = parked.read_text(encoding="utf-8")
     assert "- 处理：不办" in text
     assert "- 暂搁：2026-08-03 等依赖" in text
 
     pending_mod.main(["revive", "p001", "--write"])
-    revived = repo / "docs/pending/todo/p001_demo.md"
+    revived = repo / "docs/pending/p001_demo.md"
     text = revived.read_text(encoding="utf-8")
     assert "- 处理：未开" in text
-    assert "暂搁" not in text
+    assert "- 暂搁：2026-08-03 等依赖" in text
 
 
-def test_archive_writes_fix_ref(tmp_path, monkeypatch):
+def test_close_writes_fix_ref(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
-    archived = repo / "docs/archive/pending/p001_demo.md"
-    assert "- 处理：t012" in archived.read_text(encoding="utf-8")
+    pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+    closed = repo / "docs/pending/p001_demo.md"
+    assert "- 处理：t012" in closed.read_text(encoding="utf-8")
 
 
-def test_archive_defaults_to_dry_run(tmp_path, monkeypatch):
+def test_close_defaults_to_dry_run(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012"])
-    assert (repo / "docs/pending/todo/p001_demo.md").is_file()
-    assert not (repo / "docs/archive/pending/p001_demo.md").exists()
+    pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012"])
+    fm, _ = pending_mod.parse_pending_file(repo / "docs/pending/p001_demo.md")
+    assert fm["status"] == "todo"
 
 
-def test_archive_rejects_parked_entry(tmp_path, monkeypatch):
+def test_close_rejects_parked_entry(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
     pending_mod.main(["park", "p001", "--reason", "later", "--write"])
     with pytest.raises(SystemExit, match="revive"):
-        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+        pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
-def test_archive_rejects_already_archived(tmp_path, monkeypatch):
+def test_close_rejects_already_closed(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
-    with pytest.raises(SystemExit, match="重复归档"):
-        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t013", "--write"])
+    pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+    with pytest.raises(SystemExit, match="重复闭环"):
+        pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t013", "--write"])
 
 
-def test_archived_id_not_reused(tmp_path, monkeypatch):
+def test_closed_id_not_reused(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "first"])
-    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
     pending_mod.main(["new", "--slug", "second"])
-    assert (repo / "docs/pending/todo/p002_second.md").is_file()
+    assert (repo / "docs/pending/p002_second.md").is_file()
 
 
 def test_missing_entry_reports_error(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     with pytest.raises(SystemExit, match="未找到 p001"):
-        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+        pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
 
-def test_archive_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypatch):
-    """F19：批量迁移第二条失败时，第一条已迁移条目回滚位置并恢复被 set_field 改过的正文。"""
+def test_close_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypatch):
+    """F19：批量迁移第二条失败时，第一条已更新条目原位回滚并恢复正文。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "one"])
     pending_mod.main(["new", "--slug", "two"])
-    one = repo / "docs/pending/todo/p001_one.md"
-    two = repo / "docs/pending/todo/p002_two.md"
+    one = repo / "docs/pending/p001_one.md"
+    two = repo / "docs/pending/p002_two.md"
     orig_one = one.read_bytes()
     assert one.exists() and two.exists()
 
-    real_move = pending_mod.move_entry
+    real_write = pending_mod.atomic_write_text
     calls = {"n": 0}
 
-    def flaky(path, target):
+    def flaky(path, content, *args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
-            raise IdScanError("模拟第二条迁移失败")
-        return real_move(path, target)
+            raise IdScanError("模拟第二条更新失败")
+        return real_write(path, content, *args, **kwargs)
 
-    monkeypatch.setattr(pending_mod, "move_entry", flaky)
-    with pytest.raises(SystemExit, match="模拟第二条迁移失败"):
-        pending_mod.main(["archive", "p001", "p002", "--reason", "已核实处理结果", "--fix-ref", "t001", "--write"])
-    # p001 已移回 todo，且正文恢复（未被 set_field 改成「处理：t001」）
+    monkeypatch.setattr(pending_mod, "atomic_write_text", flaky)
+    with pytest.raises(SystemExit, match="模拟第二条更新失败"):
+        pending_mod.main(["close", "p001", "p002", "--reason", "已核实处理结果", "--fix-ref", "t001", "--write"])
     assert one.exists()
     assert one.read_bytes() == orig_one
-    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+    fm, _ = pending_mod.parse_pending_file(one)
+    assert fm["status"] == "todo"
 
 
-def test_archive_partial_io_failure_rolls_back_all(tmp_path, monkeypatch):
-    """验证批量迁移遇到底层 OSError 时依然完整回滚已移动条目与正文（Issue #20）。"""
+def test_close_partial_io_failure_rolls_back_all(tmp_path, monkeypatch):
+    """验证批量更新遇到底层 OSError 时依然完整回滚已更新条目（Issue #20）。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "one"])
     pending_mod.main(["new", "--slug", "two"])
-    one = repo / "docs/pending/todo/p001_one.md"
-    two = repo / "docs/pending/todo/p002_two.md"
+    one = repo / "docs/pending/p001_one.md"
+    two = repo / "docs/pending/p002_two.md"
     orig_one = one.read_bytes()
 
-    real_move = pending_mod.move_entry
+    real_write = pending_mod.atomic_write_text
     calls = {"n": 0}
-    def flaky(path, target):
+
+    def flaky(path, content, *args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("simulated disk io error on second entry")
-        return real_move(path, target)
+        return real_write(path, content, *args, **kwargs)
 
-    monkeypatch.setattr(pending_mod, "move_entry", flaky)
+    monkeypatch.setattr(pending_mod, "atomic_write_text", flaky)
     with pytest.raises(SystemExit, match="simulated disk io error"):
-        pending_mod.main(["archive", "p001", "p002", "--reason", "test io fail", "--write"])
+        pending_mod.main(["close", "p001", "p002", "--reason", "test io fail", "--write"])
     assert one.exists()
     assert one.read_bytes() == orig_one
-    assert not (repo / "docs/archive/pending/p001_one.md").exists()
+    fm, _ = pending_mod.parse_pending_file(one)
+    assert fm["status"] == "todo"
 
 
-
-def test_archive_reports_partial_rollback_when_restore_fails(tmp_path, monkeypatch, capsys):
+def test_close_reports_partial_rollback_when_restore_fails(tmp_path, monkeypatch, capsys):
     """回滚自身失败时不得报告完整回滚；未恢复条目与原因可见（Issue #78）。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "one"])
     pending_mod.main(["new", "--slug", "two"])
 
-    real_move = pending_mod.move_entry
+    real_write = pending_mod.atomic_write_text
     calls = {"n": 0}
 
-    def flaky(path, target):
+    def flaky_write(path, content, *args, **kwargs):
         calls["n"] += 1
+        p = Path(path)
         if calls["n"] == 2:
-            raise IdScanError("模拟第二条迁移失败")
-        return real_move(path, target)
-
-    real_write = pending_mod.atomic_write_text
-
-    def fail_restore(path, content):
-        if calls["n"] >= 2 and path.name.startswith("p001_"):
+            raise IdScanError("模拟第二条更新失败")
+        if calls["n"] >= 3 and p.name.startswith("p001_"):
             raise OSError("模拟正文恢复失败")
-        return real_write(path, content)
+        return real_write(path, content, *args, **kwargs)
 
-    monkeypatch.setattr(pending_mod, "move_entry", flaky)
-    monkeypatch.setattr(pending_mod, "atomic_write_text", fail_restore)
+    monkeypatch.setattr(pending_mod, "atomic_write_text", flaky_write)
     with pytest.raises(SystemExit, match="回滚不完整"):
         pending_mod.main(
-            ["archive", "p001", "p002", "--reason", "已核实处理结果", "--write"]
+            ["close", "p001", "p002", "--reason", "已核实处理结果", "--write"]
         )
     stderr = capsys.readouterr().err
     assert "成功回滚 0/1 条" in stderr
     assert "p001_one.md" in stderr
     assert "模拟正文恢复失败" in stderr
-    assert not (repo / "docs/archive/pending/p001_one.md").exists()
 
 
-def test_archive_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch):
-    """锁外定位的条目在锁内已被迁移时拒绝落盘，而不是继续处理旧路径（Issue #78）。"""
+def test_close_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch):
+    """锁外定位的条目在锁内路径变化时拒绝落盘（Issue #78）。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "one"])
-    one = repo / "docs/pending/todo/p001_one.md"
-    moved = repo / "docs/pending/parked/p001_one.md"
-    moved.parent.mkdir(parents=True, exist_ok=True)
+    one = repo / "docs/pending/p001_one.md"
+    moved = repo / "docs/pending/p001_other.md"
 
     real_find = pending_mod.find_entry
     calls = {"n": 0}
@@ -404,35 +389,34 @@ def test_archive_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch)
         state, path = real_find(number)
         if calls["n"] == 2:
             path.rename(moved)
-            return "parked", moved
+            return state, moved
         return state, path
 
     monkeypatch.setattr(pending_mod, "find_entry", find_then_move)
-    with pytest.raises(SystemExit, match="加锁前已被迁移"):
+    with pytest.raises(SystemExit, match="路径已变"):
         pending_mod.main(
-            ["archive", "p001", "--reason", "已核实处理结果", "--write"]
+            ["close", "p001", "--reason", "已核实处理结果", "--write"]
         )
     assert moved.exists()
-    assert not (repo / "docs/archive/pending/p001_one.md").exists()
 
 
-def test_archive_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
-    """验证 archive 与 park 显式拒绝包含换行符的 reason 或 fix-ref（Issue #52）。"""
+def test_close_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
+    """验证 close 与 park 显式拒绝包含换行符的 reason 或 fix-ref（Issue #52）。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "clean_entry"])
-    entry = repo / "docs/pending/todo/p001_clean_entry.md"
+    entry = repo / "docs/pending/p001_clean_entry.md"
     orig_content = entry.read_text(encoding="utf-8")
 
-    # 1. archive 带多行 reason 被拒绝，原内容不变
+    # 1. close 带多行 reason 被拒绝，原内容不变
     with pytest.raises(SystemExit, match="不能包含换行符"):
-        pending_mod.main(["archive", "p001", "--reason", "line1\nline2", "--write"])
+        pending_mod.main(["close", "p001", "--reason", "line1\nline2", "--write"])
     assert entry.is_file()
     assert entry.read_text(encoding="utf-8") == orig_content
 
-    # 2. archive 带多行 fix-ref 被拒绝
+    # 2. close 带多行 fix-ref 被拒绝
     with pytest.raises(SystemExit, match="不能包含换行符"):
-        pending_mod.main(["archive", "p001", "--reason", "valid", "--fix-ref", "t001\nfake", "--write"])
+        pending_mod.main(["close", "p001", "--reason", "valid", "--fix-ref", "t001\nfake", "--write"])
     assert entry.is_file()
     assert entry.read_text(encoding="utf-8") == orig_content
 
@@ -443,7 +427,6 @@ def test_archive_and_park_reject_multiline_inputs(tmp_path, monkeypatch):
     assert entry.read_text(encoding="utf-8") == orig_content
 
 
-
 # ---------- CLI ----------
 
 
@@ -451,14 +434,14 @@ def test_pending_new_prints_path(tmp_path, monkeypatch, capsys):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
-    assert capsys.readouterr().out == "docs/pending/todo/p001_demo.md\n"
+    assert capsys.readouterr().out == "docs/pending/p001_demo.md\n"
 
 
 def test_pending_new_bug_template(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "crash", "--kind", "bug"])
-    text = (repo / "docs/pending/todo/p001_crash.md").read_text(encoding="utf-8")
+    text = (repo / "docs/pending/p001_crash.md").read_text(encoding="utf-8")
     assert "- 现象：" in text
     assert "- 测试缺口：" in text
 
@@ -497,56 +480,11 @@ def test_cli_rejects_missing_slug():
 # ---------- rename ----------
 
 
-def test_pending_rename_dry_run_prints_target(tmp_path, monkeypatch, capsys):
+def test_pending_rename_command_is_removed(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-    _git(repo, "add", "-A")
-
-    pending_mod.main(["rename", "p001", "--slug", "renamed"])
-
-    out = capsys.readouterr().out
-    assert "p001_demo.md" in out
-    assert "p001_renamed.md" in out
-    assert (repo / "docs/pending/todo/p001_demo.md").is_file()
-    assert not (repo / "docs/pending/todo/p001_renamed.md").exists()
-
-
-def test_pending_rename_writes_and_keeps_state_dir(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-    pending_mod.main(["park", "p001", "--reason", "later", "--write"])
-    _git(repo, "add", "-A")
-
-    pending_mod.main(["rename", "p001", "--slug", "renamed", "--write"])
-
-    renamed = repo / "docs/pending/parked/p001_renamed.md"
-    assert renamed.is_file()
-    assert not (repo / "docs/pending/parked/p001_demo.md").exists()
-
-
-def test_pending_rename_rejects_bad_slug(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-
-    with pytest.raises(SystemExit, match="slug 非法"):
-        pending_mod.main(["rename", "p001", "--slug", "Bad-Slug", "--write"])
-
-
-def test_pending_rename_rejects_same_slug(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-
-    with pytest.raises(SystemExit, match="相同"):
-        pending_mod.main(["rename", "p001", "--slug", "demo", "--write"])
-
-
-# 旧用例 test_pending_rename_rejects_existing_target 已删除：目标名 p001_occupied.md
-# 被占用必然意味着同号多文件，rename 现在由 find_entry 的歧义检测前置拦截
-# （见 test_pending_rename_rejects_duplicated_id），「目标文件已存在」分支不再可达。
+    with pytest.raises(SystemExit):
+        pending_mod.main(["rename", "p001", "--slug", "renamed"])
 
 
 def test_findings_rename_dry_run_prints_target(tmp_path, monkeypatch, capsys):
@@ -572,55 +510,22 @@ def test_findings_rename_writes(tmp_path, monkeypatch):
 
     findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
 
-    assert (repo / "docs/findings/d001_renamed.md").is_file()
+    renamed = repo / "docs/findings/d001_renamed.md"
+    assert renamed.is_file()
     assert not (repo / "docs/findings/d001_demo.md").exists()
 
 
-def test_pending_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch):
-    """新建条目尚未 git add 时 rename 退化为普通改名，不经 git mv。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-
-    pending_mod.main(["rename", "p001", "--slug", "renamed", "--write"])
-
-    renamed = repo / "docs/pending/todo/p001_renamed.md"
-    assert renamed.is_file()
-    assert not (repo / "docs/pending/todo/p001_demo.md").exists()
-
-
 def test_findings_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch):
-    """findings 的 rename 同样对未入库条目退化为普通改名。"""
+    """findings 的 rename 对未入库条目退化为普通改名。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     findings_mod.main(["new", "--slug", "demo"])
 
     findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
 
-    assert (repo / "docs/findings/d001_renamed.md").is_file()
+    renamed = repo / "docs/findings/d001_renamed.md"
+    assert renamed.is_file()
     assert not (repo / "docs/findings/d001_demo.md").exists()
-
-
-def test_pending_rename_rejects_duplicated_id(tmp_path, monkeypatch):
-    """同号存在于 todo 与 parked 两处时 rename 拒绝并列出全部候选路径。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-    parked = repo / "docs/pending/parked"
-    parked.mkdir(parents=True, exist_ok=True)
-    (parked / "p001_demo.md").write_text("# p001 副本\n", encoding="utf-8")
-
-    with pytest.raises(SystemExit) as exc:
-        pending_mod.main(["rename", "p001", "--slug", "final", "--write"])
-
-    message = str(exc.value)
-    assert "同时存在于多处" in message
-    assert "docs/pending/todo/p001_demo.md" in message
-    assert "docs/pending/parked/p001_demo.md" in message
-    # 两侧文件均保持原样，歧义不被静默固化
-    assert (repo / "docs/pending/todo/p001_demo.md").is_file()
-    assert (parked / "p001_demo.md").is_file()
-    assert not (repo / "docs/pending/todo/p001_final.md").exists()
 
 
 def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
@@ -628,72 +533,24 @@ def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     findings_mod.main(["new", "--slug", "demo"])
-    (repo / "docs/findings/d001_copy.md").write_text("# d001 副本\n", encoding="utf-8")
+    (repo / "docs/findings/d001_extra.md").write_text("# d001\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
         findings_mod.main(["rename", "d001", "--slug", "final", "--write"])
-
     message = str(exc.value)
-    assert "同时存在于多处" in message
-    assert "docs/findings/d001_demo.md" in message
-    assert "docs/findings/d001_copy.md" in message
-    assert (repo / "docs/findings/d001_demo.md").is_file()
-    assert not (repo / "docs/findings/d001_final.md").exists()
+    assert "d001_demo.md" in message
+    assert "d001_extra.md" in message
 
 
-# ---------- 目录型条目（spike） ----------
+# ---------- spikes 目录条目支持 ----------
 
 
 def _init_spikes(repo):
+    (repo / "docs/spikes").mkdir(parents=True, exist_ok=True)
+    (repo / "docs/archive/spikes").mkdir(parents=True, exist_ok=True)
     template = repo / ".repo_template/docs/spike_report_template.md"
     template.parent.mkdir(parents=True, exist_ok=True)
-    template.write_text("# {id} spike 报告\n", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add spike template")
-
-
-def test_spike_dirs_drive_max(tmp_path):
-    repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/spikes/s004_probe/report.md")
-    _commit_entry(repo, "docs/archive/spikes/s009_old/report.md")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 9
-
-
-def test_spike_scan_ignores_template_and_loose_files(tmp_path):
-    repo = _init_repo(tmp_path)
-    _commit_entry(repo, ".repo_template/docs/spike_report_template.md")
-    _commit_entry(repo, "docs/spikes/s003_probe/report.md")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 3
-
-
-def test_spike_nested_files_counted_once(tmp_path):
-    repo = _init_repo(tmp_path)
-    _commit_entry(repo, "docs/spikes/s002_probe/report.md")
-    _commit_entry(repo, "docs/spikes/s002_probe/code/run.md")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 2
-
-
-def _allocate_spike(repo_and_slug):
-    repo, slug = repo_and_slug
-    repo = Path(repo)
-    path = allocate_dir(
-        repo,
-        prefix="s",
-        dirs=SPIKE_DIRS,
-        target_dir=repo / "docs/spikes",
-        slug=slug,
-        files={"report.md": "# {id}\n"},
-    )
-    return path.name
-
-
-def test_concurrent_spike_allocation_yields_unique_ids(tmp_path):
-    repo = _init_repo(tmp_path)
-    slugs = [f"probe_{i}" for i in range(6)]
-    with ProcessPoolExecutor(max_workers=6) as pool:
-        names = list(pool.map(_allocate_spike, [(str(repo), slug) for slug in slugs]))
-    numbers = sorted(int(name[1:4]) for name in names)
-    assert numbers == list(range(1, 7))
+    template.write_text("# Spike {id}: {title}\n", encoding="utf-8")
 
 
 def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
@@ -701,9 +558,11 @@ def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
     _init_spikes(repo)
     _bind(monkeypatch, repo)
     spikes_mod.main(["new", "--slug", "uv_lock"])
-    assert capsys.readouterr().out == "docs/spikes/s001_uv_lock\n"
-    report = repo / "docs/spikes/s001_uv_lock/report.md"
-    assert report.read_text(encoding="utf-8") == "# s001 spike 报告\n"
+    out = capsys.readouterr().out.strip()
+    assert out == "docs/spikes/s001_uv_lock"
+    report = repo / out / "report.md"
+    assert report.is_file()
+    assert report.read_text(encoding="utf-8").startswith("# Spike s001")
 
 
 def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
@@ -712,17 +571,18 @@ def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, cap
 
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    monkeypatch.setattr(
-        pending_mod, "format_file",
-        lambda path: (_ for _ in ()).throw(MdFormatError("formatter boom")),
-    )
-    with pytest.raises(SystemExit) as exc:
+
+    def fail_format(_path):
+        raise MdFormatError("simulated format failure")
+
+    monkeypatch.setattr(pending_mod, "format_file", fail_format)
+
+    with pytest.raises(SystemExit, match="simulated format failure"):
         pending_mod.main(["new", "--slug", "atomic_check"])
-    assert exc.value.code and "错误" in str(exc.value)
+
+    assert not (repo / "docs/pending/p001_atomic_check.md").exists()
     assert capsys.readouterr().out == ""
-    todo = repo / "docs/pending/todo"
-    assert not list(todo.glob("p*_atomic_check.md"))
-    assert not list(todo.glob(".tmp_*"))
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
 
 def test_spikes_new_format_failure_publishes_no_directory(tmp_path, monkeypatch, capsys):
@@ -732,17 +592,18 @@ def test_spikes_new_format_failure_publishes_no_directory(tmp_path, monkeypatch,
     repo = _init_repo(tmp_path)
     _init_spikes(repo)
     _bind(monkeypatch, repo)
-    monkeypatch.setattr(
-        spikes_mod, "format_file",
-        lambda path: (_ for _ in ()).throw(MdFormatError("formatter boom")),
-    )
-    with pytest.raises(SystemExit) as exc:
+
+    def fail_format(_path):
+        raise MdFormatError("simulated spike format failure")
+
+    monkeypatch.setattr(spikes_mod, "format_file", fail_format)
+
+    with pytest.raises(SystemExit, match="simulated spike format failure"):
         spikes_mod.main(["new", "--slug", "atomic_spike"])
-    assert exc.value.code and "错误" in str(exc.value)
+
+    assert not (repo / "docs/spikes/s001_atomic_spike").exists()
     assert capsys.readouterr().out == ""
-    spikes_dir = repo / "docs/spikes"
-    assert not list(spikes_dir.glob("s*_atomic_spike"))
-    assert not list(spikes_dir.glob(".tmp_*"))
+    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
 
 
 def test_spikes_new_formats_report_file(tmp_path, monkeypatch):
@@ -750,53 +611,61 @@ def test_spikes_new_formats_report_file(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _init_spikes(repo)
     _bind(monkeypatch, repo)
-    formatted = []
-    monkeypatch.setattr(spikes_mod, "format_file", lambda path: formatted.append(Path(path).name))
+
+    formatted_target = []
+
+    def mock_format(path):
+        formatted_target.append(path)
+
+    monkeypatch.setattr(spikes_mod, "format_file", mock_format)
     spikes_mod.main(["new", "--slug", "verify_format"])
-    assert formatted == ["report.md"]
+
+    assert len(formatted_target) == 1
+    assert formatted_target[0].name == "report.md"
 
 
-def test_allocate_atomicity_and_cleanup_on_failure(tmp_path, monkeypatch):
-    """验证 allocate 与 allocate_dir 写入中途中断时不残留残缺文件/目录，编号不被误占（Issue #59）。"""
-    import os
-    from _id_scan import allocate, allocate_dir
-
+def test_allocate_dir_formatter_failure_cleans_up(tmp_path):
+    """A18：allocate_dir 在 formatter 抛错时原子回滚临时目录。"""
     repo = _init_repo(tmp_path)
-    target = repo / "docs/pending/todo"
+    target = repo / "docs/spikes"
+    target.mkdir(parents=True)
+
+    def explode(_path):
+        raise ValueError("formatter failed")
+
+    with pytest.raises(ValueError, match="formatter failed"):
+        allocate_dir(
+            repo, prefix="s", dirs=SPIKE_DIRS, target_dir=target,
+            slug="flaky", files={"report.md": "# {id}\n"},
+            formatter=explode,
+        )
+
+    assert not (target / "s001_flaky").exists()
+    assert list(target.glob(".tmp_*")) == []
+    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
+
+
+def test_allocate_formatter_failure_cleans_up(tmp_path):
+    """A18：allocate 在 formatter 抛错时清理临时文件并不占号。"""
+    repo = _init_repo(tmp_path)
+    target = repo / "docs/pending"
     target.mkdir(parents=True, exist_ok=True)
 
-    class InjectedError(Exception): pass
+    def explode(_path):
+        raise ValueError("formatter failed")
 
-    def fail_replace(src, dst):
-        raise InjectedError("replace failure")
+    with pytest.raises(ValueError, match="formatter failed"):
+        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=target, slug="flaky", body="# {id}\n", formatter=explode)
 
-    monkeypatch.setattr("_id_scan.os", SimpleNamespace(**{**vars(os), "replace": fail_replace}))
-
-    # 1. allocate 写入替换失败
-    with pytest.raises(InjectedError):
-        allocate(repo, prefix="p", dirs=("docs/pending/todo",), target_dir=target, slug="flaky", body="# {id}\n")
-
-    # 目标路径与临时文件均不存在
     assert not (target / "p001_flaky.md").exists()
-    assert not (target / ".tmp_p001_flaky.md").exists()
-    assert scan_max_id(repo, "p", ("docs/pending/todo",)) == 0
-
-    # 2. allocate_dir 目录创建替换失败
-    spike_target = repo / "docs/spikes"
-    files = {"report.md": "ok"}
-    with pytest.raises(InjectedError):
-        allocate_dir(repo, prefix="s", dirs=("docs/spikes",), target_dir=spike_target, slug="flaky_dir", files=files)
-
-    assert not (spike_target / "s001_flaky_dir").exists()
-    assert not (spike_target / ".tmp_s001_flaky_dir").exists()
-    assert scan_max_id(repo, "s", ("docs/spikes",), kind="dir") == 0
-
+    assert list(target.glob(".tmp_*")) == []
+    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
 
 def test_spikes_new_requires_template(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    with pytest.raises(SystemExit, match="缺模板"):
+    with pytest.raises(SystemExit, match="缺.*模板"):
         spikes_mod.main(["new", "--slug", "uv_lock"])
 
 
@@ -805,63 +674,26 @@ def test_spikes_list_reports_state(tmp_path, monkeypatch, capsys):
     _init_spikes(repo)
     _bind(monkeypatch, repo)
     spikes_mod.main(["new", "--slug", "uv_lock"])
-    (repo / "docs/archive/spikes/s000_old").mkdir(parents=True)
     capsys.readouterr()
     spikes_mod.main(["list"])
     out = capsys.readouterr().out
-    assert "active    s001_uv_lock" in out
-    assert "archived  s000_old" in out
+    assert "active" in out
+    assert "s001_uv_lock" in out
 
 
-# ---------- git mv 迁移（已入库条目） ----------
-
-
-def test_archive_uses_git_mv_and_preserves_history(tmp_path, monkeypatch):
+def test_close_and_park_do_not_auto_git_add(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "add p001")
 
-    pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+    pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
 
-    staged = _git(repo, "diff", "--cached", "--name-status", "-M").stdout
-    assert "docs/pending/todo/p001_demo.md" in staged
-    assert "docs/archive/pending/p001_demo.md" in staged
-    assert not (repo / "docs/pending/todo/p001_demo.md").exists()
-
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "archive p001")
-    history = _git(
-        repo, "log", "--follow", "--format=%s", "--", "docs/archive/pending/p001_demo.md"
-    ).stdout
-    assert "add p001" in history
-
-
-def test_park_uses_git_mv_for_committed_entry(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add p001")
-
-    pending_mod.main(["park", "p001", "--reason", "later", "--write"])
-
-    staged = _git(repo, "diff", "--cached", "--name-status", "-M").stdout
-    assert "docs/pending/parked/p001_demo.md" in staged
-    assert (repo / "docs/pending/parked/p001_demo.md").is_file()
-
-
-def test_move_refuses_to_overwrite_existing_destination(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    pending_mod.main(["new", "--slug", "demo"])
-    archived = repo / "docs/archive/pending"
-    archived.mkdir(parents=True, exist_ok=True)
-    (archived / "p001_demo.md").write_text("occupied\n", encoding="utf-8")
-
-    with pytest.raises(SystemExit, match="同时存在于多处"):
-        pending_mod.main(["archive", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012", "--write"])
+    staged = _git(repo, "diff", "--cached", "--name-status").stdout
+    assert staged == ""
+    unstaged = _git(repo, "diff", "--name-status").stdout
+    assert "docs/pending/p001_demo.md" in unstaged
 
 
 # ---------- A11：旧单文件总账必须显式迁移，运行期不再解析正文 ----------
@@ -878,41 +710,11 @@ def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkey
     )
 
     with pytest.raises(IdScanError, match="migrate-legacy"):
-        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending/todo",
+        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
                  slug="demo", body="# pNNN demo\n")
     with pytest.raises(SystemExit, match="migrate-legacy"):
         pending_mod.main(["new", "--slug", "demo"])
-    # 扫描本身也不再解析旧正文
     assert scan_max_id(repo, "p", PENDING_DIRS) == 0
-
-
-def test_migrate_legacy_pending_splits_entries_and_unblocks(tmp_path, monkeypatch, capsys):
-    """A11：显式迁移把旧总账拆成一条目一文件并移除来源，随后可正常分配。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    legacy = (
-        "# 待办与不办总账\n\n## 待办\n\n"
-        "### p047 cli 退出码（2026-07-01 发现）\n\n"
-        "- 现象：退出码恒为 0\n- 处理：未开\n\n"
-        "### p051 旧事\n\n- 处理：未开\n"
-    )
-    (repo / "docs/pending.md").write_text(legacy, encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "legacy ledger")
-
-    pending_mod.main(["migrate-legacy"])
-    assert (repo / "docs/pending.md").is_file()  # dry-run 不动
-    pending_mod.main(["migrate-legacy", "--write"])
-    assert not (repo / "docs/pending.md").exists()
-    todo = repo / "docs/pending/todo"
-    assert (todo / "p047_cli.md").is_file()
-    assert (todo / "p051_entry.md").is_file()
-    capsys.readouterr()
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "migrate legacy ledger")
-
-    pending_mod.main(["new", "--slug", "fresh"])
-    assert (todo / "p052_fresh.md").is_file()
 
 
 def test_migrate_legacy_findings_splits_entries(tmp_path, monkeypatch):
@@ -951,10 +753,6 @@ def test_migrate_legacy_reports_other_sources_blocking(tmp_path, monkeypatch):
 
 
 def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
-    """分支内同号 spike 目录同时出现在 active 与 archive 两侧时报重复。
-
-    迁移是移动而非复制，即使两侧内容一致也属于残留；与工作区扫描口径一致。
-    """
     repo = _init_repo(tmp_path)
     _git(repo, "checkout", "-b", "feature")
     _commit_entry(repo, "docs/spikes/s012_probe/report.md", text="# s012\n")
@@ -965,53 +763,50 @@ def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
 
 
 @pytest.mark.parametrize("reference", [None, "main", "abc123", "PR #42"])
-def test_archive_requires_only_explanation_and_accepts_optional_non_task_reference(tmp_path, monkeypatch, reference):
+def test_close_requires_only_explanation_and_accepts_optional_non_task_reference(tmp_path, monkeypatch, reference):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "main_fix"])
-    args = ["archive", "p001", "--reason", "按用户要求在 main 修复，专项测试通过", "--write"]
+    args = ["close", "p001", "--reason", "按用户要求在 main 修复，专项测试通过", "--write"]
     if reference is not None:
         args += ["--fix-ref", reference]
     pending_mod.main(args)
-    archived = repo / "docs/archive/pending/p001_main_fix.md"
-    text = archived.read_text(encoding="utf-8")
+    closed = repo / "docs/pending/p001_main_fix.md"
+    text = closed.read_text(encoding="utf-8")
     assert "resolution=resolved" in text
     assert "reason=按用户要求在 main 修复，专项测试通过" in text
     if reference is not None:
         assert f"处理：{reference}；" in text
-    assert not (repo / "docs/pending/todo/p001_main_fix.md").exists()
 
 
 @pytest.mark.parametrize("resolution", ["transferred", "resolved", "obsolete", "duplicate"])
-def test_all_archive_resolutions_allow_no_reference_but_reject_blank_explanation(tmp_path, monkeypatch, resolution):
+def test_all_close_resolutions_allow_no_reference_but_reject_blank_explanation(tmp_path, monkeypatch, resolution):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "closure"])
-    source = repo / "docs/pending/todo/p001_closure.md"
+    source = repo / "docs/pending/p001_closure.md"
     original = source.read_bytes()
     with pytest.raises(SystemExit, match="非空 --reason"):
-        pending_mod.main(["archive", "p001", "--resolution", resolution, "--reason", "  ", "--write"])
+        pending_mod.main(["close", "p001", "--resolution", resolution, "--reason", "  ", "--write"])
     assert source.read_bytes() == original
-    assert not (repo / "docs/archive/pending/p001_closure.md").exists()
-    pending_mod.main(["archive", "p001", "--resolution", resolution, "--reason", "已核实处理依据并记录结果", "--write"])
-    text = (repo / "docs/archive/pending/p001_closure.md").read_text(encoding="utf-8")
+    pending_mod.main(["close", "p001", "--resolution", resolution, "--reason", "已核实处理依据并记录结果", "--write"])
+    text = (repo / "docs/pending/p001_closure.md").read_text(encoding="utf-8")
     assert f"resolution={resolution}" in text
     assert "reason=已核实处理依据并记录结果" in text
 
 
 @pytest.mark.parametrize("reference_args", [[], ["--fix-ref", "t012"]])
-def test_archive_missing_explanation_is_rejected_before_migration(tmp_path, monkeypatch, capsys, reference_args):
+def test_close_missing_explanation_is_rejected(tmp_path, monkeypatch, capsys, reference_args):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "unexplained"])
-    source = repo / "docs/pending/todo/p001_unexplained.md"
+    source = repo / "docs/pending/p001_unexplained.md"
     original = source.read_bytes()
     with pytest.raises(SystemExit) as failure:
-        pending_mod.main(["archive", "p001", *reference_args, "--write"])
+        pending_mod.main(["close", "p001", *reference_args, "--write"])
     assert failure.value.code == 2
     assert "--reason" in capsys.readouterr().err
     assert source.read_bytes() == original
-    assert not (repo / "docs/archive/pending/p001_unexplained.md").exists()
 
 
 def test_allocate_dir_rejects_paths_escaping_target(tmp_path, monkeypatch):

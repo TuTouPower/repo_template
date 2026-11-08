@@ -42,7 +42,7 @@ metadata:
 3. 实现 AC，依次通过项目测试和黑盒门禁；验证通过后在 `task.md` 验收标准中就地将对应条目勾选为 `- [x]`。
 4. 逐项检查 finalization：累积或更新 `docs/specs/<slug>.md`，同步 `docs/specs_index.md`（在表即生效；格式按 `.repo_template/docs/usage.md` 的 specs_index 契约）；废弃 spec 删除索引行并归档；不适用时在 progress.md 明确理由（`- specs_index: not_applicable: 具体原因`）。更新因实现而过时的 blueprint、guides、README 或接口文档。派审前用 `git ls-files --others --exclude-standard` 找出本 task 新文件，剔除无关、临时和 `.scratch/` 内容后，对明确路径执行 `git add -N -- <path...>`，使新文件进入 reviewer 可见的 diff；若存在本地环境软链，须通过 `.worktreeinclude` 或精准忽略规则排除，未被忽略的环境软链会阻断 review 指纹与 finish；合法代码软链须作为交付物保留；然后完成最终 review。
 5. 收尾前检查新增调试输出、临时文件和未解释 TODO，运行项目定义的 lint/format/typecheck，并执行 `git diff --check`。检查方式按技术栈选择，不使用通用固定 grep。
-6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py archive ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 归档；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
+6. 对实际遇到且不属于本 task 的重要问题，登记 pending 或 finding；不要求为了收尾额外全仓扫描，也不得顺手混入旁支修复。已由本 task 闭环的来源 pending 用 `pending.py close ... --resolution resolved --fix-ref {tid} --reason 已验证闭环 --write` 闭环；可跨 task 复用的已验证事实用 `findings.py new` 抽取。
 7. 更新 progress.md 的实施、review 结果和结果摘要；遗留 finding 必须指向 `pNNN` 或 follow-up tid。在「收尾报告 / 验收与验证」填写 `- 测试：`、`- 黑盒：`、`- review：` 三行实际验证摘要，不得为空或「待执行时填写」；`finish` 据此生成 `handoff.json`。
 8. 暂存全部交付文件：`git add` 实现、测试、文档、pending/finding、specs 等本 task 改动（`git add -N` 不算暂存）；task 目录由 `finish` 自行处理。无关或临时文件删除或移入 `.scratch/`。把实现 commit message 写入仓外或 `.scratch/` 的文件。
 9. `task.py finish {tid} --owner-id {owner_id} --message-file {path}` 完成校验、原位写 done、生成回执并提交实现 commit；归档由 `integrate` 完成。前置检查失败不写入，提交失败则回滚 finish 自身写入，修复后重跑；中断或回滚失败按 `recovery.md`「finish 回滚语义」处理。期间不手写 handoff、不手动 `git commit`、不创建正式中间 commit。

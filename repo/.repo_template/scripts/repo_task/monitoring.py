@@ -360,7 +360,7 @@ _HANDOFF_TYPES = {
 HANDOFF_PLACEHOLDERS = ("待执行时填写",)
 _SUMMARY_LINES = (("tests", "测试"), ("blackbox", "黑盒"), ("review", "review"))
 _PENDING_PATH_RE = re.compile(
-    r"^docs/(?:pending/(?:todo|parked)|archive/pending)/(p[0-9]+)_[^/]+\.md$"
+    r"^docs/(?:pending(?:/(?:todo|parked))?|archive/pending)/(p[0-9]+)_[^/]+\.md$"
 )
 _FINDING_PATH_RE = re.compile(r"^docs/findings/(d[0-9]+)_[^/]+\.md$")
 
