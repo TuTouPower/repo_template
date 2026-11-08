@@ -19,7 +19,7 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 .repo_template/scripts/repo_sync.py prompt revoke --id N
   python3 .repo_template/scripts/repo_sync.py link-skills
   python3 .repo_template/scripts/repo_sync.py install-hooks [--force]
-  python3 .repo_template/scripts/repo_sync.py migrate <legacy-state|workflow-schema|conventions|specs-index|retired-hooks|all>
+  python3 .repo_template/scripts/repo_sync.py migrate <legacy-state|workflow-schema|conventions|specs-index|retired-hooks|entity-storage|all> [--write]
 
 本脚本处理模板工具链与模板侧资产。日常 apply 只接受当前 schema；检测到旧布局时
 阻断并指向显式 migrate。迁移在持久文件事务内执行，失败整体回滚。不碰业务代码。

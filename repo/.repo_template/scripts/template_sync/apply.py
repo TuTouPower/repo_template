@@ -27,6 +27,7 @@ from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import prompt_substrings, read_state, write_state
 from .conventions_migration import conventions_migration_status
+from .entity_storage_migration import entity_storage_migration_status
 from .hooks import retired_hooks_status
 from .workflow_migration import workflow_migration_status
 
@@ -57,8 +58,16 @@ def _assert_distributable_tree(src: Path) -> None:
             )
 
 
-def _require_current_schema(src: Path) -> None:
+def _require_current_schema(src: Path, sync=None) -> None:
     """日常 apply 只接受当前 schema；旧布局必须先走显式 migrate（A10）。"""
+    sync = sync or ctx.current_sync()
+    entity_problems = entity_storage_migration_status(sync=sync)
+    if entity_problems:
+        raise ctx.SyncError(
+            "检测到旧实体存储布局；apply 不再自动迁移。先运行 "
+            "`python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`：\n- "
+            + "\n- ".join(entity_problems)
+        )
     problems: list[str] = []
     migrations, worktrees, errors = workflow_migration_status(src)
     if errors:
@@ -149,7 +158,7 @@ def cmd_apply(args: argparse.Namespace, sync=None) -> int:
         raise ctx.SyncError(f"来源版本已变化：预期 {expected}，实际 {source_commit}；重新 plan")
     changed: set[Path] = set()
     try:
-        _require_current_schema(src)
+        _require_current_schema(src, sync=sync)
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
@@ -158,7 +167,7 @@ def cmd_apply(args: argparse.Namespace, sync=None) -> int:
     transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
     paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
              ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
-             "AGENTS.md", "docs/tasks", "docs/archive/tasks", "docs/blueprint/conventions.md",
+             "AGENTS.md", "docs/tasks", "docs/blueprint/conventions.md",
              "docs/specs_index.md",
              *ctx.MCP_CANDIDATES]
     try:
