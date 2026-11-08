@@ -1,5 +1,7 @@
 # 手动并发：退役 dispatch 自动调度 + view 可视化看板
 
+> 归档时间：2026-11-08T10:17:21+08:00。已实施方案或既有机制说明，保留设计与历史证据；归档不代表相关能力退役。现行用法见[使用说明](../../repo/.repo_template/docs/usage.md)，裁决见[总账](../decision_log.md)。
+
 决策来源：`decision_log.md` L35。放弃 `task-dispatch` 自动并发；并发只发生在用户维度——`task-schedule` 落盘后，用户在多个会话各自跑 `task-run`。理由：① dispatch 实战效果差，小问题频发、执行不顺畅；② 编程 Agent 能力快速演进，工作流自造特殊机制（hook、skill、控制面）即使暂时有效，也终将被 Agent 自身能力消化——工作流应保持薄而通用。
 
 本文是 L35 的实施设计。实施时按仓库标准 task 流程拆分执行。

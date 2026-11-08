@@ -1,5 +1,7 @@
 # plan：goal 模式控制面 + 自治运行加固
 
+> 归档时间：2026-11-08T10:17:21+08:00。已实施方案或既有机制说明，保留设计与历史证据；归档不代表相关能力退役。现行用法见[使用说明](../../repo/.repo_template/docs/usage.md)，裁决见[总账](../decision_log.md)。
+
 来源：参考项目 supergoal（github.com/robzilla1738/supergoal，本地 ~/github_repo/supergoal）的机制分析。本仓已有 script 控制面（ledger / exact identity / worktree 拓扑），不引入 supergoal 的 prompt-as-program 骨架，只移植其防自欺机制，并解决 goal 模式「提示词非强约束、频繁中断等输入」的实测痛点。
 
 > **已落地（2026-08-12 核对；2026-09-07 勘误）**：goal 模式已实现为 `task.py goal` / `goal-check`（见 `usage.md`「skill 调用」、`architecture.md`「Goal」）。本文为方案推导，不是现行操作手册。

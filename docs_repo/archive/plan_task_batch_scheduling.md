@@ -1,5 +1,7 @@
 # 计划：task 批次调度（首轮 Agent 分析，后续脚本推导）
 
+> 归档时间：2026-11-08T10:17:21+08:00。已实施方案或既有机制说明，保留设计与历史证据；归档不代表相关能力退役。现行用法见[使用说明](../../repo/.repo_template/docs/usage.md)，裁决见[总账](../decision_log.md)。
+
 2026-07-30 用户提出，审阅决策已通过。实施按用户特批直接修改 main，保持未提交。
 
 > **已落地，本文设计已被 `task.py plan` 取代（2026-08-12 核对；2026-09-07 勘误）**：调度图落 task front matter（`depends_on` / `conflicts_with`）+ `task.py plan` 推本波链（decision_log L21）。`schedule_status` 与 `next-batch` 已由 L36 删除。正文是当时方案推导，不是现行调度手册。

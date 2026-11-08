@@ -1,5 +1,7 @@
 # Worktree 状态栏追踪
 
+> 归档时间：2026-11-08T10:17:21+08:00。已实施方案或既有机制说明，保留设计与历史证据；归档不代表相关能力退役。现行用法见[使用说明](../../repo/.repo_template/docs/usage.md)，裁决见[总账](../decision_log.md)。
+
 多会话并发跑 task（各会话执行 `task-run`）且从消费仓主仓根启动时，状态栏的目录字段若不区分会话，无法看出该会话当前落在哪个 task worktree。本机制在状态栏显示各会话实际关联的 task worktree 名。
 
 > 模板提供映射写入端，默认不启用。启用方式见[状态行 Hook 与执行范围](../../repo/.repo_template/docs/usage.md#状态行-hook-与执行范围)；显示端由仓外工具提供。

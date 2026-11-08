@@ -9,10 +9,10 @@
 | 路径 | 内容 |
 | --- | --- |
 | `README.md` / `decision_log.md` | 入口与跨文档裁决总账（唯一权威状态表） |
-| `plans/` | 方案与设计推导（`plan_*`；以文档内状态标注区分已落地/已退役）。当前改造方案：`plan_macro_overhaul_2026_11.md`。dispatch / 静默监控等过时提案已迁 `archive/` |
+| `plans/` | 当前优化方案：[测试套件性能优化](plans/plan_test_suite_performance.md)。已实施或被替代方案归入 `archive/` |
 | `reflections/` | 实战复盘、会话反思与实证分析（`workflow_reflection_*` / `reflection_*` / `analysis_*`） |
 | `reviews/` | 各轮评审产物（`2026-07/` 多路评审意见；`review_20260805_133245/` 多模型交叉评审） |
-| `archive/` | 已终止或过时提案；含看板 mock demo 的历史计划 `plan_board_v2_chain_panel_demo.md`（demo 源码已删，现行实现见该文首部说明） |
+| `archive/` | 已实施、已终止或被替代方案及历史机制说明；含看板 mock demo 的历史计划 `plan_board_v2_chain_panel_demo.md`（demo 源码已删，现行实现见该文首部说明） |
 
 ## 命名
 
@@ -30,3 +30,17 @@
 - 同一议题的裁决状态只在 `decision_log.md` 维护；复盘正文不重复列「待决策」清单。
 - 结论被后续文档修正时，在原文段落首行标注被哪份文档发展，不静默保留多版本。
 - 复盘不再新增未闭环的建议清单。新发现走 `decision_log.md` 加行。
+
+## 已归档方案导航
+
+以下文档原位于 `plans/`，现移至 `archive/`；历史评审中引用的旧路径与行号保留原意。归档不改变已有裁决或相关能力状态。
+
+|文档|归档依据|
+|---|---|
+|[plan_goal_mode_autonomy.md](archive/plan_goal_mode_autonomy.md)|goal 方案已落地|
+|[plan_macro_overhaul_2026_11.md](archive/plan_macro_overhaul_2026_11.md)|宏观改造已实施并合入 main|
+|[plan_manual_concurrency.md](archive/plan_manual_concurrency.md)|手动并发方案已落地|
+|[plan_md_kx_template.md](archive/plan_md_kx_template.md)|md_kx 接入已落地|
+|[plan_task_batch_scheduling.md](archive/plan_task_batch_scheduling.md)|批次调度方案已由 task.py plan 取代|
+|[plan_workflow_simplification.md](archive/plan_workflow_simplification.md)|工作流瘦身已实施|
+|[worktree_statusline_tracking.md](archive/worktree_statusline_tracking.md)|已实现状态栏机制说明；现行入口在 usage.md|

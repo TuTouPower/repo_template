@@ -1,5 +1,7 @@
 # plan：模板仓接入 md_kx
 
+> 归档时间：2026-11-08T10:17:21+08:00。已实施方案或既有机制说明，保留设计与历史证据；归档不代表相关能力退役。现行用法见[使用说明](../../repo/.repo_template/docs/usage.md)，裁决见[总账](../decision_log.md)。
+
 来源：用户要求模板仓与消费仓非归档 Markdown 统一用 md_kx 格式化。md_kx 三种表风格（`compact` = `|a|b|`、`spaced` = `| a | b |`、`pad` = 按列对齐）由 md_kx 仓交付，本仓只消费。
 
 > **已落地（2026-09-07 核对）**：`.md_kx.toml` 已进 `HARD_SYNC_FILES`；仓库入口为 `.repo_template/scripts/md_format.py`；pre-commit hook 与 `usage.md`「命名与格式」已约束 compact 表。本文保留方案推导，不是现行操作手册。现行命令以 `python3 .repo_template/scripts/md_format.py --help` 为准。
