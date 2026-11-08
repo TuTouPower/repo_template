@@ -1,10 +1,10 @@
-# 测试套件性能优化方案
+# 测试性能优化与工作流基线重构方案
 
 > 编写时间：2026-11-08T10:13:03+08:00。分析基线：`697c0b725a95a5077d5b2e40ed989b83fc38cac0`。
 >
 > 文档性质：下一轮优化实施方案。本文定义目标架构、实施顺序和验收条件；方案中的改造尚未实施，性能目标尚未验证。历史治理状态以[裁决总账](../decision_log.md)为准，编写本文不表示改造已经获批或完成。
 >
-> 适用范围：模板工厂的 `factory_tests/`、工厂测试配置，以及确有重复 Git I/O 的 `repo/.repo_template/scripts/repo_task/`。面向维护测试基础设施和工具链的开发者。
+> 适用范围：模板工厂的 `factory_tests/`、工厂测试配置、重复 Git I/O，以及 Issue #90 的规格来源与 Issue #91 的环境资产边界。Issue 分析另以 `d393b66` 为实现基线。面向维护测试基础设施和工具链的开发者。
 
 ## 1. 方案结论与范围
 
@@ -18,6 +18,8 @@
 
 种子复制是初始化优化，不能单独承担全量提速目标。APFS CoW、并行 worker 数量、Git 可执行入口和文件系统配置在受控测量后选优。RAM Disk 不作为默认方案。
 
+同时纳入两项正确性重构：#90 分离代码基座、主干 backlog 权威与执行期固定规格快照；#91 通过显式环境声明和 Git 忽略规则对齐 review 指纹与 finish 门禁。两者分别在第 13、14 节定义，第 15 节规定与性能工作包的依赖顺序；修复收益不能算作测试提速。
+
 ### 1.1 目标与非目标
 
 |类别|内容|
@@ -25,7 +27,9 @@
 |目标|保持用例行为、断言、错误处理和隔离边界，降低全量 wall time、初始化次数与 Git 子进程数|
 |目标|明确所有可变状态所有权，消除测试对宿主 Git 配置和共享仓库状态的隐式依赖|
 |目标|建立可重复的基准，分别报告 setup、call、teardown 和总耗时|
-|非目标|改变 task 生命周期、review、锁、迁移或同步公开语义|
+|目标|修复 #90 的规格来源猜测与条件化脏检查，建立可复验的启动规格快照|
+|目标|修复 #91 的环境链接误入交付指纹问题，保留实际交付软链的审查与提交一致性|
+|非目标|改变 #90、#91 目标边界以外的 task 生命周期、review、锁、迁移或同步公开语义|
 |非目标|通过跳过测试、减少关键断言、全局禁用 hooks 或弱化文件变更检测提速|
 |非目标|引入常驻测试服务、跨运行持久种子缓存或通用仓库恢复框架|
 |非目标|把工厂测试辅助代码分发到消费仓，或扩大消费仓默认测试范围|
@@ -343,7 +347,7 @@ result = subprocess.run(
 
 ## 8. 实施工作包与退出条件
 
-各工作包按顺序执行。涉及模板代码时必须完成工厂全量测试；本文只列目标工作，不授权部署、发布或消费仓流程。
+以下 P0–P5 是性能工作包，内部按顺序执行；纳入 #90、#91 后的总体顺序见第 15 节。涉及模板代码时必须完成工厂全量测试；本文只列目标工作，不授权代码修复、部署、发布或消费仓流程。
 
 |阶段|实施内容|验证与退出条件|
 |---|---|---|
@@ -354,7 +358,7 @@ result = subprocess.run(
 |P4：后端与调度|比较普通复制/CoW、打包、Git 入口和 worker 矩阵|按完整成本选择后端与配置，不保留没有收益的优化分支|
 |P5：交付记录|记录最终设计、受控前后对比、限制与实际验证|更新必要现行文档和裁决落点，计划状态依据实际结果更新|
 
-预期主要代码落点为工厂 fixture、`repo_task/store.py`、必要的 `git_ops.py` 和调用方。`locks.py`、`context.py` 是边界核对入口，除发现本问题直接相关缺陷外不修改其协议。契约测试随产物分发，性能 harness、fixture 辅助与基准记录保留工厂侧。
+性能改造主要代码落点为工厂 fixture、`repo_task/store.py`、必要的 `git_ops.py` 和调用方；两个 Issue 的额外落点见第 13、14 节。`locks.py`、`context.py` 是边界核对入口，仅在目标问题直接需要时调整相关字段或校验，不借机重构锁协议。契约测试随产物分发，性能 harness、fixture 辅助与基准记录保留工厂侧。
 
 ## 9. 验收设计
 
@@ -452,6 +456,7 @@ pytest repo/.repo_template/tests factory_tests -q -n 4 --dist=worksteal \
 - [Git worktree](https://git-scm.com/docs/git-worktree)：共享 refs/config 与每 worktree 状态边界。
 - [Git clone](https://git-scm.com/docs/git-clone)：local clone、硬链接、shared/alternates 和 dissociate。
 - [Git config](https://git-scm.com/docs/git-config)：fsync、自动维护、文件状态检测配置。
+- [Git ignore](https://git-scm.com/docs/gitignore)、[check-ignore](https://git-scm.com/docs/git-check-ignore)：目录规则与软链的区别、规则优先级与原生匹配；用于 #91 边界分析。
 - [Python subprocess](https://docs.python.org/3.14/library/subprocess.html)：run 的 input/capture_output、communicate、超时回收与内存边界。
 - [Python shutil](https://docs.python.org/3.14/library/shutil.html)：复制权限和 Windows 只读目录清理示例；pytest 清理能力另已核对本机 9.2.0 的 `_pytest.pathlib.rm_rf()` 与 `on_rm_rf_error()` 实现。
 - [pytest-xdist fixture how-to](https://pytest-xdist.readthedocs.io/en/stable/how-to.html)：session fixture 按 worker 执行及跨进程共享初始化模式。
@@ -459,3 +464,178 @@ pytest repo/.repo_template/tests factory_tests -q -n 4 --dist=worksteal \
 - [Apple APFS](https://developer.apple.com/documentation/foundation/about-apple-file-system)：同卷 clone；`cp -c` 的回退语义另已核对本机 `man cp`，目录 clone 限制已核对 `man clonefile`。
 
 尚未验证：优化实现后的任何加速倍数、空闲主机 worker 最优值、CoW 的稳定总体收益、pack 策略收益、RAM Disk、原生 Windows 全流程，以及按需导入收益。它们不构成已经实现的能力，需按对应工作包补证据。
+
+## 13. Issue #90：代码基座与固定规格快照
+
+### 13.1 问题报告与隔离复现
+
+[Issue #90](https://github.com/TuTouPower/repo_template/issues/90) 报告：前置 task A 已完成，后继 B 在主仓工作区完成 spike 并消除 UNVERIFIED-BLOCKING 后，`run-begin B --base A` 仍读取旧契约并阻断。读取时该 issue 为 open、暂无评论；下述结论属于本地分析与目标方案，尚未回写 issue。
+
+在 `d393b66` 的隔离仓库中，以真实完成并清理的 A 分支为 base，观察到：
+
+|场景|实际结果|
+|---|---|
+|B 的规格只在主仓工作区改为已核实，未提交|run-begin 非零退出，仍报 UNVERIFIED-BLOCKING，没有优先提示规格未提交|
+|将同一规格修改提交到主干后重新执行|run-begin 成功；B worktree 的 task.md 与主干已核实版本一致|
+
+因此，报告中的阻塞并非已证明“主干已提交后仍永久无法启动”。现有合法出口是先提交主干规格变更；缺陷是来源选择与检查顺序使错误指向旧契约，且语义依赖主干与代码基座的祖先关系。
+
+Git commit 表示完整文件树，前置分支包含后继 task 的历史文件，而不只是前置 task 自身改动。若主干规格提交在 A 分叉之后，主干与 A tip 通常已经分叉，现有逻辑会选择主干；不能把所有链式场景都解释成“主干是 anchor 祖先却丢失已提交更新”。
+
+### 13.2 根因与目标边界
+
+[store.py](../../repo/.repo_template/scripts/repo_task/store.py) 的 `load_task_backlog_baseline(tid, diff_anchor)` 通过祖先关系在主干与 anchor 间选择规格；[integration.py](../../repo/.repo_template/scripts/repo_task/integration.py) 仅在 `source_ref != base_sha` 时检查主仓目标目录脏状态并物化 task。由此把代码派生关系误用为规格来源判断条件。
+
+目标是三个职责分别定源：
+
+|对象|目标权威|允许变化的边界|
+|---|---|---|
+|代码基座 diff_anchor|显式或自动选出的 base commit|本次 task 执行期间固定，仍是实现 commit 的 first parent|
+|尚未启动的 backlog 定义|默认分支已提交的 task 目录|可通过主干维护提交变更，不由前置分支历史文件覆盖|
+|执行期初始规格与初始 review_level|启动时锁定的主干规格来源 commit|在本次 task 执行、review、finish、cleanup、integrate 与历史复验期间固定|
+|当前实施规格与代码|本 task worktree，完成后为实现 commit|按既有变更审查与 review_level 单向升级契约演进|
+
+“主干是 backlog 权威”不等于“执行期间持续读取最新主干”。后者会使主干维护、task 归档或其他任务集成改变历史 review 基线。不得将 renderer 或 monitoring 简化成每次解析当前 default_branch。
+
+### 13.3 启动流程重构
+
+1. `load_task_backlog_baseline(tid)` 移除 diff_anchor 参数，不再使用祖先关系选择规格源。一次启动在控制面锁内锁定默认分支 commit 与 task 路径，后续读取均使用该确定 SHA。新记录必须来自主干 backlog；缺失、状态不符和数据损坏明确报错，不回退到代码 anchor。
+1. 明确区分“新建 task 尚未提交”与“已提交 task 存在工作区变更”。目标路径确定后，在文档就绪校验之前无条件检查目标 task 目录，包括 staged、unstaged、非忽略 untracked、删除和 rename 的两端路径；Git 查询失败直接阻断。
+1. 目标目录有未提交改动时返回 `start=FAIL：{task_dir} 在主干有未提交改动；请先提交后再 start`。这里 task_dir 是该 tid 的仓库相对目录。其他无关主仓改动继续保留，不要求整个主仓干净。
+1. 校验主干快照中的 task.md、progress.md、目录模式和调度图。代码 base 仍执行必要的重复执行防护、依赖实现祖先校验与验证策略检查；只删除“用祖先关系猜规格源”，不删除依赖代码完整性检查。
+1. 使用代码 base 创建 worktree 后，无条件从锁定的主干 SHA 完整物化目标 task 目录，再写 active、branch、worktree、diff_anchor 等运行信息。验证和物化必须读同一快照，不在流程中重新解析成另一个“最新主干”。
+1. 任何物化、字段写入或环境链接失败，沿现有回滚路径清理本次创建的分支和 worktree，不能留下半启动状态。主干不因 start 生成规格维护 commit，也不在前置分支追加同步后继规格的 commit。
+
+当前 `_porcelain_paths()` 会跳过 rename 来源字段。严格脏检查需要针对目标路径保留来源和目标信息，或使用等价的 Git 范围检查；不能直接复用仅返回目标路径的结果就宣称覆盖完整 rename。
+
+控制面锁只约束遵守协议的操作，不能阻止人工 Git 命令。启动的确定性定义为“从锁定来源 SHA 生成一致快照”，而不是“整个执行期间永远追随主干最新值”；实施时对无法保持的启动前置条件应在产生副作用前检测并拒绝。
+
+### 13.4 固定来源记录与全链路读取
+
+拟新增 `spec_source_sha`，表示启动时主干规格来源 commit；字段最终命名在实现时统一，但不得与 diff_anchor 复用。规格读取同时使用启动时确定的 task 路径，不能靠当前主干重新发现历史目录。
+
+|载体或读取方|目标调整|
+|---|---|
+|progress.md 与字段校验|保存固定规格来源，执行期间按不可变字段校验；保留当前 task 规格可审查变更|
+|start 事件及执行上下文|持久保存来源关联，适配 start 早于 attempt reserve 的现有时序；可核对来源而非仅信任可修改工作区字段|
+|handoff.json 与 Git 实现提交|携带历史复验需要的来源，纳入结构、来源一致性和恢复校验；不破坏一个实现 commit 的约束|
+|resolve_baseline_spec_text 与 renderer|读取固定来源的契约区，输出真实来源 SHA；AC 勾选归一化等现有比较语义保留|
+|monitoring.verify_integrate_ready|从同一来源读取初始 review_level，校验只允许 single→full；来源损坏不默认 full，也不退回 anchor 猜测|
+|cleanup / integrate / 链式合并|使用成员各自固定来源，保留依赖、血缘、归档及冲突收敛门禁；归档后不依赖主干活跃 task 目录|
+|ledger import / recovery|从严格校验的执行产物恢复相同来源关联，不能把恢复时主干当作启动时基线|
+
+来源记录应能解析到真实 commit，并验证该位置的目标 task 身份、初始 backlog 状态与文档模式，和可用的启动记录一致。不能仅增加字段而不检查调用方是否确实使用它。
+
+已有 active/done 任务缺少来源记录时，需在实现前确定迁移与恢复规则：仅依据明确、可验证的历史证据补记；无法唯一确定就报告需要恢复，不静默选择当前主干或 diff_anchor。不保留运行时双源猜测作为兼容层。来源对象不可用时同样明确阻断历史复验；备份与迁机资料应包含其可恢复性要求。
+
+### 13.5 落点、验收与状态
+
+|落点|实施内容|
+|---|---|
+|store.py、integration.py|主干单源读取、无条件 dirty guard、同 SHA 验证与物化、失败回滚|
+|git_ops.py|仅在严格路径检查需要时补足 rename 两端处理，核对受影响调用方|
+|monitoring.py、render_review_prompts.py|固定契约基线、初始 review_level 和来源错误处理|
+|context.py / documents.py 及现有文档校验入口|来源字段、不可变约束与 schema 校验|
+|ledger / attempts / 执行上下文 / handoff / recovery 对应模块|来源关联、持久化、导入与迁移校验，不新增独立状态机|
+|integration 的单成员与整链冲突处理|核对物化后规格维护差异与归档收敛，不绕过现有合并安全检查|
+|task-run、task-work、usage、architecture、必要的 recovery 文档|先在主干定稿提交再 start；解释代码基座与固定规格来源，给出旧现场恢复方式|
+
+工厂测试至少覆盖：
+
+- A 已完成、B 工作区 spike 回填未提交时明确拒绝，提交后从旧 A tip 启动成功；覆盖显式与自动 base。
+- source SHA 等于和不等于 base SHA 的两种路径均执行脏检查与完整物化；新建 task 未提交报明确错误。
+- staged/unstaged、删除、跨目录 rename、非忽略附件及无关主仓脏改动的行为符合目标边界。
+- 默认分支为 main、master、trunk 时一致；base 缺依赖实现、已执行 task 重入仍拒绝。
+- task 启动后主干继续变化，review 契约和初始 review_level 不漂移；主干归档后历史复验仍有效。
+- single→full 允许、full→single 拒绝；来源缺失、损坏、伪造或对象不可用明确失败。
+- 物化异常完整回滚；单 task 与整链合并、ledger 丢失后的严格恢复均保持来源一致。
+
+主要测试入口为 `test_run_commands.py`、`test_task_start_flow.py`、`test_render_review_prompts.py`、`test_review_status_real.py` 及现有身份、恢复与整链集成测试。隔离复现已完成；上述重构、schema 变化和完整测试尚未实施，历史任务迁移方式仍需在实施阶段完成设计与验证。
+
+## 14. Issue #91：环境链接与交付物边界
+
+### 14.1 问题报告与隔离复现
+
+[Issue #91](https://github.com/TuTouPower/repo_template/issues/91) 报告：未跟踪 node_modules 目录软链在 `node_modules/` 规则下仍被 Git 枚举；review 后清理链接使指纹 stale，保留链接又可能阻断 finish。读取时该 issue 为 open、暂无评论。
+
+在隔离仓库中确认：
+
+- `.gitignore` 为 `node_modules/` 时，同名外部目录软链出现在 `git status` 的 `??` 项中。
+- 当前 review_scope 在创建该软链前后不同，证明它被纳入交付指纹。
+- 对同一软链可以成功 add、commit，Git 树模式为 `120000`，blob 保存外部目标路径。
+
+本轮只复现了枚举、指纹变化和 Git 可提交性，没有执行该现场的完整 finish/recovery 链路。读取到的 `_unstaged_outside()` 会拦截这类 `??` 项；最终提交 mismatch 的完整产品路径需补集成测试，不据 issue 描述声称已复验全部现象。
+
+Git 提交软链本身，不复制它指向的目录或文件。因此“外部或目录软链物理上不能进入 Git”不成立。项目若禁止某类链接交付，必须制定明确策略并报错，不能将其静默藏出 review 指纹。
+
+### 14.2 根因与不采用的分类方式
+
+`_review_worktree()` 合并 cached 与 others 枚举结果，无法基于显式环境意图区分未跟踪链接。Git 的目录级忽略规则不会匹配同名链接，导致开发环境进入交付树；finish 的未暂存门禁与指纹也需要使用一致边界。
+
+不采用 `is_environment_symlink(source, root)` 中“外部指向、目标是目录、去掉忽略规则尾斜杠后匹配，任一即豁免”的方案，原因如下：
+
+- 外部位置或目录类型不能证明环境用途；仓内目录链接和其他未忽略软链可能是合法交付物。
+- `source.is_dir()` 依赖目标存活。同一链接目标创建、删除或断链就改变分类，即使链接内容没变，也会产生新的假性 stale。
+- 手工删除尾斜杠再匹配会改变 Git 规则语义，且容易遗漏嵌套 .gitignore、否定规则、优先级、转义和锚定路径。
+- 只让已暂存内部文件链接进入指纹，会遗漏未跟踪交付链接，并破坏暂存前后指纹稳定性。
+
+现行 `test_scope_tracks_mode_and_symlink_target` 已覆盖未跟踪内部链接、悬空链接目标变化及提交后的指纹一致性，修复不能削弱这些断言。
+
+### 14.3 目标方案：显式声明，原生忽略，交付变更不隐身
+
+|路径状态|目标行为|
+|---|---|
+|明确声明且未跟踪的本地环境链接|由准确的 Git ignore 规则排除，创建、清理与目标存活变化均不影响交付指纹|
+|未声明、未忽略的新文件或软链|继续纳入指纹；finish 要求暂存或移除，不能因目标位于仓外而自动放行|
+|已暂存或受跟踪链接的交付变更|继续审查其内容、类型与删除；环境声明不能掩盖已进入交付集合的变更|
+|违反项目明确交付政策的链接|明确拒绝并说明修复动作，不从指纹中静默跳过|
+
+优先复用现有 `.worktreeinclude`、`link_local_files()` 与 `_ensure_links_ignored()`：该机制已为工具创建的环境链接在 Git common directory 的 info/exclude 托管块写入准确规则。需要核对并修正一致性缺口，不另建按目标几何位置推断用途的系统。
+
+手工建立的环境链接应通过能匹配链接本身的 Git 规则声明；例如相对工作树根的 `/src/frontend/node_modules`，或项目确实希望全层级忽略的 `node_modules`。这两种规则意图不同，不能由工具无条件互换。已有 `node_modules/` 规则的使用者应获得明确诊断与迁移说明，不自动重写整个 .gitignore。
+
+本轮目标选择“显式环境声明 + 准确 Git 忽略”路径，不承诺自动解释任意目录规则。如果未来要求自动支持仅有 `node_modules/` 的手工链接，应独立定义并验证目录忽略意图，仍由 Git 原生语义处理规则优先级；不引入 fnmatch 近似实现或全局外部链接豁免。
+
+`_review_worktree()` 应明确区分 index/cached 与非忽略 others 的来源，保留未暂存真实交付文件。先复用 Git 原生排除结果；只有存在直接用例证明原生结果不够时，才增加接收显式策略与跟踪状态的分类辅助。不能只看 Path 的目标类型判断交付资格。
+
+`_unstaged_outside()` 对已被准确忽略的环境路径无需额外放行。若确需额外环境策略，指纹与 finish 必须调用同一规则并只作用于满足政策的未跟踪链接，未知、查询失败或损坏状态不得默认为可豁免。环境集合计算不写配置，忽略规则建立应在 review 前的显式准备阶段完成。
+
+### 14.4 落点与验收
+
+|落点|实施内容|
+|---|---|
+|worktrees.py|复用和验证声明、链接与精确忽略；不扩大共享 info/exclude 的影响范围|
+|monitoring.py|区分 cached/others，保留真实交付链接与未跟踪文件；环境结果依照显式策略和 Git 原生规则|
+|lifecycle.py|核对 finish 与指纹使用一致排除结果，不增加“外部即放行”旁路|
+|usage、architecture、task-run、task-work|说明环境声明、目录规则与链接规则差异，以及 review 前准备要求|
+|factory_tests|指纹、环境链接及完整 finish/commit/cleanup 集成验证|
+
+验收至少包括：
+
+- 显式环境链接创建、保留、重建和清理后指纹一致；目标目录存在、删除、断链时分类不漂移。
+- 只有 `node_modules/` 时给出准确指导，修正规则或使用托管环境声明后恢复一致，不静默推断整个仓库的忽略意图。
+- 未声明的外部链接、内部文件链接、目录链接和悬空交付链接均不自动消失；目标字符串变化仍影响指纹。
+- 真实交付物暂存前、暂存后、提交后的指纹一致；强制暂存环境路径或 tracked 路径变更不能被豁免隐藏。
+- 环境路径改成非忽略交付物后遵循新状态；对项目明确忽略的同名普通文件，不擅自覆盖其既定忽略政策。
+- Git 嵌套规则、否定规则、锚定规则及不同 worktree 的声明作用域正确；不因写公共 exclude 隐藏其他工作区的正常交付。
+- 环境链接保留与清理两条路径均可完成真实 finish，并通过 committed scope、run-close 与 cleanup 校验；交付遗漏仍被拦截。
+
+主要入口为 `test_review_scope_fingerprint.py`、`test_finish_atomic.py` 及现有 `.worktreeinclude` 相关测试。本轮未实现修复、未验证完整收尾闭环；上述结果必须通过新增回归和工厂全量门禁确认。
+
+## 15. 整合实施顺序与基准重建
+
+两个 Issue 的正确性目标与性能目标独立验收，不能为了复用改造一并更换测试语义和计时基线。
+
+|顺序|工作包|依赖与退出条件|
+|---|---|---|
+|1|P0 初始测量及 Issue 回归固定|保留当前性能证据，补可重复的 #90/#91 场景，记录预期失败与现有合法路径；不提前替换安排链路|
+|2|C90：固定规格来源|按第 13 节实现来源字段、启动门禁、物化和全链路读取；先确定历史任务恢复规则；回归与全量通过|
+|3|C91：显式环境边界|按第 14 节实现原生忽略与统一交付集合；保留原有交付链接断言；完整收尾和全量通过|
+|4|P0 正确性修复后的基准重建|以同一修复后版本记录完整用例清单、环境、Git 调用与 wall time，作为后续性能工作包的受控对照|
+|5|P1→P2→P3→P4→P5|按第 8 节优化 Arrange、批量读取、种子和后端；C90 的固定来源复用不等同于共享可变缓存，C91 的交付规则不能因加速改变|
+
+C90 先收敛 store、renderer 和 monitoring 的来源语义，再进行 P2 批量读取，避免把旧来源猜测固化进缓存。C91 在性能 fixture 重写前固定行为回归，避免环境声明差异被误当成种子等价。
+
+分析基线的 1,055 个用例、240.05 秒与 2,070 次抽样 Git 执行仅保留历史意义。Issue 修复会增加用例并可能增加必要校验，不能把修复前后测试数量不同的总耗时直接解释为优化收益；后续性能 A/B 使用相同正确性版本与用例集合，必要时另报告共同场景数据。
+
+本轮交付仅为方案与分析记录，不表示 C90、C91 或 P0–P5 已实施，不改变现行裁决，不修改或关闭 GitHub issue。具体代码修复、迁移和性能结论依各工作包实际验证更新。
