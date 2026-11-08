@@ -66,7 +66,6 @@ def _bind(monkeypatch, repo):
     monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
     monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
     monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
-    monkeypatch.setattr(spikes_mod, "ARCHIVE_DIR", repo / "docs/archive/spikes")
     monkeypatch.setattr(
         spikes_mod, "TEMPLATE_PATH", repo / ".repo_template/docs/spike_report_template.md"
     )
@@ -572,10 +571,12 @@ def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
 
 def _init_spikes(repo):
     (repo / "docs/spikes").mkdir(parents=True, exist_ok=True)
-    (repo / "docs/archive/spikes").mkdir(parents=True, exist_ok=True)
     template = repo / ".repo_template/docs/spike_report_template.md"
     template.parent.mkdir(parents=True, exist_ok=True)
-    template.write_text("# Spike {id}: {title}\n", encoding="utf-8")
+    template.write_text(
+        "---\nsid: \"{id}\"\nslug: \"{slug}\"\nstatus: \"active\"\n---\n\n# Spike {id}: {title}\n",
+        encoding="utf-8",
+    )
 
 
 def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
@@ -587,7 +588,7 @@ def test_spikes_new_creates_dir_from_template(tmp_path, monkeypatch, capsys):
     assert out == "docs/spikes/s001_uv_lock"
     report = repo / out / "report.md"
     assert report.is_file()
-    assert report.read_text(encoding="utf-8").startswith("# Spike s001")
+    assert "# Spike s001" in report.read_text(encoding="utf-8")
 
 
 def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
@@ -781,7 +782,7 @@ def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
     repo = _init_repo(tmp_path)
     _git(repo, "checkout", "-b", "feature")
     _commit_entry(repo, "docs/spikes/s012_probe/report.md", text="# s012\n")
-    _commit_entry(repo, "docs/archive/spikes/s012_probe/report.md", text="# s012\n")
+    _commit_entry(repo, "docs/spikes/s012_other/report.md", text="# s012\n")
     _git(repo, "checkout", "main")
     with pytest.raises(IdScanError, match="s012"):
         scan_max_id(repo, "s", SPIKE_DIRS, kind="dir")

@@ -3,7 +3,6 @@
 
 把已闭环 / 已过时内容迁入 docs/archive/ 的确定性文件操作交给脚本执行：
   - archive-handoff：handoff.md 除最新一节外整段迁入 docs/archive/handoff.md（append）
-  - archive-spike   ：docs/spikes/sNNN_{slug}/ 整目录迁 docs/archive/spikes/（git mv）
   - archive-review  ：docs/reviews/review_*/ 整目录迁 docs/archive/reviews/（git mv）
 
 「哪些确认完结 / 过时」是语义裁定，属 skill 判断；本脚本只做动作。默认 dry-run，
@@ -11,7 +10,6 @@
 
 用法：
   repo_hygiene.py archive-handoff [--write]
-  repo_hygiene.py archive-spike sNNN [--write]
   repo_hygiene.py archive-review review_xxx [--write]
 """
 
@@ -26,16 +24,12 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SPIKES_DIR = REPO_ROOT / "docs/spikes"
-ARCHIVE_SPIKES = REPO_ROOT / "docs/archive/spikes"
 REVIEWS_DIR = REPO_ROOT / "docs/reviews"
 ARCHIVE_REVIEWS = REPO_ROOT / "docs/archive/reviews"
 HANDOFF = REPO_ROOT / "docs/handoff.md"
 ARCHIVE_HANDOFF = REPO_ROOT / "docs/archive/handoff.md"
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
-SPIKE_DIR_RE = re.compile(r"^s[0-9]+_[a-z0-9_]+$")
-SPIKE_SID_RE = re.compile(r"^s[0-9]+$")
 ARCHIVE_HANDOFF_HEADER = (
     "# 历史交接\n\n"
     "由 `repo-hygiene` 从 `docs/handoff.md` 迁入。**只追加**，禁止截断或改写已归档段落。\n"
@@ -154,7 +148,7 @@ def cmd_archive_handoff(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# archive-spike / archive-review（git mv 整目录）
+# archive-review（git mv 整目录）
 # ---------------------------------------------------------------------------
 
 def _move_leftover(src: Path, dst: Path) -> None:
@@ -191,24 +185,6 @@ def _move_dir(src: Path, dst: Path, write: bool) -> None:
         print(f"将迁移（dry-run）：{_rel(src)} -> {_rel(dst)}")
 
 
-def cmd_archive_spike(args: argparse.Namespace) -> None:
-    sid = args.sid
-    if not SPIKE_SID_RE.match(sid):
-        raise HygieneError(f"spike sid 格式应为 sNNN，收到 {sid!r}")
-    if not SPIKES_DIR.is_dir():
-        raise HygieneError(f"缺 {_rel(SPIKES_DIR)}")
-    matches = [p for p in SPIKES_DIR.iterdir()
-               if p.is_dir() and p.name.startswith(sid + "_") and SPIKE_DIR_RE.match(p.name)]
-    if len(matches) != 1:
-        raise HygieneError(f"sid {sid} 匹配 {len(matches)} 个 spike 目录；期望恰好 1 个")
-    from repo_task.finalization import validate_spike
-    try:
-        validate_spike(REPO_ROOT, matches[0])
-    except ValueError as error:
-        raise HygieneError(str(error)) from error
-    _move_dir(matches[0], ARCHIVE_SPIKES / matches[0].name, args.write)
-
-
 def cmd_archive_review(args: argparse.Namespace) -> None:
     name = args.dir
     if "/" in name or "\\" in name or ".." in name or Path(name).name != name:
@@ -230,11 +206,6 @@ def main(argv: list[str] | None = None) -> None:
     handoff = sub.add_parser("archive-handoff", help="handoff 过时段落迁 archive（保留最新节）")
     handoff.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
     handoff.set_defaults(func=cmd_archive_handoff)
-
-    spike = sub.add_parser("archive-spike", help="完结 spike 整目录迁 archive")
-    spike.add_argument("sid", help="spike sid（如 s001）")
-    spike.add_argument("--write", action="store_true")
-    spike.set_defaults(func=cmd_archive_spike)
 
     review = sub.add_parser("archive-review", help="确认过时的 review 目录迁 archive")
     review.add_argument("dir", help="review 目录名（如 review_my_check）")
