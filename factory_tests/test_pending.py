@@ -646,7 +646,10 @@ def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
 def _init_spikes(repo):
     template = repo / ".repo_template/docs/spike_report_template.md"
     template.parent.mkdir(parents=True, exist_ok=True)
-    template.write_text("# {id} spike 报告\n", encoding="utf-8")
+    template.write_text(
+        "---\nsid: \"{id}\"\nslug: \"{slug}\"\nstatus: \"active\"\n---\n\n# {id} spike 报告\n",
+        encoding="utf-8",
+    )
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "add spike template")
 

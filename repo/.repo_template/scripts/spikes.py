@@ -21,8 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import IdScanError, allocate_dir, id_lock
 from md_format import MdFormatError, format_file
+from repo_task import context as ctx
 from repo_task.documents import (
-    dump_front_matter,
     parse_front_matter,
     parse_front_matter_text,
     write_front_matter,
@@ -55,15 +55,11 @@ def cmd_new(args: argparse.Namespace) -> None:
         raise IdScanError(f"缺模板 {TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}")
 
     template_text = TEMPLATE_PATH.read_text(encoding="utf-8")
-    if template_text.startswith("---"):
-        content = template_text.replace("{slug}", slug)
-    else:
-        fm = {
-            "sid": "{id}",
-            "slug": slug,
-            "status": "active",
-        }
-        content = dump_front_matter(fm) + "\n" + template_text
+    if not template_text.startswith("---"):
+        raise IdScanError(
+            f"模板缺少标准 Front Matter (---)：{TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}"
+        )
+    content = template_text.replace("{slug}", slug)
 
     if args.title:
         title = args.title.strip()
@@ -139,7 +135,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
 
     try:
         validate_spike(REPO_ROOT, spike_dir)
-    except ValueError as err:
+    except (ValueError, ctx.TaskDataError) as err:
         sys.exit(f"错误: spike {sid} 闭环校验未通过：{err}")
 
     if not args.write:
@@ -153,7 +149,10 @@ def cmd_complete(args: argparse.Namespace) -> None:
             sys.exit(f"错误: spike {sid} 已处于 completed 状态")
         if fm.get("status") == "superseded":
             sys.exit(f"错误: spike {sid} 已处于 superseded 状态，无法 complete")
-        validate_spike(REPO_ROOT, spike_dir)
+        try:
+            validate_spike(REPO_ROOT, spike_dir)
+        except (ValueError, ctx.TaskDataError) as err:
+            sys.exit(f"错误: spike {sid} 闭环校验未通过：{err}")
         fm["status"] = "completed"
         fm.pop("superseded_by", None)
         fm.pop("reason", None)
@@ -170,9 +169,11 @@ def cmd_supersede(args: argparse.Namespace) -> None:
     if not SPIKE_SID_RE.match(successor_sid):
         sys.exit(f"错误: --by 参数格式应为 sNNN，收到 {successor_sid!r}")
 
-    reason = args.reason.strip() if args.reason else ""
-    if not reason:
+    if not args.reason or not args.reason.strip():
         sys.exit("错误: --reason 不能为空")
+    if "\n" in args.reason or "\r" in args.reason:
+        sys.exit("错误: --reason 严禁包含换行符")
+    reason = args.reason.strip()
 
     if sid == successor_sid:
         sys.exit(f"错误: 严禁自引用：{sid} 不能替代自身")
@@ -217,7 +218,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
 
     try:
         validate_spike(REPO_ROOT, succ_dir)
-    except ValueError as err:
+    except (ValueError, ctx.TaskDataError) as err:
         sys.exit(f"错误: 替代目标 {successor_sid} 证据校验未通过：{err}")
 
     # 循环引用检查
@@ -249,7 +250,10 @@ def cmd_supersede(args: argparse.Namespace) -> None:
             sys.exit(
                 f"错误: 替代目标 {successor_sid} 状态必须为 completed（当前为 {succ_fm.get('status')}）"
             )
-        validate_spike(REPO_ROOT, succ_dir)
+        try:
+            validate_spike(REPO_ROOT, succ_dir)
+        except (ValueError, ctx.TaskDataError) as err:
+            sys.exit(f"错误: 替代目标 {successor_sid} 证据校验未通过：{err}")
         fm["status"] = "superseded"
         fm["superseded_by"] = successor_sid
         fm["reason"] = reason

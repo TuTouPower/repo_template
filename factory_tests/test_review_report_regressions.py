@@ -50,6 +50,7 @@ def _spike(root, decision="- 决定：是", followup="- 后续 task：t001"):
     finding.write_text("# Verified\n", encoding="utf-8")
     report = directory / "report.md"
     report.write_text(
+        "---\nsid: \"s001\"\nslug: \"probe\"\nstatus: \"completed\"\n---\n"
         "## 结论\n已验证。\n## 是否采纳\n" + decision + "\n" + followup +
         "\n## 关联 findings\n- `d001`\n\n```python\nd1 = date()\nd999 = date()\n```\n",
         encoding="utf-8",

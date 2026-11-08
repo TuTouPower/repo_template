@@ -14,6 +14,8 @@ REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import spikes as spikes_mod
+from _id_scan import IdScanError
+from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.finalization import check_finalization, validate_spike
 from repo_task.spikes import (
@@ -211,6 +213,79 @@ def test_validate_spike_metadata_superseded_requires_fields():
         })
 
 
+def test_validate_spike_metadata_strict_types():
+    with pytest.raises(SpikeMetadataError, match="必须为 dict"):
+        validate_spike_metadata("not a dict")  # type: ignore
+
+    with pytest.raises(SpikeMetadataError, match="类型非法.*期望 str"):
+        validate_spike_metadata({"sid": 100, "slug": "probe", "status": "active"})
+
+    with pytest.raises(SpikeMetadataError, match="类型非法.*期望 str"):
+        validate_spike_metadata({"sid": "s001", "slug": ["probe"], "status": "active"})
+
+    with pytest.raises(SpikeMetadataError, match="类型非法.*期望 str"):
+        validate_spike_metadata({"sid": "s001", "slug": "probe", "status": 123})
+
+    with pytest.raises(SpikeMetadataError, match="类型非法.*期望 str"):
+        validate_spike_metadata({
+            "sid": "s001",
+            "slug": "probe",
+            "status": "superseded",
+            "superseded_by": 2,
+            "reason": "text",
+        })
+
+    with pytest.raises(SpikeMetadataError, match="类型非法.*期望 str"):
+        validate_spike_metadata({
+            "sid": "s001",
+            "slug": "probe",
+            "status": "superseded",
+            "superseded_by": "s002",
+            "reason": {"why": "not string"},
+        })
+
+
+def test_validate_spike_metadata_rejects_newlines_and_empty_fields():
+    for field, val in [
+        ("sid", "s001\n"),
+        ("slug", "probe\r"),
+        ("status", "active\r\n"),
+    ]:
+        with pytest.raises(SpikeMetadataError, match="严禁包含换行符"):
+            validate_spike_metadata({"sid": "s001", "slug": "probe", "status": "active", field: val})
+
+    with pytest.raises(SpikeMetadataError, match="严禁包含换行符"):
+        validate_spike_metadata({
+            "sid": "s001",
+            "slug": "probe",
+            "status": "superseded",
+            "superseded_by": "s002\n",
+            "reason": "valid reason",
+        })
+
+    with pytest.raises(SpikeMetadataError, match="严禁包含换行符"):
+        validate_spike_metadata({
+            "sid": "s001",
+            "slug": "probe",
+            "status": "superseded",
+            "superseded_by": "s002",
+            "reason": "line1\nline2",
+        })
+
+    with pytest.raises(SpikeMetadataError, match="sid 不能为空"):
+        validate_spike_metadata({"sid": "", "slug": "probe", "status": "active"})
+    with pytest.raises(SpikeMetadataError, match="slug 不能为空"):
+        validate_spike_metadata({"sid": "s001", "slug": "   ", "status": "active"})
+    with pytest.raises(SpikeMetadataError, match="必须提供合法的 superseded_by"):
+        validate_spike_metadata({
+            "sid": "s001",
+            "slug": "probe",
+            "status": "superseded",
+            "superseded_by": "   ",
+            "reason": "valid",
+        })
+
+
 # ===========================================================================
 # 2. spikes.py new
 # ===========================================================================
@@ -255,6 +330,16 @@ def test_spikes_new_rejects_invalid_slug(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit, match="slug 须匹配"):
         spikes_mod.main(["new", "Invalid-Slug"])
+
+
+def test_spikes_new_rejects_template_missing_front_matter(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    tpl = repo / ".repo_template/docs/spike_report_template.md"
+    tpl.write_text("# Spike report\n\nNo front matter.\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="缺少标准 Front Matter"):
+        spikes_mod.main(["new", "probe_no_fm"])
 
 
 # ===========================================================================
@@ -439,6 +524,20 @@ def test_spikes_supersede_cycle_detection(tmp_path, monkeypatch):
         spikes_mod.main(["supersede", "s001", "--by", "s002", "--reason", "cycle", "--write"])
 
 
+def test_spikes_supersede_rejects_newline_in_reason_and_empty_reason(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+
+    with pytest.raises(SystemExit, match="--reason 不能为空"):
+        spikes_mod.main(["supersede", "s001", "--by", "s002", "--reason", "   "])
+
+    with pytest.raises(SystemExit, match="--reason 严禁包含换行符"):
+        spikes_mod.main(["supersede", "s001", "--by", "s002", "--reason", "line1\nline2"])
+
+    with pytest.raises(SystemExit, match="--reason 严禁包含换行符"):
+        spikes_mod.main(["supersede", "s001", "--by", "s002", "--reason", "line1\rline2"])
+
+
 # ===========================================================================
 # 6. Finalization 引用与替代链递归校验
 # ===========================================================================
@@ -559,3 +658,25 @@ def test_finalization_superseded_chain_cycle_fails(tmp_path):
 
     with pytest.raises(ValueError, match="替代链存在循环引用"):
         check_finalization(repo, "t001", task_dir)
+
+
+def test_validate_spike_fail_closed_without_front_matter_or_invalid_metadata(tmp_path):
+    repo = _init_repo(tmp_path)
+    spike_dir = repo / "docs/spikes/s001_probe"
+    spike_dir.mkdir(parents=True)
+    report = spike_dir / "report.md"
+
+    # 1. 彻底无 Front Matter，必须 fail-closed 抛出 TaskDataError
+    report.write_text("# Spike report\n\n## 结论\n已验证。\n- 决定：是\n- 后续 task：t001\n", encoding="utf-8")
+    with pytest.raises(TaskDataError, match="必须以 YAML front matter.*开头"):
+        validate_spike(repo, spike_dir)
+
+    # 2. Front Matter 格式不合法（未闭合），必须 fail-closed 抛出 TaskDataError
+    report.write_text("---\nsid: \"s001\"\n# 未闭合\n# Spike report\n", encoding="utf-8")
+    with pytest.raises(TaskDataError):
+        validate_spike(repo, spike_dir)
+
+    # 3. 元数据非法（如 status 为非法值），必须 fail-closed 抛出 TaskDataError
+    report.write_text("---\nsid: \"s001\"\nslug: \"probe\"\nstatus: \"invalid_status\"\n---\n# Spike report\n", encoding="utf-8")
+    with pytest.raises(TaskDataError, match="元数据非法"):
+        validate_spike(repo, spike_dir)

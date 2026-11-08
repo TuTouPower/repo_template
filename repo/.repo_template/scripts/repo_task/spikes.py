@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .context import TaskDataError
 from .documents import parse_front_matter_text, parse_front_matter
 
 SPIKE_SID_RE = re.compile(r"^s[0-9]{3,}$")
@@ -14,7 +15,7 @@ VALID_STATUSES = frozenset({"active", "completed", "superseded"})
 ALLOWED_FRONT_MATTER_KEYS = frozenset({"sid", "slug", "status", "superseded_by", "reason"})
 
 
-class SpikeMetadataError(ValueError):
+class SpikeMetadataError(TaskDataError, ValueError):
     """Spike front matter schema or state error."""
 
 
@@ -24,25 +25,47 @@ def validate_spike_metadata(
     expected_sid: str | None = None,
     expected_slug: str | None = None,
 ) -> None:
+    if not isinstance(fm, dict):
+        raise SpikeMetadataError(f"spike front matter 必须为 dict，收到 {type(fm).__name__}")
+
+    for key, val in fm.items():
+        if not isinstance(key, str):
+            raise SpikeMetadataError(f"spike front matter 键必须为 str：{key!r}")
+        if not isinstance(val, str):
+            raise SpikeMetadataError(
+                f"spike front matter 字段 {key!r} 类型非法：期望 str，收到 {type(val).__name__}"
+            )
+
     unknown_keys = set(fm) - ALLOWED_FRONT_MATTER_KEYS
     if unknown_keys:
         raise SpikeMetadataError(
             f"spike front matter 包含未知字段：{', '.join(sorted(unknown_keys))}"
         )
 
+    for k in ("sid", "slug", "status", "superseded_by", "reason"):
+        v = fm.get(k)
+        if v is not None and ("\n" in v or "\r" in v):
+            raise SpikeMetadataError(f"spike {k} 严禁包含换行符：{v!r}")
+
     sid = fm.get("sid")
-    if not sid or not SPIKE_SID_RE.match(sid):
+    if not sid or not sid.strip():
+        raise SpikeMetadataError("spike sid 不能为空")
+    if not SPIKE_SID_RE.match(sid):
         raise SpikeMetadataError(f"spike sid 格式非法：{sid!r}（期望形如 s001）")
     if expected_sid is not None and sid != expected_sid:
         raise SpikeMetadataError(f"spike sid 与预期不符：{sid} != {expected_sid}")
 
     slug = fm.get("slug")
-    if not slug or not SLUG_RE.match(slug):
+    if not slug or not slug.strip():
+        raise SpikeMetadataError("spike slug 不能为空")
+    if not SLUG_RE.match(slug):
         raise SpikeMetadataError(f"spike slug 格式非法：{slug!r}（期望 snake_case）")
     if expected_slug is not None and slug != expected_slug:
         raise SpikeMetadataError(f"spike slug 与预期不符：{slug} != {expected_slug}")
 
     status = fm.get("status")
+    if not status or not status.strip():
+        raise SpikeMetadataError("spike status 不能为空")
     if status not in VALID_STATUSES:
         raise SpikeMetadataError(
             f"spike status 非法：{status!r}（必须是 active/completed/superseded）"
@@ -55,7 +78,7 @@ def validate_spike_metadata(
             raise SpikeMetadataError(f"status 为 {status} 时不得填写 reason")
     elif status == "superseded":
         succ = fm.get("superseded_by")
-        if not succ or not SPIKE_SID_RE.match(succ):
+        if not succ or not succ.strip() or not SPIKE_SID_RE.match(succ):
             raise SpikeMetadataError(
                 f"status 为 superseded 时必须提供合法的 superseded_by（收到 {succ!r}）"
             )

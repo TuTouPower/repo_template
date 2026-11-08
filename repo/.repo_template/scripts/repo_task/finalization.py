@@ -38,14 +38,13 @@ def validate_spike(root, directory):
     if not report.is_file():
         raise ValueError(f"正式 spike 缺 report.md：{directory.name}")
     text = report.read_text(encoding="utf-8")
-    if text.startswith("---"):
-        try:
-            fm, prose_text = parse_front_matter_text(text, source=report.as_posix())
-            validate_spike_metadata(fm)
-        except SpikeMetadataError as err:
-            raise ValueError(f"spike 元数据非法：{err}") from err
-    else:
-        prose_text = text
+    if not text.startswith("---"):
+        raise ctx.TaskDataError(f"正式 spike 报告必须以 YAML front matter (---) 开头：{report.as_posix()}")
+    try:
+        fm, prose_text = parse_front_matter_text(text, source=report.as_posix())
+        validate_spike_metadata(fm)
+    except SpikeMetadataError as err:
+        raise ctx.TaskDataError(f"spike 元数据非法：{err}") from err
     prose = _prose(prose_text)
     if ctx.TEMPLATE_PLACEHOLDER_RE.search(_strip_inline_code(prose)):
         raise ValueError(f"spike report 仍有占位符：{directory.name}")
@@ -86,7 +85,10 @@ def _resolve_and_validate_spike(root, sid, visited=None):
     if status == "active":
         raise ValueError(f"正式 spike 尚未完成（status 为 active）：{sid}")
     elif status == "completed":
-        validate_spike(root, spike_dir)
+        try:
+            validate_spike(root, spike_dir)
+        except (ValueError, ctx.TaskDataError) as err:
+            raise ValueError(f"正式 spike {sid} 证据校验未通过：{err}") from err
         return spike_dir
     elif status == "superseded":
         successor_sid = fm.get("superseded_by")
