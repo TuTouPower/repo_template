@@ -261,48 +261,47 @@ def test_source_runner_supports_all_layouts_without_preparatory_asset_writes(env
 def test_dirty_source_requires_explicit_development_mode(env):
     (env["src"] / ".repo_template/scripts/task.py").write_text("changed\n")
     with pytest.raises(ctx.SyncError, match="dirty"):
-        cmd_apply(Namespace(skip_tests=True, decisions={}))
+        cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={}))
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()
 
 
 def test_sync_rejects_source_drift_before_asset_transaction(env):
     with pytest.raises(ctx.SyncError, match="来源版本已变化"):
-        cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit="0" * 40))
+        cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={}, expected_commit="0" * 40))
     assert not (env["consumer"] / ".scratch/repo_sync_rollback").exists()
 
 
 def test_url_cache_never_silently_reuses_a_different_source(env):
     state = {"template_source": {"kind": "url", "value": env["src"].as_uri()}}
-    resolve_src(state)
+    resolve_src(state, sync=env["sync"])
     other = env["src"].parent / "other_source"
     shutil.copytree(env["src"], other)
     state["template_source"]["value"] = other.as_uri()
     with pytest.raises(ctx.SyncError, match="origin 与 template_source 不符"):
-        resolve_src(state)
+        resolve_src(state, sync=env["sync"])
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()
 
 
-def test_fixed_checkout_keeps_canonical_url_identity_and_supports_offline_apply(env, monkeypatch):
+def test_fixed_checkout_keeps_canonical_url_identity_and_supports_offline_apply(env):
     identity = env["src"].as_uri()
     state = {"template_source": {"kind": "url", "value": identity}}
-    checkout = resolve_src(state)
-    monkeypatch.setattr(ctx, "SOURCE_OVERRIDE", identity)
-    monkeypatch.setattr(ctx, "CHECKOUT_OVERRIDE", checkout)
-    assert cmd_apply(Namespace(skip_tests=True, decisions={}, expected_commit=env["head"])) == 0
+    checkout = resolve_src(state, sync=env["sync"])
+    sync = ctx.SyncContext.for_consumer(env["consumer"], source_override=identity, checkout_override=checkout)
+    assert cmd_apply(Namespace(sync=sync, skip_tests=True, decisions={}, expected_commit=env["head"])) == 0
     stored = json.loads(env["state_file"].read_text())
     assert stored["template_source"] == {"kind": "url", "value": identity}
     assert stored["resolved_checkout"] == str(checkout)
 
 
 def test_shared_sync_policy_and_version_survive_local_state_loss(env):
-    cmd_prompt(Namespace(action="add", text="保留业务规则", tags="business", scope="shared"))
-    assert cmd_apply(Namespace(skip_tests=True, decisions={})) == 0
-    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state()))
+    cmd_prompt(Namespace(sync=env["sync"], action="add", text="保留业务规则", tags="business", scope="shared"))
+    assert cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 0
+    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state(env["sync"])))
     env["state_file"].unlink()
-    assert read_state()["last_synced_commit"] == env["head"]
-    cmd_init(Namespace(source=str(env["src"])))
-    assert read_state()["last_synced_commit"] == env["head"]
-    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state()))
+    assert read_state(env["sync"])["last_synced_commit"] == env["head"]
+    cmd_init(Namespace(sync=env["sync"], source=str(env["src"])))
+    assert read_state(env["sync"])["last_synced_commit"] == env["head"]
+    assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state(env["sync"])))
 
 
 def test_sync_state_write_failure_restores_entire_upgrade(env, monkeypatch):
@@ -310,7 +309,7 @@ def test_sync_state_write_failure_restores_entire_upgrade(env, monkeypatch):
     def fail_write(_data, **_kwargs):
         raise OSError("simulated state write failure")
     monkeypatch.setattr("template_sync.apply.write_state", fail_write)
-    assert cmd_apply(Namespace(skip_tests=True, decisions={})) == 1
+    assert cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
     assert env["state_file"].read_bytes() == previous
     assert not (env["consumer"] / ".repo_template/sync_manifest.json").exists()
     assert not (env["consumer"] / ".repo_template/scripts/task.py").exists()

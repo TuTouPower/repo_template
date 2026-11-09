@@ -131,7 +131,7 @@ def test_agents_semantic_merge_uses_template_principles_and_preserves_project_in
     draft = env["consumer"] / ".scratch/candidate.md"
     draft.parent.mkdir()
     draft.write_text(candidate, encoding="utf-8")
-    assert cmd_apply(Namespace(skip_tests=True, decisions={}, agents_file=draft)) == 0
+    assert cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={}, agents_file=draft)) == 0
     result = (env["consumer"] / "AGENTS.md").read_text()
     assert result.startswith("Private project\n")
     assert "Merged paths" in result
