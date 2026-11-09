@@ -335,8 +335,18 @@ def test_binary_suffix_is_filtered_before_git_read(repo, monkeypatch):
     assert png_sha not in seen
 
 
-def test_oversized_blob_fails_closed(repo, monkeypatch):
+def test_oversized_blob_is_scanned_per_object_instead_of_failing_whole_scan(
+    repo, monkeypatch
+):
+    """超大对象不再让整体扫描失败：逐个顺序读取扫描（P1-1 根因修正）。
+
+    旧语义（任一对象超限则整体 fail-closed）已删除：正常二进制/office/大文本
+    会阻断 finish/commit/integrate 发布链路，属过严阻断。现行为：超限对象逐个
+    读入扫描，干净通过、泄漏检出；只有超过硬上限的对象才显式失败。
+    """
+    token = _joined("", "Users", "alice")
     (repo / "big.md").write_text("clean\n", encoding="utf-8")
+    (repo / "big_leak.md").write_text("leak " + token + "/proj\n", encoding="utf-8")
     _git(repo, "add", "-A")
     real = git_ops.batch_object_sizes
 
@@ -344,7 +354,23 @@ def test_oversized_blob_fails_closed(repo, monkeypatch):
         return {oid: MAX_SCAN_BLOB_BYTES + 1 for oid in real(oids, **kw)}
 
     monkeypatch.setattr(git_ops, "batch_object_sizes", inflated)
-    with pytest.raises(PrivacyScanError, match="超过"):
+    leaks = scan_git_index_privacy(repo)
+    assert any(entry.startswith("big_leak.md:1:") and token in entry for entry in leaks)
+    assert not any(entry.startswith("big.md") for entry in leaks)
+
+
+def test_blob_beyond_hard_cap_fails_closed(repo, monkeypatch):
+    from repo_task.privacy import MAX_SCAN_BLOB_HARD_CAP
+
+    (repo / "huge.md").write_text("clean\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    real = git_ops.batch_object_sizes
+
+    def inflated(oids, **kw):
+        return {oid: MAX_SCAN_BLOB_HARD_CAP + 1 for oid in real(oids, **kw)}
+
+    monkeypatch.setattr(git_ops, "batch_object_sizes", inflated)
+    with pytest.raises(PrivacyScanError, match="无法安全扫描"):
         scan_git_index_privacy(repo)
 
 

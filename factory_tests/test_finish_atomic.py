@@ -775,7 +775,7 @@ def test_finish_rejects_developer_home_path_in_review_report_and_task_docs(git_r
 # --------------------------------------------------------------------------
 
 
-def _committed_journal(worktree, anchor, message):
+def _committed_journal(worktree, anchor, message, execution_id="x"):
     """构造「实现 commit 已产生但 journal 残留」的 committed 事务。"""
     from repo_task import commit_txn, monitoring
 
@@ -784,7 +784,7 @@ def _committed_journal(worktree, anchor, message):
     )
     data = {
         "version": commit_txn.JOURNAL_VERSION, "tid": "t001", "attempt": 1,
-        "execution_id": "x", "branch": "t001_alpha", "diff_anchor": anchor,
+        "execution_id": execution_id, "branch": "t001_alpha", "diff_anchor": anchor,
         "review_scope": scope, "task_rel": "docs/tasks/t001_alpha",
         "message_file": str(message), "original_head": anchor,
         "index_existed": True, "files": {}, "phase": "committed",
@@ -830,13 +830,16 @@ def test_recovery_does_not_short_circuit_on_committed_journal(git_repo):
 
 
 def test_finish_txn_clear_cleans_committed_journal(git_repo):
-    """P1-2：显式 finish-txn-clear 清理已完成（committed）事务。"""
+    """P1-2：显式 finish-txn-clear 清理已完成（committed）事务。
+
+    journal 身份须与实现 commit 的执行回执一致（P1-3 对应性核对），故用真实 identity。
+    """
     from repo_task import commit_txn
 
-    _, worktree, message = _ready(git_repo)
+    identity, worktree, message = _ready(git_repo)
     anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
-    _committed_journal(worktree, anchor, message)
+    _committed_journal(worktree, anchor, message, execution_id=identity["execution_id"])
     assert commit_txn.load(worktree) is not None
 
     result = _task_cli(git_repo, "finish-txn-clear", "t001")

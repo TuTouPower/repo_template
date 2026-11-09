@@ -412,13 +412,27 @@ def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
 AC_ID_RE = re.compile(r"AC-\d{3}")
 
 
-def _strip_fenced_code(text: str) -> str:
-    """去除 Markdown 围栏代码块（规则委托 ctx.FenceState，闭栏须为裸围栏）。"""
+# 缩进代码块：行首 4 空格或制表符（CommonMark 规则）。fence 统一后只识别 0-3
+# 空格围栏，缩进代码块内的 AC/示例不得采信：跳过缩进 ≥4 的区域。
+_INDENTED_CODE_RE = re.compile(r"^(?: {4}|\t)")
+
+
+def _strip_code_blocks(text: str) -> str:
+    """去除围栏代码块（规则委托 ctx.FenceState，闭栏须为裸围栏）与缩进代码块，
+    用于 AC/验收标准提取。
+
+    fenced 示例早有跳过先例（Issue #31）；缩进代码块同理：示例里的
+    `- [x] AC-001` 不得被算作真实勾选。段落续行误伤属保守取舍：
+    真实 AC 条目一律顶格（0 缩进），模板从不缩进 AC 行。
+    """
     lines = []
     fence = ctx.FenceState()
     for line in text.splitlines():
-        if not fence.feed(line):
-            lines.append(line)
+        if fence.feed(line):
+            continue
+        if _INDENTED_CODE_RE.match(line):
+            continue
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -427,7 +441,7 @@ def extract_ac_ids(spec_text: str) -> list[str]:
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
     if not acceptance:
         return []
-    cleaned = _strip_fenced_code(acceptance)
+    cleaned = _strip_code_blocks(acceptance)
     seen: list[str] = []
     for line in cleaned.splitlines():
         for match in AC_ID_RE.findall(line):
@@ -444,7 +458,7 @@ def extract_ac_statuses(spec_text: str) -> list[tuple[str, bool]]:
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
     if not acceptance:
         return []
-    cleaned = _strip_fenced_code(acceptance)
+    cleaned = _strip_code_blocks(acceptance)
     results: list[tuple[str, bool]] = []
     seen: set[str] = set()
     for line in cleaned.splitlines():
@@ -516,7 +530,7 @@ def validate_task_documents(
                 )
 
     acceptance = _extract_markdown_section(spec_text, 3, "验收标准")
-    cleaned_acceptance = _strip_fenced_code(acceptance) if acceptance else ""
+    cleaned_acceptance = _strip_code_blocks(acceptance) if acceptance else ""
     if not cleaned_acceptance or not re.search(
         r"^\s*-\s*\[[ xX]\]\s*\S", cleaned_acceptance, re.MULTILINE
     ):

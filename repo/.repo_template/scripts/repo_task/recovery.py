@@ -93,9 +93,17 @@ def recovery_state(tid: str, *, repo) -> dict:
         return state
     task_dir = worktree / task["dir"]
     state["task_dir"] = str(task_dir)
-    fm, _ = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
+    try:
+        fm, _ = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
+    except (OSError, ctx.TaskDataError) as error:
+        return phase("corrupt", f"worktree 进展无法解析（{error}）；人工核查后处理")
     if fm.get("branch") != branch or fm.get("tid") != tid:
         return state
+    if fm.get("status") not in (*ctx.TERMINAL_STATUSES, "active", "backlog"):
+        return phase(
+            "corrupt",
+            f"worktree 进展 status 非法或缺失（{fm.get('status')!r}）；人工核查后处理",
+        )
     if fm["status"] == "active":
         if record is None:
             if (worktree / "docs/runtime/execution_context.json").exists():
@@ -152,8 +160,8 @@ def recovery_state(tid: str, *, repo) -> dict:
         state["action"] = f"停止：{error}"
         return state
     tip_sha = head.stdout.strip()
-    # P1-3：recovery 边界统一校验 tip commit 隐私，泄漏则给出专用 phase，
-    # 不再让泄漏提交经 committed_unreported / run-close 一路合入主干。
+    # P1-3：recovery 边界统一校验 tip commit 引入的新增行隐私，泄漏则给出专用
+    # phase，不再让泄漏提交经 committed_unreported / run-close 一路合入主干。
     try:
         from .lifecycle import scan_tip_privacy_leaks
         tip_leaks = scan_tip_privacy_leaks(tip_sha, repo=repo)
@@ -164,8 +172,12 @@ def recovery_state(tid: str, *, repo) -> dict:
         shown = "；".join(tip_leaks[:8])
         return phase(
             "committed_privacy_leak",
-            f"实现 commit {tip_sha[:12]} 含开发者家目录绝对路径泄漏（{shown}）；"
-            "HEAD 已前移不回滚，停止收尾/合入，人工修正后按 finish-unwind 或 recovery 处理",
+            f"实现 commit {tip_sha[:12]} 引入开发者家目录绝对路径泄漏（{shown}）；"
+            "HEAD 已前移不回滚，停止收尾/合入。用 "
+            f"`git log -S <泄漏路径片段> --oneline -- {branch}` 定位引入提交："
+            "确属非个人环境固定路径，在 repo_task/privacy.py FIXED_PATH_EXCEPTIONS "
+            "显式豁免；否则移除泄漏内容后重新 review，report 未 done 且无后继分支时"
+            "可用 finish-unwind 退回重做，人工修正后重跑 finish",
         )
     diff_anchor = fm.get("diff_anchor", "")
     report = record.get("report") or {}
@@ -193,7 +205,12 @@ def recovery_state(tid: str, *, repo) -> dict:
                     "finish-unwind 只处理 running 现场，人工核查"
                 )
                 return state
-            if _tip_has_successor(tip_sha, branch, repo=repo):
+            try:
+                has_successor = _tip_has_successor(tip_sha, branch, repo=repo)
+            except ctx.TaskDataError as error:
+                state["action"] = f"停止：后继分支判定失败（{error}）；人工核查"
+                return state
+            if has_successor:
                 state["action"] = (
                     f"停止：实现 commit 内容偏离 review 内容（{gate_detail}）；"
                     f"已有后继分支包含当前 tip {tip_sha[:12]}，撤销会使其悬空，人工核查"
@@ -214,11 +231,35 @@ def recovery_state(tid: str, *, repo) -> dict:
                     "不改写实现 commit、不 amend，请人工核查"
                 )
                 return state
-            action = _review_repair_action(
-                tid, record["attempt"], record["execution_id"],
-                tip_sha, diff_anchor, gate_detail, branch, repo=repo,
-            )
+            try:
+                action = _review_repair_action(
+                    tid, record["attempt"], record["execution_id"],
+                    tip_sha, diff_anchor, gate_detail, branch, repo=repo,
+                )
+            except ctx.TaskDataError as error:
+                state["action"] = f"停止：review 修复判定失败（{error}）；人工核查"
+                return state
             return phase("review_repair", action)
+        if verdict != "ready" and kind == "privacy":
+            # tip 引入隐私泄漏：与 committed_privacy_leak 同源（变更集口径），这里是
+            # 门禁视角的显式映射，不再落到 committed_unreported 让 run-close 补 report。
+            locate = (
+                f"用 `git log -S <泄漏路径片段> --oneline -- {branch}` 定位引入提交："
+                "确属非个人环境固定路径，在 repo_task/privacy.py FIXED_PATH_EXCEPTIONS "
+                "显式豁免；否则移除泄漏内容后重新 review 再收尾"
+            )
+            if report_done:
+                state["action"] = (
+                    f"停止：report 已写入 done，但实现 commit 引入隐私泄漏（{gate_detail}）；"
+                    f"不可撤销、不可 amend，人工核查。{locate}"
+                )
+                return state
+            return phase(
+                "committed_privacy_leak",
+                f"实现 commit {tip_sha[:12]} 引入隐私泄漏（{gate_detail}）；"
+                f"HEAD 已前移不回滚。{locate}；report 未 done 且无后继分支时"
+                "可用 finish-unwind 退回重做",
+            )
     if not record.get("report"):
         return phase("committed_unreported", "验证最终提交和 review gate；按原 identity 补缺失的 terminal/report，不重复写已有事件")
     if record.get("terminal_status") == "completed" and report_done:
@@ -309,34 +350,55 @@ def cmd_ledger_import(args):
 
 @control_locked
 def cmd_finish_txn_clear(args):
-    """显式清理已完成（committed）的 finish 提交事务 journal（P1-2 出口）。
+    """显式清理已完成（committed）的 finish 提交事务（P1-2 出口）。
 
     unknown 保留现场、rollback_safe 交给重跑 finish 幂等回滚、committed 且 tip
-    隐私核对通过才 finalize，避免清理掉一个泄漏提交的唯一现场证据。
+    隐私核对通过才 finalize，避免清理掉一个泄漏提交的唯一现场证据。与 finish
+    共用同一 txn 锁，防止清理与提交并发交错。
     """
-    from .commit_txn import finalize, judge, load
+    from .commit_txn import finalize, judge, load, txn_lock_path
     from .lifecycle import scan_tip_privacy_leaks
+    from .locks import file_lock
+    from .store import git_text_at_ref
 
     repo = args.repo
     require_primary_worktree(repo=repo)
     tid = args.tid
     worktree = (repo.primary_root / repo.worktree_rel(tid)).resolve()
-    txn = load(worktree)
-    if txn is None:
-        print(f"{tid} 无遗留提交事务")
-        return
-    if txn.get("tid") != tid:
-        sys.exit(f"拒绝清理：worktree 内是 {txn.get('tid')} 的提交事务，不是 {tid}")
-    verdict, detail = judge(worktree, txn)
-    if verdict == "unknown":
-        sys.exit(f"拒绝清理：提交结果未知（{detail}）；保留 journal 与现场，按 recovery 人工核查")
-    if verdict == "rollback_safe":
-        sys.exit(f"拒绝清理：HEAD 未前进（{detail}）；重跑 finish 会幂等回滚该事务，无需手工清理")
-    head = _git(["rev-parse", "HEAD"], root=worktree)
-    if head.returncode != 0 or not head.stdout.strip():
-        sys.exit("拒绝清理：无法读取 worktree HEAD")
-    leaks = scan_tip_privacy_leaks(head.stdout.strip(), repo=repo)
-    if leaks:
-        sys.exit(f"拒绝清理：实现 commit 含隐私泄漏（{leaks[:3]}）；先按 recovery 修正")
-    finalize(worktree)
-    print(f"{tid} 已清理已完成的提交事务 journal")
+    with file_lock(txn_lock_path(worktree)):
+        txn = load(worktree)
+        if txn is None:
+            print(f"{tid} 无遗留提交事务")
+            return
+        if txn.get("tid") != tid:
+            sys.exit(f"拒绝清理：worktree 内是 {txn.get('tid')} 的提交事务，不是 {tid}")
+        verdict, detail = judge(worktree, txn)
+        if verdict == "unknown":
+            sys.exit(f"拒绝清理：提交结果未知（{detail}）；保留 journal 与现场，按 recovery 人工核查")
+        if verdict == "rollback_safe":
+            sys.exit(f"拒绝清理：HEAD 未前进（{detail}）；重跑 finish 会幂等回滚该事务，无需手工清理")
+        head = _git(["rev-parse", "HEAD"], root=worktree)
+        if head.returncode != 0 or not head.stdout.strip():
+            sys.exit("拒绝清理：无法读取 worktree HEAD")
+        head_sha = head.stdout.strip()
+        # 核对 journal 对应实现 commit：tip 的执行回执身份须与 journal 一致，
+        # 否则实现 commit 对应关系不明（被外部提交顶替），保留现场人工核查。
+        try:
+            committed_handoff = json.loads(
+                git_text_at_ref(head_sha, f"{txn['task_rel']}/handoff.json", repo=repo)
+            )
+        except (ValueError, ctx.TaskDataError) as error:
+            sys.exit(f"拒绝清理：实现 commit 缺少可核对的执行回执（{error}）；保留现场人工核查")
+        if not isinstance(committed_handoff, dict) or any(
+            committed_handoff.get(key) != txn[key]
+            for key in ("tid", "attempt", "execution_id")
+        ):
+            sys.exit(
+                "拒绝清理：tip 执行回执与该提交事务身份不符，实现 commit 对应关系不明；"
+                "保留 journal 与现场，按 recovery 人工核查"
+            )
+        leaks = scan_tip_privacy_leaks(head_sha, repo=repo)
+        if leaks:
+            sys.exit(f"拒绝清理：实现 commit 含隐私泄漏（{leaks[:3]}）；先按 recovery 修正")
+        finalize(worktree)
+        print(f"{tid} 已清理已完成的提交事务 journal")

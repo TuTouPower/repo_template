@@ -113,6 +113,8 @@ def _validate_journal(data: dict) -> None:
 
 def load(worktree: Path) -> dict | None:
     path = txn_dir(worktree) / JOURNAL
+    if path.is_symlink() or (os.path.lexists(path) and not path.is_file()):
+        raise ctx.TaskDataError("提交事务 journal 非普通文件，可能被替换或损坏；人工核查后处理")
     if not path.is_file():
         return None
     try:
@@ -168,20 +170,21 @@ def begin(
     worktree: Path, *, tid: str, attempt: int, execution_id: str, branch: str,
     diff_anchor: str, review_scope: str, task_rel: str, message_file: str,
 ) -> dict:
-    """持久化 journal 与快照；调用方随后才允许写业务文件。"""
+    """持久化 journal 与快照；调用方随后才允许写业务文件。
+
+    先 O_EXCL 占位 journal 再写快照：占位与快照之间崩溃会留下合法但空的
+    journal，load 能读到并判 unknown（fail-closed），而不是无 journal 被误认为
+    无事务而覆盖。
+    """
     directory = txn_dir(worktree)
     git_dir = _git_dir(worktree)
     index_path = git_dir / "index"
     index_existed = index_path.is_file()
-    directory.mkdir(parents=True, exist_ok=True)
-    if index_existed:
-        shutil.copy2(index_path, directory / INDEX_BACKUP)
-    task_dir = worktree / task_rel
-    files = _snapshot_task_dir(task_dir, directory) if task_dir.is_dir() else {}
     head = _git(["rev-parse", "HEAD"], root=worktree)
     if head.returncode != 0 or not head.stdout.strip():
         raise ctx.TaskDataError("无法读取事务前 HEAD，拒绝建立提交事务")
-    data = {
+    directory.mkdir(parents=True, exist_ok=True)
+    placeholder = {
         "version": JOURNAL_VERSION,
         "tid": tid,
         "attempt": attempt,
@@ -193,14 +196,22 @@ def begin(
         "message_file": str(message_file),
         "original_head": head.stdout.strip(),
         "index_existed": index_existed,
-        "files": files,
+        "files": {},
         "phase": "prepared",
         "expected_tree": "",
         # 所有阶段共用同一期望：prepared/writing 期望=原始现场，committing
         # 由 mark_staged 覆盖为暂存后现场。任何差异一律 unknown（P1-1）。
-        "expected_files": dict(files),
+        "expected_files": {},
     }
-    _create_journal_excl(directory, data)
+    _create_journal_excl(directory, placeholder)
+    if index_existed:
+        shutil.copy2(index_path, directory / INDEX_BACKUP)
+    task_dir = worktree / task_rel
+    files = _snapshot_task_dir(task_dir, directory) if task_dir.is_dir() else {}
+    data = dict(placeholder)
+    data["files"] = files
+    data["expected_files"] = dict(files)
+    _write_journal(directory, data)
     return data
 
 
@@ -231,6 +242,40 @@ def _snapshot_hashes(task_dir: Path) -> dict[str, str]:
     }
 
 
+def _write_tree_with_index(worktree: Path, index_file: Path | None) -> str:
+    """计算指定 index 文件的 tree；index_file=None 时用当前 index。"""
+    env = None
+    if index_file is not None:
+        env = os.environ.copy()
+        env["GIT_INDEX_FILE"] = str(index_file)
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(worktree), "write-tree"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60, env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ctx.TaskDataError(f"git write-tree 执行失败：{error}") from error
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ctx.TaskDataError(f"git write-tree 失败：{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _backup_tree_matches(worktree: Path, data: dict) -> bool:
+    """prepared/writing 阶段：当前暂存区 tree 是否与事务开始时的 INDEX_BACKUP 一致。"""
+    git_dir = _git_dir(worktree)
+    backup = txn_dir(worktree) / INDEX_BACKUP
+    if not data.get("index_existed"):
+        return not (git_dir / "index").exists()
+    if not backup.is_file():
+        raise ctx.TaskDataError("提交事务 index 快照缺失，无法比对暂存区")
+    try:
+        current_tree = _write_tree_with_index(worktree, None)
+    except ctx.TaskDataError:
+        return False
+    return current_tree == _write_tree_with_index(worktree, backup)
+
+
 def _head(worktree: Path) -> str | None:
     result = _git(["rev-parse", "HEAD"], root=worktree)
     if result.returncode != 0 or not result.stdout.strip():
@@ -244,7 +289,14 @@ def _locks_present(worktree: Path) -> list[str]:
 
 
 def judge(worktree: Path, data: dict) -> tuple[str, str]:
-    """返回 (committed|rollback_safe|unknown, 说明)。只读；所有阶段统一比对现场。"""
+    """返回 (committed|rollback_safe|unknown, 说明)。只读；所有阶段统一比对现场。
+
+    HEAD 判定用血缘而非变化：只有 original_head 的后继才算 committed，
+    偏离到无关提交一律 unknown；prepared/writing 阶段另比对暂存区与事务开始
+    时的 index 快照，不一致同样 unknown。
+    """
+    from .git_ops import is_ancestor
+
     _validate_journal(data)
     locks = _locks_present(worktree)
     if locks:
@@ -253,7 +305,21 @@ def judge(worktree: Path, data: dict) -> tuple[str, str]:
     if head is None:
         return "unknown", "无法读取 HEAD，提交结果未知"
     if head != data["original_head"]:
-        return "committed", f"HEAD 已由 {data['original_head'][:12]} 前进到 {head[:12]}"
+        try:
+            repo = ctx.RepoContext.for_root(worktree)
+        except ctx.TaskDataError as error:
+            return "unknown", f"HEAD 血缘无法判定（{error}）"
+        try:
+            descended = is_ancestor(data["original_head"], head, repo=repo)
+        except ctx.TaskDataError as error:
+            return "unknown", f"HEAD 血缘无法判定（{error}）"
+        if descended:
+            return "committed", f"HEAD 已由 {data['original_head'][:12]} 前进到 {head[:12]}"
+        return (
+            "unknown",
+            f"HEAD 已偏离事务起点且非其后继"
+            f"（{data['original_head'][:12]} -> {head[:12]}），提交结果未知",
+        )
     # 所有阶段统一比对 task 目录哈希：崩溃后的人工修复/外部改写一律 unknown（P1-1）。
     task_dir = worktree / data["task_rel"]
     if _snapshot_hashes(task_dir) != data["expected_files"]:
@@ -262,6 +328,14 @@ def judge(worktree: Path, data: dict) -> tuple[str, str]:
         current_tree = _git(["write-tree"], root=worktree)
         if current_tree.returncode != 0 or current_tree.stdout.strip() != data["expected_tree"]:
             return "unknown", "暂存区与提交事务期望不一致（现场被外部修改）"
+    else:
+        # prepared/writing 阶段 finish 尚未暂存：暂存区必须与事务开始时一致。
+        try:
+            matches = _backup_tree_matches(worktree, data)
+        except ctx.TaskDataError as error:
+            return "unknown", str(error)
+        if not matches:
+            return "unknown", "暂存区与提交事务开始时的快照不一致（现场被外部修改）"
     return "rollback_safe", "HEAD 未前进且现场与事务期望一致"
 
 
@@ -272,6 +346,10 @@ def rollback(worktree: Path, data: dict) -> list[str]:
     # 纵深防御：即便调用方绕过 judge，现场偏离期望也拒绝自动覆盖。
     if _snapshot_hashes(task_dir) != data["expected_files"]:
         raise ctx.TaskDataError("现场偏离事务期望，禁止自动回滚")
+    if data["phase"] in ("prepared", "writing") and not _backup_tree_matches(worktree, data):
+        # finish 在这两个阶段尚未暂存：暂存区与快照不一致说明被外部修改，
+        # 直接恢复 INDEX_BACKUP 会丢弃他人暂存，拒绝自动回滚。
+        raise ctx.TaskDataError("暂存区偏离事务开始时的快照，禁止自动回滚")
     problems: list[str] = []
     directory = txn_dir(worktree)
     git_dir = _git_dir(worktree)
@@ -307,12 +385,19 @@ def rollback(worktree: Path, data: dict) -> list[str]:
             label = "front matter 还原失败" if rel == ctx.PROGRESS_FILE else "内容还原失败"
             problems.append(f"{rel} {label}（{error}）")
     if not problems:
-        finalize(worktree)
+        try:
+            finalize(worktree)
+        except ctx.TaskDataError as error:
+            problems.append(f"提交事务清理失败（{error}）")
     return problems
 
 
 def finalize(worktree: Path) -> None:
-    shutil.rmtree(txn_dir(worktree), ignore_errors=True)
+    """删除事务目录；目录仍在则抛错，调用方不得报成功。"""
+    directory = txn_dir(worktree)
+    shutil.rmtree(directory, ignore_errors=True)
+    if directory.exists():
+        raise ctx.TaskDataError(f"提交事务目录无法清理：{directory}；请人工核查后删除")
 
 
 def run_git_commit(worktree: Path, message_file: str, timeout: int = 600) -> subprocess.CompletedProcess:
