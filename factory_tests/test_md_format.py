@@ -75,6 +75,34 @@ def test_format_rejects_blacklist(repo):
         mdf.format_paths(["docs/archive/keep.md"])
 
 
+@pytest.mark.parametrize(
+    "bypass",
+    [
+        "./docs/archive/keep.md",
+        "docs/./archive/keep.md",
+        "docs/archive/../archive/keep.md",
+        "docs/pending/../archive/keep.md",
+    ],
+)
+def test_format_rejects_blacklist_prefix_bypass(repo, bypass):
+    """先 resolve 再判定黑名单：./、../ 与绝对路径都不得绕过（DS L255）。"""
+    with pytest.raises(mdf.MdFormatError, match="黑名单"):
+        mdf.format_paths([bypass])
+
+
+def test_format_rejects_absolute_blacklist_path(repo):
+    absolute = (repo / "docs/archive/keep.md").as_posix()
+    with pytest.raises(mdf.MdFormatError, match="黑名单"):
+        mdf.format_paths([absolute])
+
+
+def test_main_rejects_blacklist_prefix_bypass(repo, capsys):
+    with pytest.raises(SystemExit) as exc:
+        mdf.main(["./docs/archive/keep.md"])
+    assert exc.value.code == 1
+    assert "黑名单" in capsys.readouterr().err
+
+
 def test_main_rejects_explicit_blacklist_path(repo, capsys):
     """CLI 显式点名黑名单路径必须报错，不得静默 exit 0（Issue #76）。"""
     with pytest.raises(SystemExit) as exc:
@@ -166,4 +194,41 @@ def test_format_timeout_rolls_back_already_formatted(repo, tmp_path, monkeypatch
     with pytest.raises(mdf.MdFormatError, match="已回滚"):
         mdf.format_paths(["a.md", "b.md"])
     assert (repo / "a.md").read_bytes() == before_a
+
+
+def test_format_reports_all_restore_failures(repo, tmp_path, monkeypatch):
+    """部分恢复失败时 MdFormatError 须列出未恢复路径，不得声称已回滚（DS L256）。"""
+    bin_dir = tmp_path / "bin_fail_restore"
+    bin_dir.mkdir()
+    exe = bin_dir / "md_kx"
+    exe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "path = Path(sys.argv[-1])\n"
+        "if path.name == 'b.md':\n"
+        "    sys.exit(2)\n"
+        "text = path.read_text(encoding='utf-8')\n"
+        "path.write_text(text.replace('|------|------|', '|---|---|'), encoding='utf-8')\n"
+    )
+    exe.chmod(0o755)
+    monkeypatch.setattr(mdf, "find_md_kx", lambda: str(exe))
+    (repo / "b.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
+
+    real_write_bytes = Path.write_bytes
+
+    def flaky_write_bytes(self, data):
+        if self.name == "a.md":
+            raise OSError("simulated restore failure")
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
+
+    with pytest.raises(mdf.MdFormatError) as exc:
+        mdf.format_paths(["a.md", "b.md"])
+    message = str(exc.value)
+    assert "未恢复" in message
+    assert "a.md" in message
+    assert "simulated restore failure" in message
+    assert "已回滚本次已格式化" not in message
 
