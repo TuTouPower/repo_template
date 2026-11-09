@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from repo_task.context import PROGRESS_FILE, RepoContext, TaskDataError
+from repo_task.context import FenceState, PROGRESS_FILE, RepoContext, TaskDataError
 from repo_task.documents import (
     atomic_write_text,
     parse_front_matter as _parse_front_matter,
@@ -47,7 +47,6 @@ CONTRACT_HEADING = "## 契约区"
 CONTEXT_HEADING = "## 上下文区"
 VALID_REVIEW_LEVELS = {"full", "single"}
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
-FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
 def parse_front_matter(task_path: Path) -> dict:
@@ -60,33 +59,24 @@ def parse_front_matter(task_path: Path) -> dict:
 
 
 def extract_section(spec_text: str, heading: str) -> str:
-    """抽取精确二级小节正文，忽略 fenced code 内的伪标题。"""
+    """抽取精确二级小节正文，忽略 fenced code 内的伪标题（fence 规则委托 ctx.FenceState）。"""
     wanted = heading.removeprefix("## ").strip()
     section = []
     collecting = False
-    fence_marker = None
+    fence = FenceState()
 
     for line in spec_text.splitlines():
-        fence = FENCE_RE.match(line)
-        if fence:
-            marker = fence.group(1)[0]
-            width = len(fence.group(1))
-            if fence_marker is None:
-                fence_marker = (marker, width)
-            elif marker == fence_marker[0] and width >= fence_marker[1]:
-                fence_marker = None
+        if fence.feed(line):
+            # 围栏行本身仍属章节正文，只是其中的伪标题不参与小节切换。
             if collecting:
                 section.append(line)
             continue
-
-        if fence_marker is None:
-            match = H2_RE.fullmatch(line)
-            if match:
-                if collecting:
-                    break
-                collecting = match.group(1).strip() == wanted
-                continue
-
+        match = H2_RE.fullmatch(line)
+        if match:
+            if collecting:
+                break
+            collecting = match.group(1).strip() == wanted
+            continue
         if collecting:
             section.append(line)
 
@@ -133,8 +123,15 @@ def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
 
     reviewer 把本值写回报告 `reviewed_scope:`；checker 重算当前指纹比对。
     review 后改动代码/测试/spec 会改变指纹，PASS 随即失效（防「PASS 后继续改」）。
+    空指纹（git 失败/anchor 无效）显式失败，绝不注入空的 reviewed_scope。
     """
-    return monitoring_scope_fingerprint(diff_anchor, rel_task_dir, repo_root=REPO_ROOT)
+    fingerprint = monitoring_scope_fingerprint(diff_anchor, rel_task_dir, repo_root=REPO_ROOT)
+    if not fingerprint:
+        sys.exit(
+            f"review scope 指纹无法计算（{diff_anchor}:{rel_task_dir}）："
+            "拒绝把空 reviewed_scope 注入 prompt"
+        )
+    return fingerprint
 
 
 def apply_placeholders(template: str, values: dict) -> str:
@@ -253,6 +250,12 @@ def render_review_prompts(
         sys.exit(f"{spec_rel}: 缺「{CONTRACT_HEADING}」小节；reviewer 无 AC 锚点，拒绝渲染")
     context = extract_section(spec_text, CONTEXT_HEADING) or "（spec 未填上下文区）"
 
+    # 先做契约区基线校验（失败时给出可定位的基线错误），再算被审指纹。
+    drift = contract_drift_notice(
+        spec_rel, diff_anchor, contract, tid=fm["tid"], spec_source_sha=fm["spec_source_sha"]
+    )
+    fingerprint = review_scope_fingerprint(diff_anchor, rel_task_dir)
+
     # task_dir 注入绝对路径（reviewer 写文件落点与 cwd 无关）；
     # task_dir_rel 仓库内相对路径（模板在输出指令行展示，供报告引用与相对 git 路径）。
     values = {
@@ -266,7 +269,7 @@ def render_review_prompts(
         "review_level": level,
         "contract_section": contract,
         "context_section": context,
-        "review_scope_fingerprint": review_scope_fingerprint(diff_anchor, rel_task_dir),
+        "review_scope_fingerprint": fingerprint,
     }
     shared = template_paths["share"].read_text(encoding="utf-8")
 
@@ -291,9 +294,6 @@ def render_review_prompts(
             ),
         }
 
-    drift = contract_drift_notice(
-        spec_rel, diff_anchor, contract, tid=fm["tid"], spec_source_sha=fm["spec_source_sha"]
-    )
     if drift:
         prompts = {
             name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()

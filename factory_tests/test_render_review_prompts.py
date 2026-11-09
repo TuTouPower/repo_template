@@ -17,15 +17,23 @@ from render_review_prompts import (
 
 REAL_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/docs" / "review_prompts"
 REAL_VALIDATE_DIFF_ANCHOR = rrp.validate_diff_anchor
+STUB_FINGERPRINT = "0123456789abcdef"
 
 
 @pytest.fixture(autouse=True)
 def stub_diff_anchor_validation(request, monkeypatch):
-    """仅显式标记 ``stub_anchor`` 的测试跳过真实 Git 校验。"""
+    """仅显式标记 ``stub_anchor`` 的测试跳过真实 Git 校验。
+
+    DS L221 后空指纹在渲染阶段 fail-closed，而非 Git 夹具仓算不出真实指纹；
+    这类用例只验证模板/占位符渲染，故同时 stub 固定指纹，避免误触发门禁。
+    """
     if "stub_anchor" not in request.keywords:
         return
     monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
     monkeypatch.setattr(rrp, "contract_drift_notice", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        rrp, "review_scope_fingerprint", lambda *_args, **_kwargs: STUB_FINGERPRINT
+    )
 
 
 # --- parse_front_matter ---
@@ -98,6 +106,35 @@ def test_extract_section_ignores_shorter_fence_inside_block():
         "## 契约区\n真实内容\n"
     )
     assert extract_section(text, "## 契约区") == "真实内容"
+
+
+def test_extract_section_info_string_fence_is_content_not_close():
+    """DS L223：带 info string 的同宽围栏行是内容，不提前闭合外层代码块。"""
+    text = (
+        "````markdown\n## 契约区\n伪内容\n"
+        "````md\n仍是伪内容\n````\n"
+        "## 契约区\n真实内容\n"
+    )
+    assert extract_section(text, "## 契约区") == "真实内容"
+
+
+# --- DS L221：空指纹显式失败，不注入 reviewed_scope 空值 ---
+
+def test_review_scope_fingerprint_rejects_empty(monkeypatch):
+    monkeypatch.setattr(rrp, "monitoring_scope_fingerprint", lambda *_a, **_k: "")
+    with pytest.raises(SystemExit, match="指纹无法计算"):
+        rrp.review_scope_fingerprint("abc", "t001_foo")
+
+
+def test_render_fails_closed_when_scope_fingerprint_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(rrp, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor: anchor)
+    monkeypatch.setattr(rrp, "contract_drift_notice", lambda *_a, **_k: "")
+    monkeypatch.setattr(rrp, "monitoring_scope_fingerprint", lambda *_a, **_k: "")
+    task_dir = _make_task_dir(tmp_path)
+    with pytest.raises(SystemExit, match="指纹无法计算"):
+        render_review_prompts(task_dir)
 
 
 # --- apply_placeholders ---

@@ -8,6 +8,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task import review_status as crs
+from repo_task.context import RepoContext
 from repo_task.review import (
     AC_ROW_RE,
     ReviewDataError,
@@ -302,6 +303,51 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch, capsys):
         crs.main()
     assert exc.value.code == 1
     assert "task directory does not exist" in capsys.readouterr().err
+
+
+# --- DS L283：resolve_task_dir 仓库包含性防护的越界场景 ---
+def test_main_rejects_relative_task_dir_escaping_repository(tmp_path, monkeypatch, capsys):
+    """--task-dir ../../etc：resolve 后越出仓库根，明确拒绝。"""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs" / "tasks").mkdir(parents=True)
+    monkeypatch.setattr(sys, "argv", ["task.py", "--task-dir", "../../etc"])
+    with pytest.raises(SystemExit) as exc:
+        crs.main()
+    assert exc.value.code == 1
+    assert "inside repository" in capsys.readouterr().err
+
+
+def test_resolve_task_dir_rejects_absolute_outside_path(tmp_path):
+    """仓外绝对路径即便含 progress.md 也不得被解析为 task 目录。"""
+    repo = RepoContext.for_root(tmp_path / "repo")
+    (tmp_path / "repo" / "docs" / "tasks").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "progress.md").write_text("---\ntid: t001\n---\n", encoding="utf-8")
+    with pytest.raises(ReviewDataError, match="inside repository"):
+        crs.resolve_task_dir(str(outside), repo=repo)
+
+
+def test_resolve_task_dir_rejects_internal_symlink_to_external_dir(tmp_path):
+    """repo 内软链指向仓外目录：resolve 后越界，拒绝。"""
+    repo = RepoContext.for_root(tmp_path / "repo")
+    task_root = tmp_path / "repo" / "docs" / "tasks"
+    task_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "progress.md").write_text("---\ntid: t001\n---\n", encoding="utf-8")
+    (task_root / "t001_link").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ReviewDataError, match="inside repository"):
+        crs.resolve_task_dir("docs/tasks/t001_link", repo=repo)
+
+
+def test_current_scope_fingerprint_returns_none_for_outside_task_dir(tmp_path):
+    """越界 task 目录的指纹不可验证，返回 None 而非伪造指纹。"""
+    repo = RepoContext.for_root(tmp_path / "repo")
+    (tmp_path / "repo" / "docs" / "tasks").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert crs.current_scope_fingerprint(outside, "abc", repo=repo) is None
 
 
 def test_main_reports_missing_disposition(tmp_path, monkeypatch, capsys):

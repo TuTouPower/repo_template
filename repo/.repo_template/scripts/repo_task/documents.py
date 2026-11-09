@@ -343,24 +343,12 @@ def unverified_contract_gate(
     return problems, warnings
 
 def _visible_markdown_numbered_lines(text: str) -> list[tuple[int, str]]:
-    """返回 (行号, 行) 序列，剔除 fenced code 内的行。"""
+    """返回 (行号, 行) 序列，剔除 fenced code 内的行（规则委托 ctx.FenceState）。"""
     lines = []
-    fence_marker = None
+    fence = ctx.FenceState()
     for number, line in enumerate(text.splitlines(), 1):
-        if fence_marker is not None:
-            fence = ctx.FENCE_CLOSE_RE.match(line)
-            if (
-                fence
-                and fence.group(1)[0] == fence_marker[0]
-                and len(fence.group(1)) >= fence_marker[1]
-            ):
-                fence_marker = None
-            continue
-        fence = ctx.FENCE_RE.match(line)
-        if fence:
-            fence_marker = (fence.group(1)[0], len(fence.group(1)))
-            continue
-        lines.append((number, line))
+        if not fence.feed(line):
+            lines.append((number, line))
     return lines
 
 
@@ -400,23 +388,12 @@ def _missing_heading_sequence(
     return missing
 
 def _extract_markdown_section(text: str, level: int, title: str) -> str | None:
-    """提取指定标题到下一个同级或更高层级标题之间的正文。"""
+    """提取指定标题到下一个同级或更高层级标题之间的正文（fence 规则委托 ctx.FenceState）。"""
     lines = text.splitlines()
     start = None
-    fence_marker = None
+    fence = ctx.FenceState()
     for index, line in enumerate(lines):
-        if fence_marker is not None:
-            fence = ctx.FENCE_CLOSE_RE.match(line)
-            if (
-                fence
-                and fence.group(1)[0] == fence_marker[0]
-                and len(fence.group(1)) >= fence_marker[1]
-            ):
-                fence_marker = None
-            continue
-        fence = ctx.FENCE_RE.match(line)
-        if fence:
-            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+        if fence.feed(line):
             continue
         heading = ctx.HEADING_RE.fullmatch(line)
         if not heading:
@@ -436,23 +413,12 @@ AC_ID_RE = re.compile(r"AC-\d{3}")
 
 
 def _strip_fenced_code(text: str) -> str:
-    """去除 Markdown 中围栏代码块（``` 或 ~~~），避免代码块内的示例内容被误解析。"""
+    """去除 Markdown 围栏代码块（规则委托 ctx.FenceState，闭栏须为裸围栏）。"""
     lines = []
-    in_fence = False
-    fence_char = ""
-    fence_len = 0
+    fence = ctx.FenceState()
     for line in text.splitlines():
-        stripped = line.strip()
-        if not in_fence:
-            if stripped.startswith("```") or stripped.startswith("~~~"):
-                in_fence = True
-                fence_char = stripped[0]
-                fence_len = len(stripped) - len(stripped.lstrip(fence_char))
-                continue
+        if not fence.feed(line):
             lines.append(line)
-        else:
-            if stripped.startswith(fence_char * fence_len):
-                in_fence = False
     return "\n".join(lines)
 
 
