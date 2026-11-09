@@ -47,7 +47,7 @@ _FILE_URI = r"(?:file://(?:localhost)?|file:)?"
 _USER_CHARS = r"[\w.%-]+"
 
 _POSIX_HOME = re.compile(
-    _LEADING_BOUNDARY + _FILE_URI + r"/+(?:Users|home)" + _SEP + r"(" + _USER_CHARS + r")",
+    _LEADING_BOUNDARY + _FILE_URI + r"/+(?:Users|home)" + _SEP + r"(?P<user>" + _USER_CHARS + r")",
     re.IGNORECASE,
 )
 _ROOT_HOME = re.compile(
@@ -56,6 +56,18 @@ _ROOT_HOME = re.compile(
 )
 _WIN_PATH = re.compile(
     _LEADING_BOUNDARY + r"[A-Za-z]:" + _SEP + r"Users" + _SEP + r"(?P<user>" + _USER_CHARS + r")",
+    re.IGNORECASE,
+)
+# macOS firmlink 数据卷前缀：家目录位于路径中段，只识别完整绝对前缀。
+_SYSTEM_DATA_HOME = re.compile(
+    _LEADING_BOUNDARY + _FILE_URI + r"/System/Volumes/Data/Users" + _SEP
+    + r"(?P<user>" + _USER_CHARS + r")",
+    re.IGNORECASE,
+)
+# UNC 反斜杠形态：\\\\server\\Users\\<user>。不认 //server/Users/<user>
+# （与 URL 路径重叠）与盘符相对写法 C:Users\\<user>（无分隔符）。
+_UNC_HOME = re.compile(
+    _LEADING_BOUNDARY + r"\\\\[^\\/\s]+\\Users\\" + r"(?P<user>" + _USER_CHARS + r")",
     re.IGNORECASE,
 )
 
@@ -85,7 +97,7 @@ def is_privacy_candidate(rel: str) -> bool:
 
 def find_developer_path_leaks(text: str) -> list[str]:
     """返回 *text* 中出现的开发者家目录路径 token（确定性、去重、保持出现顺序）。"""
-    win_matches = list(_WIN_PATH.finditer(text))
+    win_matches = list(_WIN_PATH.finditer(text)) + list(_UNC_HOME.finditer(text))
     # 全部 Windows 命中（含被豁免的系统 profile）都用于排除 POSIX/root 重叠子串。
     win_spans = [(m.start(), m.end()) for m in win_matches]
 
@@ -95,7 +107,7 @@ def find_developer_path_leaks(text: str) -> list[str]:
             continue
         spans.append((match.start(), match.end(), match.group(0)))
 
-    for pattern in (_POSIX_HOME, _ROOT_HOME):
+    for pattern in (_POSIX_HOME, _ROOT_HOME, _SYSTEM_DATA_HOME):
         for match in pattern.finditer(text):
             m_start, m_end = match.start(), match.end()
             if any(ws <= m_start and m_end <= we for ws, we in win_spans):
@@ -116,10 +128,12 @@ def find_developer_path_leaks(text: str) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for leak in leaks:
-        if leak in seen or _is_exempt(leak):
+        # 句末路径的标点不属于用户名：上报 token 去掉尾随点（_USER_CHARS 含 .）。
+        token = leak.rstrip(".")
+        if token in seen or _is_exempt(token):
             continue
-        seen.add(leak)
-        result.append(leak)
+        seen.add(token)
+        result.append(token)
     return result
 
 
@@ -135,9 +149,11 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
 
     - BOM 显式指定编码；UTF-32 BOM 以 4 字节优先判定（LE32 前缀与 LE16 相同），
       解码后必须过可读性 gate，否则 fail-closed（防 BOM 伪装绕过）；
-    - 无 BOM 且 UTF-8 失败时，按 NUL 交错位置试探 UTF-16 LE/BE，再按 4 字节
-      周期试探 UTF-32 LE/BE（NUL 本身是合法 UTF-8 字符，必须先于 UTF-8 试探，
-      否则宽字符编码的家目录会被 NUL 隔断而漏报）；
+    - 无 BOM 且 UTF-8 失败时，数据含 NUL 且长度为偶数就按 NUL 交错位置试探
+      UTF-16 LE/BE（不设 NUL 占比门槛，CJK 主导文本 NUL 很少），能否作文本
+      由解码结果和可读性决定；再按 4 字节周期试探 UTF-32 LE/BE（NUL 本身是
+      合法 UTF-8 字符，必须先于 UTF-8 试探，否则宽字符编码的家目录会被 NUL
+      隔断而漏报）；
     - ASCII 兼容的 GBK 作最后一次尝试（中文语境常见），同样必须过可读性
       gate，二进制垃圾解码后多半不可读，仍 fail-closed；
     - 仍无法确定则抛 PrivacyScanError，绝不 ``errors='ignore'`` 静默放行。
@@ -158,19 +174,19 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
     if data.startswith(_BOM_UTF8):
         data = data[len(_BOM_UTF8):]
     # NUL 交错是宽字符编码的强信号，必须优先于 UTF-8：NUL 本身是合法 UTF-8 字符，
-    # 否则宽字符编码的家目录会被 NUL 隔断而漏报。
-    if len(data) >= 4 and len(data) % 2 == 0:
+    # 否则宽字符编码的家目录会被 NUL 隔断而漏报。不设 NUL 占比门槛：CJK 主导的
+    # UTF-16 文本 NUL 很少，能否作文本交由解码结果与可读性检查决定。
+    if len(data) >= 2 and len(data) % 2 == 0 and b"\x00" in data:
         nul_even = data[0::2].count(0)
         nul_odd = data[1::2].count(0)
-        if nul_even + nul_odd >= len(data) // 4:
-            order = ("utf-16-le", "utf-16-be") if nul_odd >= nul_even else ("utf-16-be", "utf-16-le")
-            for encoding in order:
-                try:
-                    candidate = data.decode(encoding)
-                except UnicodeDecodeError:
-                    continue
-                if _is_plausible_text(candidate):
-                    return candidate
+        order = ("utf-16-le", "utf-16-be") if nul_odd >= nul_even else ("utf-16-be", "utf-16-le")
+        for encoding in order:
+            try:
+                candidate = data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            if _is_plausible_text(candidate):
+                return candidate
     if len(data) >= 8 and len(data) % 4 == 0 and data.count(0) * 2 >= len(data):
         # 无 BOM 的 UTF-32：ASCII 字符呈 4 字节周期，NUL 占比不低于一半。
         for encoding in ("utf-32-le", "utf-32-be"):
@@ -209,13 +225,8 @@ def scan_text_privacy_leaks(text: str, *, label: str = "") -> list[str]:
     return findings
 
 
-def scan_candidate_bytes(data: bytes, *, label: str) -> list[str]:
-    """字节候选统一入口：fail-closed 解码后汇入单一文本扫描入口。"""
-    return scan_text_privacy_leaks(decode_candidate_bytes(data, label=label), label=label)
-
-
 def _text_or_binary(data: bytes, *, label: str, binary: bool = False) -> str | None:
-    """先完整解码宽字符文本；不可读二进制不进入文本比较。"""
+    """门禁、审计与候选三入口共用判定：可读文本返回内容，不可读二进制返回 None。"""
     try:
         text = decode_candidate_bytes(data, label=label)
     except PrivacyScanError:
@@ -225,6 +236,14 @@ def _text_or_binary(data: bytes, *, label: str, binary: bool = False) -> str | N
     if b"\x00" in data and not _is_plausible_text(text):
         return None
     return text
+
+
+def scan_candidate_bytes(data: bytes, *, label: str) -> list[str]:
+    """字节候选统一入口：与门禁/审计共用 _text_or_binary，不可读二进制跳过。"""
+    text = _text_or_binary(data, label=label)
+    if text is None:
+        return []
+    return scan_text_privacy_leaks(text, label=label)
 
 
 def _git(

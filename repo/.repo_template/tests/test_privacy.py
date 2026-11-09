@@ -145,6 +145,29 @@ def test_root_rule_does_not_start_mid_path():
     assert _joined("", "root", "private") not in find_developer_path_leaks(nested)
 
 
+# --- F04：只采纳两种中段形式，URL 与拒绝形态维持原结论 ---
+def test_macos_data_volume_home_is_detected():
+    token = _joined("", "System", "Volumes", "Data", "Users", "alice")
+    assert find_developer_path_leaks(token + "/proj") == [token]
+
+
+def test_unc_home_is_detected():
+    token = "\\\\" + "server" + "\\" + "Users" + "\\" + "alice"
+    assert find_developer_path_leaks(token + "\\proj") == [token]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "//" + "server" + _joined("", "Users", "alice"),  # 与 URL 路径重叠，不采纳
+        "C:" + "Users" + "\\" + "alice",                  # 盘符相对写法，不采纳
+        "https://" + "host" + _joined("", "Users", "name"),
+    ],
+)
+def test_mid_path_forms_outside_adopted_set_are_not_reported(text):
+    assert find_developer_path_leaks(text) == []
+
+
 # --- P0-2：token 边界五类变体 ---
 @pytest.mark.parametrize(
     "text",
@@ -194,6 +217,29 @@ def test_system_profile_prefix_does_not_exempt_real_username():
 def test_utf16_without_bom_is_detected(encoding):
     token = _joined("", "Users", "karson")
     data = (token + "/proj\n").encode(encoding)
+    assert scan_candidate_bytes(data, label="a.md") == [f"a.md:1: {token}"]
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_bomless_utf16_cjk_dominant_is_detected_without_nul_ratio_gate(encoding):
+    """CJK 主导文本 NUL 很少；无 BOM 也必须尝试 UTF-16 并由解码可读性决定。"""
+    token = _joined("", "Users", "karson")
+    text = ("中文说明" * 40) + "\n路径 " + token + "/proj\n" + ("更多中文" * 40)
+    data = text.encode(encoding)
+    assert data.count(0) * 4 < len(data)  # 低于旧版 len//4 门槛，钉住回归样本
+    assert scan_candidate_bytes(data, label="a.md") == [f"a.md:2: {token}"]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"\x00\x00\xfe\xff" + (_joined("", "Users", "karson") + "/proj\n").encode("utf-32-be"),
+        (_joined("", "Users", "karson") + "/proj\n").encode("utf-32-be"),
+    ],
+    ids=["bom", "no-bom"],
+)
+def test_utf32_be_is_detected(data):
+    token = _joined("", "Users", "karson")
     assert scan_candidate_bytes(data, label="a.md") == [f"a.md:1: {token}"]
 
 
