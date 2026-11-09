@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""commit-msg hook：merge 提交前核对每个来源已完成实体协议切换。
+"""commit-msg hook：merge 来源校验、编号校验与最终提交消息隐私扫描。
 
 git merge 的自动提交不运行 pre-commit，且 pre-merge-commit 阶段 MERGE_HEAD
 已被移除；MERGE_HEAD 仅在 prepare-commit-msg / commit-msg 阶段可用，因此来源
-校验放在本 hook。普通提交直接放行，隐私与 Markdown 门禁仍由 pre-commit 负责。
+校验放在本 hook。普通提交与 merge 提交一视同仁：读取最终消息文件，截掉
+``git commit -v`` 附带的 diff（scissors 行之后）并按 ``core.commentChar`` 剔除
+注释行后，交给 privacy 单一文本入口扫描。
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,21 +19,93 @@ TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
 
 from _id_scan import IdScanError, validate_merge_sources, validate_snapshot_ids  # noqa: E402
-from repo_task.context import RepoContext
+from repo_task.context import RepoContext, TaskDataError  # noqa: E402
+from repo_task.privacy import PrivacyScanError, scan_text_privacy_leaks  # noqa: E402
 
-# commit-msg 由 git 在仓库根执行。
-repo = RepoContext.for_root(Path.cwd())
+_SCISSORS_BODY = re.compile(r"-{2,} >8 -{2,}")
+
+
+def _comment_prefix(root: Path, message: str) -> str:
+    """``core.commentChar`` 生效值；auto 时按 scissors 行推断，无法推断退回 #。"""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "config", "--get", "core.commentChar"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise PrivacyScanError(f"读取 core.commentChar 失败：{error}") from error
+    configured = result.stdout.strip() if result.returncode == 0 else ""
+    if configured and configured != "auto":
+        return configured
+    for line in message.splitlines():
+        if line and _SCISSORS_BODY.fullmatch(line[1:].strip()):
+            return line[0]
+    return "#"
+
+
+def _message_payload(message: str, prefix: str) -> str:
+    """截掉 scissors 行及其后 diff，剔除注释行，只保留实际提交内容。"""
+    kept: list[str] = []
+    for line in message.splitlines():
+        if line.startswith(prefix):
+            if _SCISSORS_BODY.fullmatch(line[len(prefix):].strip()):
+                break
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _scan_message(root: Path, message_path: Path) -> int:
+    try:
+        message = message_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        print(f"commit-msg: 无法读取提交消息（fail-closed）：{error}", file=sys.stderr)
+        return 1
+    leaks = scan_text_privacy_leaks(
+        _message_payload(message, _comment_prefix(root, message)), label="commit message",
+    )
+    if leaks:
+        print(
+            "commit-msg: 提交消息含开发者家目录绝对路径"
+            "（请改为仓库相对路径或 <worktree> 占位符）：\n" + "\n".join(leaks),
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _check() -> int:
+    root = RepoContext.for_root(Path.cwd()).root
+    try:
+        validate_merge_sources(root)
+        validate_snapshot_ids(root)
+    except IdScanError as error:
+        print(f"commit-msg: 编号校验失败（fail-closed）：{error}", file=sys.stderr)
+        return 1
+    if len(sys.argv) < 2:
+        print("commit-msg: 缺少提交消息文件参数（fail-closed）", file=sys.stderr)
+        return 1
+    return _scan_message(root, Path(sys.argv[1]))
 
 
 def main() -> int:
     try:
-        if not validate_merge_sources(repo.root):
-            return 0
-        validate_snapshot_ids(repo.root)
-    except IdScanError as error:
-        print(f"commit-msg: 合并来源校验失败（fail-closed）：{error}", file=sys.stderr)
+        return _check()
+    except TaskDataError as error:
+        print(f"commit-msg: 上下文解析失败（fail-closed）：{error}", file=sys.stderr)
         return 1
-    return 0
+    except PrivacyScanError as error:
+        print(f"commit-msg: 隐私扫描失败（fail-closed）：{error}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"commit-msg: 仓库操作失败（fail-closed）：{error}", file=sys.stderr)
+        return 1
+    except Exception as error:  # noqa: BLE001 - hook 必须单行报错，不打印 traceback
+        print(
+            f"commit-msg: 未预期错误（fail-closed）：{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
