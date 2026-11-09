@@ -228,9 +228,16 @@ def require_report_done_ready(
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
     suffix = "；先按 recovery 判定（review_repair / review_mismatch）处理后重跑 run-close"
     try:
-        verdict, _kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
+        verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(f"report=done 拒绝：{error}{suffix}")
+    if verdict != "ready" and kind == "privacy":
+        sys.exit(
+            f"report=done 拒绝：{detail}；用 `git log -S <泄漏路径片段> --oneline` "
+            "定位引入提交：确属非个人环境固定路径，在 repo_task/privacy.py "
+            "FIXED_PATH_EXCEPTIONS 显式豁免，否则移除泄漏内容后重新 review；"
+            "先按 recovery 判定处理后重跑 run-close"
+        )
     if verdict != "ready":
         sys.exit(f"report=done 拒绝：{detail}{suffix}")
 

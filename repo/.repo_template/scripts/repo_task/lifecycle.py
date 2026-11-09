@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import sys
 from pathlib import Path
 
@@ -666,8 +665,9 @@ def _finish_candidate_rels(task_rel: str, *, repo) -> tuple[list[str], list[str]
     task 目录用 ``git ls-files --cached --others --exclude-standard`` 枚举，
     含 rglob 遗漏的被忽略草稿、也不误收它们（DS L212）；其它路径只取已暂存的
     变更（``diff --cached``），不再扫描整个 index 的历史存量（P0-1 根因、P1-4）。
+    类型变更（T）同样会引入新内容，必须纳入候选。
     """
-    staged = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"], repo=repo)
+    staged = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], repo=repo)
     if staged.returncode != 0:
         raise ctx.TaskDataError(f"无法列出已暂存变更：{staged.stderr.strip()}")
     staged_rels = [item for item in staged.stdout.split("\0") if item]
@@ -683,65 +683,23 @@ def _finish_candidate_rels(task_rel: str, *, repo) -> tuple[list[str], list[str]
     return task_rels, others
 
 
-def _index_blob_rels(*, repo) -> dict[str, str]:
-    """index 的 rel -> blob sha 映射；只列元数据，不读取 blob 内容。"""
-    result = _git(["ls-files", "-s", "-z"], repo=repo)
-    if result.returncode != 0:
-        raise ctx.TaskDataError(f"无法读取 index：{result.stderr.strip()}")
-    mapping: dict[str, str] = {}
-    for item in result.stdout.split("\0"):
-        if not item:
-            continue
-        meta, rel = item.split("\t", 1)
-        parts = meta.split()
-        if len(parts) >= 3:
-            mapping[rel] = parts[1]
-    return mapping
-
-
 def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
-    """扫描本次提交候选内容 + commit message，统一复用 privacy 单一扫描入口。"""
-    from .git_ops import batch_cat_file
+    """扫描本次提交候选内容 + commit message，统一复用 privacy 单一扫描入口。
+
+    已暂存侧读 index blob（软链 blob 天然是 link 文本），二进制后缀、gitlink
+    与超大对象由 privacy 入口预过滤；task 目录侧走 worktree 扫描（软链只扫
+    链接文本，不跟随目标；已删除文件跳过，删文件不引入新内容）。
+    """
     from .privacy import (
-        PrivacyScanError,
-        is_privacy_candidate,
-        scan_candidate_bytes,
+        scan_staged_blob_candidates,
         scan_text_privacy_leaks,
+        scan_worktree_candidates,
     )
 
     task_rels, other_rels = _finish_candidate_rels(task_rel, repo=repo)
     violations: list[str] = []
-
-    # 非 task 目录的已暂存变更：读 index blob（软链 blob 天然是 link 文本）。
-    if other_rels:
-        index_blobs = _index_blob_rels(repo=repo)
-        selected = [rel for rel in other_rels if is_privacy_candidate(rel)]
-        oids: list[str] = []
-        for rel in selected:
-            oid = index_blobs.get(rel)
-            if oid is None:
-                raise PrivacyScanError(f"已暂存变更缺 index blob：{rel}")
-            oids.append(oid)
-        blobs = batch_cat_file(oids, repo=repo)
-        for rel, oid in zip(selected, oids):
-            data = blobs.get(oid)
-            if data is None:
-                raise PrivacyScanError(f"无法读取已暂存内容：{rel}")
-            violations.extend(scan_candidate_bytes(data, label=rel))
-
-    # task 目录候选：lstat，软链只扫 os.readlink 文本，不跟随目标（DS L211）。
-    for rel in task_rels:
-        if not is_privacy_candidate(rel):
-            continue
-        path = repo.root / rel
-        try:
-            mode = path.lstat().st_mode
-            if stat.S_ISLNK(mode):
-                violations.extend(scan_text_privacy_leaks(os.readlink(path), label=rel))
-            elif stat.S_ISREG(mode):
-                violations.extend(scan_candidate_bytes(path.read_bytes(), label=rel))
-        except OSError as error:
-            raise PrivacyScanError(f"无法读取待提交文件：{rel}（{error}）") from error
+    violations.extend(scan_staged_blob_candidates(repo.root, other_rels))
+    violations.extend(scan_worktree_candidates(repo.root, task_rels))
 
     # commit message 同样会永久进入 Git 历史（DS L213）。
     violations.extend(scan_text_privacy_leaks(message, label="commit message"))
@@ -766,49 +724,15 @@ def _check_privacy_leaks(task_dir: Path, *, repo, message: str) -> None:
 
 
 def _scan_commit_privacy_leaks(ref: str, *, repo) -> list[str]:
-    """扫描 ref commit 引入/修改的文本 blob（非全量 tree），fail-closed。"""
-    from .git_ops import batch_cat_file
-    from .privacy import (
-        PrivacyScanError,
-        is_privacy_candidate,
-        scan_candidate_bytes,
-    )
+    """扫描 ref 相对第一父提交新增的行（变更集扫描），fail-closed。
 
-    changed = _git(
-        ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root",
-         "--diff-filter=ACMR", ref],
-        repo=repo,
-    )
-    if changed.returncode != 0:
-        raise PrivacyScanError(f"无法列出 {ref} 变更：{changed.stderr.strip()}")
-    rels = [item for item in changed.stdout.split("\0") if item and is_privacy_candidate(item)]
-    if not rels:
-        return []
-    tree = _git(["ls-tree", "-r", "-z", "--end-of-options", ref], repo=repo)
-    if tree.returncode != 0:
-        raise PrivacyScanError(f"无法读取 {ref} tree：{tree.stderr.strip()}")
-    blobs_by_rel: dict[str, str] = {}
-    for item in tree.stdout.split("\0"):
-        if not item:
-            continue
-        meta, rel = item.split("\t", 1)
-        parts = meta.split()
-        if len(parts) >= 3 and parts[1] == "blob":
-            blobs_by_rel[rel] = parts[2]
-    oids: list[str] = []
-    for rel in rels:
-        oid = blobs_by_rel.get(rel)
-        if oid is None:
-            raise PrivacyScanError(f"{ref} 缺变更文件 blob：{rel}")
-        oids.append(oid)
-    blobs = batch_cat_file(oids, repo=repo)
-    violations: list[str] = []
-    for rel, oid in zip(rels, oids):
-        data = blobs.get(oid)
-        if data is None:
-            raise PrivacyScanError(f"无法读取 {ref}:{rel}")
-        violations.extend(scan_candidate_bytes(data, label=rel))
-    return violations
+    只看本次引入的新增内容，不翻历史存量：历史泄漏不阻断本次收尾/合入，
+    由显式审计入口另行覆盖。finish、run-close、integrate、recovery 的 tip
+    核对统一走此口径（P1-3）。
+    """
+    from .privacy import scan_commit_introduced_privacy
+
+    return scan_commit_introduced_privacy(repo.root, ref)
 
 
 def scan_tip_privacy_leaks(ref: str, *, repo) -> list[str]:
@@ -851,10 +775,20 @@ def _verify_committed_privacy(*, repo) -> None:
 def _verify_post_commit_scope(
     review_scope: str, diff_anchor: str, task_rel: str, tid: str, *, repo
 ) -> None:
-    """提交后统一核对：scope 重算 + 隐私（正常路径与所有 committed 分支共用，P1-2）。"""
+    """提交后统一核对：scope 重算 + 隐私（正常路径与所有 committed 分支共用，P1-2）。
+
+    指纹重算失败同样 fail-closed：不回滚已产生的实现 commit，按 recovery 继续收尾。
+    """
     from .monitoring import review_scope_fingerprint
 
-    actual_scope = review_scope_fingerprint(diff_anchor, task_rel, ref="HEAD", repo=repo)
+    try:
+        actual_scope = review_scope_fingerprint(diff_anchor, task_rel, ref="HEAD", repo=repo)
+    except ctx.TaskDataError as error:
+        sys.exit(
+            f"finish=FAIL：提交后 review 指纹重算失败（{error}）；HEAD 已前移不回滚，"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`："
+            "判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
+        )
     if actual_scope != review_scope:
         sys.exit(
             f"finish=FAIL：提交内容与 review 内容不一致（review_scope={review_scope!r}，"
@@ -894,6 +828,14 @@ def _finish_prechecks(args) -> dict:
             "改用仓外真实文件。零写入退出"
         )
     message_path = raw_message.resolve()
+    # 解析后复核：经软链祖先绕过词法检查、实际落入 task 目录的一律拒绝。
+    # 祖先是否含软链不单独拒绝（/tmp 等合法路径本身常是软链），只看解析结果。
+    task_dir_resolved = task_dir_abs.resolve()
+    if message_path == task_dir_resolved or task_dir_resolved in message_path.parents:
+        sys.exit(
+            f"finish=FAIL：--message-file {args.message_file} 解析后仍位于当前 task 目录内，"
+            "会被一并提交；移到仓外或 .scratch/。零写入退出"
+        )
     try:
         message = message_path.read_text(encoding="utf-8")
     except OSError as error:
@@ -1091,7 +1033,15 @@ def cmd_finish(args):
                 # committed 退出前统一完成 scope 重算与提交后隐私核对，并清理已完成
                 # 事务，避免 journal 残留形成 recovery/run-close 互锁（P1-2）。
                 mark_phase(worktree, txn, "committed")
-                finalize(worktree)
+                try:
+                    finalize(worktree)
+                except ctx.TaskDataError as error:
+                    sys.exit(
+                        f"finish=FAIL：{reason}\n提交已产生（{detail}）；"
+                        f"提交事务清理失败（{error}），不回滚，"
+                        f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾；"
+                        f"收尾完成后用 finish-txn-clear 清理"
+                    )
                 _verify_post_commit_scope(
                     plan["review_scope"], plan["diff_anchor"], plan["task_rel"], tid, repo=repo
                 )
@@ -1104,7 +1054,13 @@ def cmd_finish(args):
                     f"finish=FAIL：{reason}\n提交结果未知（{detail}）；已保留 journal 与现场，"
                     f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，禁止盲目重试"
                 )
-            problems = rollback(worktree, txn)
+            try:
+                problems = rollback(worktree, txn)
+            except ctx.TaskDataError as error:
+                sys.exit(
+                    f"finish=FAIL：{reason}\n回滚被拒绝（{error}）；已保留 journal 与现场，"
+                    f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定，禁止盲目重试"
+                )
             if problems:
                 sys.exit(
                     f"finish=FAIL：{reason}\n回滚未完成：{'；'.join(problems)}。"
@@ -1116,8 +1072,9 @@ def cmd_finish(args):
         try:
             mark_phase(worktree, txn, "writing")
             _close_task(args, "done", None, prechecked=True, repo=repo)
-        except SystemExit as stop:
-            settle_failure(f"done 写入失败：{stop.code}")
+        except (SystemExit, OSError, ctx.TaskDataError) as stop:
+            detail = stop.code if isinstance(stop, SystemExit) else stop
+            settle_failure(f"done 写入失败：{detail}")
         try:
             from .documents import atomic_write_text
             atomic_write_text(
@@ -1128,14 +1085,21 @@ def cmd_finish(args):
             if staged.returncode != 0:
                 raise ctx.TaskDataError(f"git add 失败：{staged.stderr.strip()}")
             mark_staged(worktree, txn)
-        except (OSError, ctx.TaskDataError) as error:
-            settle_failure(str(error))
+        except (SystemExit, OSError, ctx.TaskDataError) as error:
+            detail = error.code if isinstance(error, SystemExit) else error
+            settle_failure(str(detail))
         committed = run_git_commit(worktree, str(message_path))
         if committed.returncode != 0:
             detail = (committed.stderr.strip() or committed.stdout.strip())[-1500:]
             settle_failure(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
         mark_phase(worktree, txn, "committed")
-        finalize(worktree)
+        try:
+            finalize(worktree)
+        except ctx.TaskDataError as error:
+            sys.exit(
+                f"finish=FAIL：实现 commit 已产生，但提交事务清理失败（{error}）；不回滚，"
+                f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾"
+            )
         _verify_post_commit_scope(
             plan["review_scope"], plan["diff_anchor"], plan["task_rel"], tid, repo=repo
         )
