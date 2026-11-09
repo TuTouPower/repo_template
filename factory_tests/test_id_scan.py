@@ -835,6 +835,35 @@ def test_close_missing_explanation_is_rejected(tmp_path, monkeypatch, capsys, re
     assert source.read_bytes() == original
 
 
+def _allocate_worker(repo_str: str, slug: str) -> str:
+    """进程池 worker：跨进程调用 allocate，验证 id_lock 的互斥取号。"""
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    from _id_scan import allocate
+
+    repo = Path(repo_str)
+    return allocate(
+        repo,
+        prefix="p",
+        dirs=PENDING_DIRS,
+        target_dir=repo / "docs/pending",
+        slug=slug,
+        body="# {id}\n",
+    ).name
+
+
+def test_concurrent_allocation_yields_unique_ids(tmp_path):
+    """并发 worker 不会撞号：编号连续、文件名唯一、每个条目都落盘。"""
+    repo = _init_repo(tmp_path)
+    slugs = [f"worker_{index:02d}" for index in range(8)]
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        names = list(pool.map(_allocate_worker, [str(repo)] * len(slugs), slugs))
+
+    assert len(set(names)) == len(slugs)
+    assert sorted(int(name[1:4]) for name in names) == list(range(1, len(slugs) + 1))
+    for name in names:
+        assert (repo / "docs/pending" / name).is_file()
+
+
 def test_allocate_dir_rejects_paths_escaping_target(tmp_path, monkeypatch):
     """files 键不得为绝对路径或含 ..，且失败时不在外部留文件（Issue #80）。"""
     repo = _init_repo(tmp_path)
