@@ -29,6 +29,7 @@
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -39,7 +40,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from repo_task.context import RepoContext
+from repo_task.documents import parse_front_matter_text
 from repo_task.integration import _dependency_implementations
+from repo_task.spikes import validate_spike_metadata
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
 from template_sync.entity_storage_migration import (
@@ -61,6 +64,15 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     )
 
 
+def _docs_snapshot(root: Path) -> dict[str, bytes]:
+    """docs/ 全树相对路径 -> 字节内容，用于回滚后整体比对。"""
+    docs = root / "docs"
+    return {
+        path.relative_to(docs).as_posix(): path.read_bytes()
+        for path in sorted(docs.rglob("*")) if path.is_file()
+    }
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "consumer"
@@ -77,7 +89,8 @@ def repo(tmp_path: Path) -> Path:
     (root / "docs/runtime").mkdir(parents=True)
     (root / "docs/archive/reviews").mkdir(parents=True)
 
-    # 初始提交
+    # 初始提交（.scratch/ 备份不得进入 Git）
+    (root / ".gitignore").write_text(".scratch/\n", encoding="utf-8")
     (root / "README.md").write_text("# Repo\n", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-m", "chore: initial commit")
@@ -276,6 +289,13 @@ def test_entity_storage_migration_write_e2e(repo, capsys):
 
     # 6. migration status 查验完全为当前布局
     assert entity_storage_migration_status(sync=sync) == []
+
+    # 工作区清洁：.scratch/ 事务备份被忽略，本次落盘只涉及 docs/ 下预期路径
+    status_lines = _git(repo, "status", "--porcelain").stdout.splitlines()
+    assert not any(".scratch" in line for line in status_lines)
+    changed_paths = [line[3:] for line in status_lines]
+    assert changed_paths
+    assert all(path.startswith("docs/") for path in changed_paths), changed_paths
 
     # 7. 查验依赖实现定位（方案第 257–269 行）
     _git(repo, "add", "-A")
@@ -476,6 +496,7 @@ def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(r
 def test_entity_storage_migration_rollback_on_failure(repo, monkeypatch):
     _setup_legacy_repo(repo)
     sync = ctx.SyncContext.for_consumer(repo)
+    before = _docs_snapshot(repo)
 
     real_atomic_write = sys.modules["template_sync.entity_storage_migration"].atomic_write_text
     calls = {"count": 0}
@@ -491,11 +512,9 @@ def test_entity_storage_migration_rollback_on_failure(repo, monkeypatch):
     with pytest.raises(MigrationError, match="已自动回滚"):
         migrate_entity_storage(sync=sync, write=True)
 
-    # 回滚后核对现场完整性：原归档任务仍存在
-    assert (repo / "docs/archive/tasks/t001_alpha").is_dir()
-    assert not (repo / "docs/tasks/t001_alpha").exists()
-    assert (repo / "docs/pending/todo/p001_fix_cli.md").is_file()
-    assert (repo / "docs/archive/handoff.md").is_file()
+    # 回滚后对 docs/ 全树整体比对：t001/p001~p003/s001/audit.log/handoff/目标目录
+    # 全部纳入，杜绝只核对部分文件而漏掉残留。
+    assert _docs_snapshot(repo) == before
 
 
 def test_apply_blocks_on_legacy_entity_storage(repo, capsys):
@@ -633,3 +652,191 @@ def test_entity_storage_migration_preserves_pending_body_indentation(repo):
     text = target_p1.read_text(encoding="utf-8")
     assert "    - 第一层缩进\n        - 第二层缩进" in text
     assert "def foo():\n    return 42" in text
+
+
+def test_entity_storage_migration_cleans_template_gitkeep(repo):
+    """P1-7：模板自带 .gitkeep 占位文件不得阻断清理，也不得残留。"""
+    _setup_legacy_repo(repo)
+    for rel in (
+        "docs/archive/tasks", "docs/archive/pending", "docs/archive/spikes",
+        "docs/pending/todo", "docs/pending/parked",
+    ):
+        directory = repo / rel
+        if directory.is_dir():
+            (directory / ".gitkeep").write_text("", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: add template gitkeep placeholders")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    assert migrate_entity_storage(sync=sync, write=True)
+    assert not (repo / "docs/archive/tasks").exists()
+    assert not (repo / "docs/pending/todo").exists()
+    assert not (repo / "docs/pending/parked").exists()
+    assert not (repo / "docs/archive/pending").exists()
+    assert not (repo / "docs/archive/spikes").exists()
+    assert entity_storage_migration_status(sync=sync) == []
+
+
+def test_entity_storage_migration_escapes_superseded_reason(repo):
+    """DS L292：superseded reason 含引号/反斜杠时写出合法 YAML，往返不丢字符。"""
+    _setup_legacy_repo(repo)
+    tricky = '方案含 "双引号" 与 \\ 反斜杠'
+    escaped = tricky.replace("\\", "\\\\").replace('"', '\\"')
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "---\n"
+        'sid: "s001"\n'
+        'slug: "kv_store"\n'
+        'status: "superseded"\n'
+        'superseded_by: "s002"\n'
+        f'reason: "{escaped}"\n'
+        "---\n"
+        "# Spike s001\n\n## 背景\n旧方案，关联 d001。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: tricky superseded reason")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    migrate_entity_storage(sync=sync, write=True)
+
+    target = repo / "docs/spikes/s001_kv_store/report.md"
+    text = target.read_text(encoding="utf-8")
+    fm, _ = parse_front_matter_text(text, source="report.md")
+    assert fm["reason"] == tricky
+    validate_spike_metadata(fm, expected_sid="s001", expected_slug="kv_store")
+
+
+def test_entity_storage_migration_blocks_unknown_spike_front_matter_field(repo):
+    """DS L239：归档 spike 的未知字段由统一校验阻断，不再白名单重建静默丢弃。"""
+    _setup_legacy_repo(repo)
+    s1_rep = repo / "docs/archive/spikes/s001_kv_store/report.md"
+    s1_rep.write_text(
+        "---\n"
+        'sid: "s001"\n'
+        'slug: "kv_store"\n'
+        'status: "completed"\n'
+        'custom_field: "leak"\n'
+        "---\n"
+        "# Spike s001\n\n## 结论\n采纳 d001。\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: unknown spike field")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="Front Matter 非法"):
+        migrate_entity_storage(sync=sync, write=True)
+
+
+def test_entity_storage_migration_preserves_pending_fix_ref(repo):
+    """DS L240：正文同时含 reason= 与 fix_ref= 时，fix_ref 不再静默丢失。"""
+    _setup_legacy_repo(repo)
+    p3 = repo / "docs/archive/pending/p003_closed_item.md"
+    p3.write_text(
+        "# p003\n\n- 处理：resolution=resolved；reason=已修复并验证；fix_ref=t042\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: closed pending with fix_ref")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    migrate_entity_storage(sync=sync, write=True)
+
+    target = repo / "docs/pending/p003_closed_item.md"
+    fm, _ = parse_front_matter_text(target.read_text(encoding="utf-8"), source="p003")
+    assert fm["fix_ref"] == "t042"
+    assert fm["reason"] == "已修复并验证"
+    assert fm["resolution"] == "resolved"
+
+
+def test_entity_storage_migration_blocks_unknown_pending_front_matter_field(repo):
+    """DS L240：旧 pending 的未知 Front Matter 字段阻断，而非白名单重建丢弃。"""
+    _setup_legacy_repo(repo)
+    p1 = repo / "docs/pending/todo/p001_fix_cli.md"
+    p1.write_text(
+        "---\n"
+        'pid: "p001"\n'
+        'slug: "fix_cli"\n'
+        'status: "todo"\n'
+        'custom: "leak"\n'
+        "---\n# p001\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: unknown pending field")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="未知 Front Matter 字段"):
+        migrate_entity_storage(sync=sync, write=True)
+
+
+def test_entity_storage_migration_wraps_invalid_pending_status_as_migration_error(repo):
+    """DS L237：扁平 pending 非法 status 由 build_migration_plan 包装为 MigrationError，不留 traceback。"""
+    _setup_legacy_repo(repo)
+    bad = repo / "docs/pending/p009_bad.md"
+    bad.write_text(
+        "---\n"
+        'pid: "p009"\n'
+        'slug: "bad"\n'
+        'status: "nonsense"\n'
+        "---\n# p009\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: invalid pending status")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="非法 Front Matter"):
+        migrate_entity_storage(sync=sync, write=True)
+
+
+def test_entity_storage_migration_removes_stale_derived_index(repo):
+    """DS L231：已跟踪的陈旧 tasks_index.json 由迁移显式删除/报告。"""
+    _setup_legacy_repo(repo)
+    for rel in ("docs/tasks_index.json", "docs/archive/tasks_index.json"):
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[]\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: stale derived index")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    assert any("tasks_index" in item for item in entity_storage_migration_status(sync=sync))
+    migrate_entity_storage(sync=sync, write=True)
+    assert not (repo / "docs/tasks_index.json").exists()
+    assert not (repo / "docs/archive/tasks_index.json").exists()
+    assert entity_storage_migration_status(sync=sync) == []
+
+
+def test_entity_storage_migration_rejects_symlink_entity(repo, tmp_path):
+    """P1-10：实体目录为软链时拒绝迁移，绝不沿软链写/删仓外文件。"""
+    _setup_legacy_repo(repo)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = repo / "docs/spikes/s002_network"
+    shutil.rmtree(link)
+    link.symlink_to(outside, target_is_directory=True)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: symlink spike entity")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    with pytest.raises(MigrationError, match="软链"):
+        migrate_entity_storage(sync=sync, write=True)
+
+
+def test_entity_storage_migration_fails_closed_on_worktree_query_error(repo, monkeypatch):
+    """DS L242：git worktree 查询失败即抛 MigrationError，不再 fail-open 放行。"""
+    _setup_legacy_repo(repo)
+    sync = ctx.SyncContext.for_consumer(repo)
+    mod = sys.modules["template_sync.entity_storage_migration"]
+    real_git = mod._git
+
+    def flaky_git(root, *args):
+        if args and args[0] == "worktree":
+            return subprocess.CompletedProcess([], 1, "", "simulated worktree failure")
+        return real_git(root, *args)
+
+    monkeypatch.setattr(mod, "_git", flaky_git)
+    with pytest.raises(MigrationError, match="无法查询 git worktree"):
+        migrate_entity_storage(sync=sync, write=True)

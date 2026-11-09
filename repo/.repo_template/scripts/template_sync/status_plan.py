@@ -9,12 +9,23 @@ from .agents_merge import agents_section_diagnosis, agents_section_status
 from .assets import hard_sync_status, retired_template_warnings
 from .common import _git, consumer_locked
 from .conventions_migration import conventions_migration_status
+from .migrate import KINDS, migrate_command, migration_findings
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
 from .source import assert_not_self, resolve_src, src_dirty
 from .specs_index_migration import specs_index_migration_status, specs_index_report
-from .state import active_prompts, prompt_substrings, read_state
+from .state import active_prompts, prompt_substrings, read_state, require_no_legacy_state
 from .workflow_migration import workflow_migration_status
+
+
+def _migration_backlog(sync, src) -> list[tuple[str, list[str]]]:
+    """统一可处理集合：status / plan / apply / migrate 共用 migration_findings。"""
+    rows = []
+    for kind in KINDS:
+        findings = migration_findings(kind, sync, src=src)
+        if findings:
+            rows.append((kind, findings))
+    return rows
 
 
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -27,6 +38,7 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
 @consumer_locked
 def cmd_status(args: argparse.Namespace, sync=None) -> int:
     sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
         print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
@@ -103,18 +115,27 @@ def cmd_status(args: argparse.Namespace, sync=None) -> int:
         print(f"  BLOCKED（不可机械迁移，阻断同步）: {problem}")
     if not si_migrations and not si_problems:
         print("  一致")
+    print("\n迁移待办（与 apply / migrate 同一可处理集合）:")
+    backlog = _migration_backlog(sync, src)
+    if not backlog:
+        print("  无")
+    for kind, findings in backlog:
+        print(f"  {kind}: {migrate_command(src, sync, kind)}")
+        for item in findings:
+            print(f"    - {item}")
     return 0
 
 
 @consumer_locked
 def cmd_plan(args: argparse.Namespace, sync=None) -> int:
     sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
         print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
         return 0
     src = resolve_src(state, refresh=getattr(args, "fetch", False), sync=sync)
-    assert_not_self(src)
+    assert_not_self(src, sync=sync)
     if state["template_source"].get("kind") == "url" and not getattr(args, "fetch", False):
         print("来源缓存：未联网刷新（--fetch 刷新；首次会自动建缓存）")
     head = _git(src, "rev-parse", "HEAD").stdout.strip() or "?"
@@ -253,4 +274,17 @@ def cmd_plan(args: argparse.Namespace, sync=None) -> int:
         print(f"- BLOCKED（不可机械迁移，阻断同步）: {problem}")
     if not si_migrations and not si_problems:
         print("一致")
+    print("\n### 迁移待办（与 apply / migrate 同一可处理集合）")
+    backlog = _migration_backlog(sync, src)
+    if not backlog:
+        print("无")
+    else:
+        rows = [
+            [kind, str(len(findings)), migrate_command(src, sync, kind)]
+            for kind, findings in backlog
+        ]
+        print(_md_table(["类型", "待处理项数", "可执行命令"], rows))
+        for kind, findings in backlog:
+            for item in findings:
+                print(f"- {kind}: {item}")
     return 0

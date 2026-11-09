@@ -1,4 +1,8 @@
-"""install-hooks 子命令与已退役 merge guard 配置清理。"""
+"""install-hooks 子命令与已退役 merge guard 配置清理。
+
+status 与 action 共用同一「可处理集合」：status 报告什么，migrate 就处理什么，
+避免 plan/apply 显示一致但 action 无法收敛的死锁。
+"""
 
 from __future__ import annotations
 
@@ -13,11 +17,17 @@ from .common import _detect_json_indent, _git, consumer_locked
 
 
 _RETIRED_MERGE_GUARD_COMMAND = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/merge_guard.py"'
-def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str], sync=None) -> None:
-    sync = sync or ctx.current_sync()
+
+
+def _load_settings(sync: ctx.SyncContext) -> tuple[dict | None, str | None]:
+    """统一读取 .claude/settings.json；损坏或顶层非对象一律转 SyncError。
+
+    链式 .get 在顶层为数组、hooks 为数组/None 时会抛 AttributeError，进而让
+    事务 journal 停留在 applying；这里在读取后即做类型校验。
+    """
     settings = sync.consumer / ".claude/settings.json"
     if not settings.is_file():
-        return
+        return None, None
     try:
         raw = settings.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -25,10 +35,43 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str], 
         raise ctx.SyncError(
             f"{sync.rel(settings)} 无法解析，不能安全移除已退役 merge guard PreToolUse（{error}）"
         ) from error
+    if not isinstance(data, dict):
+        raise ctx.SyncError(
+            f"{sync.rel(settings)} 顶层必须是 JSON 对象，不能安全移除已退役 merge guard PreToolUse"
+        )
+    return data, raw
+
+
+def _settings_has_retired_command(data: dict) -> bool:
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
-        return
+        return False
     groups = hooks.get("PreToolUse")
+    if not isinstance(groups, list):
+        return False
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        entries = group.get("hooks")
+        if not isinstance(entries, list):
+            continue
+        if any(
+            isinstance(entry, dict)
+            and str(entry.get("command", "")).strip() == _RETIRED_MERGE_GUARD_COMMAND
+            for entry in entries
+        ):
+            return True
+    return False
+
+
+def _remove_retired_merge_guard_setting(
+    changed: set[Path], reports: list[str], sync: ctx.SyncContext
+) -> None:
+    data, raw = _load_settings(sync)
+    if data is None or raw is None:
+        return
+    hooks = data.get("hooks")
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
     if not isinstance(groups, list):
         return
     changed_settings = False
@@ -62,66 +105,53 @@ def _remove_retired_merge_guard_setting(changed: set[Path], reports: list[str], 
         hooks.pop("PreToolUse", None)
     if not hooks:
         data.pop("hooks", None)
+    settings = sync.consumer / ".claude/settings.json"
     temporary = settings.with_name(settings.name + ".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=_detect_json_indent(raw)) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(data, ensure_ascii=False, indent=_detect_json_indent(raw)) + "\n",
+        encoding="utf-8",
+    )
     temporary.replace(settings)
     changed.add(settings)
     reports.append(f"{sync.rel(settings)} 已移除退役 merge guard PreToolUse")
 
 
-def _retired_guard_state(sync=None) -> tuple[Path, bool, bool]:
-    sync = sync or ctx.current_sync()
+def _retired_guard_state(sync: ctx.SyncContext) -> tuple[Path, bool]:
     legacy = sync.consumer / ".claude/hooks/merge_guard.py"
     retired = sync.consumer / ".repo_template/hooks/merge_guard.py"
     managed = (
         legacy.is_symlink()
         and legacy.resolve(strict=False) == retired.resolve(strict=False)
     )
-    return legacy, managed, not legacy.exists() and not legacy.is_symlink()
+    return legacy, managed
 
 
 def retired_hooks_status(sync=None) -> list[str]:
-    """返回仍残留的退役 hook 现场（链接或 settings 中的命令）。"""
+    """返回仍残留的退役 hook 现场；与 migrate_retired_hooks 的可处理集合完全一致。"""
     sync = sync or ctx.current_sync()
-    legacy, managed, missing_link = _retired_guard_state(sync=sync)
+    legacy, managed = _retired_guard_state(sync)
     findings: list[str] = []
     if managed:
         findings.append(sync.rel(legacy))
-    settings = sync.consumer / ".claude/settings.json"
-    if settings.is_file():
-        try:
-            data = json.loads(settings.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
-            raise ctx.SyncError(
-                f"{sync.rel(settings)} 无法解析，不能安全移除已退役 merge guard PreToolUse（{error}）"
-            ) from error
-        groups = (data or {}).get("hooks", {}).get("PreToolUse", []) if isinstance(data, dict) else []
-        if isinstance(groups, list):
-            for group in groups:
-                entries = group.get("hooks") if isinstance(group, dict) else None
-                if isinstance(entries, list) and any(
-                    isinstance(entry, dict)
-                    and str(entry.get("command", "")).strip() == _RETIRED_MERGE_GUARD_COMMAND
-                    for entry in entries
-                ):
-                    findings.append(sync.rel(settings))
-                    break
-    if missing_link and not findings:
-        return []
+    data, _ = _load_settings(sync)
+    if data is not None and _settings_has_retired_command(data):
+        findings.append(sync.rel(sync.consumer / ".claude/settings.json"))
     return sorted(set(findings))
 
 
 def migrate_retired_hooks(sync=None) -> list[str]:
-    """显式移除由模板管理的退役 merge_guard 链接与设置项，保留消费方自定义 hook。"""
+    """按 retired_hooks_status 的可处理集合逐项处理，保留消费方自定义 hook。"""
     sync = sync or ctx.current_sync()
-    legacy, managed, missing_link = _retired_guard_state(sync=sync)
+    findings = retired_hooks_status(sync=sync)
+    if not findings:
+        return []
     changed: set[Path] = set()
     reports: list[str] = []
-    if not retired_hooks_status(sync=sync):
-        return reports
-    if managed or missing_link:
-        _remove_retired_merge_guard_setting(changed, reports, sync=sync)
-    if managed:
+    legacy, managed = _retired_guard_state(sync)
+    settings_rel = sync.rel(sync.consumer / ".claude/settings.json")
+    if settings_rel in findings:
+        _remove_retired_merge_guard_setting(changed, reports, sync)
+    if managed and sync.rel(legacy) in findings:
         legacy.unlink()
         changed.add(legacy)
         reports.append(f"{sync.rel(legacy)} 已退役并移除")

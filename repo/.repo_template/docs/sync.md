@@ -18,7 +18,7 @@
 
 ## entity-storage 一次性实体存储迁移
 
-日常 `apply` 遇到旧实体存储布局时会先阻断，并提示运行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`。该一次性迁移彻底废除物理搬迁归档与交接归档，收敛至固定规范路径契约：
+日常 `apply` 遇到旧实体存储布局时会先阻断，并提示从固定来源 product 运行**来源脚本**（带 `--consumer`）执行 `migrate entity-storage --write`。该一次性迁移彻底废除物理搬迁归档与交接归档，收敛至固定规范路径契约：
 
 - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验终态 done/dropped 证据）；
 - `docs/pending/todo/pNNN.md` -> `docs/pending/pNNN.md`（status: todo）；
@@ -27,7 +27,8 @@
 - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（status: completed，校验报告与 findings 闭环证据）；
 - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（无损保持原始字节）；
 - `docs/archive/handoff.md` -> 确认内容已完整入库 Git 历史后退役移除；
-- 清理遗留空旧目录，并更新维护文档中的确定引用。
+- 删除已废弃派生索引 `docs/tasks_index.json` / `docs/archive/tasks_index.json`（旧仓已跟踪文件不受 `.gitignore` 影响）；
+- 清理遗留空旧目录（忽略模板自带的 `.gitkeep` / `.DS_Store` 占位文件），并更新维护文档中的确定引用。
 
 ### 迁移维护窗口与规程
 
@@ -36,10 +37,10 @@
    - 清点所有登记 worktree、本地分支、未完成 attempt、pending merge；先在旧工具链下完成或清理；
    - 确保主工作区与暂存区干净；备份 Git 对象、refs、`docs/runtime/` 及未跟踪附件。
 2. **拟定计划（dry-run）**：
-   - 执行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage`；
+   - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage`；
    - 检查打印的实体映射清单与校验状态，确认无异常。
 3. **正式执行落盘**：
-   - 执行 `python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`；
+   - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage --write`；
    - 迁移器在排他锁与持久文件事务 `FileTransaction` 内原子执行；若任一步骤校验失败，整体回滚原状态。
 4. **提交与恢复正常工作**：
    - 检查 `git status` 与 diff，提交迁移 commit；
@@ -47,7 +48,7 @@
 
 ## workflow schema 强制迁移
 
-日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局或退役 hook 残留时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。迁移不再隐含在同步写盘里。
+日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、退役 hook 残留、旧实体存储布局或旧布局 state 时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。迁移不再隐含在同步写盘里。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（含 entity-storage、retired-hooks、legacy-state），并给出可直接执行的迁移命令，避免 plan 显示一致但 apply 阻断。
 
 显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：失败整体回滚，成功后校验目标 schema，不可机械转换的数据列出并中止。若仍存在 `docs/archive/tasks/` 等旧多目录布局，须先按上一节执行 `entity-storage` 迁移。
 
@@ -75,7 +76,7 @@
 
 同步版本的可移植基线为 `.repo_template/sync_manifest.json`（随同步 commit 入库），只保存 resolved commit 和可共享 URL；共享保护决策通过 `prompt add --scope shared` 写入可入库的 `.repo_template/sync_policy.json`；本机来源路径、缓存与私人 user_prompts 留在忽略的 sync_state 中，迁机须备份。新 clone 无 state 时读取 manifest，路径源用 `init --source <新机器路径>` 重新接入，保留版本基线；私人保护策略从备份恢复后再同步。不要把含凭据 URL 或本机路径写进 manifest。
 
-旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` 明确拒绝并指向 `repo_sync.py migrate legacy-state`。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 总账同理，用 `pending.py migrate-legacy` / `findings.py migrate-legacy` 显式拆分，迁移结果提交后编号分配才恢复。
+旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` / `apply` / `status` / `plan` / `link-skills` 均明确拒绝并指向 `repo_sync.py migrate legacy-state --write`。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 单文件总账同理：运行期 fail-closed 不解析正文编号，须先用完整命令显式拆分（来源仓脚本，默认 dry-run、`--write` 落盘）：`python3 .repo_template/scripts/pending.py migrate-legacy --write` 与 `python3 .repo_template/scripts/findings.py migrate-legacy --write`。执行前备份，执行后核对拆分条目编号与正文、提交迁移 commit；其它分支/worktree 残留旧总账时编号分配继续阻断。
 
 ## 正式同步
 

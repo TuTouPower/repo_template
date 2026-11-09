@@ -15,7 +15,7 @@
 |`docs/handoff.md`|当前项目交接快照（人类上下文）|固定单文件维护当前焦点与交接上下文，不进 `archive/`（历史由 Git 提交保存）|
 |`docs/archive/reviews/`|独立冷文稿归档|仅 `.repo_template/scripts/repo_hygiene.py archive-review` 独占整包归档已闭环独立 review 会话产物；交接、task、spike 严禁归档|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/runtime/tasks_audit.log`|rewind/purge 审计（append-only）|仅 `.repo_template/scripts/task.py rewind` / `purge` 独占 append，禁止 agent 手动修改|
+|`docs/runtime/tasks_audit.log`|状态回退审计（append-only）|`task.py rewind` / `purge` / `finish-unwind` 与 `rewind_failed` 恢复分支经 `append_audit` 独占 append，禁止 agent 手动修改|
 |`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
 |`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
 |`.repo_template/docs/review_prompts/`|review prompt 模板|改审查标准时更新|
@@ -108,7 +108,8 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
 
 消费仓旧布局或旧 schema 升级须通过显式迁移命令完成，日常 `apply` 遇到旧 schema 会直接阻断并拒绝写入。
 
-- **实体存储一次性迁移**：`python3 .repo_template/scripts/repo_sync.py migrate entity-storage [--write]`。
+- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`（旧消费仓本地脚本不含 `migrate` 子命令），默认 dry-run、`--write` 落盘：
+  `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage --write`。
   针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
   - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验终态 done/dropped 证据）；
   - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref）；
@@ -118,9 +119,12 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
   - 清理空旧目录并更新维护文档中确定引用。
   默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败完整回滚。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
 - **其他历史迁移**：
-  - `workflow schema` 迁移（`repo_sync.py migrate all` 或 `workflow`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
+  - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
   - `legacy-state` 迁移（`repo_sync.py migrate legacy-state`）：将旧版 state 迁至 `.repo_template/sync_state.json`；
-  - `pending / findings` 单文件总账迁移（`pending.py migrate-legacy` / `findings.py migrate-legacy`）：将早期单文件拆分为条目文件。
+  - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，存在时 `new` 一律 fail-closed 阻断，须先显式拆分。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
+    `python3 .repo_template/scripts/pending.py migrate-legacy --write` 与
+    `python3 .repo_template/scripts/findings.py migrate-legacy --write`。
+    核对拆分出的 `docs/pending/pNNN_*.md` / `docs/findings/dNNN_*.md` 编号与正文无遗漏并提交迁移 commit 后，编号分配才恢复；其它分支/worktree 仍残留旧总账时编号分配继续阻断，须先在这些分支完成迁移或收敛。
 
 Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-only`，最低要求 Git 2.38；工具会在执行 `git merge --no-commit` 前检查，版本不足时不会留下 pending merge。
 
