@@ -83,6 +83,9 @@
 | L66 | 消费仓备份、大文件等不入库用户文件无落点；`data/` 是项目运行目录且可被清理 | 用户裁定（2026-11-10） | 新增仓库根 `local/`：gitignore、只属于用户；`repo_cleanup` 任何类别不进入不删除；worktree `.env` 扫描不进入，需要时经 `.worktreeinclude` 显式链接；隐私超限提示改指 `local/`，不再指向 `docs/archive/` | `repo/{.gitignore,AGENTS.md,.worktreeinclude}`、`repo_cleanup.py`、`repo_task/{worktrees,privacy}.py`、`usage.md`、`repo-cleanup` skill | 已实现，未运行测试 |
 | L67 | `task-from-pending` 只表达来源，未表达「转为 task」的目标 | 用户提出（2026-11-10） | 更名 `pending-to-task`，同步 canonical skill、registry、命令薄层、宿主软链与使用文档；历史记录保留原名 | `.repo_template/skills/pending-to-task/`、`registry.json`、`.opencode/commands/`、`.agents/skills/`、`.claude/skills/` | 已实现 |
 | L68 | `repo-cleanup` 点名清 scratch 会删除未结束同步/图事务；在用草稿只靠 agent 判断 | 用户裁定（2026-11-10） | scratch 进入默认类别；带 scratch 时非阻塞持控制面锁，被占用立即失败；未结束或损坏事务跳过 scratch、其它类别照常清；主人限未关闭 pending 引用与未发布模板 issue 报告，最后修改满 3 天也清，无主照常清；issue 本地报告记录发布地址。3 天期限仅用于草稿类主人，不适用于事务。方案见 `archive/plan_scratch_cleanup.md` | `repo_cleanup.py`、`repo_task/{file_transaction,locks}.py`、`pending.py`、`repo-cleanup` / `template-issue-report` / `issue-handler` skill | 已实施 |
+| L69 | A06 自动解冲突以 note 子串认定上限调大「已授权」 | 2026-11-10 四线合并审阅第 8 项、用户裁定 | 维持现状，只修措辞：合并检查是一致性检查，不是授权证明；「用户批准后调大轮次上限」是 agent 必须遵守的流程约束，代码不核验批准来源；不做 TTY 确认或主仓审计日志等机械强制 | `repo_task/integration.py` docstring、`.repo_template/docs/{architecture,recovery}.md`；方案见 `reviews/review_20261110/adoption.md` F12 | 开放 |
+| L70 | 隐私门禁不阻断存量泄漏，与 review_20261107 A07 验收冲突 | 2026-11-10 四线合并审阅第 14 项、用户裁定 | 以 `conventions.md` 为准：门禁只阻断本次新增文本行，存量由显式 `privacy-audit` 处理；不加自动存量审计门禁；A07 追加后续修订说明 | `repo/docs/blueprint/conventions.md`、`reviews/review_20261107/adoption.md` A07 | 已落地 |
+| L71 | 迁移备份恢复缺隔离消费仓真实演练 | 2026-11-10 四线合并审阅第 33 项、review_20261109 | 用户裁定不做；迁移恢复的证据边界为代码路径与工厂 rollback 用例，引用「迁移已验收」时保留该限定 | `reviews/review_20261110/adoption.md` | 已否决 |
 
 
 ## 未闭环

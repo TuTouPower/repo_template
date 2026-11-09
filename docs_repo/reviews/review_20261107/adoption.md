@@ -88,6 +88,8 @@
 
 ### A07. 隐私门禁覆盖范围与读取版本统一（P1，修改后采纳 DS #3、#6 重复取数项）
 
+> 后续修订（2026-11-10）：验收中「非本次变更的 tracked 泄漏」一项已被 R01 有意收窄。门禁只阻断本次新增文本行，存量由显式 `task.py privacy-audit` 处理，现行口径以 `repo/docs/blueprint/conventions.md` 为准。见 [review_20261110 F13](../review_20261110/adoption.md)。
+
 **依据与判断**：`repo/docs/blueprint/conventions.md` 约束已跟踪非归档文本文件；pre-commit 只取 staged Markdown，finish 只取 staged docs 和当前 task 目录。缩小文档范围会弱化现行契约，因此拒绝。两处 staged 查询的 pathspec 不同，并非完全相同命令，但可以共享候选清单。`.scratch/` 排除在只枚举 docs 的查询中确实无效。
 
 **修改方案**：建立公共“候选文件枚举＋内容扫描”入口，将隐私扫描与 Markdown 格式化选文件彻底分开。提交门禁扫描整个 index 中非归档文本，使用 index blob，避免工作区干净内容掩盖 staged 泄漏；finish 检查预期提交快照并在提交后核对实际快照。当前 task 尚未暂存但将由 finish 纳入的文件也必须覆盖。保持现行契约覆盖全体已跟踪文件，不能仅改成检查本次变更文件。无法读取候选内容必须显式失败，不能沿用 `scan_path_privacy` 的 OSError 后继续。门禁切换前检查既有受跟踪内容；测试所需路径使用运行时构造，公开示例使用占位符，不给测试目录开整片豁免。
