@@ -67,7 +67,7 @@ def test_remove_worktree_reports_orphan_dir(git_repo):
     orphan = git_repo / "worktrees" / "t001_orphan"
     orphan.mkdir(parents=True)
     ok, message = worktrees.remove_worktree(
-        "worktrees/t001_orphan", repo=ctx.RepoContext.for_root(git_repo)
+        "worktrees/t001_orphan", repo=ctx.RepoContext.for_root(git_repo), tid="t001"
     )
     assert ok is False
     assert orphan.exists()
@@ -79,7 +79,7 @@ def test_discard_worktree_reports_orphan_dir(git_repo):
     orphan = git_repo / "worktrees" / "t002_orphan"
     orphan.mkdir(parents=True)
     ok, message = worktrees.discard_worktree(
-        "worktrees/t002_orphan", repo=ctx.RepoContext.for_root(git_repo)
+        "worktrees/t002_orphan", repo=ctx.RepoContext.for_root(git_repo), tid="t002"
     )
     assert ok is False
     assert orphan.exists()
@@ -89,7 +89,7 @@ def test_discard_worktree_reports_orphan_dir(git_repo):
 def test_remove_worktree_succeeds_when_path_absent(git_repo):
     """未登记且路径确实不存在时 prune 后返回成功。"""
     ok, _ = worktrees.remove_worktree(
-        "worktrees/already_gone", repo=ctx.RepoContext.for_root(git_repo)
+        "worktrees/already_gone", repo=ctx.RepoContext.for_root(git_repo), tid="t009"
     )
     assert ok is True
 

@@ -1394,7 +1394,8 @@ def cmd_purge(args):
     if fm.get("branch") and has_unmerged_commits(fm["branch"], repo=repo):
         sys.exit(f"{args.tid} 分支 {fm['branch']!r} 有未合并 commit；purge 拒绝（请用 drop）")
     removed, wt_msg = remove_worktree(
-        fm.get("worktree", ""), expected_branch=fm.get("branch"), repo=repo
+        fm.get("worktree", ""), expected_branch=fm.get("branch"), repo=repo,
+        tid=args.tid,
     )
     if not removed:
         sys.exit(f"{wt_msg}\npurge 中止：worktree 未清理时删除 task 目录会留下无主工作区")

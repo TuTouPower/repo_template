@@ -330,54 +330,31 @@ def resolve_start_base(
         )
     return base_branch, base_sha
 
-def _tid_from_worktree_rel(rel: str, repo: "ctx.RepoContext") -> str | None:
-    """从 worktree 相对路径反解归属 tid：必须形如 ``../{repo.name}_{tid}``。
-
-    形如 ``/``、绝对路径或命名不符的一律返回 None（fail-closed，由调用方拒绝）。
-    repo 名本身可含下划线，按最后一个下划线切分 tid 后缀。
-    """
-    prefix = f"../{repo.name}_"
-    if not rel.startswith(prefix):
-        return None
-    tid = rel[len(prefix):]
-    return tid if ctx.TID_RE.fullmatch(tid) else None
-
-
 def _check_worktree_ownership(
-    rel: str, registered_branch: str | None, tid: str | None,
-    *, repo: "ctx.RepoContext",
+    rel: str, registered_branch: str | None,
+    *, tid: str, repo: "ctx.RepoContext",
 ) -> str | None:
     """破坏性操作前的归属校验；通过返回 None，否则返回拒绝理由。
 
-    ``tid`` 给定时：``rel`` 必须恰等于 ``repo.worktree_rel(tid)`` 派生路径；
-    已登记分支必须满足 task 分支命名约束且 tid 前缀与 ``tid`` 一致。``tid``
-    缺省时只做路径/分支一致性比对（两者都能解析且 tid 不一致才拒绝），保持
-    旧调用兼容；跨 task 伪造（同源篡改 rel 与 branch）须由调用方传 ``tid``。
+    ``rel`` 必须恰等于 ``repo.worktree_rel(tid)`` 派生路径；已登记分支必须
+    满足 task 分支命名约束且 tid 前缀与 ``tid`` 一致。``tid`` 是必填关键字
+    参数，由签名强制调用方声明归属，防止同源篡改的 rel/branch 删除他人
+    worktree。
     """
-    if tid is not None:
-        if not ctx.TID_RE.fullmatch(tid):
-            return f"tid 非法：{tid!r}；拒绝破坏性 worktree 操作"
-        expected = repo.worktree_rel(tid)
-        if rel != expected:
-            return (
-                f"{rel} 与 {tid} 派生路径 {expected} 不符；"
-                "拒绝操作非归属 worktree"
-            )
-        if registered_branch:
-            match = ctx.TASK_BRANCH_RE.fullmatch(registered_branch)
-            if not match or match.group(1) != tid:
-                return (
-                    f"{rel} 登记分支为 {registered_branch!r}，与 {tid} 不符；"
-                    "拒绝操作非归属 worktree"
-                )
-        return None
-    rel_tid = _tid_from_worktree_rel(rel, repo)
-    if rel_tid is not None and registered_branch:
+    if not ctx.TID_RE.fullmatch(tid):
+        return f"tid 非法：{tid!r}；拒绝破坏性 worktree 操作"
+    expected = repo.worktree_rel(tid)
+    if rel != expected:
+        return (
+            f"{rel} 与 {tid} 派生路径 {expected} 不符；"
+            "拒绝操作非归属 worktree"
+        )
+    if registered_branch:
         match = ctx.TASK_BRANCH_RE.fullmatch(registered_branch)
-        if match and match.group(1) != rel_tid:
+        if not match or match.group(1) != tid:
             return (
-                f"{rel} 登记分支为 {registered_branch!r}，"
-                f"与路径归属 {rel_tid} 不符；拒绝操作非归属 worktree"
+                f"{rel} 登记分支为 {registered_branch!r}，与 {tid} 不符；"
+                "拒绝操作非归属 worktree"
             )
     return None
 
@@ -471,20 +448,19 @@ def _prune_unregistered(
     return True, f"worktree 不在登记表且路径已不存在，已 prune：{rel}"
 
 def discard_worktree(
-    rel: str, *, repo: "ctx.RepoContext", tid: str | None = None,
+    rel: str, *, repo: "ctx.RepoContext", tid: str,
 ) -> tuple[bool, str]:
     """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。
 
-    ``tid`` 给定时做归属校验：``rel`` 必须恰等于 ``repo.worktree_rel(tid)``
-    派生路径，且登记分支的 tid 前缀须一致；不符直接拒绝。破坏性入口
-    （rewind/drop）必须传 ``tid``，否则同源篡改的 front matter 可借此删除
-    其他 task 的 worktree 与分支。
+    ``tid`` 为必填关键字参数，做归属校验：``rel`` 必须恰等于
+    ``repo.worktree_rel(tid)`` 派生路径，且登记分支的 tid 前缀须一致；不符
+    直接拒绝，防止同源篡改的 front matter 删除其他 task 的 worktree 与分支。
     """
     path = (repo.primary_root / rel).resolve()
     registered = worktree_paths(repo=repo).get(str(path))
     if registered is None:
         return _prune_unregistered(path, rel, repo=repo)
-    refusal = _check_worktree_ownership(rel, registered, tid, repo=repo)
+    refusal = _check_worktree_ownership(rel, registered, tid=tid, repo=repo)
     if refusal:
         return False, refusal
     if Path.cwd().resolve().is_relative_to(path):
@@ -503,13 +479,14 @@ def discard_worktree(
 
 def remove_worktree(
     rel: str, *, expected_branch: str | None = None,
-    repo: "ctx.RepoContext", tid: str | None = None,
+    repo: "ctx.RepoContext", tid: str,
 ) -> tuple[bool, str]:
     """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。
 
-    expected_branch 非空时校验登记分支归属，防止 front matter 损坏/冲突解决
-    错误导致一个 task 清理另一个 task 的工作区。expected_branch 本身可与 rel
-    同源伪造：``tid`` 给定时额外校验派生路径与分支 tid 前缀，不符直接拒绝。
+    ``tid`` 为必填关键字参数，校验派生路径与登记分支 tid 前缀，不符直接拒绝。
+    expected_branch 非空时额外校验登记分支归属，防止 front matter 损坏/冲突
+    解决错误导致一个 task 清理另一个 task 的工作区；expected_branch 本身可与
+    rel 同源伪造，因此归属判定以 ``tid`` 为准。
     """
     if not rel:
         return True, "无 worktree"
@@ -517,17 +494,16 @@ def remove_worktree(
     registered_branch = worktree_paths(repo=repo).get(str(path))
     if registered_branch is None:
         return _prune_unregistered(path, rel, repo=repo)
-    refusal = _check_worktree_ownership(rel, registered_branch, tid, repo=repo)
+    refusal = _check_worktree_ownership(rel, registered_branch, tid=tid, repo=repo)
     if refusal:
         return False, refusal
     if expected_branch is not None:
-        if tid is not None:
-            forged = ctx.TASK_BRANCH_RE.fullmatch(expected_branch)
-            if not forged or forged.group(1) != tid:
-                return False, (
-                    f"预期分支 {expected_branch!r} 与 {tid} 不符"
-                    "（须为该 task 自身分支）；拒绝移除其他 task 的 worktree"
-                )
+        forged = ctx.TASK_BRANCH_RE.fullmatch(expected_branch)
+        if not forged or forged.group(1) != tid:
+            return False, (
+                f"预期分支 {expected_branch!r} 与 {tid} 不符"
+                "（须为该 task 自身分支）；拒绝移除其他 task 的 worktree"
+            )
         if registered_branch != expected_branch:
             return False, (
                 f"{rel} 登记分支为 {registered_branch!r}，预期 {expected_branch!r}；"

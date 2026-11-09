@@ -108,14 +108,13 @@ def test_remove_refuses_forged_expected_branch(git_repo):
         _git(git_repo, "worktree", "remove", "--force", "../repo_t002")
 
 
-def test_remove_without_tid_still_catches_path_branch_mismatch(git_repo):
-    """tid 缺省时路径归属与登记分支 tid 不一致也拒绝（纵深，不断旧行为）。"""
+def test_remove_without_tid_is_type_error(git_repo):
+    """缺 tid 由签名拒绝，不再提供弱校验路径。"""
     repo_ctx = _repo_ctx(git_repo)
     _git(git_repo, "worktree", "add", "-b", "t001_x", "../repo_t002")
     try:
-        ok, message = worktrees.remove_worktree("../repo_t002", repo=repo_ctx)
-        assert ok is False
-        assert "不符" in message
+        with pytest.raises(TypeError, match="tid"):
+            worktrees.remove_worktree("../repo_t002", repo=repo_ctx)
     finally:
         _git(git_repo, "worktree", "remove", "--force", "../repo_t002")
 
@@ -156,7 +155,7 @@ def test_prune_unregistered_reports_dangling_symlink(git_repo):
     dangling = (git_repo / rel)
     dangling.parent.mkdir(parents=True, exist_ok=True)
     os.symlink(git_repo / "no_such_target", dangling)
-    ok, message = worktrees.remove_worktree(rel, repo=repo_ctx)
+    ok, message = worktrees.remove_worktree(rel, repo=repo_ctx, tid="t009")
     assert ok is False
     assert "仍存在" in message
 
