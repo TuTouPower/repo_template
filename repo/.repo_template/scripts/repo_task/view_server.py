@@ -76,11 +76,23 @@ def _render_html(model: dict) -> str:
 _RENDER_CACHE_TTL = 0.5  # 500ms 内复用渲染结果，平抑高并发资源冲击（Issue #48）
 
 
+class _DocNotFound(ctx.TaskDataError):
+    """任务文档 404 类错误：未知 tid/doc、路径越界、文档缺失。
+
+    与状态发现/渲染失败（TaskDataError → 500）区分：前者是请求资源不存在，
+    后者是服务端状态损坏。详情只进服务端日志，响应一律通用文案。
+    """
+
+
 class _BoardCache:
     """按 (repo.root, token) 键控的请求级缓存，由每个 serve() 实例独占持有。
 
     首页与 /task-doc 共享同一次有效状态发现与 schedule：消除模块级全局状态，
     也避免 /task-doc 每次请求重复 discover_effective_bundle + compute_schedule。
+
+    文档数据与 board 渲染解耦：snapshot_data() 只做状态发现（文档端点用），
+    snapshot() 在其上叠加模型构建与 HTML 渲染（首页用）。渲染失败不影响文档，
+    文档缺失不影响首页；各自错误独立映射状态码。
     """
 
     def __init__(self, repo, token: str, ttl: float = _RENDER_CACHE_TTL):
@@ -91,11 +103,12 @@ class _BoardCache:
         self._key: tuple[str, str] | None = None
         self._time = 0.0
         self._html = ""
+        self._html_valid = False
         self._schedule = None
         self._sources = None
 
-    def snapshot(self) -> tuple[str, dict, dict]:
-        """返回 (html, schedule, sources)，TTL 内复用；键随 repo/token 失效。"""
+    def _data(self) -> tuple[dict, dict]:
+        """有效状态发现 + schedule；TTL 内复用。失败抛 TaskDataError（→500）。"""
         key = (str(self._repo.root), self._token)
         now = time.monotonic()
         with self._lock:
@@ -104,13 +117,29 @@ class _BoardCache:
                 and self._schedule is not None
                 and (now - self._time < self._ttl)
             ):
-                return self._html, self._schedule, self._sources
+                return self._schedule, self._sources
             tasks, sources = discover_effective_bundle(repo=self._repo)
             schedule = compute_schedule(tasks, repo=self._repo)
+            self._key, self._time = key, now
+            self._schedule, self._sources = schedule, sources
+            self._html_valid = False
+            return schedule, sources
+
+    def snapshot_data(self) -> tuple[dict, dict]:
+        """文档端点用：只返回 (schedule, sources)，不触碰渲染面。"""
+        return self._data()
+
+    def snapshot(self) -> tuple[str, dict, dict]:
+        """首页用：返回 (html, schedule, sources)，TTL 内复用渲染结果。"""
+        schedule, sources = self._data()
+        key = (str(self._repo.root), self._token)
+        with self._lock:
+            if self._html_valid and self._key == key:
+                return self._html, schedule, sources
             model = _build_model(schedule, self._token, repo=self._repo)
             html = _render_html(model)
-            self._key, self._time = key, time.monotonic()
-            self._html, self._schedule, self._sources = html, schedule, sources
+            self._html = html
+            self._html_valid = True
             return html, schedule, sources
 
 
@@ -124,19 +153,19 @@ def _allowed_doc_roots(base: Path, repo) -> tuple[Path, ...]:
 
 
 def _resolve_task_doc_in(base: Path, tasks: dict[str, dict], tid: str, doc: str, *, repo) -> Path:
-    """在给定工作区根下校验并解析任务文档路径；非法请求抛 ctx.TaskDataError。"""
+    """在给定工作区根下校验并解析任务文档路径；非法请求抛 _DocNotFound。"""
     if tid not in tasks:
-        raise ctx.TaskDataError(f"未知任务 {tid!r}")
+        raise _DocNotFound(f"未知任务 {tid!r}")
     filename = _DOC_NAMES.get(doc)
     if filename is None:
-        raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/progress）")
+        raise _DocNotFound(f"未知文档类型 {doc!r}（仅 task/progress）")
     directory = tasks[tid].get("dir", "")
     root = base.resolve()
     path = (root / directory / filename).resolve()
     if not any(path.is_relative_to(allowed) for allowed in _allowed_doc_roots(root, repo)):
-        raise ctx.TaskDataError(f"任务 {tid} 文档路径越界：{path}")
+        raise _DocNotFound(f"任务 {tid} 文档路径越界：{path}")
     if not path.is_file():
-        raise ctx.TaskDataError(f"任务 {tid} 无 {filename}")
+        raise _DocNotFound(f"任务 {tid} 无 {filename}")
     return path
 
 
@@ -154,12 +183,15 @@ def _read_task_doc(schedule: dict, sources: dict, tid: str, doc: str, *, repo) -
     entry = sources.get(tid) or {}
     if entry.get("source") == "branch" and entry.get("read_at"):
         if tid not in tasks:
-            raise ctx.TaskDataError(f"未知任务 {tid!r}")
+            raise _DocNotFound(f"未知任务 {tid!r}")
         filename = _DOC_NAMES.get(doc)
         if filename is None:
-            raise ctx.TaskDataError(f"未知文档类型 {doc!r}（仅 task/progress）")
+            raise _DocNotFound(f"未知文档类型 {doc!r}（仅 task/progress）")
         rel = f"{tasks[tid].get('dir', '')}/{filename}"
-        return git_text_at_ref(entry["read_at"], rel, repo=repo).encode("utf-8")
+        try:
+            return git_text_at_ref(entry["read_at"], rel, repo=repo).encode("utf-8")
+        except ctx.TaskDataError as error:
+            raise _DocNotFound(f"任务 {tid} 文档不可读：{error}") from error
     base = (
         Path(entry["read_at"])
         if entry.get("source") == "worktree" and entry.get("read_at")
@@ -285,9 +317,12 @@ class _Handler(BaseHTTPRequestHandler):
         except SystemExit as error:
             # sys.exit 给出的是业务提示（如工作区限制），不含内部路径，可回显。
             self._send_error_text(503, str(error) or "服务不可用（运行环境不满足）")
-        except ctx.TaskDataError as error:
-            LOGGER.warning("看板任务数据不可用 path=%s：%s", self.path, error)
+        except _DocNotFound as error:
+            LOGGER.warning("看板任务文档不可用 path=%s：%s", self.path, error)
             self._send_error_text(404, "请求的任务资源不可用")
+        except ctx.TaskDataError as error:
+            LOGGER.warning("看板状态发现/渲染失败 path=%s：%s", self.path, error)
+            self._send_error_text(500, "内部错误，请查看服务端日志")
         except OSError as error:
             LOGGER.warning("看板资源读取失败 path=%s：%s", self.path, error)
             self._send_error_text(500, "内部错误，请查看服务端日志")
@@ -326,7 +361,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             tid = (query.get("tid") or [""])[0]
             doc = (query.get("doc") or [""])[0]
-            _, schedule, sources = self.server.board.snapshot()
+            schedule, sources = self.server.board.snapshot_data()
             body = _read_task_doc(schedule, sources, tid, doc, repo=self.server.repo)
             self._send_bytes(200, body, "text/plain; charset=utf-8")
             return

@@ -210,9 +210,11 @@ def test_http_error_response_does_not_leak_internal_path(repo_layout, monkeypatc
     class MockHandler:
         def __init__(self, path):
             self.path = path
+            board = SimpleNamespace(snapshot=lambda: ("<html>", {"tasks": tasks}, {}))
+            board.snapshot_data = lambda: ({"tasks": tasks}, {})
             self.server = SimpleNamespace(
                 repo=RepoContext.for_root(tasks_dir.parent.parent),
-                board=SimpleNamespace(snapshot=lambda: ("<html>", {"tasks": tasks}, {})),
+                board=board,
             )
 
         def _route_get(self):
@@ -492,6 +494,169 @@ def test_board_cache_key_is_repo_and_token(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_task_doc_discovery_failure_maps_to_500(repo_layout, monkeypatch, caplog):
+    """状态发现失败（TaskDataError）走 500 而非 404；详情只进日志（P2-5）。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+
+    def boom():
+        raise ctx.TaskDataError("dispatch_ledger 第 3 行损坏")
+
+    responses = []
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            board = SimpleNamespace(snapshot=boom)
+            board.snapshot_data = boom
+            self.server = SimpleNamespace(
+                repo=RepoContext.for_root(tasks_dir.parent.parent),
+                board=board,
+            )
+
+        def _route_get(self):
+            view_server._Handler._route_get(self)
+
+        def _send_error_text(self, status, message):
+            responses.append((status, message))
+
+        def _send_bytes(self, status, body, ct):
+            responses.append((status, body))
+
+    handler = MockHandler("/task-doc?tid=t001&doc=task&token=test-session-token")
+    with caplog.at_level(logging.WARNING):
+        view_server._Handler.do_GET(handler)
+    assert responses[-1] == (500, "内部错误，请查看服务端日志")
+    assert "第 3 行损坏" in caplog.text
+
+
+def test_task_doc_unknown_tid_stays_404(repo_layout, monkeypatch):
+    """未知 tid 仍走 404（P2-5 仅此类返回 404）。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+    tasks = {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}}
+    schedule = {"tasks": tasks, "selected": ["t001"]}
+    responses = []
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            board = SimpleNamespace(snapshot=lambda: ("<html>", schedule, {}))
+            board.snapshot_data = lambda: (schedule, {})
+            self.server = SimpleNamespace(
+                repo=RepoContext.for_root(tasks_dir.parent.parent),
+                board=board,
+            )
+
+        def _route_get(self):
+            view_server._Handler._route_get(self)
+
+        def _send_error_text(self, status, message):
+            responses.append((status, message))
+
+        def _send_bytes(self, status, body, ct):
+            responses.append((status, body))
+
+    handler = MockHandler("/task-doc?tid=t999&doc=task&token=test-session-token")
+    view_server._Handler.do_GET(handler)
+    assert responses[-1] == (404, "请求的任务资源不可用")
+
+
+def test_task_doc_survives_render_failure(repo_layout, monkeypatch, caplog):
+    """渲染面爆炸不影响文档端点：首页 500 时 /task-doc 仍 200（P2-9 解耦）。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
+    tasks = {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}}
+
+    def fake_bundle(*, repo):
+        return (tasks, {})
+
+    monkeypatch.setattr(view_server, "discover_effective_bundle", fake_bundle)
+    monkeypatch.setattr(
+        view_server, "compute_schedule",
+        lambda tasks=None, **kwargs: {"tasks": tasks, "selected": ["t001"]},
+    )
+
+    def boom(schedule, token, **kwargs):
+        raise ctx.TaskDataError("board 模型构建失败")
+
+    monkeypatch.setattr(view_server, "_build_model", boom)
+
+    board = view_server._BoardCache(repo, "test-session-token")
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            self.server = SimpleNamespace(repo=repo, board=board)
+            self.responses = []
+
+        def _route_get(self):
+            view_server._Handler._route_get(self)
+
+        def _send_error_text(self, status, message):
+            self.responses.append((status, message))
+
+        def _send_bytes(self, status, body, ct):
+            self.responses.append((status, body))
+
+    index = MockHandler("/?token=test-session-token")
+    doc = MockHandler("/task-doc?tid=t001&doc=task&token=test-session-token")
+    with caplog.at_level(logging.WARNING):
+        view_server._Handler.do_GET(index)
+    view_server._Handler.do_GET(doc)
+    assert index.responses[-1][0] == 500
+    assert doc.responses[-1][0] == 200
+    assert b"# task " in doc.responses[-1][1]
+
+
+def test_index_survives_doc_failure(repo_layout, monkeypatch):
+    """文档缺失不影响首页：/task-doc 404 时首页仍 200（P2-9 解耦）。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
+    (tasks_dir / "t009_nodoc").mkdir()
+    tasks = {
+        "t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"},
+        "t009": {"tid": "t009", "dir": "docs/tasks/t009_nodoc"},
+    }
+
+    def fake_bundle(*, repo):
+        return (tasks, {})
+
+    monkeypatch.setattr(view_server, "discover_effective_bundle", fake_bundle)
+    monkeypatch.setattr(
+        view_server, "compute_schedule",
+        lambda tasks=None, **kwargs: {"tasks": tasks, "selected": ["t001"]},
+    )
+    monkeypatch.setattr(view_server, "_build_model", lambda schedule, token, **kwargs: {})
+    monkeypatch.setattr(view_server, "_render_html", lambda model: "<html>board</html>")
+
+    board = view_server._BoardCache(repo, "test-session-token")
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            self.server = SimpleNamespace(repo=repo, board=board)
+            self.responses = []
+
+        def _route_get(self):
+            view_server._Handler._route_get(self)
+
+        def _send_error_text(self, status, message):
+            self.responses.append((status, message))
+
+        def _send_bytes(self, status, body, ct):
+            self.responses.append((status, body))
+
+    index = MockHandler("/?token=test-session-token")
+    doc = MockHandler("/task-doc?tid=t009&doc=task&token=test-session-token")
+    view_server._Handler.do_GET(index)
+    view_server._Handler.do_GET(doc)
+    assert index.responses[-1][0] == 200
+    assert doc.responses[-1] == (404, "请求的任务资源不可用")
+
+
 def test_task_doc_reuses_index_bundle(repo_layout, monkeypatch):
     """首页与 /task-doc 共享同一份 bundle，TTL 内不重复 discover_effective_bundle。"""
     tasks_dir, _ = repo_layout
@@ -548,11 +713,13 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
     class MockHandler:
         def __init__(self, path):
             self.path = path
+            board = SimpleNamespace(
+                snapshot=lambda: ("<html>board</html>", schedule, {}),
+            )
+            board.snapshot_data = lambda: (schedule, {})
             self.server = SimpleNamespace(
                 repo=RepoContext.for_root(tasks_dir.parent.parent),
-                board=SimpleNamespace(
-                    snapshot=lambda: ("<html>board</html>", schedule, {})
-                ),
+                board=board,
             )
         def _send_error_text(self, status, message):
             responses.append((status, message))
