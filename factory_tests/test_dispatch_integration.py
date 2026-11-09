@@ -784,18 +784,20 @@ def test_track_worktree_binds_session_explicitly_without_command_sniffing(tmp_pa
         encoding="utf-8",
     )
 
-    assert tw.bind(str(project), "owner-a", "t001", 1, "exec-1") is True
-    assert tw.current_worktree(str(project), "owner-a") == str(tmp_path / "project_t001")
+    assert tw.bind(str(project), "host-session", "t001", 1, "exec-1", owner_id="owner-a") is True
+    assert tw.current_worktree(str(project), "host-session") == str(tmp_path / "project_t001")
     record = json.loads(
         (project / ".scratch/statusline_workdir.jsonl").read_text(encoding="utf-8")
     )
-    assert record["session"] == "owner-a"
+    assert record["session"] == "host-session"
+    assert record["owner_id"] == "owner-a"
     assert record["attempt"] == 1
 
     with ledger.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"tid": "t001", "event": "attempt_terminal"}) + "\n")
+    assert tw.current_worktree(str(project), "host-session") == ""
     assert tw.current_worktree(str(project), "owner-a") == ""
-    assert tw.bind(str(project), "owner-b", "t001") is False
+    assert tw.bind(str(project), "owner-b", "t001", owner_id="owner-b") is False
     assert tw.current_worktree(str(project), "owner-b") == ""
 
 
@@ -804,20 +806,24 @@ def test_run_begin_binds_and_run_close_done_unbinds_statusline(git_repo):
     from test_run_commands import OWNER
     from task_flow_support import finish_cli, prepare_finish
 
-    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", OWNER)
+    session = "host-session"
+    begun = _task_cli(git_repo, "run-begin", "t001", "--owner-id", OWNER, "--session-id", session)
     assert begun.returncode == 0, begun.stderr
     mapping = git_repo / ".scratch/statusline_workdir.jsonl"
     record = json.loads(mapping.read_text(encoding="utf-8").splitlines()[-1])
-    assert record["session"] == OWNER and record["tid"] == "t001"
+    assert record["session"] == session and record["owner_id"] == OWNER and record["tid"] == "t001"
     assert record["worktree"] == str(_worktree(git_repo, "t001").resolve())
 
     worktree = _worktree(git_repo, "t001")
     message = prepare_finish(worktree, "t001", "alpha")
     assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
-    closed = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
+    closed = _task_cli(
+        git_repo, "run-close", "t001", "--owner-id", OWNER, "--session-id", session,
+        "--result", "done",
+    )
     assert closed.returncode == 0, closed.stderr
     last = json.loads(mapping.read_text(encoding="utf-8").splitlines()[-1])
-    assert last["session"] == OWNER and last["worktree"] == ""
+    assert last["session"] == session and last["worktree"] == ""
 
 
 def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path):

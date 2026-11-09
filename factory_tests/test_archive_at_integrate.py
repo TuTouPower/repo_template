@@ -255,7 +255,7 @@ def test_staged_edit_of_task_side_file_is_rejected(git_repo):
 
 def test_moving_a_non_member_task_dir_is_rejected(git_repo):
     identity = _prepared_merge(git_repo)
-    _git(git_repo, "mv", "docs/tasks/t002_beta", "docs/archive/tasks/t002_beta")
+    _git(git_repo, "mv", "docs/tasks/t002_beta", "docs/t002_beta")
 
     _assert_rejected(git_repo, identity, "t002_beta")
 
@@ -361,22 +361,22 @@ def test_dependency_implementation_rejects_base_sha_not_matching_first_parent(gi
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-q", "-m", "tamper handoff base_sha")
 
-    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+    with pytest.raises(TaskDataError, match=r"handoff\.base_sha"):
         integration._dependency_implementations("t001", repo=RepoContext.for_root(git_repo))
 
 
-@pytest.mark.parametrize("mutator", [
-    lambda p: p.pop("execution_id"),
-    lambda p: p.update({"execution_id": ""}),
-    lambda p: p.update({"execution_id": "   "}),
-    lambda p: p.pop("attempt"),
-    lambda p: p.update({"attempt": 0}),
-    lambda p: p.update({"attempt": -1}),
-    lambda p: p.update({"attempt": True}),
-    lambda p: p.update({"attempt": "1"}),
-    lambda p: p.pop("spec_source_sha"),
+@pytest.mark.parametrize(("mutator", "expected"), [
+    (lambda p: p.pop("execution_id"), "缺必填字段 execution_id"),
+    (lambda p: p.update({"execution_id": ""}), "execution_id 不能为空"),
+    (lambda p: p.update({"execution_id": "   "}), "execution_id 不能为空"),
+    (lambda p: p.pop("attempt"), "缺必填字段 attempt"),
+    (lambda p: p.update({"attempt": 0}), "attempt 必须为正整数"),
+    (lambda p: p.update({"attempt": -1}), "attempt 必须为正整数"),
+    (lambda p: p.update({"attempt": True}), "字段 attempt 类型或值非法"),
+    (lambda p: p.update({"attempt": "1"}), "字段 attempt 类型或值非法"),
+    (lambda p: p.pop("spec_source_sha"), "缺必填字段 spec_source_sha"),
 ])
-def test_dependency_implementation_rejects_invalid_handoff_fields(git_repo, mutator):
+def test_dependency_implementation_rejects_invalid_handoff_fields(git_repo, mutator, expected):
     from repo_task import integration
     from repo_task.context import TaskDataError
 
@@ -389,7 +389,7 @@ def test_dependency_implementation_rejects_invalid_handoff_fields(git_repo, muta
     _git(git_repo, "add", "-A")
     _git(git_repo, "commit", "-q", "-m", "tamper handoff fields")
 
-    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+    with pytest.raises(TaskDataError, match=expected):
         integration._dependency_implementations("t001", repo=RepoContext.for_root(git_repo))
 
 

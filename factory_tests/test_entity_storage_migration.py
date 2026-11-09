@@ -290,12 +290,15 @@ def test_entity_storage_migration_write_e2e(repo, capsys):
     # 6. migration status 查验完全为当前布局
     assert entity_storage_migration_status(sync=sync) == []
 
-    # 工作区清洁：.scratch/ 事务备份被忽略，本次落盘只涉及 docs/ 下预期路径
-    status_lines = _git(repo, "status", "--porcelain").stdout.splitlines()
+    # 工作区清洁：.scratch/ 事务备份被忽略，本次落盘只涉及 docs/ 与 schema 标记
+    status_lines = _git(repo, "status", "--porcelain", "-uall").stdout.splitlines()
     assert not any(".scratch" in line for line in status_lines)
     changed_paths = [line[3:] for line in status_lines]
     assert changed_paths
-    assert all(path.startswith("docs/") for path in changed_paths), changed_paths
+    assert all(
+        path.startswith("docs/") or path == ".repo_template/entity_schema.json"
+        for path in changed_paths
+    ), changed_paths
 
     # 7. 查验依赖实现定位（方案第 257–269 行）
     _git(repo, "add", "-A")
@@ -413,7 +416,7 @@ def test_entity_storage_migration_preserves_tampered_handoff_bytes_and_defers_ve
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "chore: migrate entity storage and tampered handoff")
     # 用作依赖时仍被业务门禁拒绝（无 override、无历史格式兼容分支）
-    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+    with pytest.raises(TaskDataError, match=r"handoff\.base_sha"):
         _dependency_implementations("t001", repo=RepoContext.for_root(repo))
 
 

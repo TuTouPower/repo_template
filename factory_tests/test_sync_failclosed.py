@@ -49,6 +49,7 @@ def _pair(tmp_path: Path):
     _git(consumer, "config", "user.email", "t@e.c")
     _git(consumer, "config", "user.name", "T")
     (consumer / ".repo_template").mkdir(parents=True)
+    (consumer / ".repo_template/entity_schema.json").write_text('{"version": 1}\n', encoding="utf-8")
     (consumer / ".repo_template/sync_state.json").write_text(json.dumps({
         "template_source": {"kind": "path", "value": str(src)},
         "last_synced_commit": None, "last_synced_at": None, "user_prompts": [],

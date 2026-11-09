@@ -52,7 +52,7 @@ def test_judge_unknown_when_head_diverged_to_unrelated_commit(txn_repo, controll
     git_run(txn_repo, "commit", "--allow-empty", "-m", "diverged")
     verdict, detail = commit_txn.judge(txn_repo, txn)
     assert verdict == "unknown"
-    assert "偏离" in detail
+    assert "不能认领外部提交" in detail
 
 
 def test_judge_rejects_external_descendant_before_commit_phase(txn_repo, controlled_env):
@@ -81,7 +81,7 @@ def test_rollback_refuses_when_index_externally_modified(txn_repo, controlled_en
     txn = _begin(txn_repo)
     (txn_repo / "outside.txt").write_text("external\n", encoding="utf-8")
     git_run(txn_repo, "add", "outside.txt")
-    with pytest.raises(ctx.TaskDataError, match="暂存区偏离"):
+    with pytest.raises(ctx.TaskDataError, match="暂存区与提交事务开始时的快照不一致"):
         commit_txn.rollback(txn_repo, txn)
     # 拒绝回滚后现场与 journal 保留。
     assert (txn_repo / "outside.txt").is_file()
