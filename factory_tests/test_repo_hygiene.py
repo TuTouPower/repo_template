@@ -108,3 +108,50 @@ def test_repo_hygiene_git_timeout(monkeypatch):
     with pytest.raises(rh.HygieneError, match="超时（30s）"):
         rh._git("status")
 
+
+def test_archive_review_rolls_back_when_git_add_fails(repo, monkeypatch):
+    """git add 失败时整目录回滚，源与目标都不残留，可重试（DS L261）。"""
+    d = repo / "docs/reviews/review_my_check"
+    d.mkdir(parents=True)
+    (d / "review_general.md").write_text("PASS\n", encoding="utf-8")
+    meta = d / "_meta" / "notes.json"
+    meta.parent.mkdir()
+    meta.write_text('{"x": 1}\n', encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add my_check")
+
+    real_git = rh._git
+
+    def flaky_git(*args, **kwargs):
+        if args and args[0] == "add":
+            return subprocess.CompletedProcess(args, 1, "", "simulated git add failure")
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setattr(rh, "_git", flaky_git)
+    with pytest.raises(rh.HygieneError, match="已回滚目录"):
+        rh.cmd_archive_review(argparse.Namespace(dir="review_my_check", write=True))
+    assert (d / "review_general.md").is_file()
+    assert meta.is_file()
+    assert not (repo / "docs/archive/reviews/review_my_check").exists()
+
+    monkeypatch.setattr(rh, "_git", real_git)
+    rh.cmd_archive_review(argparse.Namespace(dir="review_my_check", write=True))
+    dest = repo / "docs/archive/reviews/review_my_check"
+    assert (dest / "review_general.md").is_file()
+    assert (dest / "_meta/notes.json").is_file()
+    assert not d.exists()
+
+
+def test_archive_review_rejects_existing_target(repo):
+    d = repo / "docs/reviews/review_my_check"
+    d.mkdir(parents=True)
+    (d / "review_general.md").write_text("PASS\n", encoding="utf-8")
+    dest = repo / "docs/archive/reviews/review_my_check"
+    dest.mkdir(parents=True)
+    (dest / "sentinel.md").write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(rh.HygieneError, match="目标已存在"):
+        rh.cmd_archive_review(argparse.Namespace(dir="review_my_check", write=True))
+    assert (dest / "sentinel.md").is_file()
+    assert (d / "review_general.md").is_file()
+
