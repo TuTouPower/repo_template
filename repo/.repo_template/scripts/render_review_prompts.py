@@ -12,9 +12,11 @@ reviewer 不再自行去读 task：契约区与上下文区正文直接注入 pr
   python3 .repo_template/scripts/render_review_prompts.py --progress docs/tasks/t001_my_slug/progress.md
   python3 .repo_template/scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
 
-必填 front matter：tid, slug, diff_anchor
-可选：spec_path（默认 <task_dir>/task.md）、review_level
-默认 stdout；--out-dir 时 full 写入 code_review_prompt.md 与 test_review_prompt.md，single 写入 general_review_prompt.md
+ 必填 front matter：tid, slug, diff_anchor
+ 可选：spec_path（默认 <task_dir>/task.md）、review_level
+ 默认 stdout；--out-dir 时 full 写入 code_review_prompt.md 与 test_review_prompt.md，single 写入 general_review_prompt.md
+ --out-dir 必须在仓库内且不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root
+ 绝对路径，落进 task 目录会被 finish 隐私扫描误阻断；请用 .scratch/review_prompts）
 """
 
 from __future__ import annotations
@@ -95,6 +97,32 @@ def resolve_repo_path(path: Path, *, label: str, require_file: bool = False) -> 
     if require_file and not candidate.is_file():
         sys.exit(f"missing {label}: {relative.as_posix()}")
     return candidate, relative.as_posix()
+
+
+def resolve_out_dir(raw: str) -> Path:
+    """解析 --out-dir 并统一校验输出落点，返回绝对路径。
+
+    prompt 内含 task_dir/repo_root 本机绝对路径：落进 docs/tasks/ 会被 finish
+    隐私扫描误阻断（DS L221），故该落点直接拒绝并给出可执行替代。
+    """
+    out_dir = Path(raw)
+    if not out_dir.is_absolute():
+        out_dir = REPO_ROOT / out_dir
+    root = REPO_ROOT.resolve()
+    resolved = out_dir.resolve()
+    try:
+        rel = resolved.relative_to(root)
+    except ValueError:
+        sys.exit(
+            f"--out-dir 必须在仓库内（收到 {raw!r}）；拒绝越界写入"
+        )
+    if rel.parts[:2] == ("docs", "tasks"):
+        sys.exit(
+            "--out-dir 不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root 绝对路径，"
+            "会被 finish 隐私扫描误阻断）；请改用 --out-dir .scratch/review_prompts "
+            "或保持默认 stdout 输出"
+        )
+    return resolved
 
 
 def validate_diff_anchor(diff_anchor: str) -> str:
@@ -330,15 +358,7 @@ def main():
     prompts = render_review_prompts(task_dir, task_path=task_path)
 
     if args.out_dir:
-        out_dir = Path(args.out_dir)
-        if not out_dir.is_absolute():
-            out_dir = REPO_ROOT / out_dir
-        try:
-            out_dir.resolve().relative_to(REPO_ROOT.resolve())
-        except ValueError:
-            sys.exit(
-                f"--out-dir 必须在仓库内（收到 {args.out_dir!r}）；拒绝越界写入"
-            )
+        out_dir = resolve_out_dir(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         for filename, prompt in prompts.items():
             path = out_dir / filename

@@ -1,11 +1,13 @@
 """task 看板 view_server 纯函数测试。"""
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from types import SimpleNamespace
+
+from git_env_support import git_run as _git
+from git_env_support import init_repo
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -141,20 +143,9 @@ def test_read_task_doc_from_worktree_source(tmp_path):
     assert body.decode("utf-8") == "# worktree 最新\n"
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=True,
-    )
-
-
 def test_read_task_doc_from_branch_source(tmp_path, monkeypatch):
     """branch 来源（done 未合并）：用 git show 读分支文档，不落主仓 404。"""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.email", "t@e.c")
-    _git(repo, "config", "user.name", "t")
+    repo = init_repo(tmp_path / "repo")
     (repo / "base.txt").write_text("x\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")

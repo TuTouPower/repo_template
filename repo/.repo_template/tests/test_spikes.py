@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from git_env_support import git_run as _git
+from git_env_support import init_repo
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 REPO_ROOT = SCRIPTS_DIR.parent.parent
@@ -27,23 +29,8 @@ from repo_task.spikes import (
 pytestmark = pytest.mark.contract
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-    )
-
-
 def _init_repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir(parents=True, exist_ok=True)
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Tester")
-    _git(repo, "config", "user.email", "tester@example.com")
+    repo = init_repo(tmp_path / "repo")
 
     # 准备 specs_index
     specs_index = repo / "docs/specs_index.md"

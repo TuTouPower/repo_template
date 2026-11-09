@@ -49,6 +49,31 @@ def _rel(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _delivery_files(dst: Path) -> list[Path]:
+    """显式枚举进入 index 的交付文件：任何层级的 `_meta/` 过程文件永不被 add。
+
+    不依赖消费仓 .gitignore 是否配了 `_meta/` 忽略规则（DS L261）：旧仓缺该规则时，
+    隐式 `git add -A -- <src> <dst>` 会把过程文件 stage 进 index；此处只 add 枚举出的
+    交付文件，契约明确优于约定。
+    """
+    files = []
+    for path in sorted(dst.rglob("*")):
+        rel = path.relative_to(dst)
+        if "_meta" in rel.parts:
+            continue
+        if path.is_symlink():
+            # 链接本身入 index，不跟随目标；目录软链亦只收录这一条，不下钻。
+            files.append(path)
+            continue
+        if path.is_dir():
+            continue
+        if any((dst / parent).is_symlink() for parent in rel.parents if parent != Path(".")):
+            # rglob 跟随目录软链下钻出的仓外目标：顶层链接本身已收录，此处跳过。
+            continue
+        files.append(path)
+    return files
+
+
 def _move_dir(src: Path, dst: Path, write: bool) -> None:
     if dst.exists():
         raise HygieneError(f"目标已存在 {_rel(dst)}；不覆盖或合并")
@@ -63,9 +88,10 @@ def _move_dir(src: Path, dst: Path, write: bool) -> None:
         shutil.move(str(src), str(dst))
     except OSError as error:
         raise HygieneError(f"移动目录失败：{error}") from error
-    # 用 git add -A 精确记录源删除与目标新增，让 Git 自动识别重命名；被 .gitignore
-    # 忽略的 _meta/ 等过程文件随目录一起移动但不会进入 index。
-    r = _git("add", "-A", "--", _rel(src), _rel(dst))
+    # 只 add 显式枚举的交付文件 + 源删除：_meta/ 等过程文件随目录一起移动，
+    # 但永不进入 index（即使消费仓 .gitignore 缺忽略规则）。
+    targets = [_rel(src), *(_rel(path) for path in _delivery_files(dst))]
+    r = _git("add", "-A", "--", *targets)
     if r.returncode != 0:
         shutil.move(str(dst), str(src))
         raise HygieneError(f"git add -A 失败，已回滚目录：{r.stderr.strip()}")

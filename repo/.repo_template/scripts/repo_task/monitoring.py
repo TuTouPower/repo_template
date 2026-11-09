@@ -534,7 +534,7 @@ def read_verification_summary(note_body: str) -> dict[str, str]:
 
 
 def staged_ledger_entries(root: Path) -> tuple[list[str], list[str]]:
-    """暂存区相对 HEAD 新增（含归档迁入）的 pending / findings 条目编号。"""
+    """暂存区相对 HEAD 新增的 pending / findings 条目编号。"""
     result = _git(["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", "--"], root=root)
     if result.returncode != 0:
         raise ctx.TaskDataError(f"无法读取暂存区相对 HEAD 的变更：{result.stderr.strip()}")

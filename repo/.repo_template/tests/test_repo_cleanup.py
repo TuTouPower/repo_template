@@ -12,6 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from git_env_support import get_controlled_git_env
+from git_env_support import init_repo
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -50,9 +53,7 @@ def tree(tmp_path: Path) -> Path:
     (repo / "artifacts/out.bin").write_bytes(b"x")
     (repo / "data").mkdir(parents=True)
     (repo / "data/db.sqlite").write_bytes(b"x")
-    subprocess.run(["git", "-C", str(repo), "init", "-b", "main"], capture_output=True)
-    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@e.c"], capture_output=True)
-    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], capture_output=True)
+    init_repo(repo)
     return repo
 
 
@@ -204,6 +205,7 @@ def test_cli_scan_is_read_only(tree):
     r = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "scan"],
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        env=get_controlled_git_env(),
     )
     assert r.returncode == 0, r.stderr
     assert "repo-cleanup 预览" in r.stdout
@@ -217,6 +219,7 @@ def test_cli_apply_default(tree):
     r = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "apply"],
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        env=get_controlled_git_env(),
     )
     assert r.returncode == 0, r.stderr
     assert "模式：apply" in r.stdout
@@ -228,6 +231,7 @@ def test_cli_unknown_category_rejected(tree):
     r = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "scan", "bogus"],
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        env=get_controlled_git_env(),
     )
     assert r.returncode != 0
     assert "未知类别" in r.stderr
@@ -287,6 +291,7 @@ def test_cli_apply_expected_count_blocks_on_change(tree):
     r = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "apply", "--expected-count", "999"],
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        env=get_controlled_git_env(),
     )
     assert r.returncode != 0
     assert "清理候选数量发生变化" in r.stderr
