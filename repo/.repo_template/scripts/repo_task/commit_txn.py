@@ -10,8 +10,10 @@
   输出“结果未知”，禁止自动回滚与盲目重试。
 
 journal 是唯一状态机载体：每步写入前持久化 before/after 指纹，staging 前持久化
-目标 index tree；恢复只接受该步骤已记录的两侧状态。提交认领检查阶段、唯一父提交
-与执行身份，accept 再检查落盘 tree。不保留旧 journal 格式兼容分支。
+目标 index tree；恢复只接受该步骤已记录的两侧状态。回滚前先校验快照副本，写入
+``rolling_back`` 阶段后才修改现场；该阶段允许从同一快照幂等重做整个回滚。提交
+认领检查阶段、唯一父提交与执行身份，accept 再检查落盘 tree。不保留旧 journal
+格式兼容分支。
 """
 
 from __future__ import annotations
@@ -38,7 +40,9 @@ JOURNAL_VERSION = 2
 
 # task_rel 必须是 docs/tasks/<tid>_<slug> 单层目录（DS L208）。
 TASK_DIR_RE = re.compile(r"docs/tasks/(t[0-9]+)_[^/]+")
-PHASES = frozenset({"prepared", "writing", "staging", "committing", "committed"})
+PHASES = frozenset(
+    {"prepared", "writing", "staging", "committing", "committed", "rolling_back"}
+)
 
 # journal 必需键 → 期望类型（缺键/类型错统一 TaskDataError）。
 _REQUIRED_KEYS: dict[str, type] = {
@@ -172,6 +176,7 @@ def _file_digest(path: Path) -> str:
 
 
 def _snapshot_task_dir(task_dir: Path, directory: Path) -> dict[str, str]:
+    """落盘并 fsync 后回读副本；副本摘要与源文件不一致时中止 begin。"""
     files: dict[str, str] = {}
     for path in sorted(task_dir.rglob("*")):
         if not path.is_file() and not path.is_symlink():
@@ -179,12 +184,32 @@ def _snapshot_task_dir(task_dir: Path, directory: Path) -> dict[str, str]:
         rel = path.relative_to(task_dir).as_posix()
         dest = directory / FILES_DIR / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
+        source_digest = _file_digest(path)
         shutil.copy2(path, dest, follow_symlinks=False)
         if not dest.is_symlink():
             _fsync_path(dest)
         _fsync_path(dest.parent)
-        files[rel] = _file_digest(path)
+        if _file_digest(dest) != source_digest:
+            raise ctx.TaskDataError(
+                f"恢复快照副本与源文件摘要不一致：{rel}；中止提交事务，尚未写业务文件"
+            )
+        files[rel] = source_digest
     return files
+
+
+def _snapshot_copy_problems(directory: Path, files: dict[str, str]) -> list[str]:
+    """逐个校验快照副本；返回与 journal 摘要不一致的路径。"""
+    problems: list[str] = []
+    for rel in sorted(files):
+        source = directory / FILES_DIR / rel
+        try:
+            digest = _file_digest(source)
+        except OSError as error:
+            problems.append(f"{rel} 快照副本不可读（{error}）")
+            continue
+        if digest != files[rel]:
+            problems.append(f"{rel} 快照副本摘要与 journal 不一致")
+    return problems
 
 
 def begin(
@@ -390,6 +415,15 @@ def judge(worktree: Path, data: dict) -> tuple[str, str]:
         return "committed", f"已核对实现提交 {head[:12]} 的父提交与执行身份；tree 是否一致须由 accept 验证"
     if data["phase"] == "committed":
         return "unknown", "已记录提交完成但 HEAD 回到起点，禁止自动回滚外部改写"
+    snapshot_problems = _snapshot_copy_problems(txn_dir(worktree), data["files"])
+    if snapshot_problems:
+        return "unknown", (
+            "恢复快照副本与 journal 摘要不一致（"
+            + "；".join(snapshot_problems)
+            + "）；拒绝自动回滚，保留 journal 交人工处理"
+        )
+    if data["phase"] == "rolling_back":
+        return "rollback_safe", "回滚已开始但未完成；重跑 finish 将从快照幂等重做整个回滚"
     # 允许当前步骤已持久化的前后状态；除此以外均视为外部修改。
     task_dir = worktree / data["task_rel"]
     if _snapshot_hashes(task_dir) not in (data["expected_files"], data["pending_files"]):
@@ -426,15 +460,55 @@ def verify_committed_tree(worktree: Path, data: dict) -> None:
         raise ctx.TaskDataError("落盘 tree 与事务期望不一致；保留 journal，运行 recovery/finish-unwind")
 
 
+def _restore_problems(worktree: Path, data: dict) -> list[str]:
+    """回滚后复验：task 哈希集合与 index tree 都必须等于 journal 原始值。"""
+    problems: list[str] = []
+    try:
+        if not _backup_tree_matches(worktree, data):
+            problems.append("暂存区 tree 与事务前 index 快照不一致")
+    except ctx.TaskDataError as error:
+        problems.append(f"暂存区 tree 校验失败（{error}）")
+    original = data["files"]
+    current = _snapshot_hashes(worktree / data["task_rel"])
+    if current != original:
+        parts: list[str] = []
+        missing = sorted(set(original) - set(current))
+        extra = sorted(set(current) - set(original))
+        changed = sorted(
+            rel for rel in set(original) & set(current) if original[rel] != current[rel]
+        )
+        if missing:
+            parts.append("缺失 " + ", ".join(missing))
+        if extra:
+            parts.append("多出 " + ", ".join(extra))
+        if changed:
+            parts.append("内容不符 " + ", ".join(changed))
+        problems.append("task 目录哈希集合与事务前不一致（" + "；".join(parts) + "）")
+    return problems
+
+
 def rollback(worktree: Path, data: dict) -> list[str]:
-    """精确回滚 finish 自身写入；返回失败项，空列表表示全部成功。"""
+    """精确回滚 finish 自身写入；返回失败项，空列表表示全部成功。
+
+    回滚前先校验全部快照副本，任一不符即拒绝并保留 journal。回滚开始前原子写入
+    ``rolling_back`` 阶段标记；中途再次中断后，重跑 rollback 会从同一快照幂等重做。
+    回滚完成后 task 哈希集合与 index tree 均须等于 journal 原始值才 finalize。
+    """
     _validate_journal(data)
     task_dir = worktree / data["task_rel"]
     verdict, detail = judge(worktree, data)
     if verdict != "rollback_safe":
         raise ctx.TaskDataError(f"禁止自动回滚：{detail}")
-    problems: list[str] = []
     directory = txn_dir(worktree)
+    snapshot_problems = _snapshot_copy_problems(directory, data["files"])
+    if snapshot_problems:
+        raise ctx.TaskDataError(
+            "恢复快照副本校验失败，拒绝回滚："
+            + "；".join(snapshot_problems)
+            + "；保留 journal 与现场，人工核查"
+        )
+    mark_phase(worktree, data, "rolling_back")
+    problems: list[str] = []
     git_dir = _git_dir(worktree)
     index_path = git_dir / "index"
     backup = directory / INDEX_BACKUP
@@ -469,6 +543,8 @@ def rollback(worktree: Path, data: dict) -> list[str]:
         except OSError as error:
             label = "front matter 还原失败" if rel == ctx.PROGRESS_FILE else "内容还原失败"
             problems.append(f"{rel} {label}（{error}）")
+    if not problems:
+        problems.extend(_restore_problems(worktree, data))
     if not problems:
         try:
             finalize(worktree)
