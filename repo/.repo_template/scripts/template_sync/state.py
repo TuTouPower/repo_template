@@ -11,8 +11,22 @@ from .common import _load_json_object, _now_iso, consumer_locked
 from .source import source_identity
 
 
-def legacy_state_path(sync=None):
-    return (sync or ctx.current_sync()).legacy_state_path()
+def legacy_state_path(sync: ctx.SyncContext):
+    return sync.legacy_state_path()
+
+
+def require_no_legacy_state(sync: ctx.SyncContext) -> None:
+    """apply/status/plan/link-skills 入口门禁：旧布局 state 存在即阻断。
+
+    旧布局 state 不参与运行期回退；若放行，apply 的软链修复会删掉宿主位真实目录，
+    连带删除 user_prompts、同步记录与来源记录。存在时一律先走显式迁移。
+    """
+    legacy = sync.legacy_state_path()
+    if legacy.exists():
+        raise ctx.SyncError(
+            f"检测到旧布局 state：{sync.rel(legacy)}；本命令不读取它，"
+            "先运行 `python3 .repo_template/scripts/repo_sync.py migrate legacy-state --write`"
+        )
 
 
 def read_state(sync=None) -> dict | None:

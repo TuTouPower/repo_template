@@ -14,10 +14,13 @@ from repo_task.file_transaction import FileTransaction
 from . import context as ctx
 from .assets import _dir_has_diff
 from .common import _load_json_object, consumer_locked
+from .state import require_no_legacy_state
 
 
-def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Path], reports: list[str], sync=None) -> None:
-    sync = sync or ctx.current_sync()
+def _ensure_symlink(
+    link: Path, target_rel: str, expected: Path, changed: set[Path],
+    reports: list[str], sync: ctx.SyncContext,
+) -> None:
     if link.is_symlink():
         if link.resolve() == expected:
             return
@@ -26,8 +29,19 @@ def _ensure_symlink(link: Path, target_rel: str, expected: Path, changed: set[Pa
         changed.add(link)
         return
     if link.is_dir():
-        # 旧架构残留：宿主位曾是模板同步进去的真实目录。新架构真相源收敛到
-        # .repo_template/skills/，宿主位只留软链。备份旧内容后转软链。
+        # 旧架构残留：宿主位曾是模板同步进去的真实目录。只允许删除与模板
+        # skills 真相源同名的管理内容；任何额外文件（sync_state.json 等用户数据）
+        # 都属未管理，拒绝 rmtree，防止转软链时静默删除本地数据。
+        managed_names = {p.name for p in expected.iterdir()} if expected.is_dir() else set()
+        unmanaged = sorted(
+            item.name for item in link.iterdir()
+            if item.name not in managed_names and item.name not in ctx.NOISE_NAMES
+        )
+        if unmanaged:
+            raise ctx.SyncError(
+                f"{sync.rel(link)} 是含未管理文件的真实目录（{', '.join(unmanaged)}），"
+                "拒绝删除转软链；先备份并人工清理后重跑"
+            )
         shutil.rmtree(link)
         os.symlink(target_rel, link)
         changed.add(link)
@@ -55,12 +69,12 @@ def repair_symlinks(changed: set[Path], sync=None) -> list[str]:
             _ensure_symlink(
                 sync.skills_claude / entry.name,
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
-                expected, changed, reports,
+                expected, changed, reports, sync,
             )
             _ensure_symlink(
                 sync.skills_agents / entry.name,
                 os.path.join("..", "..", ".repo_template", "skills", entry.name),
-                expected, changed, reports,
+                expected, changed, reports, sync,
             )
     for host_dir in (sync.skills_claude, sync.skills_agents):
         if not host_dir.exists():
@@ -103,8 +117,7 @@ def _skill_description(skill_dir: Path, name: str) -> str:
     return desc.replace('"', "'")
 
 
-def _expected_opencode_command_content(name: str, sync=None) -> str:
-    sync = sync or ctx.current_sync()
+def _expected_opencode_command_content(name: str, sync: ctx.SyncContext) -> str:
     return (
         "---\n"
         f'description: "{_skill_description(sync.skills_src / name, name)}"\n'
@@ -116,8 +129,7 @@ def _expected_opencode_command_content(name: str, sync=None) -> str:
     )
 
 
-def _load_skill_roles(sync=None) -> dict | None:
-    sync = sync or ctx.current_sync()
+def _load_skill_roles(sync: ctx.SyncContext) -> dict | None:
     path = sync.skills_src / "registry.json"
     if not path.exists():
         return None
@@ -128,9 +140,9 @@ def _load_skill_roles(sync=None) -> dict | None:
     return roles
 
 
-def _public_skill_names(names: list[str]) -> list[str]:
+def _public_skill_names(names: list[str], sync: ctx.SyncContext) -> list[str]:
     """校验 registry 覆盖全部 skill；未登记即 fail-closed，status 与 apply 同口径。"""
-    roles = _load_skill_roles()
+    roles = _load_skill_roles(sync)
     if roles is None:
         return names
     missing = sorted(name for name in names if name not in roles)
@@ -148,10 +160,10 @@ def opencode_commands_status(sync=None) -> list[dict]:
     if not sync.skills_src.exists():
         return items
     names = sorted(e.name for e in sync.skills_src.iterdir() if e.is_dir())
-    names = _public_skill_names(names)
+    names = _public_skill_names(names, sync)
     for name in names:
         dest = sync.commands_opencode / f"{name}.md"
-        expected = _expected_opencode_command_content(name)
+        expected = _expected_opencode_command_content(name, sync)
         if not dest.exists():
             items.append({
                 "name": name,
@@ -224,9 +236,9 @@ def sync_opencode_commands(changed: set[Path], sync=None) -> list[str]:
         return reports
     sync.commands_opencode.mkdir(parents=True, exist_ok=True)
     names = sorted(e.name for e in sync.skills_src.iterdir() if e.is_dir())
-    names = _public_skill_names(names)
+    names = _public_skill_names(names, sync)
     for name in names:
-        content = _expected_opencode_command_content(name)
+        content = _expected_opencode_command_content(name, sync)
         dest = sync.commands_opencode / f"{name}.md"
         if dest.exists() and not dest.is_file():
             continue
@@ -324,6 +336,7 @@ def symlink_status(sync=None) -> list[dict]:
 @consumer_locked
 def cmd_link_skills(args: argparse.Namespace, sync=None) -> int:
     sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    require_no_legacy_state(sync)
     changed: set[Path] = set()
     transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
     paths = [".claude/skills", ".agents/skills", ".opencode/commands"]
@@ -332,8 +345,8 @@ def cmd_link_skills(args: argparse.Namespace, sync=None) -> int:
     except ValueError as error:
         raise ctx.SyncError(str(error)) from error
     try:
-        reports = repair_symlinks(changed)
-        reports += sync_opencode_commands(changed)
+        reports = repair_symlinks(changed, sync=sync)
+        reports += sync_opencode_commands(changed, sync=sync)
         transaction.applied()
         transaction.accept()
     except (OSError, ValueError, ctx.SyncError, subprocess.SubprocessError) as error:

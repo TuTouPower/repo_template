@@ -99,6 +99,10 @@ class SyncContext:
     def rel(self, path: Path) -> str:
         return path.relative_to(self.consumer).as_posix()
 
+    def contains(self, path: Path) -> bool:
+        """路径（含软链解析后）是否仍在消费仓内；迁移写盘前统一边界校验。"""
+        return path.resolve(strict=False).is_relative_to(self.consumer.resolve())
+
     def legacy_state_path(self) -> Path:
         return self.consumer / ".agents/skills/repo-template-sync/sync_state.json"
 

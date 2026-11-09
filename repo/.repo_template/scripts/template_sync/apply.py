@@ -21,15 +21,12 @@ from .agents_merge import _agents_parts, _replace_agents_force
 from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked
 from .gates import _run_tests
+from .migrate import KINDS, migrate_command, migration_findings
 from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
-from .specs_index_migration import specs_index_migration_status, specs_index_report
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
-from .state import prompt_substrings, read_state, write_state
-from .conventions_migration import conventions_migration_status
-from .entity_storage_migration import entity_storage_migration_status
-from .hooks import retired_hooks_status
-from .workflow_migration import workflow_migration_status
+from .state import prompt_substrings, read_state, require_no_legacy_state, write_state
+from .specs_index_migration import specs_index_report
 
 
 def _assert_distributable_tree(src: Path) -> None:
@@ -58,44 +55,41 @@ def _assert_distributable_tree(src: Path) -> None:
             )
 
 
-def _require_current_schema(src: Path, sync=None) -> None:
-    """日常 apply 只接受当前 schema；旧布局必须先走显式 migrate（A10）。"""
-    sync = sync or ctx.current_sync()
-    entity_problems = entity_storage_migration_status(sync=sync)
+def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
+    """日常 apply 只接受当前 schema；旧布局必须先走显式 migrate（A10）。
+
+    与 status / plan / migrate 共用 migration_findings 这一单一可处理集合，
+    消除「plan 显示一致但 apply 阻断」。引导命令基于固定来源 product 与消费仓身份，
+    不再指向旧消费仓本地脚本（旧工具链无 migrate 子命令）。
+    """
+    entity_problems = migration_findings("entity-storage", sync)
     if entity_problems:
         raise ctx.SyncError(
             "检测到旧实体存储布局；apply 不再自动迁移。先运行 "
-            "`python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write`：\n- "
+            f"`{migrate_command(src, sync, 'entity-storage')}`：\n- "
             + "\n- ".join(entity_problems)
         )
     problems: list[str] = []
-    migrations, worktrees, errors = workflow_migration_status(src, sync=sync)
-    if errors:
-        problems.extend(f"workflow schema 现场：{error}" for error in errors)
-    if worktrees:
+    for kind in KINDS:
+        if kind == "entity-storage":
+            continue
         problems.extend(
-            f"workflow schema 现场：已登记 task worktree {branch} @ {root}"
-            for root, branch in worktrees
+            f"{kind} 旧布局：{item}"
+            for item in migration_findings(kind, sync, src=src)
         )
-    problems.extend(f"workflow schema 旧布局：{path}" for path in migrations)
-    problems.extend(
-        f"conventions 旧写法：{path}" for path in conventions_migration_status(sync=sync)
-    )
-    problems.extend(
-        f"specs_index 旧布局：{path}" for path in specs_index_migration_status(sync=sync)
-    )
-    problems.extend(f"退役 hook 残留：{path}" for path in retired_hooks_status(sync=sync))
     if problems:
         raise ctx.SyncError(
             "检测到旧布局；apply 不再自动迁移。先运行 "
-            "`python3 .repo_template/scripts/repo_sync.py migrate all`（或按类型单项迁移）：\n- "
+            f"`{migrate_command(src, sync, 'all')}`（或按类型单项迁移）：\n- "
             + "\n- ".join(problems)
         )
 
 
-def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str], sync=None) -> None:
+def _apply_sync_write(
+    src: Path, decisions: dict[str, str], changed: set[Path], blocked: list[str],
+    sync: ctx.SyncContext,
+) -> None:
     """apply 的写盘主体；OSError 由调用方回滚（F16）。"""
-    sync = sync or ctx.current_sync()
     for rel in ctx.HARD_SYNC_DIRS:
         s, d = src / rel, sync.consumer / rel
         if s.exists():
@@ -132,8 +126,7 @@ def _apply_sync_write(src: Path, decisions: dict[str, str], changed: set[Path], 
         _apply_shared_unit(unit, decision, src, changed, sync=sync)
 
 
-def _print_changed(paths: set[Path], header: str, sync=None) -> None:
-    sync = sync or ctx.current_sync()
+def _print_changed(paths: set[Path], header: str, sync: ctx.SyncContext) -> None:
     print(header)
     for path in sorted(paths, key=str):
         print(sync.rel(path))
@@ -144,6 +137,7 @@ def _print_changed(paths: set[Path], header: str, sync=None) -> None:
 @consumer_locked
 def cmd_apply(args: argparse.Namespace, sync=None) -> int:
     sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无同步来源；使用 --source 或 init --source <path|url>")

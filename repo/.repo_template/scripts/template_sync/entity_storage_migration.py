@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from pending import (
+    ALLOWED_FM_KEYS as PENDING_ALLOWED_FM_KEYS,
     ENTRY_FILE_RE as PENDING_FILE_RE,
     ID_RE as PENDING_ID_RE,
     VALID_RESOLUTIONS as PENDING_VALID_RESOLUTIONS,
@@ -40,7 +41,11 @@ from repo_task.context import (
     TID_RE,
     VALID_STATUSES as TASK_VALID_STATUSES,
 )
-from repo_task.documents import atomic_write_text, parse_front_matter_text
+from repo_task.documents import (
+    atomic_write_text,
+    dump_front_matter,
+    parse_front_matter_text,
+)
 from repo_task.file_transaction import FileTransaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.spikes import (
@@ -52,11 +57,55 @@ from repo_task.spikes import (
 from . import context as ctx
 
 _IGNORED_NAMES = frozenset({".DS_Store", ".gitkeep", ".git"})
+_CLEANABLE_NAMES = frozenset({".DS_Store", ".gitkeep"})
+_STALE_INDEX_RELS = ("docs/tasks_index.json", "docs/archive/tasks_index.json")
 TASK_DIR_RE = re.compile(r"^(t\d{3,})_([a-z0-9_]+)$")
 
 
 class MigrationError(ctx.SyncError):
     """实体存储迁移阻断异常。"""
+
+
+def _render_front_matter(fm: dict, body: str) -> str:
+    """统一 Front Matter 序列化：YAML 双引号转义 + 正文保真。
+
+    消除按字段白名单重建与 f-string 拼接——含引号/反斜杠的 reason 不再写出非法 YAML，
+    未知字段由 validate_* 校验阻断而非静默丢弃。
+    """
+    clean = body.lstrip("\r\n").rstrip()
+    return dump_front_matter(fm) + "\n" + (clean + "\n" if clean else "")
+
+
+def _validate_spike_fm(fm: dict, sid: str, slug: str, rep: Path, sync: ctx.SyncContext) -> None:
+    try:
+        validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
+    except (ValueError, TaskDataError) as err:
+        raise MigrationError(f"{sync.rel(rep)}: spike Front Matter 非法：{err}") from err
+
+
+def _reject_symlink_entities(consumer: Path, sync: ctx.SyncContext) -> None:
+    """迁移前对每个实体目录 lstat：拒绝任何软链，防沿软链写/删仓外文件。"""
+    roots = (
+        "docs/tasks", "docs/archive/tasks",
+        "docs/pending", "docs/pending/todo", "docs/pending/parked", "docs/archive/pending",
+        "docs/spikes", "docs/archive/spikes",
+    )
+    for rel in roots:
+        parent = consumer / rel
+        if parent.is_symlink():
+            raise MigrationError(f"{rel} 是软链目录，拒绝沿软链迁移实体")
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_symlink():
+                raise MigrationError(
+                    f"{sync.rel(child)} 是软链，拒绝沿软链迁移实体（仓外写入风险）"
+                )
+
+
+def _assert_within_consumer(path: Path, sync: ctx.SyncContext) -> None:
+    if not sync.contains(path):
+        raise MigrationError(f"{sync.rel(path)} 解析到消费仓外，拒绝写入")
 
 
 @dataclass
@@ -100,6 +149,7 @@ class MigrationPlan:
     handoff_archive_remove: Path | None
     reference_updates: list[tuple[Path, str, str]]
     dirs_to_clean: list[Path]
+    stale_index_paths: list[Path]
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -130,9 +180,8 @@ def _check_clean_working_copy(consumer: Path) -> None:
         raise MigrationError(f"迁移前工作区必须干净（存在已暂存或未暂存修改）：\n{details}")
 
 
-def entity_storage_migration_status(sync=None) -> list[str]:
+def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
     """检测消费仓是否仍存在旧实体存储布局，返回待迁移项描述列表。"""
-    sync = sync or ctx.current_sync()
     consumer = sync.consumer
     problems: list[str] = []
 
@@ -197,6 +246,11 @@ def entity_storage_migration_status(sync=None) -> list[str]:
     if old_handoff.is_file():
         problems.append("docs/archive/handoff.md 待退役移除")
 
+    # 7. 已废弃派生索引：模板已删并 ignore，但旧仓已跟踪文件不受 ignore 影响
+    for rel in _STALE_INDEX_RELS:
+        if (consumer / rel).is_file():
+            problems.append(f"{rel} 为已废弃派生索引，迁移将删除")
+
     return sorted(problems)
 
 
@@ -211,6 +265,11 @@ def _parse_legacy_pending_content(
             fm, body = parse_front_matter_text(raw_text, source=source_label)
         except (TaskDataError, ValueError, KeyError) as err:
             raise MigrationError(f"{source_label}: Front Matter 解析失败：{err}") from err
+        unknown = set(fm) - PENDING_ALLOWED_FM_KEYS
+        if unknown:
+            raise MigrationError(
+                f"{source_label}: 包含未知 Front Matter 字段 {sorted(unknown)}，拒绝丢弃迁移"
+            )
 
     file_match = PENDING_FILE_RE.match(path.name)
     if not file_match:
@@ -258,27 +317,27 @@ def _parse_legacy_pending_content(
         reason = None
 
     if status == "closed":
-        # 从正文中解析「- 处理：...」
+        # 从正文中解析「- 处理：...」。逐段识别具名字段，无条件保留 fix_ref；
+        # 裸 tid / main / PR 等仍按旧规则收作 fix_ref，避免与 reason= 同时出现时丢失。
         m = re.search(r"^[ \t]*-[ \t]*处理[ \t]*[:：][ \t]*(.*)$", body, re.MULTILINE)
         if m:
             line = m.group(1).strip()
-            res_match = re.search(r"resolution=([a-z]+)", line)
-            if res_match:
-                resolution = res_match.group(1)
-            reason_match = re.search(r"reason=(.*)$", line)
-            if reason_match:
-                reason = reason_match.group(1).strip()
-            elif not reason:
-                # 尝试分割解析：例如「t012；已在 main 修复并验证」或纯理由
-                parts = [p.strip() for p in re.split(r"[；;]", line) if p.strip()]
-                for part in parts:
-                    if part.startswith("resolution="):
-                        continue
-                    if re.match(r"^t\d{3,}$", part) or part in ("main", "PR", "untracked"):
-                        if not fix_ref:
-                            fix_ref = part
-                    elif not reason and part not in ("未开", "不办", "无"):
-                        reason = part
+            free_parts: list[str] = []
+            for part in [p.strip() for p in re.split(r"[；;]", line) if p.strip()]:
+                if part.startswith("resolution="):
+                    resolution = part.split("=", 1)[1].strip()
+                elif part.startswith("fix_ref="):
+                    fix_ref = part.split("=", 1)[1].strip()
+                elif part.startswith("reason="):
+                    reason = part.split("=", 1)[1].strip()
+                else:
+                    free_parts.append(part)
+            for part in free_parts:
+                if re.match(r"^t\d{3,}$", part) or part in ("main", "PR", "untracked"):
+                    if not fix_ref:
+                        fix_ref = part
+                elif not reason and part not in ("未开", "不办", "无"):
+                    reason = part
 
         if reason in ("未开", "不办", "无"):
             reason = None
@@ -484,10 +543,11 @@ def _clean_empty_dir_strictly(dir_path: Path, sync: ctx.SyncContext) -> None:
     if not dir_path.is_dir():
         raise MigrationError(f"清理失败：{sync.rel(dir_path)} 不是目录")
 
-    # 自底向上清理空子目录，仅允许清理 .DS_Store
+    # 自底向上清理空子目录；模板自带占位文件（.DS_Store / .gitkeep）同样清理，
+    # 否则旧消费仓的 .gitkeep 会让整个迁移事务在清理阶段回滚。
     for item in sorted(dir_path.rglob("*"), key=lambda p: len(p.parts), reverse=True):
         if item.is_file():
-            if item.name == ".DS_Store":
+            if item.name in _CLEANABLE_NAMES:
                 item.unlink()
             else:
                 raise MigrationError(
@@ -512,7 +572,7 @@ def _clean_empty_dir_strictly(dir_path: Path, sync: ctx.SyncContext) -> None:
 def _check_worktrees_clean(root: Path) -> None:
     r = _git(root, "worktree", "list", "--porcelain")
     if r.returncode != 0:
-        return
+        raise MigrationError(f"无法查询 git worktree（{r.stderr.strip()}）；拒绝放行迁移")
     active_wt = []
     current_root = None
     for line in r.stdout.splitlines() + [""]:
@@ -547,13 +607,13 @@ def _check_no_unknown_entries(dir_path: Path, kind: str, sync: ctx.SyncContext) 
                 raise MigrationError(f"{sync.rel(item)}: {sync.rel(dir_path)} 存在非规范待办项或未知散落文件")
 
 
-def build_migration_plan(sync=None) -> MigrationPlan:
+def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
     """预检并构建实体存储一次性迁移计划；若存在冲突或数据不符则阻断。"""
-    sync = sync or ctx.current_sync()
     consumer = sync.consumer
 
-    # 1. 检查 worktree 现场
+    # 1. 检查 worktree 现场与软链实体（拒绝沿软链写/删仓外文件）
     _check_worktrees_clean(consumer)
+    _reject_symlink_entities(consumer, sync)
 
     tasks_plan: list[TaskItem] = []
     pendings_plan: list[PendingItem] = []
@@ -676,7 +736,11 @@ def build_migration_plan(sync=None) -> MigrationPlan:
         fm, body = _parse_legacy_pending_content(
             path, content, default_status, sync.rel(path), source_sub
         )
-        validate_pending_front_matter(fm, filename=path.name, source=sync.rel(path))
+        validate_label = sync.rel(path)
+        try:
+            validate_pending_front_matter(fm, filename=path.name, source=validate_label)
+        except (TaskDataError, ValueError, KeyError) as err:
+            raise MigrationError(f"{validate_label} 非法 Front Matter：{err}") from err
         pendings_plan.append(
             PendingItem(
                 pid=fm["pid"],
@@ -712,16 +776,18 @@ def build_migration_plan(sync=None) -> MigrationPlan:
                 raise MigrationError(f"{sync.rel(child)}: 缺失 report.md")
             rep_text = rep.read_text(encoding="utf-8")
             if rep_text.startswith("---"):
-                fm, _ = parse_front_matter_text(rep_text, source=sync.rel(rep))
-                validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
+                fm, body = parse_front_matter_text(rep_text, source=sync.rel(rep))
                 status = fm.get("status", "active")
             else:
-                status = "active"
                 fm = {"sid": sid, "slug": slug, "status": "active"}
-                validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
-                rep_text = f"---\nsid: \"{sid}\"\nslug: \"{slug}\"\nstatus: \"active\"\n---\n\n" + rep_text.lstrip("\r\n").rstrip() + "\n"
+                body = rep_text
+                status = "active"
+            final_fm = dict(fm)
+            final_fm["status"] = status
+            _validate_spike_fm(final_fm, sid, slug, rep, sync)
+            new_rep = _render_front_matter(final_fm, body)
             _validate_spike_findings_references(rep_text, sync.rel(rep), consumer)
-            spikes_plan.append(SpikeItem(sid, slug, child, child, status, rep_text))
+            spikes_plan.append(SpikeItem(sid, slug, child, child, status, new_rep))
 
     # 收集 docs/archive/spikes/
     if archived_spikes_dir.is_dir():
@@ -747,45 +813,35 @@ def build_migration_plan(sync=None) -> MigrationPlan:
                 raise MigrationError(f"{sync.rel(child)}: 缺失 report.md 闭环证据")
             rep_text = rep.read_text(encoding="utf-8")
 
-            # 目录来源与 Front Matter 状态一致性检查：归档 spike 决不可声明为 active
-            is_superseded = False
-            existing_fm: dict[str, Any] = {}
+            # 归档 spike：统一 Front Matter 校验 + YAML 序列化，保留全部既有字段。
+            # 未知字段与类型问题由 validate_spike_metadata 阻断，不再白名单重建静默丢弃；
+            # reason 等含引号/反斜杠的值经 dump_front_matter 转义，不再写出非法 YAML。
             if rep_text.startswith("---"):
                 existing_fm, body = parse_front_matter_text(rep_text, source=sync.rel(rep))
-                st = existing_fm.get("status")
-                if st == "active":
-                    raise MigrationError(
-                        f"{sync.rel(rep)}: 归档 spike 状态与目录矛盾（声明为 active）"
-                    )
-                if st == "superseded":
-                    is_superseded = True
             else:
-                body = rep_text
-
-            clean_body = body.lstrip("\r\n").rstrip()
-            if is_superseded:
-                validate_spike_metadata(existing_fm, expected_sid=sid, expected_slug=slug)
+                existing_fm, body = {}, rep_text
+            if not isinstance(existing_fm, dict):
+                raise MigrationError(f"{sync.rel(rep)}: Front Matter 解析结果非法")
+            declared = existing_fm.get("status")
+            if declared == "active":
+                raise MigrationError(
+                    f"{sync.rel(rep)}: 归档 spike 状态与目录矛盾（声明为 active）"
+                )
+            target_status = "superseded" if declared == "superseded" else "completed"
+            final_fm = dict(existing_fm)
+            final_fm["status"] = target_status
+            if not final_fm.get("sid"):
+                final_fm["sid"] = sid
+            if not final_fm.get("slug"):
+                final_fm["slug"] = slug
+            _validate_spike_fm(final_fm, sid, slug, rep, sync)
+            if target_status == "superseded":
                 _validate_spike_findings_references(rep_text, sync.rel(rep), consumer)
-                fm_lines = [
-                    "---",
-                    f'sid: "{sid}"',
-                    f'slug: "{slug}"',
-                    f'status: "superseded"',
-                    f'superseded_by: "{existing_fm["superseded_by"]}"',
-                    f'reason: "{existing_fm["reason"]}"',
-                    "---",
-                    "",
-                ]
-                new_rep = "\n".join(fm_lines) + (clean_body + "\n" if clean_body else "")
-                seen_sids[sid] = child
-                spikes_plan.append(SpikeItem(sid, slug, child, target_dir, "superseded", new_rep))
             else:
                 _validate_spike_closed_evidence(rep_text, sync.rel(rep), consumer)
-                fm = {"sid": sid, "slug": slug, "status": "completed"}
-                validate_spike_metadata(fm, expected_sid=sid, expected_slug=slug)
-                new_rep = f'---\nsid: "{sid}"\nslug: "{slug}"\nstatus: "completed"\n---\n\n' + (clean_body + "\n" if clean_body else "")
-                seen_sids[sid] = child
-                spikes_plan.append(SpikeItem(sid, slug, child, target_dir, "completed", new_rep))
+            new_rep = _render_front_matter(final_fm, body)
+            seen_sids[sid] = child
+            spikes_plan.append(SpikeItem(sid, slug, child, target_dir, target_status, new_rep))
 
     # 5. tasks_audit.log 预检
     old_audit = consumer / "docs/archive/tasks_audit.log"
@@ -832,6 +888,11 @@ def build_migration_plan(sync=None) -> MigrationPlan:
             if new_text != text:
                 ref_updates.append((doc_path, text, new_text))
 
+    # 8. 已废弃派生索引：模板已删并 ignore，旧仓已跟踪文件必须显式删除
+    stale_index_paths = [
+        consumer / rel for rel in _STALE_INDEX_RELS if (consumer / rel).is_file()
+    ]
+
     return MigrationPlan(
         tasks=tasks_plan,
         pendings=pendings_plan,
@@ -840,6 +901,7 @@ def build_migration_plan(sync=None) -> MigrationPlan:
         handoff_archive_remove=handoff_remove,
         reference_updates=ref_updates,
         dirs_to_clean=dirs_to_clean,
+        stale_index_paths=stale_index_paths,
     )
 
 
@@ -891,21 +953,31 @@ def _collect_transaction_paths(consumer: Path, plan: MigrationPlan) -> list[str]
     for doc_path, _, _ in plan.reference_updates:
         paths_set.add(doc_path.relative_to(consumer).as_posix())
 
+    for index_path in plan.stale_index_paths:
+        paths_set.add(index_path.relative_to(consumer).as_posix())
+
     return _prune_ancestor_paths(paths_set)
 
 
-def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
-    """执行 entity-storage 迁移：默认 dry-run，加 write=True 在事务中落盘。"""
+def migrate_entity_storage(
+    sync=None, *, write: bool = False, require_clean: bool = True,
+) -> list[str]:
+    """执行 entity-storage 迁移：默认 dry-run，加 write=True 在事务中落盘。
+
+    require_clean 由 cmd_migrate 在 all 模式置 False：all 入口已统一做一次干净检查，
+    逐项事务落盘造成的工作区变更不得被 entity 步误判为「现场脏」而死锁。
+    """
     sync = sync or ctx.current_sync()
     consumer = sync.consumer
 
     with git_common_lock(consumer, CONTROL_LOCK_NAME):
-        # 1. 迁移前必须检查工作区干净（staged 和 unstaged 均无修改）
-        _check_clean_working_copy(consumer)
-
+        # 先判空：无迁移需求时直接返回，不检查工作区（migrate all 前序步骤落盘后
+        # 工作区已脏，若 entity 步进门先查干净会必然误报）。
         problems = entity_storage_migration_status(sync=sync)
         if not problems:
             return []
+        if require_clean:
+            _check_clean_working_copy(consumer)
 
         plan = build_migration_plan(sync=sync)
         reports: list[str] = []
@@ -947,6 +1019,8 @@ def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
             reports.append(f"Handoff archive: 移除 {sync.rel(plan.handoff_archive_remove)}")
         for doc_path, _, _ in plan.reference_updates:
             reports.append(f"Reference update: 更新 {sync.rel(doc_path)} 中过时路径引用")
+        for index_path in plan.stale_index_paths:
+            reports.append(f"Stale index: 删除 {sync.rel(index_path)}（已废弃派生索引）")
 
         if not write:
             print("模式：dry-run；以下为实体存储迁移计划（未写盘，加 --write 执行落盘）：")
@@ -966,11 +1040,14 @@ def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
             # 1. 搬移并更新 Tasks
             for t in plan.tasks:
                 if t.source_dir != t.target_dir:
+                    _assert_within_consumer(t.source_dir, sync)
+                    _assert_within_consumer(t.target_dir, sync)
                     t.target_dir.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(t.source_dir), str(t.target_dir))
 
             # 2. 搬移并重写 Pendings
             for p in plan.pendings:
+                _assert_within_consumer(p.target_path, sync)
                 p.target_path.parent.mkdir(parents=True, exist_ok=True)
                 fm_data = {
                     "pid": p.pid,
@@ -988,37 +1065,51 @@ def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
                 new_text = dump_pending_front_matter(fm_data) + (clean_body + "\n" if clean_body else "")
                 atomic_write_text(p.target_path, new_text)
                 if p.source_path.resolve() != p.target_path.resolve() and p.source_path.exists():
+                    _assert_within_consumer(p.source_path, sync)
                     p.source_path.unlink()
 
             # 3. 搬移并重写 Spikes
             for s in plan.spikes:
                 if s.source_dir != s.target_dir:
+                    _assert_within_consumer(s.source_dir, sync)
+                    _assert_within_consumer(s.target_dir, sync)
                     s.target_dir.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(s.source_dir), str(s.target_dir))
                 rep_file = s.target_dir / "report.md"
+                _assert_within_consumer(rep_file, sync)
                 atomic_write_text(rep_file, s.report_content)
 
             # 4. 迁移 tasks_audit.log
             if plan.audit_log_move:
                 src_log, dst_log = plan.audit_log_move
+                _assert_within_consumer(src_log, sync)
+                _assert_within_consumer(dst_log, sync)
                 dst_log.parent.mkdir(parents=True, exist_ok=True)
                 dst_log.write_bytes(src_log.read_bytes())
                 src_log.unlink()
 
             # 5. 移除 docs/archive/handoff.md
             if plan.handoff_archive_remove and plan.handoff_archive_remove.exists():
+                _assert_within_consumer(plan.handoff_archive_remove, sync)
                 plan.handoff_archive_remove.unlink()
 
             # 6. 更新引用
             for doc_path, _, new_content in plan.reference_updates:
+                _assert_within_consumer(doc_path, sync)
                 atomic_write_text(doc_path, new_content)
 
-            # 7. 清理空旧目录（严格逐级 rmdir，绝不使用 rmtree，非空直接阻断报错）
+            # 7. 删除已废弃派生索引（旧仓已跟踪文件，.gitignore 不生效）
+            for index_path in plan.stale_index_paths:
+                if index_path.is_file():
+                    _assert_within_consumer(index_path, sync)
+                    index_path.unlink()
+
+            # 8. 清理空旧目录（严格逐级 rmdir，绝不使用 rmtree，非空直接阻断报错）
             for d in plan.dirs_to_clean:
                 if d.exists() and d.is_dir():
                     _clean_empty_dir_strictly(d, sync)
 
-            # 8. 写入后验证：再次查询必须无旧布局残留
+            # 9. 写入后验证：再次查询必须无旧布局残留
             remaining = entity_storage_migration_status(sync=sync)
             if remaining:
                 raise MigrationError(
@@ -1027,7 +1118,7 @@ def migrate_entity_storage(sync=None, *, write: bool = False) -> list[str]:
 
             transaction.applied(verified=True)
             transaction.accept()
-        except (MigrationError, OSError, ValueError, KeyError, RuntimeError) as error:
+        except Exception as error:
             try:
                 transaction.rollback(automatic=True)
             except Exception as rb_err:
