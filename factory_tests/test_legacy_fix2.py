@@ -184,12 +184,14 @@ def test_md_format_git_timeout_wrapped(tmp_path, monkeypatch):
     import md_format as mdf
     repo = _init_repo(tmp_path)
 
+    context = RepoContext.for_root(repo)
+
     def boom(*a, **k):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
 
     monkeypatch.setattr(mdf.subprocess, "run", boom)
     with pytest.raises(mdf.MdFormatError, match="超时"):
-        mdf.collect_all(repo=RepoContext.for_root(repo))
+        mdf.collect_all(repo=context)
 
 
 # ---------- P2 spikes sid ----------
