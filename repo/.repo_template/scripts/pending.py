@@ -38,6 +38,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import (
     IdScanError,
+    _assert_no_symlink,
     allocate,
     apply_legacy_migration,
     canonical_entry_id,
@@ -58,6 +59,8 @@ SCAN_DIRS = ("docs/pending",)
 LEDGER_REL = "docs/pending.md"
 ID_RE = re.compile(r"^p(0[0-9]{2}|[1-9][0-9]{2,})$")
 ENTRY_FILE_RE = re.compile(entry_file_pattern(PREFIX))
+# 宽松匹配：同号但 padding/字符非法的文件，用于格式错误诊断而非静默“未找到”。
+_LOOSE_ENTRY_RE = re.compile(r"^p([0-9]+)_.*\.md$")
 HANDLE_RE = re.compile(r"^[ \t]*-[ \t]*处理[ \t]*[:：].*$")
 PARKED_RE = re.compile(r"^[ \t]*-[ \t]*暂搁[ \t]*[:：].*$")
 
@@ -196,6 +199,9 @@ def dump_pending_front_matter(fm: dict[str, str]) -> str:
 
 def _read_and_parse_entry(path: Path) -> tuple[dict[str, str], str, str]:
     """读取并解析 pending 文件的 front matter 与正文，校验严格字段，并返回内容 SHA256。"""
+    if path.is_symlink():
+        raise IdScanError(f"拒绝读取软链条目：{_rel(path)}")
+    _assert_no_symlink(REPO_ROOT, path)
     if not path.is_file():
         raise IdScanError(f"文件不存在：{_rel(path)}")
     try:
@@ -218,21 +224,52 @@ def parse_pending_file(path: Path) -> tuple[dict[str, str], str]:
     return fm, body
 
 
+def _malformed_for_number(number: int) -> list[Path]:
+    """返回同号但文件名不规范的候选，用于诊断（不含严格命中）。"""
+    bad: list[Path] = []
+    if not PENDING_DIR.is_dir():
+        return bad
+    for path in sorted(PENDING_DIR.glob("*.md")):
+        if parse_entry_file_name(PREFIX, path.name) is not None:
+            continue
+        loose = _LOOSE_ENTRY_RE.match(path.name)
+        if loose:
+            try:
+                if int(loose.group(1)) == number:
+                    bad.append(path)
+            except ValueError:
+                continue
+    return bad
+
+
 def find_entry(number: int) -> tuple[str, Path]:
     """在 docs/pending 中定位条目，返回 (status, path)。"""
+    if PENDING_DIR.is_symlink():
+        raise IdScanError(f"拒绝经软链目录定位条目：{_rel(PENDING_DIR)}")
     if not PENDING_DIR.is_dir():
         raise IdScanError(f"未找到 p{number:03d}（{_rel(PENDING_DIR)} 目录不存在）")
+    _assert_no_symlink(REPO_ROOT, PENDING_DIR)
     hits = sorted(
         path
         for path in PENDING_DIR.glob("*.md")
         if (parsed := parse_entry_file_name(PREFIX, path.name)) and parsed[0] == number
     )
     if not hits:
+        bad = _malformed_for_number(number)
+        if bad:
+            joined = ", ".join(_rel(p) for p in bad)
+            raise IdScanError(
+                f"未找到 p{number:03d}；存在同号但文件名不规范：{joined}；"
+                "须改成 pNNN_slug.md 规范命名（小写 snake_case，三位起）"
+            )
         raise IdScanError(f"未找到 p{number:03d}")
     if len(hits) > 1:
         joined = ", ".join(_rel(p) for p in hits)
         raise IdScanError(f"p{number:03d} 同时存在多个文件：{joined}；请先解决同号多处")
     path = hits[0]
+    if path.is_symlink():
+        raise IdScanError(f"拒绝经软链条目写入：{_rel(path)}")
+    _assert_no_symlink(REPO_ROOT, path)
     fm, _ = parse_pending_file(path)
     return fm["status"], path
 
@@ -278,12 +315,20 @@ def cmd_new(args: argparse.Namespace) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
+    if PENDING_DIR.is_symlink():
+        raise IdScanError(f"拒绝经软链目录列举条目：{_rel(PENDING_DIR)}")
     if not PENDING_DIR.is_dir():
         print("(no entries)")
         return
     rows: list[tuple[str, str, str]] = []
     for path in sorted(PENDING_DIR.glob("*.md")):
         if parse_entry_file_name(PREFIX, path.name) is None:
+            loose = _LOOSE_ENTRY_RE.match(path.name)
+            if loose or path.name.startswith("p"):
+                sys.stderr.write(
+                    f"警告：{_rel(path)} 文件名不符合规范 pNNN_slug.md，已跳过；"
+                    "请改成规范命名后重试\n"
+                )
             continue
         fm, body = parse_pending_file(path)
         status = fm["status"]
@@ -336,6 +381,9 @@ def _apply_state_updates(
 
             for index, (path, new_text, orig_bytes) in enumerate(snapshots, 1):
                 try:
+                    _assert_no_symlink(REPO_ROOT, path)
+                    if path.is_symlink():
+                        raise IdScanError(f"拒绝向软链条目写入：{_rel(path)}")
                     atomic_write_text(path, new_text)
                     modified.append((path, orig_bytes))
                     sys.stderr.write(f"已更新：{_rel(path)}\n")
