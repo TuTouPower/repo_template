@@ -410,6 +410,17 @@ def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
         _check_duplicates(ref or "index", found, prefix)
 
 
+def slug_from_title(title: str) -> str:
+    """从标题派生新建条目的 slug；仅用于条目创建，不构成运行期兼容路径。
+
+    去掉标题末尾的括号说明（如「（2026-07-01 发现）」）再取 slug。
+    """
+    title = re.sub(r"[（(][^）)]*[）)]\s*$", "", title.strip())
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    slug = re.sub(r"_+", "_", slug)
+    return slug or "entry"
+
+
 SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
 
 
@@ -657,16 +668,3 @@ def allocate_dir(
             _cleanup_staging(staging)
             _reraise_publish_error(error)
     return path
-
-
-# ---------------------------------------------------------------------------
-# 旧单文件总账解析（迁移用）
-# ---------------------------------------------------------------------------
-
-
-def slug_from_title(title: str) -> str:
-    # 去掉标题末尾的括号说明（如「（2026-07-01 发现）」）再取 slug。
-    title = re.sub(r"[（(][^）)]*[）)]\s*$", "", title.strip())
-    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
-    slug = re.sub(r"_+", "_", slug)
-    return slug or "entry"

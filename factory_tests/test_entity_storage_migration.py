@@ -468,6 +468,26 @@ def test_entity_storage_migration_blocks_on_spike_status_conflict(repo):
         migrate_entity_storage(sync=sync, write=False)
 
 
+def test_entity_storage_migration_status_reports_flat_active_spike_without_front_matter(repo):
+    """R04：扁平布局的 active spike 完全没有 Front Matter 时，status 必须报待迁移。"""
+    schema = repo / ".repo_template/entity_schema.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_text('{"version": 1}\n', encoding="utf-8")
+
+    report = repo / "docs/spikes/s001_network/report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Spike s001\n\n调研网络驱动。\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: flat active spike without front matter")
+    sync = ctx.SyncContext.for_consumer(repo)
+
+    problems = entity_storage_migration_status(sync=sync)
+    assert any(
+        "docs/spikes/s001_network/report.md" in item and "front matter" in item.lower()
+        for item in problems
+    ), problems
+
+
 def test_entity_storage_migration_blocks_on_dirty_working_tree(repo):
     """迁移前必须检查工作区干净（staged 和 unstaged 均无修改）。"""
     _setup_legacy_repo(repo)
