@@ -535,17 +535,27 @@ def test_leftover_transaction_with_git_lock_reports_unknown_without_rollback(git
     assert "人工核查" in state["action"]
 
 
-def test_finish_retry_idempotently_rolls_back_leftover_safe_transaction(git_repo):
-    """A01：HEAD 未前进且现场未改的中断事务，重跑 finish 先幂等回滚再继续。"""
+def test_finish_settles_leftover_rollback_safe_transaction_idempotently(git_repo):
+    """P1-13：直接 begin 构造遗留 rollback_safe 事务，finish 幂等回滚后只产生一个实现 commit。"""
+    from repo_task import commit_txn
+
     _, worktree, message = _ready(git_repo)
-    hook = _install_hook(git_repo, 'echo "hook-says-no" >&2\nexit 1')
-    assert finish_cli(worktree, "t001", OWNER, message).returncode != 0
-    # 上次失败已安全回滚并清理 journal
-    assert json.loads(_task_cli(git_repo, "recovery", "t001").stdout)["phase"] != "finish_txn_unknown"
-    hook.unlink()
-    retry = finish_cli(worktree, "t001", OWNER, message)
-    assert retry.returncode == 0, retry.stdout + retry.stderr
+    anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    txn = commit_txn.begin(
+        worktree, tid="t001", attempt=1, execution_id="x", branch="t001_alpha",
+        diff_anchor=anchor, review_scope="x", task_rel="docs/tasks/t001_alpha",
+        message_file=str(message),
+    )
+    assert commit_txn.judge(worktree, txn)[0] == "rollback_safe"
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "已幂等回滚上次中断的提交事务" in result.stderr
+    assert _git(worktree, "rev-list", "--count", f"{anchor}..HEAD").stdout.strip() == "1"
+    assert _git(worktree, "rev-parse", "HEAD^1").stdout.strip() == anchor
     assert _git(worktree, "status", "--porcelain").stdout == ""
+    assert commit_txn.load(worktree) is None
 
 
 # --------------------------------------------------------------------------
@@ -758,3 +768,170 @@ def test_finish_rejects_developer_home_path_in_review_report_and_task_docs(git_r
     note_path.write_text(clean_note, encoding="utf-8")
     third = finish_cli(worktree, "t001", OWNER, message)
     assert third.returncode == 0, third.stdout + third.stderr
+
+
+# --------------------------------------------------------------------------
+# P1-1 / P1-2 / P1-13 / DS L210 / DS L213 / DS L284 补覆盖
+# --------------------------------------------------------------------------
+
+
+def _committed_journal(worktree, anchor, message):
+    """构造「实现 commit 已产生但 journal 残留」的 committed 事务。"""
+    from repo_task import commit_txn, monitoring
+
+    scope = monitoring.review_scope_fingerprint(
+        anchor, "docs/tasks/t001_alpha", repo_root=worktree, ref="HEAD"
+    )
+    data = {
+        "version": commit_txn.JOURNAL_VERSION, "tid": "t001", "attempt": 1,
+        "execution_id": "x", "branch": "t001_alpha", "diff_anchor": anchor,
+        "review_scope": scope, "task_rel": "docs/tasks/t001_alpha",
+        "message_file": str(message), "original_head": anchor,
+        "index_existed": True, "files": {}, "phase": "committed",
+        "expected_tree": "", "expected_files": {},
+    }
+    directory = commit_txn.txn_dir(worktree)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / commit_txn.JOURNAL).write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+    return data
+
+
+def test_finish_refuses_leftover_committed_transaction(git_repo):
+    """P1-13：HEAD 已前进的 journal，finish 拒绝重提交并提示 recovery / 清理出口。"""
+    _, worktree, message = _ready(git_repo)
+    anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
+    head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    assert head != anchor
+    _committed_journal(worktree, anchor, message)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "不重复提交" in result.stderr
+    assert "finish-txn-clear" in result.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == head
+
+
+def test_recovery_does_not_short_circuit_on_committed_journal(git_repo):
+    """P1-2：committed journal 不再短路 recovery，落入常规判定并给出清理出口。"""
+    _, worktree, message = _ready(git_repo)
+    anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
+    _committed_journal(worktree, anchor, message)
+
+    state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
+
+    assert state["phase"] != "finish_txn_committed"
+    assert state["finish_txn"] == "committed"
+    assert "finish-txn-clear" in state["action"]
+
+
+def test_finish_txn_clear_cleans_committed_journal(git_repo):
+    """P1-2：显式 finish-txn-clear 清理已完成（committed）事务。"""
+    from repo_task import commit_txn
+
+    _, worktree, message = _ready(git_repo)
+    anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    assert finish_cli(worktree, "t001", OWNER, message).returncode == 0
+    _committed_journal(worktree, anchor, message)
+    assert commit_txn.load(worktree) is not None
+
+    result = _task_cli(git_repo, "finish-txn-clear", "t001")
+
+    assert result.returncode == 0, result.stderr
+    assert "已清理" in result.stdout
+    assert commit_txn.load(worktree) is None
+
+
+def test_finish_blocks_leftover_unknown_transaction_after_manual_repair(git_repo):
+    """P1-1/P1-13：writing 阶段崩溃后人工修复，重跑 finish 判 unknown 且不覆盖修复。"""
+    from repo_task import commit_txn
+
+    _, worktree, message = _ready(git_repo)
+    anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    txn = commit_txn.begin(
+        worktree, tid="t001", attempt=1, execution_id="x", branch="t001_alpha",
+        diff_anchor=anchor, review_scope="x", task_rel="docs/tasks/t001_alpha",
+        message_file=str(message),
+    )
+    commit_txn.mark_phase(worktree, txn, "writing")
+    note = worktree / "docs/tasks/t001_alpha/progress.md"
+    note.write_text(note.read_text(encoding="utf-8") + "\n人工修复：补充验证摘要\n", encoding="utf-8")
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "结果未知" in result.stderr and "保留现场" in result.stderr
+    assert "人工修复" in note.read_text(encoding="utf-8")
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == anchor
+    assert commit_txn.load(worktree) is not None
+    state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
+    assert state["phase"] == "finish_txn_unknown"
+
+
+def test_finish_reports_privacy_leak_written_by_commit_hook(git_repo):
+    """DS L284：提交阶段 hook 写入家目录路径，finish 报提交后泄漏且 HEAD 已前移不回滚。"""
+    _, worktree, message = _ready(git_repo)
+    before_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
+    leak = "/".join(("", "Users", "leakuser", "secret"))
+    matched = "/".join(("", "Users", "leakuser"))
+    _install_hook(
+        git_repo,
+        f"printf '\\n{leak}\\n' >> docs/tasks/t001_alpha/review_code.md\n"
+        "git add docs/tasks/t001_alpha/review_code.md",
+    )
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "提交快照检测到开发者家目录绝对路径泄漏" in result.stderr
+    assert matched in result.stderr
+    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() != before_head
+
+
+def test_finish_rejects_commit_message_with_home_path(git_repo):
+    """DS L213：commit message 含家目录路径，前置零写入阻断。"""
+    _, worktree, message = _ready(git_repo)
+    leak = "/".join(("", "Users", "msguser", "proj"))
+    message.write_text(f"feat: 完成 task\n\n路径 {leak}\n", encoding="utf-8")
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, message)
+
+    assert result.returncode != 0
+    assert "检测到开发者家目录绝对路径泄漏" in result.stderr
+    assert "commit message" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_rejects_symlink_message_file(git_repo):
+    """DS L210：--message-file 为软链时拒绝，零写入。"""
+    _, worktree, _ = _ready(git_repo)
+    outside = worktree.parent / "outside_message.txt"
+    outside.write_text("feat: x\n", encoding="utf-8")
+    link = worktree.parent / "message_link.txt"
+    link.symlink_to(outside)
+    before = _snapshot(git_repo, worktree)
+
+    result = finish_cli(worktree, "t001", OWNER, link)
+
+    assert result.returncode != 0
+    assert "是软链" in result.stderr
+    assert _snapshot(git_repo, worktree) == before
+
+
+def test_finish_rejects_symlink_message_file_inside_task_dir(git_repo):
+    """DS L210：task 目录内指向仓外的软链不得靠 resolve 绕过包含检查。"""
+    _, worktree, _ = _ready(git_repo)
+    outside = worktree.parent / "outside_secret.txt"
+    outside.write_text("feat: x\n", encoding="utf-8")
+    link = _task_dir(worktree) / "message.txt"
+    link.symlink_to(outside)
+
+    result = finish_cli(worktree, "t001", OWNER, link)
+
+    assert result.returncode != 0
+    assert "位于当前 task 目录内" in result.stderr
