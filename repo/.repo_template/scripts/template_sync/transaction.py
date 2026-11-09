@@ -13,8 +13,8 @@ from .common import _git
 from .gates import _run_tests
 
 
-def cmd_transaction(args, sync=None):
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+def cmd_transaction(args):
+    sync: ctx.SyncContext = args.sync
     with git_common_lock(sync.consumer, CONTROL_LOCK_NAME):
         transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
         try:

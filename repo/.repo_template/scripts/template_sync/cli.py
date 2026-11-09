@@ -97,9 +97,11 @@ def main(argv: list[str] | None = None) -> None:
     consumer = (
         args.consumer.expanduser().resolve() if args.consumer else ctx.TOOLKIT_ROOT.parent
     )
-    args.sync = ctx.SyncContext.for_consumer(consumer)
-    ctx.SOURCE_OVERRIDE = args.source if args.cmd != "init" else None
-    ctx.CHECKOUT_OVERRIDE = args.checkout
+    args.sync = ctx.SyncContext.for_consumer(
+        consumer,
+        source_override=args.source if args.cmd != "init" else None,
+        checkout_override=args.checkout,
+    )
     try:
         if getattr(args, "cmd", None) == "apply":
             args.decisions = _parse_decisions(args.decision)

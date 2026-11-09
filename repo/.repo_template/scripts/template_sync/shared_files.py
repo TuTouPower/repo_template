@@ -28,9 +28,8 @@ def _blocked(rule: str, substrings: list[str]) -> bool:
     return any(sub in rule for sub in substrings)
 
 
-def merge_gitignore(src: Path, blocked: list[str], changed: set[Path], sync=None) -> dict:
+def merge_gitignore(src: Path, blocked: list[str], changed: set[Path], sync: ctx.SyncContext) -> dict:
     """追加模板独有规则（去重、遵从 prompt 拦截）；删除消费侧 prompt 禁止的 ignore 行。"""
-    sync = sync or ctx.current_sync()
     dst = sync.consumer / ".gitignore"
     src_lines = (src / ".gitignore").read_text(encoding="utf-8").splitlines()
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
@@ -81,9 +80,8 @@ _PRETTIERIGNORE_HEADER = (
 )
 
 
-def merge_prettierignore(changed: set[Path], sync=None) -> dict:
+def merge_prettierignore(changed: set[Path], sync: ctx.SyncContext) -> dict:
     """机械合并 .prettierignore：模板自有路径去重追加，消费独有规则保留。"""
-    sync = sync or ctx.current_sync()
     dst = sync.consumer / ".prettierignore"
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
     dst_set = {ln.strip() for ln in dst_lines}
@@ -209,9 +207,8 @@ def _sanitize_mcp_servers(servers: dict, source: str | None = None) -> dict:
     return clean
 
 
-def merge_mcp(src: Path, changed: set[Path], sync=None) -> list[str]:
+def merge_mcp(src: Path, changed: set[Path], sync: ctx.SyncContext) -> list[str]:
     """按 server 键合并 MCP：模板新增键加入，已有键保留消费值（禁冲密钥）。"""
-    sync = sync or ctx.current_sync()
     merged: list[str] = []
     for rel in ctx.MCP_CANDIDATES:
         sp, dp = src / rel, sync.consumer / rel
@@ -273,9 +270,8 @@ def shared_class(src_path: Path, dst_path: Path) -> str:
     return "none"
 
 
-def shared_status(src: Path, sync=None) -> list[dict]:
+def shared_status(src: Path, sync: ctx.SyncContext) -> list[dict]:
     """裁定单元分类（AGENTS.md 目的地为软链时解引用实体再比对）。"""
-    sync = sync or ctx.current_sync()
     out: list[dict] = []
     for unit in ctx.SHARED_FILES:
         s = src / unit
@@ -289,10 +285,9 @@ def shared_status(src: Path, sync=None) -> list[dict]:
     return out
 
 
-def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[Path], sync=None) -> None:
+def _apply_shared_unit(unit: str, decision: str | None, src: Path, changed: set[Path], sync: ctx.SyncContext) -> None:
     # 标题协议下只自动更新开发原则；其余部分分别保护或交 Agent。
-    sync = sync or ctx.current_sync()
-    if unit == "AGENTS.md" and _apply_agents_sectioned(src, changed):
+    if unit == "AGENTS.md" and _apply_agents_sectioned(src, changed, sync):
         print("AGENTS.md 已按标题协议处理：开发原则强制更新，目录规则交 agent 合并，项目介绍保留")
         return
     if not decision:

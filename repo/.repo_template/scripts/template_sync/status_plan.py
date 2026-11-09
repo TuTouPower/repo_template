@@ -36,8 +36,8 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 @consumer_locked
-def cmd_status(args: argparse.Namespace, sync=None) -> int:
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+def cmd_status(args: argparse.Namespace) -> int:
+    sync: ctx.SyncContext = args.sync
     require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
@@ -127,8 +127,8 @@ def cmd_status(args: argparse.Namespace, sync=None) -> int:
 
 
 @consumer_locked
-def cmd_plan(args: argparse.Namespace, sync=None) -> int:
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+def cmd_plan(args: argparse.Namespace) -> int:
+    sync: ctx.SyncContext = args.sync
     require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:

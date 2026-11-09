@@ -103,7 +103,7 @@ def _retired_guard(consumer: Path) -> tuple[Path, Path]:
     return guard, retired
 
 
-def test_workflow_status_reads_consumer_even_when_script_repo_differs(tmp_path, monkeypatch):
+def test_workflow_status_reads_consumer_even_when_script_repo_differs(tmp_path):
     """P1-5：helper 显式用 --consumer 的 sync，绝不回退来源脚本所在仓。"""
     src = _make_source(tmp_path / "source")
     consumer = _make_consumer(tmp_path / "consumer", src)
@@ -112,11 +112,8 @@ def test_workflow_status_reads_consumer_even_when_script_repo_differs(tmp_path, 
     _git(consumer, "commit", "-m", "legacy workflow")
     sync = ctx.SyncContext.for_consumer(consumer)
 
-    # 模拟「从来源脚本运行、未显式传 sync」时模块级默认身份错指来源仓。
-    # 旧代码 _collect_workflow_task_dirs / _registered_task_worktrees 回退到这里会查错仓。
-    monkeypatch.setattr(ctx, "CONSUMER", src)
-    monkeypatch.setattr(ctx, "STATE_PATH", src / ".repo_template/sync_state.json")
-    monkeypatch.setattr(ctx, "SKILLS_SRC", src / ".repo_template/skills")
+    # 显式 sync 即唯一真相源：helper 只读传入身份，不再回退模块级默认。
+    # （历史 monkeypatch ctx.CONSUMER/STATE_PATH/SKILLS_SRC 已随模块级可变状态删除。）
 
     migrations, _, errors = workflow_migration_status(src, sync=sync)
     assert errors == []

@@ -279,8 +279,8 @@ def _branch_task_status(branch: str, sync: ctx.SyncContext) -> str:
 def _unintegrated_done_branches(sync: ctx.SyncContext) -> tuple[str, list[str]]:
     """返回 (默认分支, 状态为 done 但尚未合入默认分支的 task 分支)。
 
-    done task 的目录由 integrate 的 merge commit 归档；旧布局下这类分支的目录已在分支内
-    归档，新工具链不处理这种中间形态，必须先 integrate。git 查询失败 fail-closed。
+    旧布局下 done task 的目录曾由 integrate 的 merge commit 归档；这类分支的目录
+    已在分支内归档，新工具链不处理这种中间形态，必须先 integrate。git 查询失败 fail-closed。
     """
     listed = _git(sync.consumer, "branch", "--format=%(refname:short)", "--list", "t[0-9]*_*")
     if listed.returncode != 0:
@@ -449,9 +449,8 @@ def _inspect_workflow_task_dir(
 
 
 def workflow_migration_status(
-    src: Path, sync=None,
+    src: Path, sync: ctx.SyncContext,
 ) -> tuple[list[str], list[tuple[Path, str]], list[str]]:
-    sync = sync or ctx.current_sync()
     task_template_path = src / ".repo_template/docs/task_template/task.md"
     note_template_path = src / ".repo_template/docs/task_template" / PROGRESS_FILE
     try:
@@ -486,14 +485,13 @@ def workflow_migration_status(
 
 def force_migrate_workflow_tasks(
     changed: set[Path], *, template_template_dir: Path | None = None,
-    sync=None,
+    sync: ctx.SyncContext,
 ) -> list[str]:
     """显式迁移消费仓旧 workflow 布局到当前 schema。
 
     template_template_dir 指向当前目标 schema 的 task_template 目录；缺省读消费仓
     自身工具链，显式迁移时应传固定来源快照。
     """
-    sync = sync or ctx.current_sync()
     base, unintegrated = _unintegrated_done_branches(sync)
     if unintegrated:
         raise ctx.SyncError(_unintegrated_done_message(base, unintegrated))

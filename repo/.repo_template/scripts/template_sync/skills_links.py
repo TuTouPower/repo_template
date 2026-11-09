@@ -55,9 +55,8 @@ def _ensure_symlink(
     changed.add(link)
 
 
-def repair_symlinks(changed: set[Path], sync=None) -> list[str]:
+def repair_symlinks(changed: set[Path], sync: ctx.SyncContext) -> list[str]:
     """建/修宿主软链，指向 .repo_template/。清理已删除 skill 的残留软链。非本机制链接报告不碰。"""
-    sync = sync or ctx.current_sync()
     reports: list[str] = []
     valid_names = set()
     if sync.skills_src.exists():
@@ -129,10 +128,13 @@ def _expected_opencode_command_content(name: str, sync: ctx.SyncContext) -> str:
     )
 
 
-def _load_skill_roles(sync: ctx.SyncContext) -> dict | None:
+def _load_skill_roles(sync: ctx.SyncContext) -> dict:
     path = sync.skills_src / "registry.json"
     if not path.exists():
-        return None
+        raise ctx.SyncError(
+            "skills/registry.json 缺失：无法判定 skill 公开角色，"
+            "拒绝生成 opencode 命令薄层；先补登记后重跑"
+        )
     data = _load_json_object(path, "skills/registry.json")
     roles = data.get("skills")
     if not isinstance(roles, dict):
@@ -141,10 +143,8 @@ def _load_skill_roles(sync: ctx.SyncContext) -> dict | None:
 
 
 def _public_skill_names(names: list[str], sync: ctx.SyncContext) -> list[str]:
-    """校验 registry 覆盖全部 skill；未登记即 fail-closed，status 与 apply 同口径。"""
+    """校验 registry 覆盖全部 skill；缺失/未登记即 fail-closed，status 与 apply 同口径。"""
     roles = _load_skill_roles(sync)
-    if roles is None:
-        return names
     missing = sorted(name for name in names if name not in roles)
     if missing:
         raise ctx.SyncError(
@@ -153,9 +153,8 @@ def _public_skill_names(names: list[str], sync: ctx.SyncContext) -> list[str]:
     return [name for name in names if roles[name].get("role") == "public"]
 
 
-def opencode_commands_status(sync=None) -> list[dict]:
+def opencode_commands_status(sync: ctx.SyncContext) -> list[dict]:
     """返回 opencode 命令薄层状态：[{"name": ..., "rel": ..., "state": ..., "desc": ...}]。"""
-    sync = sync or ctx.current_sync()
     items = []
     if not sync.skills_src.exists():
         return items
@@ -222,7 +221,7 @@ def opencode_commands_status(sync=None) -> list[dict]:
     return items
 
 
-def sync_opencode_commands(changed: set[Path], sync=None) -> list[str]:
+def sync_opencode_commands(changed: set[Path], sync: ctx.SyncContext) -> list[str]:
     """项目级 opencode 命令薄层：每个 skill 生成同名 /<skill> 命令。
 
     opencode 能直接识别 .agents/skills，但缺 / 触发器。命令正文只做一件事：
@@ -230,7 +229,6 @@ def sync_opencode_commands(changed: set[Path], sync=None) -> list[str]:
     取自 SKILL.md frontmatter（SKILL.md 是唯一真相源）。
     手写命令（无本机制标记）永不覆盖/删除；skill 删除后仅清理带标记残留。
     """
-    sync = sync or ctx.current_sync()
     reports: list[str] = []
     if not sync.skills_src.exists():
         return reports
@@ -263,9 +261,8 @@ def sync_opencode_commands(changed: set[Path], sync=None) -> list[str]:
     return reports
 
 
-def skill_status(src: Path, sync=None) -> list[dict]:
+def skill_status(src: Path, sync: ctx.SyncContext) -> list[dict]:
     """skill 状态：模板侧 override；消费侧独有 keep；旧真实目录 stale。"""
-    sync = sync or ctx.current_sync()
     out: list[dict] = []
     src_skills = src / ".repo_template/skills"
     if src_skills.exists():
@@ -287,8 +284,7 @@ def skill_status(src: Path, sync=None) -> list[dict]:
     return out
 
 
-def symlink_status(sync=None) -> list[dict]:
-    sync = sync or ctx.current_sync()
+def symlink_status(sync: ctx.SyncContext) -> list[dict]:
     out: list[dict] = []
     valid_names = set()
     hosts = (
@@ -334,8 +330,8 @@ def symlink_status(sync=None) -> list[dict]:
 
 
 @consumer_locked
-def cmd_link_skills(args: argparse.Namespace, sync=None) -> int:
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+def cmd_link_skills(args: argparse.Namespace) -> int:
+    sync: ctx.SyncContext = args.sync
     require_no_legacy_state(sync)
     changed: set[Path] = set()
     transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")

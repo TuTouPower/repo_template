@@ -50,8 +50,7 @@ def _migrate_specs_index_text(text: str) -> str | None:
     return result if result != text else None
 
 
-def specs_index_migration_status(sync=None) -> list[str]:
-    sync = sync or ctx.current_sync()
+def specs_index_migration_status(sync: ctx.SyncContext) -> list[str]:
     path = sync.consumer / SPECS_INDEX_REL
     if not path.is_file():
         return []
@@ -62,8 +61,7 @@ def specs_index_migration_status(sync=None) -> list[str]:
     return []
 
 
-def migrate_specs_index(changed: set[Path], sync=None) -> list[str]:
-    sync = sync or ctx.current_sync()
+def migrate_specs_index(changed: set[Path], sync: ctx.SyncContext) -> list[str]:
     path = sync.consumer / SPECS_INDEX_REL
     if not path.is_file():
         return []
@@ -76,6 +74,5 @@ def migrate_specs_index(changed: set[Path], sync=None) -> list[str]:
     return [f"{sync.rel(path)} 已迁移 specs_index 旧说明句/无数据 supersedes 列（保留其余内容）"]
 
 
-def specs_index_report(sync=None) -> list[str]:
-    sync = sync or ctx.current_sync()
+def specs_index_report(sync: ctx.SyncContext) -> list[str]:
     return specs_index_errors(sync.consumer)
