@@ -308,9 +308,9 @@ def test_spikes_new_creates_directory_and_frontmatter(tmp_path, monkeypatch, cap
     assert fm == {"sid": "s001", "slug": "uv_lock", "status": "active"}
     assert "# Spike report: UV Lock Probe" in body
 
-    # 验证不自动 git add（工作区保留为未暂存）
-    staged = _git(repo, "status", "--porcelain").stdout
-    assert "??" in staged or "docs/spikes/s001_uv_lock" in staged
+    # 验证不自动 git add：index 中不得出现任何 staged 变更（DS L281）
+    staged = _git(repo, "diff", "--cached", "--name-only").stdout
+    assert staged == ""
 
 
 def test_spikes_new_supports_opt_slug_and_increments_id(tmp_path, monkeypatch, capsys):
@@ -680,3 +680,61 @@ def test_validate_spike_fail_closed_without_front_matter_or_invalid_metadata(tmp
     report.write_text("---\nsid: \"s001\"\nslug: \"probe\"\nstatus: \"invalid_status\"\n---\n# Spike report\n", encoding="utf-8")
     with pytest.raises(TaskDataError, match="元数据非法"):
         validate_spike(repo, spike_dir)
+
+
+def test_spikes_complete_rejects_slug_mismatch(tmp_path, monkeypatch, capsys):
+    """complete 必须校验目录 slug，手工篡改 report.md slug 不得通过（DS L260）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    spikes_mod.main(["new", "probe_complete"])
+    spike_dir = repo / "docs/spikes/s001_probe_complete"
+    _fill_report(repo, spike_dir)
+    report = spike_dir / "report.md"
+    fm, body = parse_front_matter(report)
+    fm["slug"] = "tampered_slug"
+    write_front_matter(report, fm, body)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="slug 与预期不符"):
+        spikes_mod.main(["complete", "s001"])
+    assert parse_front_matter(report)[0]["status"] == "active"
+
+
+def test_spikes_supersede_rejects_slug_mismatch(tmp_path, monkeypatch):
+    """supersede 主条目同样校验目录 slug（DS L260）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    spikes_mod.main(["new", "probe_old"])
+    spikes_mod.main(["new", "probe_new"])
+    s001_dir = repo / "docs/spikes/s001_probe_old"
+    s002_dir = repo / "docs/spikes/s002_probe_new"
+    _fill_report(repo, s002_dir)
+    spikes_mod.main(["complete", "s002", "--write"])
+
+    fm, body = parse_front_matter(s001_dir / "report.md")
+    fm["slug"] = "tampered_slug"
+    write_front_matter(s001_dir / "report.md", fm, body)
+
+    with pytest.raises(SystemExit, match="slug 与预期不符"):
+        spikes_mod.main(["supersede", "s001", "--by", "s002", "--reason", "更优方案"])
+
+
+def test_spikes_list_warns_on_corrupted_front_matter(tmp_path, monkeypatch, capsys):
+    """损坏 spike 归入 unknown 且打印 stderr 警告，不静默吞错（DS L259）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    spikes_mod.main(["new", "good_one"])
+    broken = repo / "docs/spikes/s002_broken"
+    broken.mkdir(parents=True)
+    (broken / "report.md").write_text("---\nsid: s002\n未闭合\n", encoding="utf-8")
+    capsys.readouterr()
+
+    spikes_mod.main(["list"])
+    default_view = capsys.readouterr()
+    assert "s002_broken" not in default_view.out
+    assert "警告" in default_view.err
+
+    spikes_mod.main(["list", "--state", "unknown"])
+    unknown_view = capsys.readouterr()
+    assert "s002_broken" in unknown_view.out
+    assert "警告" in unknown_view.err

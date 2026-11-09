@@ -10,7 +10,9 @@ from .documents import parse_front_matter_text, parse_front_matter
 
 SPIKE_SID_RE = re.compile(r"^s[0-9]{3,}$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
-ENTRY_DIR_RE = re.compile(r"^s([0-9]{3,})_[a-z0-9_]+$")
+# 与 _id_scan.CANONICAL_NUMBER 同一规则：三位允许 0xx，四位及以上首位不得为 0。
+# 拒绝 s0001_x 这类「按编号 startswith 找不到」的非规范目录名。
+ENTRY_DIR_RE = re.compile(r"^s(0[0-9]{2}|[1-9][0-9]{2,})_[a-z0-9_]+$")
 VALID_STATUSES = frozenset({"active", "completed", "superseded"})
 ALLOWED_FRONT_MATTER_KEYS = frozenset({"sid", "slug", "status", "superseded_by", "reason"})
 
@@ -91,10 +93,16 @@ def find_spike_dir(repo_root: Path, sid: str) -> Path:
     spikes_dir = repo_root / "docs/spikes"
     if not spikes_dir.is_dir():
         raise SpikeMetadataError("缺目录 docs/spikes")
+    try:
+        target_number = int(sid[1:])
+    except ValueError as error:
+        raise SpikeMetadataError(f"spike sid 格式非法：{sid!r}") from error
     matches = [
         p
         for p in spikes_dir.iterdir()
-        if p.is_dir() and p.name.startswith(f"{sid}_") and ENTRY_DIR_RE.match(p.name)
+        if p.is_dir()
+        and (match := ENTRY_DIR_RE.match(p.name))
+        and int(match.group(1)) == target_number
     ]
     if not matches:
         raise SpikeMetadataError(f"未找到 spike：{sid}")

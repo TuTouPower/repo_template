@@ -2,25 +2,21 @@
 """findings.py - 已验证技术发现的条目分配与列举入口。
 
 一条目一文件：`docs/findings/dNNN_slug.md`。发现是长期资产，不迁 archive，
-失效时就地改写「现状」字段。
+失效时就地改写「现状」字段。条目身份（编号与文件名）创建后固定，不提供改名接口。
 
 用法：
   python3 .repo_template/scripts/findings.py new --slug uv_lock_platform_marker
   python3 .repo_template/scripts/findings.py list
-  python3 .repo_template/scripts/findings.py rename d012 --slug new_slug [--write]
+  python3 .repo_template/scripts/findings.py migrate-legacy [--write]
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
-`rename` 改条目文件名（保留编号，仅换 slug）：已入库文件用 `git mv` 保留历史，
-未入库（新建尚未 git add）文件退化为普通改名；dry-run 默认，加 `--write` 落盘。
-rename 不自动改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 dNNN 引用，
-脚本只负责让文件名与新的 slug 一致。
+旧仓残留 docs/findings.md 单文件总账时，先用 migrate-legacy 显式拆分并提交结果，
+再分配新编号；编号分配本身不解析旧正文。
 """
 
 from __future__ import annotations
 
 import argparse
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -28,18 +24,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import (
     IdScanError,
     allocate,
-    id_lock,
-    legacy_ledger_entries,
-    slug_from_title,
+    apply_legacy_migration,
+    parse_entry_file_name,
+    plan_legacy_migration,
 )
 from md_format import MdFormatError, format_file
-from repo_task.documents import atomic_write_text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "d"
 FINDINGS_DIR = REPO_ROOT / "docs/findings"
 SCAN_DIRS = ("docs/findings",)
-ENTRY_FILE_RE = re.compile(r"^d([0-9]{3,})_[a-z0-9_]+\.md$")
+LEDGER_REL = "docs/findings.md"
 
 TEMPLATE = """# {id} {一句话简述}
 
@@ -68,95 +63,46 @@ def cmd_new(args: argparse.Namespace) -> None:
     print(path.relative_to(REPO_ROOT).as_posix())
 
 
+def _render_finding_entry(entry_id: str, slug: str, title: str, body: str) -> str:
+    heading = f"# {entry_id} {title or entry_id}"
+    return f"{heading}\n\n{body}\n"
+
+
 def cmd_migrate_legacy(args: argparse.Namespace) -> None:
     """把当前工作区旧 docs/findings.md 拆成一条目一文件；默认 dry-run。"""
-    legacy_path = REPO_ROOT / "docs" / "findings.md"
-    if not legacy_path.is_file():
-        sys.exit(f"未找到旧单文件总账：{legacy_path.relative_to(REPO_ROOT).as_posix()}")
-    entries = legacy_ledger_entries(legacy_path.read_text(encoding="utf-8"), PREFIX)
-    if not entries:
-        sys.exit("docs/findings.md 未解析出任何 dNNN 条目")
-    plan = []
-    for number, title, body in entries:
-        entry_id = f"d{number:03d}"
-        target = FINDINGS_DIR / f"{entry_id}_{slug_from_title(title)}.md"
-        plan.append((entry_id, target, title, body))
+    try:
+        items = plan_legacy_migration(
+            REPO_ROOT, prefix=PREFIX, ledger_rel=LEDGER_REL, target_dir=FINDINGS_DIR
+        )
+    except IdScanError as error:
+        sys.exit(f"错误: {error}")
     if not args.write:
         sys.stderr.write("dry-run；以下为拟定迁移，加 --write 落盘。\n")
-        for entry_id, target, title, _body in plan:
+        for item in items:
             sys.stderr.write(
-                f"  {entry_id} {title} -> {target.relative_to(REPO_ROOT).as_posix()}\n"
+                f"  {item.entry_id} {item.title} -> "
+                f"{item.target.relative_to(REPO_ROOT).as_posix()}\n"
             )
         return
-
-    created: list[Path] = []
     try:
-        with id_lock(REPO_ROOT):
-            FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
-            for entry_id, target, title, body in plan:
-                if target.exists():
-                    raise IdScanError(f"{target.relative_to(REPO_ROOT).as_posix()} 已存在；迁移中止")
-                atomic_write_text(target, f"# {entry_id} {title or entry_id}\n\n{body}\n")
-                format_file(target)
-                created.append(target)
-            if _run_git(["ls-files", "--error-unmatch", legacy_path.relative_to(REPO_ROOT).as_posix()]).returncode == 0:
-                result = _run_git(["rm", "-f", legacy_path.relative_to(REPO_ROOT).as_posix()])
-                if result.returncode != 0:
-                    raise IdScanError(f"git rm 旧总账失败：{result.stderr.strip()}")
-            else:
-                legacy_path.unlink()
-    except BaseException:
-        for path in created:
-            path.unlink(missing_ok=True)
-        raise
+        created = apply_legacy_migration(
+            items,
+            repo_root=REPO_ROOT,
+            prefix=PREFIX,
+            ledger_rel=LEDGER_REL,
+            render=_render_finding_entry,
+            formatter=format_file,
+        )
+    except (IdScanError, MdFormatError) as error:
+        sys.exit(f"错误: {error}")
     print(f"已迁移 {len(created)} 条 -> docs/findings/；来源 docs/findings.md 已移除")
-
-
-def _run_git(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
-
-
-def cmd_rename(args: argparse.Namespace) -> None:
-    """rename：保留编号，仅换 slug。已入库用 git mv、未入库普通改名；dry-run 默认。
-
-    不改文档正文里的引用——slug 改动需人工核对 docs/ 与 src/ 内的 dNNN 引用。
-    """
-    if not re.fullmatch(r"[a-z0-9]+(_[a-z0-9]+)*", args.slug):
-        sys.exit(f"slug 非法（须 snake_case）：{args.slug!r}")
-    if not re.fullmatch(r"d\d{3,}", args.entry_id):
-        sys.exit(f"entry_id 非法（须 dNNN）：{args.entry_id!r}")
-    # 找原文件；同号多处命中时拒绝并列出全部候选，避免只改其一固化歧义。
-    hits = sorted(FINDINGS_DIR.glob(f"{args.entry_id}_*.md"))
-    if not hits:
-        sys.exit(f"未找到 {args.entry_id}")
-    if len(hits) > 1:
-        joined = ", ".join(path.relative_to(REPO_ROOT).as_posix() for path in hits)
-        sys.exit(f"{args.entry_id} 同时存在于多处：{joined}；请先解决同号多处")
-    old_path = hits[0]
-    new_path = old_path.with_name(f"{args.entry_id}_{args.slug}.md")
-    if new_path == old_path:
-        sys.exit(f"新 slug 与旧 slug 相同：{args.slug!r}")
-    if new_path.exists():
-        sys.exit(f"目标文件已存在：{new_path.relative_to(REPO_ROOT).as_posix()}")
-    if not args.write:
-        print(f"dry-run：{old_path.relative_to(REPO_ROOT).as_posix()} → {new_path.relative_to(REPO_ROOT).as_posix()}")
-        print("（rename 不自动改正文 dNNN 引用；如需同步，请人工核对 docs/ 与 src/）")
-        return
-    r = _run_git(["ls-files", "--error-unmatch", str(old_path.relative_to(REPO_ROOT))])
-    if r.returncode == 0:
-        r = _run_git(["mv", str(old_path.relative_to(REPO_ROOT)), str(new_path.relative_to(REPO_ROOT))])
-        if r.returncode != 0:
-            sys.exit(f"git mv 失败：{r.stderr.strip()}")
-    else:
-        old_path.rename(new_path)
-    print(f"已重命名：{new_path.relative_to(REPO_ROOT).as_posix()}")
 
 
 def cmd_list(_args: argparse.Namespace) -> None:
     rows: list[tuple[str, str]] = []
     if FINDINGS_DIR.is_dir():
         for path in sorted(FINDINGS_DIR.glob("*.md")):
-            if not ENTRY_FILE_RE.match(path.name):
+            if parse_entry_file_name(PREFIX, path.name) is None:
                 continue
             # 摘要取 H1 标题（# dNNN 描述）——文件首行必有，字段名变体不影响检索
             title = ""
@@ -186,12 +132,6 @@ def main(argv: list[str] | None = None) -> None:
 
     list_parser = sub.add_parser("list", help="列举全部发现")
     list_parser.set_defaults(func=cmd_list)
-
-    rename_parser = sub.add_parser("rename", help="改条目 slug（保留编号）")
-    rename_parser.add_argument("entry_id", metavar="dNNN", help="要改的发现编号")
-    rename_parser.add_argument("--slug", required=True, help="新 snake_case slug")
-    rename_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
-    rename_parser.set_defaults(func=cmd_rename)
 
     args = parser.parse_args(argv)
     try:

@@ -9,6 +9,7 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts" / "repo_state.py"
 sys.path.insert(0, str(SCRIPT.parent))
+from git_repo_support import get_controlled_git_env
 import repo_state
 
 
@@ -20,6 +21,7 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         encoding="utf-8",
         errors="replace",
         check=check,
+        env=get_controlled_git_env(),
     )
 
 
@@ -31,6 +33,7 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=get_controlled_git_env(),
     )
 
 
@@ -205,3 +208,55 @@ def test_added_lines_warns_and_fails_on_unreadable_untracked(repo, monkeypatch, 
     assert rc == 1
     stderr = capsys.readouterr().err
     assert "WARNING" in stderr and "locked.py" in stderr
+
+
+def _run_from(repo: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=get_controlled_git_env(),
+    )
+
+
+def test_changed_files_from_subdirectory_uses_repo_relative_paths(repo):
+    """从子目录调用时，未跟踪与 tracked 路径统一为仓库根相对（DS L257）。"""
+    baseline = _baseline(repo)
+    (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    (repo / "docs" / "new_doc.md").write_text("doc\n", encoding="utf-8")
+
+    result = _run_from(repo, repo / "docs", "changed-files", baseline)
+    assert result.returncode == 0, result.stderr
+    assert set(result.stdout.splitlines()) == {"tracked.txt", "docs/new_doc.md"}
+
+
+def test_exclude_from_subdirectory_matches_repo_relative_paths(repo):
+    """--exclude 与路径口径一致：docs/* 从子目录调用仍能排除 docs/ 下未跟踪文件。"""
+    baseline = _baseline(repo)
+    (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    (repo / "docs" / "new_doc.md").write_text("doc\n", encoding="utf-8")
+
+    result = _run_from(repo, repo / "docs", "changed-files", baseline, "--exclude", "docs/*")
+    assert result.returncode == 0, result.stderr
+    assert set(result.stdout.splitlines()) == {"tracked.txt"}
+
+
+def test_added_lines_exclude_from_subdirectory(repo):
+    baseline = _baseline(repo)
+    (repo / "docs" / "fresh.py").write_text("TODO in docs\n", encoding="utf-8")
+
+    result = _run_from(repo, repo / "docs", "added-lines", baseline, "--exclude", "docs/*")
+    assert result.returncode == 0, result.stderr
+    assert "TODO in docs" not in result.stdout.splitlines()
+
+
+def test_deliverable_from_subdirectory(repo):
+    baseline = _baseline(repo)
+    (repo / "docs" / "new_doc.md").write_text("doc\n", encoding="utf-8")
+
+    result = _run_from(repo, repo / "docs", "deliverable", baseline, "new_doc.md")
+    assert result.returncode == 0, result.stderr
+    assert "untracked new file" in result.stdout

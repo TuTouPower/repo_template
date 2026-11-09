@@ -293,4 +293,26 @@ def test_cli_apply_expected_count_blocks_on_change(tree):
     assert (tree / "src/app/__pycache__").is_dir()
 
 
+def test_hard_protected_runtime_paths_are_never_collected_or_deleted(tree):
+    """HARD_PROTECTED 必须真正生效：伪造 hits 直接调 apply_delete 也不删（DS L289）。
+
+    默认扫描下 docs/ 的 logs 类本就不收集，只断言「不在默认扫描」即使删掉
+    HARD_PROTECTED 两项也照过；这里直接验证 collect 与 apply_delete 的防线。
+    """
+    protected = [
+        {"path": "docs/runtime/tasks_audit.log", "category": "logs", "kind": "file"},
+        {"path": "docs/runtime/dispatch_ledger.jsonl", "category": "logs", "kind": "file"},
+    ]
+    deleted = rc.apply_delete(tree, protected)
+    assert deleted == []
+    assert (tree / "docs/runtime/tasks_audit.log").is_file()
+    assert (tree / "docs/runtime/dispatch_ledger.jsonl").is_file()
+
+    hits, _ = rc.collect(tree, ["logs"], [])
+    paths = {h["path"] for h in hits}
+    assert "docs/runtime/tasks_audit.log" not in paths
+    assert "docs/runtime/dispatch_ledger.jsonl" not in paths
+    assert "scripts/debug.log" in paths
+
+
 

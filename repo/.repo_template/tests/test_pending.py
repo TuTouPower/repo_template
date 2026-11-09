@@ -92,9 +92,11 @@ def test_pending_new_slug_options_and_derivation(repo: Path, capsys: pytest.Capt
     pending_mod.main(["new", "--slug", "opt_slug"])
     assert (repo / "docs/pending/p001_opt_slug.md").is_file()
 
-    # 从 --title 自动生成 slug
+    # 从 --title 自动生成 slug：只产生一个 p002_*.md，且 slug 符合规范（DS L293）
     pending_mod.main(["new", "--title", "CLI 退出码异常"])
-    assert (repo / "docs/pending/p002_cli.md").is_file() or (repo / "docs/pending/p002_cli_tui_chu_ma_yi_chang.md").is_file()
+    matches = sorted((repo / "docs/pending").glob("p002_*.md"))
+    assert len(matches) == 1
+    assert pending_mod.SLUG_RE.match(matches[0].stem.split("_", 1)[1])
 
 
 def test_pending_new_bug_kind(repo: Path) -> None:
@@ -428,6 +430,15 @@ def test_list_corrupted_metadata_fails_closed(repo: Path) -> None:
 
     with pytest.raises(SystemExit, match="未知 front matter 字段|解析 front matter 失败"):
         pending_mod.main(["list"])
+
+
+def test_slug_from_title_is_deterministic():
+    """slug 推导是单一确定性行为，不接受两个候选文件名（DS L293）。"""
+    from _id_scan import slug_from_title
+
+    assert slug_from_title("CLI 退出码异常（2026-07-01 发现）") == "cli"
+    assert slug_from_title("UV Lock Platform Marker") == "uv_lock_platform_marker"
+    assert slug_from_title("!!!") == "entry"
 
 
 def test_concurrent_modification_rejected_by_sha256(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:

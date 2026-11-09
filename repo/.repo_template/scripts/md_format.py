@@ -40,8 +40,24 @@ def _rel(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
 
 
+def _canonical_rel(rel: str) -> str:
+    """把任意输入路径 resolve 成仓库根相对路径；越界或解析失败直接拒绝。
+
+    黑名单判定必须基于规范相对路径：`./docs/archive/x.md`、
+    `docs/pending/../archive/x.md` 与绝对路径都不得绕过 archive 黑名单。
+    """
+    root = REPO_ROOT.resolve()
+    try:
+        absolute = (root / rel).resolve()
+    except OSError as e:
+        raise MdFormatError(f"无法解析路径 {rel}：{e}") from e
+    if not absolute.is_relative_to(root):
+        raise MdFormatError(f"路径 {rel} 越过仓库边界，拒绝格式化")
+    return absolute.relative_to(root).as_posix()
+
+
 def _is_blacklisted(rel: str) -> bool:
-    return rel.startswith(BLACKLIST_PREFIXES)
+    return _canonical_rel(rel).startswith(BLACKLIST_PREFIXES)
 
 
 def _git(*args: str, root: Path | None = None) -> subprocess.CompletedProcess:
@@ -81,17 +97,22 @@ def collect_changed() -> list[str]:
     return [rel for rel in sorted(rels) if not _is_blacklisted(rel)]
 
 
-def _restore_snapshots(snapshots: dict[Path, bytes]) -> int:
-    """把快照路径恢复为原内容；返回实际恢复的文件数。"""
+def _restore_snapshots(snapshots: dict[Path, bytes]) -> tuple[int, list[tuple[Path, str]]]:
+    """把快照路径恢复为原内容；返回 (实际恢复数, 恢复失败路径与原因)。
+
+    不允许静默跳过单个恢复失败：调用方必须把全部失败路径列入 MdFormatError，
+    否则「已回滚」文案会掩盖未恢复文件。
+    """
     restored = 0
+    failures: list[tuple[Path, str]] = []
     for path, data in snapshots.items():
         try:
             if path.is_file() and path.read_bytes() != data:
                 path.write_bytes(data)
                 restored += 1
-        except OSError:
-            continue
-    return restored
+        except OSError as error:
+            failures.append((path, str(error)))
+    return restored, failures
 
 
 def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
@@ -101,8 +122,11 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     非 check 路径中途失败时回滚本次已写入的格式化，不留「已格式化未暂存」残留。
     md_kx 缺失或非漂移类失败抛 MdFormatError（CLI 语义）。
     """
+    # 先统一规范相对路径（含 resolve 与越界检查），再判定黑名单：
+    # ./、../、绝对路径都无法绕过 archive 黑名单。
+    rels = [_canonical_rel(rel) for rel in rel_paths]
     # 黑名单先于缺二进制：拒绝归档路径不依赖本机是否安装 md_kx。
-    for rel in rel_paths:
+    for rel in rels:
         if _is_blacklisted(rel):
             raise MdFormatError(f"{rel} 在黑名单，拒绝格式化")
     executable = find_md_kx()
@@ -113,24 +137,16 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
             "一般已全局安装：uv tool install md-kx）；未装或不在 PATH 时用 "
             "`uv tool install md-kx` 安装，或把已装的 md_kx 加入 PATH。"
         )
-    # 越界路径防御（Issue #17）
-    for rel in rel_paths:
-        try:
-            resolved = (REPO_ROOT / rel).resolve()
-            if not resolved.is_relative_to(REPO_ROOT.resolve()):
-                raise MdFormatError(f"路径 {rel} 越过仓库边界，拒绝格式化")
-        except OSError as e:
-            raise MdFormatError(f"无法解析路径 {rel}：{e}") from e
 
     snapshots: dict[Path, bytes] = {}
     if not check:
-        for rel in rel_paths:
+        for rel in rels:
             path = REPO_ROOT / rel
             if path.is_file():
                 snapshots[path] = path.read_bytes()
     changed: list[str] = []
     try:
-        for rel in rel_paths:
+        for rel in rels:
             path = REPO_ROOT / rel
             if not path.is_file():
                 continue
@@ -157,7 +173,15 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
             if before != after:
                 changed.append(rel)
     except (MdFormatError, OSError, subprocess.SubprocessError) as error:
-        suffix = "；已回滚本次已格式化的文件" if _restore_snapshots(snapshots) else ""
+        restored, failures = _restore_snapshots(snapshots)
+        if failures:
+            details = "；".join(
+                f"{_rel(path)}: {reason}" for path, reason in failures
+            )
+            raise MdFormatError(
+                f"{error}；成功回滚 {restored}/{len(snapshots)} 条，未恢复：{details}"
+            ) from error
+        suffix = f"；已回滚本次已格式化的 {restored} 个文件" if restored else ""
         raise MdFormatError(f"{error}{suffix}") from error
     return changed
 
@@ -198,9 +222,6 @@ def main(argv: list[str] | None = None) -> None:
         if args.changed and args.all:
             raise MdFormatError("--changed 与 --all 互斥")
         if args.paths:
-            rejected = [p for p in args.paths if _is_blacklisted(p)]
-            if rejected:
-                raise MdFormatError(f"{', '.join(rejected)} 在黑名单，拒绝格式化")
             rels = args.paths
         elif args.changed:
             rels = collect_changed()

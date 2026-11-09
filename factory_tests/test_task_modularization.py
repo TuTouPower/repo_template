@@ -11,6 +11,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+from git_repo_support import get_controlled_git_env
 import task
 from repo_task import attempts, monitoring, scheduling
 
@@ -23,6 +24,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
         encoding="utf-8",
         errors="replace",
         check=True,
+        env=get_controlled_git_env(),
     )
 
 

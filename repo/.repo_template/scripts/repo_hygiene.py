@@ -2,7 +2,8 @@
 """repo_hygiene.py — repo-hygiene skill 的机械迁移动作执行器。
 
 把已闭环 / 已过时冷文稿迁入 docs/archive/ 的确定性文件操作交给脚本执行：
-  - archive-review：docs/reviews/review_*/ 整目录迁 docs/archive/reviews/（git mv）
+  - archive-review：docs/reviews/review_*/ 整目录迁 docs/archive/reviews/
+    （单次目录 move + git add -A，失败整目录回滚，不留部分状态）
 
 「哪些确认完结 / 过时」是语义裁定，属 skill 判断；本脚本只做动作。默认 dry-run，
 --write 才落盘。不 commit（commit 门禁在 skill）。
@@ -44,41 +45,31 @@ def _rel(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# archive-review（git mv 整目录）
+# archive-review（单次目录移动 + 统一 git add）
 # ---------------------------------------------------------------------------
-
-def _move_leftover(src: Path, dst: Path) -> None:
-    """git mv 只搬已跟踪文件；把源侧残留（gitignore 的 _meta/ 等）并入目标。"""
-    if not src.exists():
-        return
-    dst.mkdir(parents=True, exist_ok=True)
-    for item in sorted(src.iterdir(), key=lambda p: p.name):
-        dest = dst / item.name
-        if dest.exists():
-            if item.is_dir() and dest.is_dir():
-                _move_leftover(item, dest)
-                continue
-            raise HygieneError(f"残留与目标冲突：{_rel(item)}")
-        shutil.move(str(item), str(dest))
-    try:
-        src.rmdir()
-    except OSError as error:
-        raise HygieneError(f"源目录未清空 {_rel(src)}：{error}") from error
 
 
 def _move_dir(src: Path, dst: Path, write: bool) -> None:
     if dst.exists():
         raise HygieneError(f"目标已存在 {_rel(dst)}；不覆盖或合并")
-    if write:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        r = _git("mv", _rel(src), _rel(dst))
-        if r.returncode != 0:
-            raise HygieneError(f"git mv 失败：{r.stderr.strip()}")
-        if src.exists():
-            _move_leftover(src, dst)
-        print(f"已迁移：{_rel(src)} -> {_rel(dst)}")
-    else:
+    if not write:
         print(f"将迁移（dry-run）：{_rel(src)} -> {_rel(dst)}")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    # 整目录一次 move：要么全成功要么全失败，不产生「源与目标各留一部分」的中间状态。
+    # git mv 只搬 tracked 文件、需二次搬运 gitignore 残留；残留搬运失败时源与目标
+    # 会各留一部分且无回滚，下次运行因 dst.exists() 永久拒绝（DS L261）。
+    try:
+        shutil.move(str(src), str(dst))
+    except OSError as error:
+        raise HygieneError(f"移动目录失败：{error}") from error
+    # 用 git add -A 精确记录源删除与目标新增，让 Git 自动识别重命名；被 .gitignore
+    # 忽略的 _meta/ 等过程文件随目录一起移动但不会进入 index。
+    r = _git("add", "-A", "--", _rel(src), _rel(dst))
+    if r.returncode != 0:
+        shutil.move(str(dst), str(src))
+        raise HygieneError(f"git add -A 失败，已回滚目录：{r.stderr.strip()}")
+    print(f"已迁移：{_rel(src)} -> {_rel(dst)}")
 
 
 def cmd_archive_review(args: argparse.Namespace) -> None:

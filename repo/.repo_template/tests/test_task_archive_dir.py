@@ -1,7 +1,8 @@
-"""task.py 目录扫描与归档一致性。
+"""task.py 目录扫描与原位状态一致性。
 
 通过 monkeypatch 把 task.py 全局路径指向 tmp_path 下临时目录，
-不依赖真实仓库结构、不触发 git。
+不依赖真实仓库结构、不触发 git。task 状态（backlog/active/done/dropped）
+原位表达在 docs/tasks/，不迁入 archive。
 """
 import json
 import sys
@@ -43,6 +44,14 @@ def fake_repo(tmp_path):
 @pytest.fixture
 def repo_ctx(fake_repo):
     return RepoContext.for_root(fake_repo)
+
+
+def _docs_snapshot(root: Path) -> set[str]:
+    """docs/ 全树文件集合快照（含目录），用于验证只读命令零派生写入。"""
+    docs = root / "docs"
+    if not docs.is_dir():
+        return set()
+    return {p.relative_to(root).as_posix() for p in docs.rglob("*")}
 
 
 def _make_task(tasks_dir, tid, slug, status):
@@ -243,24 +252,30 @@ def test_close_task_in_place_drop(fake_repo, repo_ctx, monkeypatch):
 
 
 def test_list_is_readonly_and_never_writes_index(fake_repo, repo_ctx, capsys):
-    """A14：task 文件是唯一权威；list 只读，不生成任何派生索引文件。"""
+    """A14：task 文件是唯一权威；list 只读，不生成任何派生索引文件（DS L294）。"""
     import argparse
 
     _make_task(repo_ctx.tasks_dir, "t001", "alpha", "backlog")
+    before = _docs_snapshot(fake_repo)
     lifecycle.cmd_list(argparse.Namespace(status=None, ref=None, json=False, repo=repo_ctx))
     capsys.readouterr()
+    assert _docs_snapshot(fake_repo) == before
     assert not (fake_repo / "docs" / "tasks_index.json").exists()
+    assert not (fake_repo / "docs/archive/tasks_index.json").exists()
 
 
 def test_list_json_exports_to_stdout_without_writing(fake_repo, repo_ctx, capsys):
-    """A14：机器可读导出只到 stdout，不落盘。"""
+    """A14：机器可读导出只到 stdout，不落盘（DS L294）。"""
     import argparse
 
     _make_task(repo_ctx.tasks_dir, "t001", "alpha", "backlog")
+    before = _docs_snapshot(fake_repo)
     lifecycle.cmd_list(argparse.Namespace(status=None, ref=None, json=True, repo=repo_ctx))
     payload = json.loads(capsys.readouterr().out)
     assert [task["tid"] for task in payload["tasks"]] == ["t001"]
+    assert _docs_snapshot(fake_repo) == before
     assert not (fake_repo / "docs" / "tasks_index.json").exists()
+    assert not (fake_repo / "docs/archive/tasks_index.json").exists()
 
 
 def test_purge_tombstone_cleanup_failure_warns_and_completes_purge(fake_repo, repo_ctx, capsys, monkeypatch):

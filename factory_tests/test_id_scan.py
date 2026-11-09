@@ -15,6 +15,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+from git_repo_support import get_controlled_git_env
 from _id_scan import IdScanError, allocate, allocate_dir, scan_max_id
 import pending as pending_mod
 import findings as findings_mod
@@ -32,6 +33,7 @@ def _git(repo, *args):
         text=True,
         encoding="utf-8", errors="replace",
         check=True,
+        env=get_controlled_git_env(),
     )
 
 
@@ -501,7 +503,7 @@ def test_cli_rejects_missing_slug():
     assert exc.value.code == 2
 
 
-# ---------- rename ----------
+# ---------- 固定身份不变量：rename 命令已删除 ----------
 
 
 def test_pending_rename_command_is_removed(tmp_path, monkeypatch):
@@ -511,59 +513,12 @@ def test_pending_rename_command_is_removed(tmp_path, monkeypatch):
         pending_mod.main(["rename", "p001", "--slug", "renamed"])
 
 
-def test_findings_rename_dry_run_prints_target(tmp_path, monkeypatch, capsys):
+def test_findings_rename_command_is_removed(tmp_path, monkeypatch):
+    """固定身份不变量：findings 与 pending 一致，不提供 slug 改名接口。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    findings_mod.main(["new", "--slug", "demo"])
-    _git(repo, "add", "-A")
-
-    findings_mod.main(["rename", "d001", "--slug", "renamed"])
-
-    out = capsys.readouterr().out
-    assert "d001_demo.md" in out
-    assert "d001_renamed.md" in out
-    assert (repo / "docs/findings/d001_demo.md").is_file()
-    assert not (repo / "docs/findings/d001_renamed.md").exists()
-
-
-def test_findings_rename_writes(tmp_path, monkeypatch):
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    findings_mod.main(["new", "--slug", "demo"])
-    _git(repo, "add", "-A")
-
-    findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
-
-    renamed = repo / "docs/findings/d001_renamed.md"
-    assert renamed.is_file()
-    assert not (repo / "docs/findings/d001_demo.md").exists()
-
-
-def test_findings_rename_untracked_entry_uses_plain_rename(tmp_path, monkeypatch):
-    """findings 的 rename 对未入库条目退化为普通改名。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    findings_mod.main(["new", "--slug", "demo"])
-
-    findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
-
-    renamed = repo / "docs/findings/d001_renamed.md"
-    assert renamed.is_file()
-    assert not (repo / "docs/findings/d001_demo.md").exists()
-
-
-def test_findings_rename_rejects_duplicated_id(tmp_path, monkeypatch):
-    """同号多文件时 findings rename 拒绝并列出全部候选路径。"""
-    repo = _init_repo(tmp_path)
-    _bind(monkeypatch, repo)
-    findings_mod.main(["new", "--slug", "demo"])
-    (repo / "docs/findings/d001_extra.md").write_text("# d001\n", encoding="utf-8")
-
-    with pytest.raises(SystemExit) as exc:
-        findings_mod.main(["rename", "d001", "--slug", "final", "--write"])
-    message = str(exc.value)
-    assert "d001_demo.md" in message
-    assert "d001_extra.md" in message
+    with pytest.raises(SystemExit):
+        findings_mod.main(["rename", "d001", "--slug", "renamed", "--write"])
 
 
 # ---------- spikes 目录条目支持 ----------
@@ -775,6 +730,98 @@ def test_migrate_legacy_reports_other_sources_blocking(tmp_path, monkeypatch):
         pending_mod.main(["new", "--slug", "demo"])
 
 
+def test_pending_migrate_legacy_splits_and_unblocks_allocation(tmp_path, monkeypatch):
+    """P1-11：pending migrate-legacy 真实可用，迁移后分配不再被旧总账阻断。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/pending.md").write_text(
+        "# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "legacy pending")
+
+    with pytest.raises(SystemExit, match="migrate-legacy"):
+        pending_mod.main(["new", "--slug", "blocked"])
+
+    pending_mod.main(["migrate-legacy", "--write"])
+    migrated = repo / "docs/pending/p047_cli.md"
+    assert migrated.is_file()
+    fm, _ = pending_mod.parse_pending_file(migrated)
+    assert fm == {"pid": "p047", "slug": "cli", "status": "todo"}
+    assert not (repo / "docs/pending.md").exists()
+
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "migrate legacy pending")
+    pending_mod.main(["new", "--slug", "next"])
+    assert (repo / "docs/pending/p048_next.md").is_file()
+
+
+def test_pending_migrate_legacy_dry_run_is_read_only(tmp_path, monkeypatch, capsys):
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/pending.md").write_text("# 待办\n\n### p001 old\n", encoding="utf-8")
+    before = (repo / "docs/pending.md").read_bytes()
+
+    pending_mod.main(["migrate-legacy"])
+
+    assert "dry-run" in capsys.readouterr().err
+    assert (repo / "docs/pending.md").read_bytes() == before
+    assert not (repo / "docs/pending/p001_old.md").exists()
+
+
+def test_migrate_legacy_rejects_same_number_occupied(tmp_path, monkeypatch):
+    """同号不同 slug 的既有条目也必须阻断，否则生成同号多文件（DS L253）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/findings").mkdir(parents=True)
+    (repo / "docs/findings/d012_other.md").write_text("# d012 既有\n", encoding="utf-8")
+    (repo / "docs/findings.md").write_text(
+        "# 发现\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit, match="已有条目文件"):
+        findings_mod.main(["migrate-legacy", "--write"])
+    assert not (repo / "docs/findings/d012_uv_lock.md").exists()
+    assert (repo / "docs/findings.md").is_file()
+
+
+def test_migrate_legacy_cleans_up_on_format_failure(tmp_path, monkeypatch):
+    """格式化失败时已写入 target 必须清理，避免重试永久中止（DS L253）。"""
+    from md_format import MdFormatError
+
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/findings.md").write_text(
+        "# 发现\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
+    )
+
+    def fail_format(_path):
+        raise MdFormatError("simulated format failure")
+
+    monkeypatch.setattr(findings_mod, "format_file", fail_format)
+    with pytest.raises(SystemExit, match="simulated format failure"):
+        findings_mod.main(["migrate-legacy", "--write"])
+    assert not (repo / "docs/findings/d012_uv_lock.md").exists()
+    assert (repo / "docs/findings.md").is_file()
+
+
+def test_migrate_legacy_keeps_all_heading_levels(tmp_path, monkeypatch):
+    """旧总账含 # d013 / ###### d014 时不得静默丢条目（DS L254）。"""
+    repo = _init_repo(tmp_path)
+    _bind(monkeypatch, repo)
+    (repo / "docs/findings.md").write_text(
+        "# 发现\n\n# d013 first level\n\n- 现状：有效\n\n"
+        "###### d014 sixth level\n\n- 现状：有效\n",
+        encoding="utf-8",
+    )
+
+    findings_mod.main(["migrate-legacy", "--write"])
+    assert (repo / "docs/findings/d013_first_level.md").is_file()
+    assert (repo / "docs/findings/d014_sixth_level.md").is_file()
+    assert not (repo / "docs/findings.md").exists()
+
+
 # ---------- 分支内 active/archive 同号迁移残留 ----------
 
 
@@ -833,6 +880,35 @@ def test_close_missing_explanation_is_rejected(tmp_path, monkeypatch, capsys, re
     assert failure.value.code == 2
     assert "--reason" in capsys.readouterr().err
     assert source.read_bytes() == original
+
+
+def _allocate_worker(repo_str: str, slug: str) -> str:
+    """进程池 worker：跨进程调用 allocate，验证 id_lock 的互斥取号。"""
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    from _id_scan import allocate
+
+    repo = Path(repo_str)
+    return allocate(
+        repo,
+        prefix="p",
+        dirs=PENDING_DIRS,
+        target_dir=repo / "docs/pending",
+        slug=slug,
+        body="# {id}\n",
+    ).name
+
+
+def test_concurrent_allocation_yields_unique_ids(tmp_path):
+    """并发 worker 不会撞号：编号连续、文件名唯一、每个条目都落盘。"""
+    repo = _init_repo(tmp_path)
+    slugs = [f"worker_{index:02d}" for index in range(8)]
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        names = list(pool.map(_allocate_worker, [str(repo)] * len(slugs), slugs))
+
+    assert len(set(names)) == len(slugs)
+    assert sorted(int(name[1:4]) for name in names) == list(range(1, len(slugs) + 1))
+    for name in names:
+        assert (repo / "docs/pending" / name).is_file()
 
 
 def test_allocate_dir_rejects_paths_escaping_target(tmp_path, monkeypatch):

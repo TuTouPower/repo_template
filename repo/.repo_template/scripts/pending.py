@@ -20,6 +20,10 @@
   python3 .repo_template/scripts/pending.py park pNNN ... --reason "..." [--write]
   python3 .repo_template/scripts/pending.py revive pNNN ... [--write]
   python3 .repo_template/scripts/pending.py close pNNN ... --reason "..." [--fix-ref REF] [--resolution RES] [--write]
+  python3 .repo_template/scripts/pending.py migrate-legacy [--write]
+
+旧仓残留 docs/pending.md 单文件总账时，先用 migrate-legacy 显式拆成一条目一文件，
+提交迁移结果后再分配新编号；编号分配本身不解析旧正文。
 """
 
 from __future__ import annotations
@@ -35,7 +39,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _id_scan import (
     IdScanError,
     allocate,
+    apply_legacy_migration,
+    canonical_entry_id,
+    entry_file_pattern,
     id_lock,
+    parse_entry_file_name,
+    plan_legacy_migration,
     slug_from_title,
     SLUG_RE,
 )
@@ -46,8 +55,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREFIX = "p"
 PENDING_DIR = REPO_ROOT / "docs/pending"
 SCAN_DIRS = ("docs/pending",)
-ID_RE = re.compile(r"^p([0-9]{3,})$")
-ENTRY_FILE_RE = re.compile(r"^p([0-9]{3,})_([a-z0-9_]+)\.md$")
+LEDGER_REL = "docs/pending.md"
+ID_RE = re.compile(r"^p(0[0-9]{2}|[1-9][0-9]{2,})$")
+ENTRY_FILE_RE = re.compile(entry_file_pattern(PREFIX))
 HANDLE_RE = re.compile(r"^[ \t]*-[ \t]*处理[ \t]*[:：].*$")
 PARKED_RE = re.compile(r"^[ \t]*-[ \t]*暂搁[ \t]*[:：].*$")
 
@@ -121,11 +131,11 @@ def validate_pending_front_matter(
         raise IdScanError(f"{src_prefix}slug 非法（须 snake_case）：{slug!r}")
 
     if filename is not None:
-        file_match = ENTRY_FILE_RE.match(filename)
-        if not file_match:
+        parsed = parse_entry_file_name(PREFIX, filename)
+        if parsed is None:
             raise IdScanError(f"{src_prefix}文件名不符合规范 pNNN_slug.md：{filename}")
-        fn_pid = f"p{int(file_match.group(1)):03d}"
-        fn_slug = file_match.group(2)
+        fn_pid = canonical_entry_id(PREFIX, parsed[0])
+        fn_slug = parsed[1]
         if pid != fn_pid:
             raise IdScanError(f"{src_prefix}元数据 pid ({pid}) 与文件名编号 ({fn_pid}) 不一致")
         if slug != fn_slug:
@@ -212,7 +222,11 @@ def find_entry(number: int) -> tuple[str, Path]:
     """在 docs/pending 中定位条目，返回 (status, path)。"""
     if not PENDING_DIR.is_dir():
         raise IdScanError(f"未找到 p{number:03d}（{_rel(PENDING_DIR)} 目录不存在）")
-    hits = sorted(PENDING_DIR.glob(f"p{number:03d}_*.md"))
+    hits = sorted(
+        path
+        for path in PENDING_DIR.glob("*.md")
+        if (parsed := parse_entry_file_name(PREFIX, path.name)) and parsed[0] == number
+    )
     if not hits:
         raise IdScanError(f"未找到 p{number:03d}")
     if len(hits) > 1:
@@ -256,6 +270,7 @@ def cmd_new(args: argparse.Namespace) -> None:
             slug=slug,
             body=body,
             formatter=format_file,
+            migration="python3 .repo_template/scripts/pending.py migrate-legacy",
         )
     except (IdScanError, MdFormatError) as error:
         sys.exit(f"错误: {error}")
@@ -268,7 +283,7 @@ def cmd_list(args: argparse.Namespace) -> None:
         return
     rows: list[tuple[str, str, str]] = []
     for path in sorted(PENDING_DIR.glob("*.md")):
-        if not ENTRY_FILE_RE.match(path.name):
+        if parse_entry_file_name(PREFIX, path.name) is None:
             continue
         fm, body = parse_pending_file(path)
         status = fm["status"]
@@ -443,6 +458,40 @@ def cmd_close(args: argparse.Namespace) -> None:
     _apply_state_updates(args.write, plan, note=note)
 
 
+def _render_pending_entry(entry_id: str, slug: str, title: str, body: str) -> str:
+    """把旧总账条目渲染成符合 pending 严格 front matter 的新条目。"""
+    fm = {"pid": entry_id, "slug": slug, "status": "todo"}
+    heading = f"# {entry_id} {title}".rstrip()
+    return dump_pending_front_matter(fm) + f"{heading}\n\n{body}\n"
+
+
+def cmd_migrate_legacy(args: argparse.Namespace) -> None:
+    """把当前工作区旧 docs/pending.md 拆成一条目一文件；默认 dry-run。"""
+    try:
+        items = plan_legacy_migration(
+            REPO_ROOT, prefix=PREFIX, ledger_rel=LEDGER_REL, target_dir=PENDING_DIR
+        )
+    except IdScanError as error:
+        sys.exit(f"错误: {error}")
+    if not args.write:
+        sys.stderr.write("dry-run；以下为拟定迁移，加 --write 落盘。\n")
+        for item in items:
+            sys.stderr.write(f"  {item.entry_id} {item.title} -> {_rel(item.target)}\n")
+        return
+    try:
+        created = apply_legacy_migration(
+            items,
+            repo_root=REPO_ROOT,
+            prefix=PREFIX,
+            ledger_rel=LEDGER_REL,
+            render=_render_pending_entry,
+            formatter=format_file,
+        )
+    except (IdScanError, MdFormatError) as error:
+        sys.exit(f"错误: {error}")
+    print(f"已迁移 {len(created)} 条 -> docs/pending/；来源 docs/pending.md 已移除")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="待办条目分配与状态管理")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -484,6 +533,10 @@ def main(argv: list[str] | None = None) -> None:
     close_parser.add_argument("--reason", required=True, help="必填备注：处理结果与闭环依据，不能只填空白")
     close_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
     close_parser.set_defaults(func=cmd_close)
+
+    migrate_parser = sub.add_parser("migrate-legacy", help="把旧单文件总账拆成一条目一文件")
+    migrate_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
+    migrate_parser.set_defaults(func=cmd_migrate_legacy)
 
     args = parser.parse_args(argv)
     if args.command == "new":

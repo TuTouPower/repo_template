@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from git_repo_support import get_controlled_git_env
+
 FACTORY_DIR = Path(__file__).resolve().parent
 FACTORY_ROOT = FACTORY_DIR.parent
 TEMPLATE_SOURCE = FACTORY_ROOT / "repo/.repo_template"
@@ -22,6 +24,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
         encoding="utf-8",
         errors="replace",
         check=True,
+        env=get_controlled_git_env(),
     )
 
 
@@ -48,6 +51,7 @@ def _run_spikes(repo: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=get_controlled_git_env(),
     )
 
 
@@ -154,3 +158,21 @@ def test_factory_spikes_cli_complete_fail_closed_without_front_matter(tmp_path: 
     res = _run_spikes(repo, "complete", "s001")
     assert res.returncode != 0
     assert "YAML front matter" in res.stderr
+
+
+def test_factory_spikes_cli_ignores_non_canonical_padding(tmp_path: Path):
+    """s0001_bad 非规范 padding 不得被 list/find 识别（DS L258）。"""
+    repo = _init_repo(tmp_path)
+    bad = repo / "docs/spikes/s0001_bad"
+    bad.mkdir(parents=True)
+    (bad / "report.md").write_text(
+        '---\nsid: "s001"\nslug: "bad"\nstatus: "active"\n---\n# Spike\n',
+        encoding="utf-8",
+    )
+
+    listed = _run_spikes(repo, "list", "--state", "all")
+    assert "s0001_bad" not in listed.stdout
+
+    completed = _run_spikes(repo, "complete", "s001")
+    assert completed.returncode != 0
+    assert "未找到 spike" in completed.stderr
