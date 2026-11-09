@@ -248,9 +248,11 @@ def batch_object_sizes(
 def default_branch(
     root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> str:
-    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → 本地唯一非 task 分支。
+    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master →
+    当前 HEAD（非 task 分支）→ 本地唯一非 task 分支。
 
-    全部来源落空时抛 TaskDataError，不兜底返回 main。
+    全部来源落空时抛 TaskDataError，不兜底返回 main。当前 HEAD 探测兼容
+    尚未产生首个 commit 的 init 仓库（refs/heads/main 还不存在）。
     """
     if root is None and repo is None:
         raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
@@ -266,6 +268,11 @@ def default_branch(
     for name in ("main", "master"):
         if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], root=root).returncode == 0:
             return name
+    r = _git(["symbolic-ref", "--quiet", "--short", "HEAD"], root=root)
+    if r.returncode == 0 and r.stdout.strip():
+        name = r.stdout.strip()
+        if not ctx.TASK_BRANCH_RE.fullmatch(name):
+            return name
     branches = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads"], root=root)
     if branches.returncode == 0:
         non_task = [
@@ -276,7 +283,7 @@ def default_branch(
             return non_task[0]
     raise ctx.TaskDataError(
         "无法确定主干分支；已尝试来源：origin/HEAD、init.defaultBranch（且本地分支存在）、"
-        "本地 main/master、本地唯一非 task 分支。"
+        "本地 main/master、当前 HEAD（非 task 分支）、本地唯一非 task 分支。"
         "请运行 `git remote set-head origin --auto` 或 "
         "`git config init.defaultBranch <name>` 后重试"
     )
