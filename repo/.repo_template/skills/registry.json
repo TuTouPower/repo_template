@@ -25,7 +25,7 @@
     "task-create": {
       "role": "public"
     },
-    "task-from-pending": {
+    "pending-to-task": {
       "role": "public"
     },
     "task-integrate": {
@@ -60,11 +60,11 @@
       "child": "task-integrate"
     },
     {
-      "parent": "task-from-pending",
+      "parent": "pending-to-task",
       "child": "bug-to-pending"
     },
     {
-      "parent": "task-from-pending",
+      "parent": "pending-to-task",
       "child": "task-create"
     },
     {

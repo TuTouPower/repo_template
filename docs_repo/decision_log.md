@@ -81,6 +81,7 @@
 | L64 | 状态行写入缺少宿主身份与渲染闭环 | 同上；修订 L46 的无条件写入部分 | 默认不写绑定；显式 --session-id 才启用，session 与 owner 分开；提供 render/resolve，消费方负责宿主配置，不修改 settings | `repo_task/{control,statusline,cli}.py`、`track_worktree.py` | 已实现，宿主未联调 |
 | L65 | 依赖错误压平、handoff 校验重复与原始字节哈希 | 同上 | 共享 handoff 契约，保留查询失败/坏数据/歧义原因；核心资产按 Git clean/EOL 语义比较 | `repo_task/{handoff,integration,monitoring}.py` | 已实现，未运行测试 |
 | L66 | 消费仓备份、大文件等不入库用户文件无落点；`data/` 是项目运行目录且可被清理 | 用户裁定（2026-11-10） | 新增仓库根 `local/`：gitignore、只属于用户；`repo_cleanup` 任何类别不进入不删除；worktree `.env` 扫描不进入，需要时经 `.worktreeinclude` 显式链接；隐私超限提示改指 `local/`，不再指向 `docs/archive/` | `repo/{.gitignore,AGENTS.md,.worktreeinclude}`、`repo_cleanup.py`、`repo_task/{worktrees,privacy}.py`、`usage.md`、`repo-cleanup` skill | 已实现，未运行测试 |
+| L67 | `task-from-pending` 只表达来源，未表达「转为 task」的目标 | 用户提出（2026-11-10） | 更名 `pending-to-task`，同步 canonical skill、registry、命令薄层、宿主软链与使用文档；历史记录保留原名 | `.repo_template/skills/pending-to-task/`、`registry.json`、`.opencode/commands/`、`.agents/skills/`、`.claude/skills/` | 已实现 |
 
 
 ## 未闭环

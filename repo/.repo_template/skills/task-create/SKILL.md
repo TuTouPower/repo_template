@@ -28,4 +28,4 @@ metadata:
 
 - 不实现、不 start、不 finish。
 - 只写本批 task 目录。
-- bug 分析走 `bug-to-pending`；pending 转 task 走 `task-from-pending`。
+- bug 分析走 `bug-to-pending`；pending 转 task 走 `pending-to-task`。

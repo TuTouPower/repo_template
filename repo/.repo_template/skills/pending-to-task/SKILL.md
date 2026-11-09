@@ -1,12 +1,12 @@
 ---
-name: task-from-pending
+name: pending-to-task
 description: 把 docs/pending/ 中仍有效、值得实施的条目聚合成 backlog task，并闭环已转办条目。用户要求从 pending 立项或批量转办待办时调用。
 disable-model-invocation: true
 metadata:
   opencode/autoinvoke: "false"
 ---
 
-# task-from-pending
+# pending-to-task
 
 将 `docs/pending/` 中仍有效、值得实施的条目聚合成 backlog task，并闭环已转办条目。
 

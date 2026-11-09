@@ -75,7 +75,7 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 |`repo-template-sync`|用户入口|
 |`repo-template-sync-core`|内部正文流程|
 |`task-create`|用户入口|
-|`task-from-pending`|用户入口|
+|`pending-to-task`|用户入口|
 |`task-integrate`|内部正文流程|
 |`task-merge`|用户入口|
 |`task-preflight`|用户入口|
@@ -88,8 +88,8 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 |---|---|
 |`task-run`|`task-work`|
 |`task-run`|`task-integrate`|
-|`task-from-pending`|`bug-to-pending`|
-|`task-from-pending`|`task-create`|
+|`pending-to-task`|`bug-to-pending`|
+|`pending-to-task`|`task-create`|
 |`pending-record`|`bug-to-pending`|
 |`bug-to-pending`|`task-create`|
 |`repo-template-sync`|`repo-template-sync-core`|

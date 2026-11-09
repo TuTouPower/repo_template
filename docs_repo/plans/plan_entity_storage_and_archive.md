@@ -312,7 +312,7 @@ Git 历史不重写。已经 integrated 的实现、review、handoff 和 ledger 
 |`repo/AGENTS.md`|更新实体固定路径、正式状态及写权不变量|
 |`repo/.repo_template/docs/usage.md`|CLI、数据迁移、工具链写权及 skill 调用的唯一用法定义|
 |`architecture.md`、`recovery.md`、`sync.md`|分别维护机制、故障恢复及升级切换规则|
-|`pending-record`、`pending-fix`、`task-from-pending`、`bug-to-pending`、`task-work`、`task-integrate`、`repo-hygiene` 等 skill|改用新状态接口，删除搬目录剧本，不扩大授权|
+|`pending-record`、`pending-fix`、`pending-to-task`、`bug-to-pending`、`task-work`、`task-integrate`、`repo-hygiene` 等 skill|改用新状态接口，删除搬目录剧本，不扩大授权|
 |registry 与宿主生成入口|从实际生成源更新 description、调用约定与导航，重新生成并核对 diff|
 
 查找不到的模块名以实际调用链定位，不为与表格对齐创建空模块。旧 `ARCHIVED_STATUSES` 若表达任务终态，改为准确的终态名称；不得把终态判断与归档目录继续绑在一起。
