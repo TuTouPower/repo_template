@@ -20,6 +20,7 @@ from typing import Any
 FACTORY_TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = FACTORY_TESTS_DIR.parent
 TEMPLATE_DIR = REPO_ROOT / "repo" / ".repo_template"
+PRODUCT_ROOT = REPO_ROOT / "repo"
 SCRIPTS_DIR = TEMPLATE_DIR / "scripts"
 TASK_TEMPLATE_DIR = TEMPLATE_DIR / "docs" / "task_template"
 
@@ -235,6 +236,47 @@ def build_sync_source_seed(seed_dir: Path) -> Path:
     finally:
         if empty_template.exists():
             shutil.rmtree(empty_template)
+
+
+def build_full_product_tree_repo(dst: Path) -> Path:
+    """把完整产物树 ``repo/`` 复制为独立消费仓并初始化 Git（P0-1 回归专用）。
+
+    既有种子仓只复制 ``scripts/`` + ``docs/task_template``，不含
+    ``.repo_template/tests/``、``hooks/``、``docs/``、``AGENTS.md`` 等随硬同步
+    分发并被 Git 跟踪的文件，因而无法暴露「模板自带测试夹具命中隐私门禁」。
+    本 helper 显式提供完整产物树布局；不改变任何既有种子仓的默认行为，
+    也不注册 session fixture，故不拖慢全量测试。
+    """
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(
+        PRODUCT_ROOT, dst, symlinks=True,
+        ignore=shutil.ignore_patterns(".git", ".scratch", "__pycache__", "*.pyc", ".pytest_cache"),
+    )
+
+    task_dir = dst / "docs" / "tasks" / "t001_alpha"
+    shutil.copytree(TASK_TEMPLATE_DIR, task_dir)
+    _, body = parse_front_matter(TASK_TEMPLATE_DIR / "progress.md")
+    write_front_matter(
+        task_dir / "progress.md",
+        {
+            "tid": "t001", "slug": "alpha", "title": "alpha", "status": "backlog",
+            "branch": "", "worktree": "", "review_level": "full",
+            "diff_anchor": "", "note": "",
+        },
+        body,
+    )
+    (task_dir / "task.md").write_text(valid_spec(), encoding="utf-8")
+    configure_project_verification(dst)
+
+    git_run(dst, "init", "-b", "main")
+    git_run(dst, "config", "user.email", "test@example.com")
+    git_run(dst, "config", "user.name", "test")
+    git_run(dst, "config", "commit.gpgsign", "false")
+    git_run(dst, "config", "gc.auto", "0")
+    git_run(dst, "add", "-A")
+    git_run(dst, "commit", "-m", "init")
+    return dst
 
 
 def validate_seed(seed: Path) -> None:

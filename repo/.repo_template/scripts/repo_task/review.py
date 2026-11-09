@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .context import PROGRESS_FILE, TaskDataError
+from .context import FenceState, PROGRESS_FILE, TaskDataError
 from .documents import extract_ac_statuses, parse_front_matter as _parse_front_matter
 from .privacy import scan_text_privacy_leaks
 
@@ -19,9 +19,6 @@ REVIEW_SCOPE_RE = re.compile(
 REVIEW_SCOPE_HINT_RE = re.compile(r"reviewed_scope", re.IGNORECASE)
 ROUND_HEADER_RE = re.compile(r"^##\s+Round\s+([0-9]+)(?:\s|$)", re.MULTILINE)
 H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
-FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
-# 闭栏须为裸围栏（无 info string）；fence 内带 info 的围栏行是内容，不是提前闭栏。
-FENCE_CLOSE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})[ \t]*$")
 FINDING_RE = re.compile(r"^(t[0-9]+)_(?:code|test|gen)_f[0-9]+$")
 # AC 复验行（J2/J3）：`- AC-NNN：TICK-VALID|TICK-VOID，re_verified|trust_prior。<证据>`。
 # 冒号、逗号接受全角与半角；允许 AC 编号与标签带反引号 / 加粗修饰；证据文字不解析。
@@ -51,24 +48,12 @@ def read(path: Path) -> str:
 def visible_markdown_lines(text: str) -> list[str]:
     """移除 fenced code 与 blockquote，保留可参与结构解析的正文行。
 
-    围栏规则与 repo_task.documents 一致：开栏可带 info string，闭栏须为裸围栏
-    且宽度 >= 开栏；fence 内带 info string 的围栏行是内容，不提前闭合代码块。
+    围栏规则统一委托 ctx.FenceState（与 documents/render_review_prompts 同源）。
     """
     lines = []
-    fence_marker = None
+    fence = FenceState()
     for line in text.splitlines():
-        if fence_marker is not None:
-            close = FENCE_CLOSE_RE.match(line)
-            if (
-                close
-                and close.group(1)[0] == fence_marker[0]
-                and len(close.group(1)) >= fence_marker[1]
-            ):
-                fence_marker = None
-            continue
-        fence = FENCE_RE.match(line)
-        if fence:
-            fence_marker = (fence.group(1)[0], len(fence.group(1)))
+        if fence.feed(line):
             continue
         if line.lstrip().startswith(">"):
             continue

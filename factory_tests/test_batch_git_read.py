@@ -15,11 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from git_repo_support import get_controlled_git_env, git_run
 from repo_task import context as ctx
 from repo_task.git_ops import (
     _git_bytes,
+    _parse_batch_check_output,
     _parse_cat_file_batch_output,
     batch_cat_file,
+    batch_object_sizes,
 )
 from repo_task.integration import _materialize_task_dir_from_ref, _validate_task_dir_tree_modes
 from repo_task.store import (
@@ -129,17 +132,22 @@ def test_parse_extra_trailing_bytes():
 def sample_repo(tmp_path):
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    subprocess.run(["git", "-C", str(repo_dir), "init", "-b", "main"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(repo_dir), "config", "user.name", "Test"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(repo_dir), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+    git_run(repo_dir, "init", "-b", "main")
+    git_run(repo_dir, "config", "user.name", "Test")
+    git_run(repo_dir, "config", "user.email", "test@example.com")
+    git_run(repo_dir, "config", "commit.gpgsign", "false")
     return repo_dir
 
 
 def _hash_object(repo_dir: Path, content: bytes, write: bool = True) -> str:
-    cmd = ["git", "-C", str(repo_dir), "hash-object", "--stdin"]
+    cmd = ["hash-object", "--stdin"]
     if write:
         cmd.append("-w")
-    res = subprocess.run(cmd, input=content, capture_output=True, check=True)
+    res = subprocess.run(
+        ["git", "-C", str(repo_dir), *cmd],
+        input=content, capture_output=True, check=True,
+        env=get_controlled_git_env(),
+    )
     return res.stdout.strip().decode("ascii")
 
 
@@ -211,6 +219,42 @@ def test_batch_cat_file_rejects_newlines_in_oid(sample_repo):
 
 
 # ==============================================================================
+# 2b. batch_object_sizes 与 batch-check 严格解析（隐私扫描大小预过滤）
+# ==============================================================================
+
+
+def test_batch_object_sizes_normal_empty_and_duplicates(sample_repo):
+    assert batch_object_sizes([], root=sample_repo) == {}
+    oid = _hash_object(sample_repo, b"12345")
+    assert batch_object_sizes([oid, oid], root=sample_repo) == {oid: 5}
+
+
+def test_batch_object_sizes_chunking(sample_repo):
+    oids, contents = [], {}
+    for i in range(10):
+        content = f"content_size_{i}\n".encode()
+        oid = _hash_object(sample_repo, content)
+        oids.append(oid)
+        contents[oid] = len(content)
+    assert batch_object_sizes(oids, root=sample_repo, batch_size=3) == contents
+
+
+def test_batch_object_sizes_missing_fails_closed(sample_repo):
+    missing = "0123456789abcdef0123456789abcdef01234567"
+    with pytest.raises(ctx.TaskDataError, match="对象缺失"):
+        batch_object_sizes([missing], root=sample_repo)
+
+
+def test_parse_batch_check_rejects_bad_header_and_trailing_bytes():
+    with pytest.raises(ctx.TaskDataError, match="头部格式非法"):
+        _parse_batch_check_output(b"nonsense\n", ["oid1"])
+    with pytest.raises(ctx.TaskDataError, match="size 非法"):
+        _parse_batch_check_output(b"oid1 blob nope\n", ["oid1"])
+    with pytest.raises(ctx.TaskDataError, match="多余未解析数据"):
+        _parse_batch_check_output(b"oid1 blob 3\njunk\n", ["oid1"])
+
+
+# ==============================================================================
 # 3. store.py 快照与批量读取集成测试
 # ==============================================================================
 
@@ -246,8 +290,8 @@ def repo_with_tasks(sample_repo):
         "---\ntid: t003\nslug: old\nstatus: done\n---\n# t003 archive body\n", encoding="utf-8"
     )
 
-    subprocess.run(["git", "-C", str(sample_repo), "add", "-A"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(sample_repo), "commit", "-m", "init tasks"], check=True, capture_output=True)
+    git_run(sample_repo, "add", "-A")
+    git_run(sample_repo, "commit", "-m", "init tasks")
     return repo_context
 
 
@@ -289,10 +333,7 @@ def test_load_owner_task_at_ref(repo_with_tasks):
 
 def test_resolve_baseline_spec_text_batch(repo_with_tasks):
     repo = repo_with_tasks
-    head_sha = subprocess.run(
-        ["git", "-C", str(repo.root), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    head_sha = git_run(repo.root, "rev-parse", "HEAD").stdout.strip()
 
     text, source_sha = resolve_baseline_spec_text(
         "t001", "docs/tasks/t001_first/task.md", head_sha, repo=repo
@@ -314,8 +355,8 @@ def test_materialize_task_dir_from_ref_batch(repo_with_tasks, tmp_path):
     script = repo.root / "docs" / "tasks" / "t001_first" / "run.sh"
     script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
     script.chmod(0o755)
-    subprocess.run(["git", "-C", str(repo.root), "add", "-A"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(repo.root), "commit", "-m", "add executable script"], check=True, capture_output=True)
+    git_run(repo.root, "add", "-A")
+    git_run(repo.root, "commit", "-m", "add executable script")
 
     _materialize_task_dir_from_ref("HEAD", "docs/tasks/t001_first", dest_worktree, repo=repo)
 

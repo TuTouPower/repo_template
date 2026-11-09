@@ -162,6 +162,89 @@ def batch_cat_file(
 
     return {oid: parsed_all[oid] for oid in oid_list}
 
+
+def _parse_batch_check_output(
+    stdout: bytes, expected_oids: Sequence[str]
+) -> dict[str, int]:
+    """解析 ``git cat-file --batch-check`` 输出（<oid> <type> <size> 或 <oid> missing）。"""
+    results: dict[str, int] = {}
+    pos = 0
+    total_len = len(stdout)
+    for idx, expected_oid in enumerate(expected_oids):
+        if pos >= total_len:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch-check 输出截断：第 {idx + 1} 项处 EOF"
+            )
+        newline_idx = stdout.find(b"\n", pos)
+        if newline_idx == -1:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch-check 第 {idx + 1} 项头部缺少换行符"
+            )
+        header = stdout[pos:newline_idx].decode("utf-8", errors="replace")
+        pos = newline_idx + 1
+        parts = header.split()
+        if len(parts) == 2 and parts[1] == "missing":
+            raise ctx.TaskDataError(f"git 对象缺失：{expected_oid}")
+        if len(parts) != 3:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch-check 头部格式非法：{header!r}"
+            )
+        try:
+            size = int(parts[2])
+            if size < 0:
+                raise ValueError
+        except ValueError:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch-check size 非法：{header!r}"
+            )
+        results[expected_oid] = size
+    if pos < total_len:
+        raise ctx.TaskDataError(
+            f"git cat-file --batch-check 产生多余未解析数据：剩余 {total_len - pos} 字节"
+        )
+    return results
+
+
+def batch_object_sizes(
+    oids: Sequence[str],
+    *,
+    root: Path | None = None,
+    repo: "ctx.RepoContext | None" = None,
+    timeout: int = 60,
+    batch_size: int = 1000,
+) -> dict[str, int]:
+    """批量读取对象大小（不读内容），供隐私扫描在 cat-file 前做大小预过滤。
+
+    缺失对象直接抛 TaskDataError（已跟踪对象不应缺失，fail-closed）。
+    """
+    if root is None and repo is None:
+        raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
+    oid_list = list(oids)
+    if not oid_list:
+        return {}
+    for oid in oid_list:
+        if "\n" in oid or "\r" in oid:
+            raise ctx.TaskDataError(f"非法对象 ID：{oid!r}")
+    unique_oids = list(dict.fromkeys(oid_list))
+    all_sizes: dict[str, int] = {}
+    for i in range(0, len(unique_oids), batch_size):
+        chunk = unique_oids[i : i + batch_size]
+        input_bytes = b"".join(oid.encode("utf-8") + b"\n" for oid in chunk)
+        r = _git_bytes(
+            ["cat-file", "--batch-check"],
+            input=input_bytes,
+            root=root,
+            repo=repo,
+            timeout=timeout,
+        )
+        if r.returncode != 0:
+            raise ctx.TaskDataError(
+                f"git cat-file --batch-check 失败：{r.stderr.decode('utf-8', errors='replace').strip()}"
+            )
+        all_sizes.update(_parse_batch_check_output(r.stdout, chunk))
+    return {oid: all_sizes[oid] for oid in oid_list}
+
+
 def default_branch(
     root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> str:

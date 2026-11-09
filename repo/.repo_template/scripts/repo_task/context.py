@@ -56,12 +56,14 @@ class RepoContext:
 
     @classmethod
     def from_code_location(cls, code_file: Path | str) -> "RepoContext":
-        """入口脚本/模块所在工作区：自动识别主工作区。"""
+        """入口脚本/模块所在工作区：由 .repo_template 祖先定位；未命中即显式报错。"""
         resolved = Path(code_file).resolve()
         for parent in (resolved, *resolved.parents):
             if parent.name == ".repo_template":
                 return cls.for_root(parent.parent)
-        return cls.for_root(resolved.parents[3] if len(resolved.parents) > 3 else resolved.parent)
+        raise TaskDataError(
+            f"无法从 {code_file} 定位 .repo_template 祖先；请显式指定仓库根（--root）"
+        )
 
     @property
     def name(self) -> str:
@@ -125,6 +127,37 @@ H3_RE = re.compile(r"^ {0,3}###[ \t]+(.+?)[ \t]*$")
 LIST_ITEM_RE = re.compile(r"^ {0,3}-[ \t]+(.+)$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+
+
+class FenceState:
+    """Markdown fenced code 状态机：仓库内唯一的 fence 规则实现。
+
+    开栏用 ``FENCE_RE``（行首 0-3 空格 + 反引号/波浪号围栏），闭栏用
+    ``FENCE_CLOSE_RE``（裸围栏、同字符、宽度 >= 开栏）。围栏内带 info string
+    的围栏行是内容，不提前闭合代码块。``feed`` 返回该行是否属于 fenced code
+    （含开栏与闭栏行本身）；各消费方据此决定是否纳入结构解析或正文抽取。
+    """
+
+    __slots__ = ("marker",)
+
+    def __init__(self) -> None:
+        self.marker: tuple[str, int] | None = None
+
+    def feed(self, line: str) -> bool:
+        if self.marker is not None:
+            close = FENCE_CLOSE_RE.match(line)
+            if (
+                close
+                and close.group(1)[0] == self.marker[0]
+                and len(close.group(1)) >= self.marker[1]
+            ):
+                self.marker = None
+            return True
+        opening = FENCE_RE.match(line)
+        if opening:
+            self.marker = (opening.group(1)[0], len(opening.group(1)))
+            return True
+        return False
 UNVERIFIED_RE = re.compile(
     r"(?<![A-Z0-9_-])UNVERIFIED(?:-(BLOCKING|SPIKE))?(?![A-Z0-9_-])"
 )
