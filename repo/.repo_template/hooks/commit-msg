@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""commit-msg hook：merge 提交前核对每个来源已完成实体协议切换。
+
+git merge 的自动提交不运行 pre-commit，且 pre-merge-commit 阶段 MERGE_HEAD
+已被移除；MERGE_HEAD 仅在 prepare-commit-msg / commit-msg 阶段可用，因此来源
+校验放在本 hook。普通提交直接放行，隐私与 Markdown 门禁仍由 pre-commit 负责。
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
+
+from _id_scan import IdScanError, validate_merge_sources, validate_snapshot_ids  # noqa: E402
+from repo_task.context import RepoContext
+
+# commit-msg 由 git 在仓库根执行。
+repo = RepoContext.for_root(Path.cwd())
+
+
+def main() -> int:
+    try:
+        if not validate_merge_sources(repo.root):
+            return 0
+        validate_snapshot_ids(repo.root)
+    except IdScanError as error:
+        print(f"commit-msg: 合并来源校验失败（fail-closed）：{error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.exit(main())

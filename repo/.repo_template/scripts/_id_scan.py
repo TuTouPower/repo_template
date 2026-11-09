@@ -365,19 +365,24 @@ def branch_uses_current_schema(repo_root: Path, ref: str) -> bool:
     return True
 
 
-def validate_merge_sources(repo_root: Path) -> None:
-    """原生 merge 的每个来源都须属于当前协议；版本标记不能被主干静默继承。"""
+def validate_merge_sources(repo_root: Path) -> bool:
+    """原生 merge 的每个来源都须属于当前协议；版本标记不能被主干静默继承。
+
+    返回是否处于 merge 提交阶段。``pre-merge-commit`` 阶段 MERGE_HEAD 已被移除，
+    自动 merge 的来源校验由 ``commit-msg`` hook 调用本函数完成。
+    """
     raw = Path(_run_git(repo_root, ["rev-parse", "--git-path", "MERGE_HEAD"]).strip())
     path = raw if raw.is_absolute() else repo_root / raw
     try:
         heads = path.read_text(encoding="ascii").splitlines()
     except FileNotFoundError:
-        return
+        return False
     for head in heads:
         if not re.fullmatch(r"[0-9a-f]{40,64}", head):
             raise IdScanError("MERGE_HEAD 非法，停止提交")
         if not branch_uses_current_schema(repo_root, head):
             raise IdScanError(f"merge 来源 {head[:12]} 未完成实体协议切换；禁止直接合入")
+    return True
 
 
 def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
