@@ -11,7 +11,7 @@
 | `README.md` / `decision_log.md` | 入口与跨文档裁决总账（唯一权威状态表） |
 | `plans/` | 当前方案：[测试性能优化与工作流基线重构](plans/plan_test_suite_performance.md)、[生命周期实体稳定存储与历史文稿归档重构](plans/plan_entity_storage_and_archive.md)。已实施或被替代方案归入 `archive/` |
 | `reflections/` | 实战复盘、会话反思与实证分析（`workflow_reflection_*` / `reflection_*` / `analysis_*`） |
-| `reviews/` | 各轮评审产物（`2026-07/` 多路评审意见；`review_20260805_133245/` 多模型交叉评审） |
+| `reviews/` | [2026-11-09 合并审阅与修复](reviews/review_20261109.md)；各轮评审产物（`2026-07/` 多路评审意见；`review_20260805_133245/` 多模型交叉评审） |
 | `archive/` | 已实施、已终止或被替代方案及历史机制说明；含看板 mock demo 的历史计划 `plan_board_v2_chain_panel_demo.md`（demo 源码已删，现行实现见该文首部说明） |
 
 ## 命名

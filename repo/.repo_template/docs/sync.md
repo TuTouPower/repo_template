@@ -76,7 +76,7 @@
 
 同步版本的可移植基线为 `.repo_template/sync_manifest.json`（随同步 commit 入库），只保存 resolved commit 和可共享 URL；共享保护决策通过 `prompt add --scope shared` 写入可入库的 `.repo_template/sync_policy.json`；本机来源路径、缓存与私人 user_prompts 留在忽略的 sync_state 中，迁机须备份。新 clone 无 state 时读取 manifest，路径源用 `init --source <新机器路径>` 重新接入，保留版本基线；私人保护策略从备份恢复后再同步。不要把含凭据 URL 或本机路径写进 manifest。
 
-旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` / `apply` / `status` / `plan` / `link-skills` 均明确拒绝并指向来源 product 的 `repo_sync.py migrate legacy-state --write`（带 `--consumer`/`--source`/`--checkout` 固定 pin；旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 单文件总账同理：运行期 fail-closed 不解析正文编号，须先用完整命令显式拆分（来源仓脚本，默认 dry-run、`--write` 落盘）：`python3 .repo_template/scripts/pending.py migrate-legacy --write` 与 `python3 .repo_template/scripts/findings.py migrate-legacy --write`。执行前备份，执行后核对拆分条目编号与正文、提交迁移 commit；其它分支/worktree 残留旧总账时编号分配继续阻断。
+旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` / `apply` / `status` / `plan` / `link-skills` 均明确拒绝并指向来源 product 的 `repo_sync.py migrate legacy-state --write`（带 `--consumer`/`--source`/`--checkout` 固定 pin；旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 单文件总账同理：运行期 fail-closed 不解析正文编号，须先用完整命令显式拆分（来源仓脚本，默认 dry-run、`--write` 落盘）：`repo_sync.py migrate pending-ledger --write` 与 `repo_sync.py migrate findings-ledger --write`。执行前备份，执行后核对拆分条目编号与正文、提交迁移 commit；目标实体验收通过后写入 `.repo_template/entity_schema.json`，只有当前协议来源参与取号。历史来源保留但不参与分配；合并入口拒绝未完成协议切换的执行分支，并检查最终编号唯一性；安装模板 hooks 后，原生 merge 的自动提交与手工继续提交也会核对 MERGE_HEAD 来源。标记不能替代迁移或数据校验。
 
 ## 正式同步
 
@@ -101,3 +101,11 @@
 ## .prettierignore 机械追加
 
 `repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径清单见 `usage.md`「命名与格式」。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。`.github/workflows/repo-template-ci.yml` 已下线（`b3e5c8f` 起不再分发），残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
+
+## 实体协议切换验收
+
+`migrate all` 依次处理旧 state、workflow、conventions、specs-index、retired-hooks、pending-ledger、findings-ledger、entity-storage。每项拥有独立文件事务；失败保留之前已完成步骤，只恢复当前项，不宣称全流程原子性。单文件总账转换不再修改 Git index。
+
+entity-storage 先验证源身份与冲突，再转换实体，使用正常运行时模型验证全部目标数据，最后写 schema 标记并接受事务。迁移不复验历史实现血缘；handoff 字节保留，历史 done 被用作依赖时才查证实现来源。缺 progress.md 应先转换 workflow，不接受“搬完旧目录即成功”。
+
+切换前停止所有会话并验证备份可恢复。旧分支保留作历史；新执行从当前协议主干或已完成前驱创建，不能仅补标记让旧分支参与。已有新协议业务写入时禁止仅降级脚本或直接反搬目录；按 recovery 保留现场并前向修复。以上流程已按源码静态核对，本轮未运行迁移演练。

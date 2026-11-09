@@ -122,3 +122,11 @@ sync_manifest 是可入库版本基线；sync_policy 是显式共享保护决策
 ## 权威分工
 
 AGENTS 保留长期不变量和写权；本文解释机制与取舍；usage 说明日常接口（路径写权、命令约定、命名格式、skill 调用、支持边界）；recovery 说明多会话接管与状态恢复；sync 说明模板同步、升级与降级；SKILL 说明阶段动作、授权和停止；registry 是角色/调用图唯一事实源。持久事务日志和脚本检查决定机械状态，测试验证这些语义；派生入口与表格由生成器更新。
+
+## 实体协议与交付验证
+
+实体协议边界由 `.repo_template/entity_schema.json` 表达。运行期只理解当前布局；旧正文转换集中在 `template_sync.legacy_ledgers`，仅显式 migrate 导入。取号扫描当前协议的分支/worktree，合并入口验证协议与编号唯一性。版本标记不能替代源身份校验、目标模型验收或业务证据核验。
+
+交付隐私检查使用同一 snapshot 比较器；完整 blob 解码后比较新增文本行，检查点的输入分别是 index、候选 worktree 覆盖或确定 tree/commit。全量审计与交付门禁分离。具体策略见 `docs/blueprint/conventions.md`。
+
+handoff 结构由 `repo_task.handoff` 单点校验。依赖来源查询保留缺失、坏数据、Git 查询失败与来源歧义诊断，不把查询失败改写成缺证据。工作区核心资产比较使用 Git 按路径执行 clean/EOL 规范化后的 blob OID。

@@ -52,3 +52,11 @@
 运行态只服务本机主 clone，不提供分布式协作。迁移前停止所有会话，备份整个 Git common dir、主仓 `docs/runtime/`、`.repo_template/sync_state.json`、所有 task 分支与 worktree 未提交内容；用隔离副本核对 ledger、Git refs、执行回执（`handoff.json`）和 review 可读后再迁移。不能仅复制 goal 快照或把新 clone 当作原控制面。
 
 ledger 丢失但 done 分支和已入库的执行回执完整时，运行 `task.py ledger import {tid} --confirm-stopped`。脚本验证 exact identity、恰好一个实现 commit、base、`task.md` AC 全部勾选、最终 review 和干净 worktree，原子重建完成事件；已有该 tid 事件则拒绝覆盖。所有恢复与诊断只查找固定规范路径 `docs/tasks/{tid}_{slug}/`；项目交接仅读取 `docs/handoff.md`（历史统一由 Git 历史提供，不再维护 `docs/archive/handoff.md`）；审计日志写入 `docs/runtime/tasks_audit.log`，不依赖或回退至旧归档路径。active、缺分支、缺执行回执或坏 review 不可猜补，必须恢复备份；`recovery` 给出停止诊断。goal 快照可用 `goal --reset` 从有效任务重新冻结。
+
+## finish 文件事务恢复
+
+journal v2 记录每一步原子业务写入的前后指纹；写 index 前先在私有 index 计算目标 tree。HEAD 未前进且文件/index 匹配已记录中间状态时，重跑 finish 可精确回滚自身写入，再重新检查。未记录的外部修改一律保留现场，不自动覆盖。
+
+prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committing/committed 阶段还须核对唯一父提交与 handoff 执行身份；清理快照之前必须验证实际 tree、review scope 与隐私。hook 改写导致 tree 不匹配时保留 journal；recovery 按 finish_tree_mismatch 诊断，满足原 finish-unwind 写权、running、无 done report、无后继约束后才可撤销重做。成功 unwind 后清理已认领事务，避免新 finish 被旧 journal 锁死。
+
+旧 journal 不自动升级；存在旧事务时先按原版本恢复或人工核验，禁止直接删除备份后升级。恢复流程本轮只做静态核对，未执行故障注入测试。

@@ -74,6 +74,13 @@
 | L57 | 环境软链在末尾斜杠规则下未被忽略且进入交付指纹与阻断 finish（Issue #91） | Issue #91、测试性能方案实施 | 显式环境声明 + 精准 Git 原生忽略规则（`info/exclude` 写入不带斜杠规则）；`_review_worktree` 严格区分 cached 与 others，对未忽略环境软链提供明确诊断与指引，不静默算入交付指纹；finish 门禁与指纹使用一致原生忽略边界，真实交付软链（120000）严格保留 | `repo_task/{worktrees,monitoring,lifecycle}.py` | 已落地 |
 | L58 | 测试套件运行开销大、重复 Git 子进程与 Arrange 冗余 | 测试性能优化方案 P1–P4 落地 | Arrange 阶段以显式 RepoContext 领域 API 替代非被测 CLI；`repo_task` 引入单次 `ls-tree` 与非交互 `git cat-file --batch` 批量读取与 commit 快照；`factory_tests` 引入受控 Git 环境、Profile 种子与 session 级别的高速独立复制；全量用例数增至 1098，耗时从 255.77s 降至 179.29s（跌破 3 分钟） | `repo_task/{git_ops,store,integration}.py`、`factory_tests/{git_repo_support,conftest}.py` | 已落地 |
 | L59 | 实体生命周期目录搬迁导致路径变换与 Git 自动合并重命名冲突（Issue #92） | Issue #92、实体稳定存储方案实施 | 实体终生原位流转不进 Archive：Task（`docs/tasks/`）、Pending（`docs/pending/`）、Spike（`docs/spikes/`）；Archive 仅保留冻结冷文稿（`reviews/` 与 `specs/`）；退役 `archive-handoff` 与 `archive-spike`；跨任务核心资产（progress, task, handoff, review_*）基于完整 `(mode, oid)` 实施所有权严格拦截；依赖实现按 `handoff.json` Blob OID 与非 merge commit 血缘纯拓扑定位；提供 `repo_sync.py migrate entity-storage` 一次性迁移与同步阻断 | `repo_task/{store,lifecycle,integration,monitoring,graph}.py`、`pending.py`、`spikes.py`、`template_sync/entity_storage_migration.py` | 已落地 |
+| L60 | 交付隐私门禁粒度与二进制策略分叉 | 2026-11-09 合并审阅、用户授权修复 | 统一 snapshot 新增文本行比较；完整 blob 先解码，所有交付入口共享；全量审计独立 CLI；不按后缀豁免文本 | `repo_task/privacy.py`、hook、lifecycle/integration | 已实现，未运行测试 |
+| L61 | finish 半写入不可恢复、外部提交被误认领 | 同上 | journal v2 记录逐步 before/after 与预期 index tree；提交认领核阶段、父提交、执行身份；清理前复验实际 tree；unwind 清理已认领事务 | `repo_task/{commit_txn,lifecycle,recovery,monitoring}.py` | 已实现，未运行测试 |
+| L62 | 迁移检测漏项、目标身份未验与运行期旧格式耦合 | 同上；补记 D2/D3 语义 | 显式迁移转换源数据，正常模型验收后写 entity_schema；仅当前协议来源参与取号，合并仍验协议与编号。D2：迁移不认证历史血缘、保留 handoff，使用时核验；D3：逐项事务，前项成功保留，失败仅回滚当前项 | `template_sync/{migrate,legacy_ledgers,entity_storage_migration}.py`、`_id_scan.py` | 已实现，未运行测试 |
+| L63 | 相邻 CLI/格式化器仍隐式选择仓库 | 同上；延续 A15 | pending/spikes/findings/Markdown 库调用显式传 RepoContext，入口支持 --root；删除 hook 改写全局身份 | 对应 scripts 与 pre-commit | 已实现，未运行测试 |
+| L64 | 状态行写入缺少宿主身份与渲染闭环 | 同上；修订 L46 的无条件写入部分 | 默认不写绑定；显式 --session-id 才启用，session 与 owner 分开；提供 render/resolve，消费方负责宿主配置，不修改 settings | `repo_task/{control,statusline,cli}.py`、`track_worktree.py` | 已实现，宿主未联调 |
+| L65 | 依赖错误压平、handoff 校验重复与原始字节哈希 | 同上 | 共享 handoff 契约，保留查询失败/坏数据/歧义原因；核心资产按 Git clean/EOL 语义比较 | `repo_task/{handoff,integration,monitoring}.py` | 已实现，未运行测试 |
+
 
 ## 未闭环
 

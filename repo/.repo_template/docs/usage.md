@@ -117,14 +117,15 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
   - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节；目标已存在即阻断）；
   - `docs/archive/handoff.md` -> 确认内容已完整进入 Git 历史后退役移除；
   - 清理空旧目录（含仅剩占位文件的旧目录）并更新维护文档中确定引用。
+  同时转换仅有旧 active spike 的仓库；归档与当前 task 均验证 tid/slug 与目录一致、全状态编号唯一。缺 progress.md 先执行 workflow-schema；全部目标实体通过正式模型校验后才建立 schema 标记。
   默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败回滚本项。`migrate all` 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
 - **其他历史迁移**（逐项事务，已完成步骤保留；`migrate all` 失败仅阻断当前类型，不整体回滚已完成步骤）：
   - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
   - `legacy-state` 迁移（来源 product 脚本 `repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate legacy-state --write`）：将旧版 state 迁至 `.repo_template/sync_state.json`（旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）；
-  - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，存在时 `new` 一律 fail-closed 阻断，须先显式拆分。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
-    `python3 .repo_template/scripts/pending.py migrate-legacy --write` 与
-    `python3 .repo_template/scripts/findings.py migrate-legacy --write`。
-    核对拆分出的 `docs/pending/pNNN_*.md` / `docs/findings/dNNN_*.md` 编号与正文无遗漏并提交迁移 commit 后，编号分配才恢复；其它分支/worktree 仍残留旧总账时编号分配继续阻断，须先在这些分支完成迁移或收敛。
+  - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，须先显式拆分，之后执行 entity-storage 完成目标模型验收。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
+    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate pending-ledger --write` 与
+    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate findings-ledger --write`。
+    核对拆分条目编号与正文无遗漏；entity-storage 验收 task/pending/spike 身份与状态后写入 `.repo_template/entity_schema.json`。提交一致版本后才能继续分配。仅声明当前协议的分支/worktree 参与取号；旧来源保留为历史，不参与运行集合，也不得直接 integrate。合并边界仍检查目标协议与编号唯一性，不能仅复制 schema 标记代替迁移。
 
 Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-only`，最低要求 Git 2.38；工具会在执行 `git merge --no-commit` 前检查，版本不足时不会留下 pending merge。
 
@@ -161,7 +162,9 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 
 ## 状态行绑定与执行范围
 
-`run-begin` 在 claim 成功后以 `owner_id` 作为会话标识，把该会话与 task 当前 worktree 显式写入 `.scratch/statusline_workdir.jsonl`；`run-close --result done` 解除绑定。渲染脚本读取该文件并用 `track_worktree.py resolve --session <owner_id>`（或同名库函数）取得当前 worktree；attempt 已终结时解析为空。
+状态行默认不产生绑定。需要展示时，给 `run-begin` 提供 `--session-id <宿主真实会话ID>`；执行权仍用独立 `--owner-id`。绑定记录同时保存 session、owner、attempt 与 execution_id，解析时核对当前 ledger 身份。`run-close --session-id <同一会话ID>` 显式解绑；未提供时终态 ledger 仍使旧绑定失效。宿主配置由消费仓维护，模板不改写 settings。
+
+模板提供可直接调用的渲染端：在消费仓根运行 `python3 .repo_template/scripts/track_worktree.py render --session <宿主真实会话ID> --project <主仓路径>`，输出对应 worktree 名；未绑定时输出主仓名。只需绝对路径可用 `resolve` 子命令。手动绑定必须同时提供 `bind --session <宿主真实会话ID> --owner-id <执行权ID> --tid <tid> --attempt <attempt> --execution-id <execution_id> --project <主仓路径>`。宿主负责传入真实 session ID，不再假定它等于 owner。绑定与渲染失败可诊断，不阻断业务事务。命令写法已静态核对，宿主显示未实测。
 
 绑定不解析终端命令文本、不依赖宿主私有字段；写入或读取失败只输出诊断，不影响任务生命周期与收尾。宿主 session 与 `owner_id` 的映射由宿主适配层维护。
 
@@ -180,3 +183,7 @@ python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求�
 `repo_hygiene.py archive-review` 是唯一的冷文稿归档命令，限定将已闭环独立的 `docs/reviews/review_*/` 会话目录迁入 `docs/archive/reviews/`；项目交接固定在 `docs/handoff.md` 单文件快照，不进 archive；task、spike、pending 均终生在规范路径原位流转，严禁归档。
 
 Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
+
+## 路径隐私审计
+
+隐私策略与各检查点定义见 `docs/blueprint/conventions.md`「路径隐私」。日常门禁比较新增文本行；全量审计在消费仓根运行 `python3 .repo_template/scripts/task.py privacy-audit --ref HEAD`。命令只读，退出 1 表示存在泄漏，读取或解码失败非零退出；先核对诊断，不以空输出代替通过。
