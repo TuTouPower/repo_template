@@ -67,8 +67,8 @@ def _ensure_links_ignored(
     这些路径在主仓本已被忽略，规则对主仓与其它 worktree 语义不变。"""
     if not linked:
         return
-    if not ((repo.root / ".git").exists() or (repo.primary_root / ".git").exists() or (worktree / ".git").exists()):
-        return
+    # 不再因缺少 .git 而静默跳过边界保护：后续 _untracked_in/git_common_dir 会
+    # 对误配置显式报错（fail-closed），单测需用真实/注入的 git 上下文。
     missing = _untracked_in(worktree, linked)
     if not missing:
         return
@@ -90,12 +90,20 @@ def _ensure_links_ignored(
         raise ctx.TaskDataError(f"软链在 worktree 中未被忽略：{', '.join(still)}")
 
 
+def _normalize_rel(p: str) -> str:
+    """规范化仓库相对路径：仅移除显式 './' 前缀与尾随 '/'，不剥字面前导点。
+
+    lstrip('./') 会误删 .venv/.env 等点前缀，导致 git 忽略规则永远匹配不到。
+    """
+    return Path(p).as_posix().removeprefix("./").rstrip("/")
+
+
 def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, str]:
     """诊断未跟踪软链中因 Git 规则以 '/' 结尾仅匹配目录而未被忽略的环境软链。
 
     返回 {rel_path: matched_rule} 映射。未命中目录忽略规则的软链或非软链不返回。
     """
-    symlinks = [p for p in paths if (root / p).is_symlink()]
+    symlinks = [_normalize_rel(p) for p in paths if (root / p).is_symlink()]
     if not symlinks:
         return {}
     r = _git(["rev-parse", "--git-dir"], root=root)
@@ -106,8 +114,8 @@ def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, s
 
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
-        for p in symlinks:
-            parts = Path(p).parts
+        for rel in symlinks:
+            parts = Path(rel).parts
             curr_src = root
             curr_dst = td_path
             for part in ["", *parts[:-1]]:
@@ -121,11 +129,10 @@ def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, s
 
         check_map = {}
         check_paths = []
-        for p in symlinks:
-            posix_p = Path(p).as_posix().lstrip("./").rstrip("/")
-            cand = f"{posix_p}/"
+        for rel in symlinks:
+            cand = f"{rel}/"
             check_paths.append(cand)
-            check_map[cand] = posix_p
+            check_map[cand] = rel
 
         cmd = [
             "--git-dir", str(git_dir), "--work-tree", str(td_path),
@@ -180,11 +187,10 @@ def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
 
     ignored_env = set()
     if env_sources and ((repo.root / ".git").exists() or (repo.primary_root / ".git").exists()):
-        try:
-            untracked_in_main = set(_untracked_in(repo.root, env_sources))
-            ignored_env = {p for p in env_sources if p not in untracked_in_main}
-        except ctx.TaskDataError:
-            pass
+        # fail-closed：git 查询失败时无法确定忽略状态，让 TaskDataError 带诊断
+        # 传播（由 start 流程回滚），不再静默按「无需补忽略规则」继续链接。
+        untracked_in_main = set(_untracked_in(repo.root, env_sources))
+        ignored_env = {p for p in env_sources if p not in untracked_in_main}
 
     to_ensure = []
     for index, src in enumerate(sources):
@@ -369,20 +375,32 @@ def rollback_start(
         failures.append(f"路径 {worktree_rel} 仍存在，未自动删除未知内容")
     return "; ".join(failures) or None
 
+def _prune_unregistered(
+    path: Path, rel: str, *, repo: "ctx.RepoContext",
+) -> tuple[bool, str]:
+    """未登记 worktree：prune 后必须确认路径确实消失，否则报告孤儿目录。"""
+    prune = _git(["worktree", "prune"], repo=repo)
+    if prune.returncode != 0:
+        return (
+            False,
+            f"git worktree prune 失败（{prune.stderr.strip()}）；"
+            f"无法确认 {rel} 清理状态",
+        )
+    if path.exists():
+        return (
+            False,
+            f"git worktree prune 后 {rel} 路径仍存在；该 worktree 未登记且无分支归属，"
+            f"拒绝静默返回成功，请手动清理 {rel}",
+        )
+    return True, f"worktree 不在登记表且路径已不存在，已 prune：{rel}"
+
 def discard_worktree(
     rel: str, *, repo: "ctx.RepoContext",
 ) -> tuple[bool, str]:
     """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。"""
     path = (repo.primary_root / rel).resolve()
     if str(path) not in worktree_paths(repo=repo):
-        prune = _git(["worktree", "prune"], repo=repo)
-        if prune.returncode != 0:
-            return (
-                False,
-                f"git worktree prune 失败（{prune.stderr.strip()}）；"
-                f"无法确认 {rel} 清理状态",
-            )
-        return True, f"worktree 不在登记表，已 prune：{rel}"
+        return _prune_unregistered(path, rel, repo=repo)
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 回主仓"
     unlink_managed_links(path, repo=repo)
@@ -411,14 +429,7 @@ def remove_worktree(
     path = (repo.primary_root / rel).resolve()
     registered_branch = worktree_paths(repo=repo).get(str(path))
     if registered_branch is None:
-        prune = _git(["worktree", "prune"], repo=repo)
-        if prune.returncode != 0:
-            return (
-                False,
-                f"git worktree prune 失败（{prune.stderr.strip()}）；"
-                f"无法确认 {rel} 清理状态",
-            )
-        return True, f"worktree 不在登记表，已 prune：{rel}"
+        return _prune_unregistered(path, rel, repo=repo)
     if expected_branch and registered_branch != expected_branch:
         return False, (
             f"{rel} 登记分支为 {registered_branch!r}，预期 {expected_branch!r}；"
