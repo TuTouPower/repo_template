@@ -224,6 +224,7 @@ def main():
     )
     run_begin.add_argument("tid")
     run_begin.add_argument("--owner-id", required=True, help="当前会话唯一标识，写入 ledger claim")
+    run_begin.add_argument("--session-id", help="可选宿主真实 session ID；提供时启用状态行绑定")
     run_begin.add_argument("--base", help="可选上一已完成 task 分支")
     run_begin.set_defaults(func=cmd_run_begin)
 
@@ -233,6 +234,7 @@ def main():
     )
     run_close.add_argument("tid")
     run_close.add_argument("--owner-id", required=True, help="须与 ledger claim 一致")
+    run_close.add_argument("--session-id", help="可选宿主真实 session ID；解除该会话状态行绑定")
     run_close.add_argument("--result", required=True, choices=("done", "blocked", "failed"))
     run_close.add_argument("--class", dest="fail_class", choices=ctx.LEDGER_FAIL_CLASSES,
                            help="仅 --result failed")

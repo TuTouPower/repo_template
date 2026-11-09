@@ -1,12 +1,12 @@
 """状态行 worktree 绑定核心实现（只读账本 + 显式会话绑定）。
 
-绑定由核心命令在拿到 identity 后显式建立：`run-begin` 写入，`run-close` 解除。
+绑定由核心命令在拿到 identity 后显式建立：`run-begin --session-id` 写入，`run-close --session-id` 解除。
 本脚本不解析任何终端命令文本，也不依赖宿主私有字段；会话标识由调用方提供
-（`--session`，通常即 `owner_id`）。
+（`--session` 为宿主 session ID，`--owner-id` 为执行权身份）。
 
 用法：
-  python3 .repo_template/scripts/track_worktree.py bind --session <owner> --tid t113
-  python3 .repo_template/scripts/track_worktree.py resolve --session <owner>
+  python3 .repo_template/scripts/track_worktree.py bind --session <host-session> --owner-id <owner> --tid t113
+  python3 .repo_template/scripts/track_worktree.py render --session <host-session>
 
 `resolve` 只在该会话绑定的 attempt 仍处于打开状态时输出 worktree 绝对路径，
 否则输出空字符串；读取或账本异常时输出空并向 stderr 给出可定位诊断，
@@ -241,9 +241,9 @@ def _statusline_path(project: str) -> str:
 
 
 def bind(project: str, session: str, tid: str, attempt: int | None = None,
-         execution_id: str = "") -> bool:
+         execution_id: str = "", *, owner_id: str) -> bool:
     """显式建立 session → worktree 绑定；无打开窗口或持久化失败返回 False。"""
-    if not session or not tid:
+    if not session or not tid or not owner_id:
         LOGGER.warning(
             "track_worktree: 绑定跳过（session/tid 为空）：project=%s session=%r tid=%r",
             project, session, tid,
@@ -259,6 +259,7 @@ def bind(project: str, session: str, tid: str, attempt: int | None = None,
         return False
     if not append_record(_statusline_path(project), {
         "session": session,
+        "owner_id": owner_id,
         "tid": tid,
         "attempt": attempt,
         "execution_id": execution_id,
@@ -334,7 +335,7 @@ def current_worktree(project: str, session: str) -> str:
                     candidate.get("execution_id"), identity[0], identity[1],
                 )
                 return ""
-            if identity[2] and identity[2] != session:
+            if not candidate.get("owner_id") or identity[2] != candidate["owner_id"]:
                 LOGGER.warning(
                     "track_worktree: 会话绑定 owner 不符：project=%s session=%r "
                     "tid=%r 账本 owner=%r", project, session, tid, identity[2],
@@ -356,19 +357,28 @@ def main() -> int:
     bind_parser = sub.add_parser("bind", help="会话绑定到 task 当前 worktree")
     bind_parser.add_argument("--session", required=True)
     bind_parser.add_argument("--tid", required=True)
+    bind_parser.add_argument("--owner-id", required=True)
     bind_parser.add_argument("--project", default=os.getcwd())
     bind_parser.add_argument("--attempt", type=int, default=None)
     bind_parser.add_argument("--execution-id", default="")
     resolve_parser = sub.add_parser("resolve", help="输出会话当前 worktree（无则空）")
     resolve_parser.add_argument("--session", required=True)
     resolve_parser.add_argument("--project", default=os.getcwd())
+    render_parser = sub.add_parser("render", help="渲染会话当前 worktree 名；未绑定时显示项目名")
+    render_parser.add_argument("--session", required=True, help="宿主真实 session ID")
+    render_parser.add_argument("--project", default=os.getcwd())
     args = parser.parse_args()
 
     if args.cmd == "bind":
         return 0 if bind(
-            args.project, args.session, args.tid, args.attempt, args.execution_id,
+            args.project, args.session, args.tid, args.attempt, args.execution_id, owner_id=args.owner_id,
         ) else 1
-    print(current_worktree(args.project, args.session))
+    worktree = current_worktree(args.project, args.session)
+    if args.cmd == "render":
+        label = os.path.basename(worktree or os.path.abspath(args.project))
+        print("".join(char for char in label if char.isprintable()))
+    else:
+        print(worktree)
     return 0
 
 

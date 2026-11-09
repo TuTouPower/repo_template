@@ -159,21 +159,21 @@ def _statusline_diagnostic(
     action: str, repo: "ctx.RepoContext", owner_id: str, tid: str, detail: str,
 ) -> None:
     print(
-        f"WARNING: 状态行{action}失败（project={repo.root} session={owner_id!r} "
+        f"WARNING: 状态行{action}失败（project={repo.root} owner_id={owner_id!r} "
         f"tid={tid}：{detail}）；不影响任务收尾",
         file=sys.stderr,
     )
 
 
 def _bind_statusline(
-    repo: "ctx.RepoContext", owner_id: str, tid: str, attempt: int, execution_id: str,
+    repo: "ctx.RepoContext", owner_id: str, tid: str, attempt: int, execution_id: str, session_id: str,
 ) -> None:
     """展示层副作用：显式写入会话 → worktree 绑定；不吞 bind 返回值，失败只诊断。"""
     from . import statusline
 
-    identity = f"attempt={attempt} execution_id={execution_id}"
+    identity = f"session={session_id!r} attempt={attempt} execution_id={execution_id}"
     try:
-        bound = statusline.bind(str(repo.root), owner_id, tid, attempt, execution_id)
+        bound = statusline.bind(str(repo.root), session_id, tid, attempt, execution_id, owner_id=owner_id)
     except _STATUSLINE_ERRORS as error:
         _statusline_diagnostic(f"绑定（{identity}）", repo, owner_id, tid, str(error))
         return
@@ -184,11 +184,11 @@ def _bind_statusline(
         )
 
 
-def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str) -> None:
+def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str, session_id: str) -> None:
     from . import statusline
 
     try:
-        statusline.unbind(str(repo.root), owner_id, tid)
+        statusline.unbind(str(repo.root), session_id, tid)
     except _STATUSLINE_ERRORS as error:
         _statusline_diagnostic("解绑", repo, owner_id, tid, str(error))
 
@@ -316,7 +316,8 @@ def cmd_run_begin(args):
             f"run-begin 失败于步骤 {step}：{detail}\n"
             f"run-begin 不回滚已完成的步骤；{_recovery_hint(tid)}，勿重复 run-begin"
         )
-    _bind_statusline(repo, owner_id, tid, reserved["attempt"], reserved["execution_id"])
+    if getattr(args, "session_id", None):
+        _bind_statusline(repo, owner_id, tid, reserved["attempt"], reserved["execution_id"], args.session_id)
     _print_json({
         "tid": tid,
         "attempt": reserved["attempt"],
@@ -406,7 +407,8 @@ def cmd_run_close(args):
         if args.result == "done":
             print(_cleanup_worktree(tid, attempt, execution_id, repo=repo), file=sys.stderr)
             written.append("cleanup")
-        _unbind_statusline(repo, owner_id, tid)
+        if getattr(args, "session_id", None):
+            _unbind_statusline(repo, owner_id, tid, args.session_id)
     except (SystemExit, ctx.TaskDataError, OSError) as error:
         detail = error.code if isinstance(error, SystemExit) else error
         sys.exit(

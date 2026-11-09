@@ -46,7 +46,7 @@ def test_report_then_reserve_new_attempt_keeps_window_open(tmp_path):
     expected = str(worktree_dir.resolve())
 
     assert statusline.resolve_worktree(str(project), "t001") == expected
-    assert statusline.bind(str(project), "owner-a", "t001", 2, "exec-2") is True
+    assert statusline.bind(str(project), "owner-a", "t001", 2, "exec-2", owner_id="owner-a") is True
     assert statusline.current_worktree(str(project), "owner-a") == expected
 
 
@@ -59,7 +59,7 @@ def test_latest_terminal_event_closes_window(tmp_path):
         {"tid": "t001", "event": "report", "attempt": 1, "status": "done"},
     ])
     assert statusline.resolve_worktree(str(project), "t001") == ""
-    assert statusline.bind(str(project), "owner-a", "t001") is False
+    assert statusline.bind(str(project), "owner-a", "t001", owner_id="owner-a") is False
 
 
 def test_resolve_worktree_skips_non_object_ledger_lines(tmp_path):
@@ -97,7 +97,7 @@ def test_current_worktree_skips_non_object_statusline_lines(tmp_path):
         "\n".join([
             "123",
             json.dumps({
-                "session": "owner-a", "tid": "t001", "attempt": 1,
+                "session": "owner-a", "owner_id": "owner-a", "tid": "t001", "attempt": 1,
                 "execution_id": "e", "worktree": str(worktree_dir.resolve()),
                 "ts": "2026-01-01T00:00:00+00:00",
             }),
@@ -112,7 +112,7 @@ def test_bind_failure_emits_locatable_diagnostic(tmp_path, caplog):
     """bind 无打开窗口时输出含 project/session/tid 的诊断。"""
     project = tmp_path / "project"
     with caplog.at_level(logging.WARNING):
-        assert statusline.bind(str(project), "sess-1", "t404") is False
+        assert statusline.bind(str(project), "sess-1", "t404", owner_id="sess-1") is False
     text = caplog.text
     assert "sess-1" in text
     assert "t404" in text
@@ -127,7 +127,7 @@ def test_current_worktree_rejects_deleted_worktree_dir(tmp_path, caplog):
     _write_ledger(project, [
         {"tid": "t001", "event": "start", "worktree": "../project_t001"},
     ])
-    assert statusline.bind(str(project), "owner-a", "t001") is True
+    assert statusline.bind(str(project), "owner-a", "t001", owner_id="owner-a") is True
     assert statusline.current_worktree(str(project), "owner-a") == str(worktree_dir.resolve())
 
     shutil.rmtree(worktree_dir)

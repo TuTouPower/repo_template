@@ -30,6 +30,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _id_scan import IdScanError, scan_max_id
 import pending as pending_mod
+from functools import partial
+from repo_task.context import RepoContext
 from repo_task.documents import atomic_write_text
 
 pytestmark = pytest.mark.contract
@@ -40,12 +42,12 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     r = init_repo(tmp_path / "repo")
     (r / "docs" / "pending").mkdir(parents=True)
     (r / "docs" / "pending" / ".gitkeep").write_text("", encoding="utf-8")
+    (r / ".repo_template").mkdir(exist_ok=True)
+    (r / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
     _git(r, "add", "-A")
     _git(r, "commit", "-m", "init")
 
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", r)
-    monkeypatch.setattr(pending_mod, "PENDING_DIR", r / "docs/pending")
-    monkeypatch.setattr(pending_mod, "SCAN_DIRS", ("docs/pending",))
+    monkeypatch.setattr(pending_mod, "main", partial(pending_mod.main, repo=RepoContext.for_root(r)))
     return r
 
 
@@ -57,7 +59,7 @@ def test_pending_new_creates_canonical_path_and_todo_state(repo: Path, capsys: p
     path = repo / "docs/pending/p001_demo_task.md"
     assert path.is_file()
 
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm == {
         "pid": "p001",
         "slug": "demo_task",
@@ -90,7 +92,7 @@ def test_pending_new_bug_kind(repo: Path) -> None:
     pending_mod.main(["new", "crash_item", "--kind", "bug"])
     path = repo / "docs/pending/p001_crash_item.md"
     assert path.is_file()
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm["status"] == "todo"
     assert "- 现象：" in body
     assert "- 测试缺口：" in body
@@ -113,7 +115,7 @@ def test_park_then_revive_round_trip(repo: Path) -> None:
     # park
     pending_mod.main(["park", "p001", "--reason", "2026-11-08 等外部依赖", "--write"])
     assert path.is_file()
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm == {
         "pid": "p001",
         "slug": "demo",
@@ -128,7 +130,7 @@ def test_park_then_revive_round_trip(repo: Path) -> None:
     # revive
     pending_mod.main(["revive", "p001", "--write"])
     assert path.is_file()
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm == {
         "pid": "p001",
         "slug": "demo",
@@ -154,7 +156,7 @@ def test_close_direct_from_todo(repo: Path) -> None:
     ])
 
     assert path.is_file()
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm == {
         "pid": "p001",
         "slug": "demo",
@@ -172,7 +174,7 @@ def test_close_defaults_to_resolved_without_fix_ref(repo: Path) -> None:
 
     pending_mod.main(["close", "p001", "--reason", "经复核无需处理", "--write"])
 
-    fm, body = pending_mod.parse_pending_file(path)
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
     assert fm["status"] == "closed"
     assert fm["resolution"] == "resolved"
     assert fm["reason"] == "经复核无需处理"
@@ -257,13 +259,13 @@ def test_batch_operations_and_atomic_rollback(repo: Path, monkeypatch: pytest.Mo
 
     # 批量 park
     pending_mod.main(["park", "p001", "p002", "--reason", "batch wait", "--write"])
-    assert pending_mod.parse_pending_file(path1)[0]["status"] == "parked"
-    assert pending_mod.parse_pending_file(path2)[0]["status"] == "parked"
+    assert pending_mod.parse_pending_file(path1, repo=RepoContext.for_root(repo))[0]["status"] == "parked"
+    assert pending_mod.parse_pending_file(path2, repo=RepoContext.for_root(repo))[0]["status"] == "parked"
 
     # 批量 revive
     pending_mod.main(["revive", "p001", "p002", "--write"])
-    assert pending_mod.parse_pending_file(path1)[0]["status"] == "todo"
-    assert pending_mod.parse_pending_file(path2)[0]["status"] == "todo"
+    assert pending_mod.parse_pending_file(path1, repo=RepoContext.for_root(repo))[0]["status"] == "todo"
+    assert pending_mod.parse_pending_file(path2, repo=RepoContext.for_root(repo))[0]["status"] == "todo"
 
     # 批量更新中途失败回滚
     orig1 = path1.read_bytes()
@@ -285,8 +287,8 @@ def test_batch_operations_and_atomic_rollback(repo: Path, monkeypatch: pytest.Mo
     # 第一条已被成功回滚，正文与状态不变
     assert path1.read_bytes() == orig1
     assert path2.read_bytes() == orig2
-    assert pending_mod.parse_pending_file(path1)[0]["status"] == "todo"
-    assert pending_mod.parse_pending_file(path2)[0]["status"] == "todo"
+    assert pending_mod.parse_pending_file(path1, repo=RepoContext.for_root(repo))[0]["status"] == "todo"
+    assert pending_mod.parse_pending_file(path2, repo=RepoContext.for_root(repo))[0]["status"] == "todo"
 
 
 def test_no_auto_git_add_on_state_changes(repo: Path) -> None:
@@ -332,32 +334,32 @@ def test_front_matter_validation_strictness(repo: Path) -> None:
     # 未知字段
     atomic_write_text(path, '---\npid: "p001"\nslug: "demo"\nstatus: "todo"\nunknown: "val"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="未知 front matter 字段"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
     # pid 与文件名不一致
     atomic_write_text(path, '---\npid: "p002"\nslug: "demo"\nstatus: "todo"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="元数据 pid .* 不一致"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
     # slug 与文件名不一致
     atomic_write_text(path, '---\npid: "p001"\nslug: "other"\nstatus: "todo"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="元数据 slug .* 不一致"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
     # todo 状态包含 resolution
     atomic_write_text(path, '---\npid: "p001"\nslug: "demo"\nstatus: "todo"\nresolution: "resolved"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="status=todo 时不得包含 resolution"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
     # 包含换行符
     atomic_write_text(path, '---\npid: "p001"\nslug: "demo"\nstatus: "parked"\nreason: "line1\\nline2"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="不能包含换行符"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
     # closed 缺少 resolution
     atomic_write_text(path, '---\npid: "p001"\nslug: "demo"\nstatus: "closed"\nreason: "done"\n---\n# p001\n')
     with pytest.raises(IdScanError, match="resolution 非法"):
-        pending_mod.parse_pending_file(path)
+        pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
 
 
 def test_list_filtering(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -435,9 +437,9 @@ def test_concurrent_modification_rejected_by_sha256(repo: Path, monkeypatch: pyt
     real_find = pending_mod.find_entry
     calls = {"n": 0}
 
-    def modify_on_second_find(number: int) -> tuple[str, Path]:
+    def modify_on_second_find(number: int, **kwargs) -> tuple[str, Path]:
         calls["n"] += 1
-        state, path = real_find(number)
+        state, path = real_find(number, **kwargs)
         if calls["n"] == 2:
             # 锁外读取完成，锁内定位时外部写入了新内容
             path.write_text(path.read_text(encoding="utf-8") + "\n- 并发写入\n", encoding="utf-8")

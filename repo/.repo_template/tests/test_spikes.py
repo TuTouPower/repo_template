@@ -16,6 +16,8 @@ REPO_ROOT = SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import spikes as spikes_mod
+from functools import partial
+from repo_task.context import RepoContext
 from _id_scan import IdScanError
 from repo_task.context import TaskDataError
 from repo_task.documents import parse_front_matter, write_front_matter
@@ -61,19 +63,14 @@ def _init_repo(tmp_path: Path) -> Path:
         "- {结论已抽取到的 dNNN；须指向现存 docs/findings 条目。}\n",
         encoding="utf-8",
     )
+    (repo / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "chore: init template")
     return repo
 
 
 def _bind(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
-    monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
-    monkeypatch.setattr(
-        spikes_mod,
-        "TEMPLATE_PATH",
-        repo / ".repo_template/docs/spike_report_template.md",
-    )
+    monkeypatch.setattr(spikes_mod, "main", partial(spikes_mod.main, repo=RepoContext.for_root(repo)))
 
 
 def _make_finding(repo: Path, did: str = "d001", slug: str = "verified") -> Path:

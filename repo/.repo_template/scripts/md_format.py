@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+from repo_task.context import RepoContext
 
 # 黑名单：不格式化的已跟踪 md（方案 B）。判定按路径段 casefold 比较，
 # macOS/NTFS 大小写不敏感文件系统上 Docs/ARCHIVE 不得绕过。
@@ -59,17 +59,17 @@ def find_md_kx() -> str | None:
     return shutil.which("md_kx")
 
 
-def _rel(path: Path) -> str:
-    return path.relative_to(REPO_ROOT).as_posix()
+def _rel(path: Path, *, repo: RepoContext) -> str:
+    return path.relative_to(repo.root).as_posix()
 
 
-def _canonical_rel(rel: str) -> str:
+def _canonical_rel(rel: str, *, repo: RepoContext) -> str:
     """把任意输入路径 resolve 成仓库根相对路径；越界或解析失败直接拒绝。
 
     黑名单判定必须基于规范相对路径：`./docs/archive/x.md`、
     `docs/pending/../archive/x.md` 与绝对路径都不得绕过 archive 黑名单。
     """
-    root = REPO_ROOT.resolve()
+    root = repo.root.resolve()
     try:
         absolute = (root / rel).resolve()
     except OSError as e:
@@ -79,8 +79,8 @@ def _canonical_rel(rel: str) -> str:
     return absolute.relative_to(root).as_posix()
 
 
-def _is_blacklisted(rel: str) -> bool:
-    canon = _canonical_rel(rel)
+def _is_blacklisted(rel: str, *, repo: RepoContext) -> bool:
+    canon = _canonical_rel(rel, repo=repo)
     parts = [segment.casefold() for segment in canon.split("/")]
     if len(parts) >= 2 and parts[0] == "docs" and parts[1] == "archive":
         return True
@@ -94,10 +94,10 @@ def _is_staging_tmp(rel: str) -> bool:
     return Path(rel).name.startswith(".tmp_")
 
 
-def _git(*args: str, root: Path | None = None) -> subprocess.CompletedProcess:
+def _git(*args: str, repo: RepoContext) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
-            ["git", "-C", str(root or REPO_ROOT), *args],
+            ["git", "-C", str(repo.root), *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30,
             env=_controlled_git_env(),
@@ -110,33 +110,33 @@ def _git(*args: str, root: Path | None = None) -> subprocess.CompletedProcess:
         raise MdFormatError(f"git 执行失败（{' '.join(args)}）：{error}") from error
 
 
-def collect_all() -> list[str]:
+def collect_all(*, repo: RepoContext) -> list[str]:
     """全部已跟踪非黑名单 .md。"""
-    result = _git("ls-files", "-z", "--", "*.md")
+    result = _git("ls-files", "-z", "--", "*.md", repo=repo)
     if result.returncode != 0:
         raise MdFormatError(f"git ls-files 失败：{result.stderr.strip()}")
     return [
         rel for rel in result.stdout.split("\0")
-        if rel and not _is_staging_tmp(rel) and not _is_blacklisted(rel)
+        if rel and not _is_staging_tmp(rel) and not _is_blacklisted(rel, repo=repo)
     ]
 
 
-def collect_changed() -> list[str]:
+def collect_changed(*, repo: RepoContext) -> list[str]:
     """相对 HEAD 的已跟踪改动 + staged + 未跟踪 .md（扣黑名单与 .scratch/）。"""
     rels: set[str] = set()
-    result = _git("diff", "--name-only", "-z", "HEAD", "--", "*.md")
+    result = _git("diff", "--name-only", "-z", "HEAD", "--", "*.md", repo=repo)
     if result.returncode != 0:
         raise MdFormatError(f"git diff 失败：{result.stderr.strip()}")
     rels.update(rel for rel in result.stdout.split("\0") if rel)
-    result = _git("diff", "--cached", "--name-only", "-z", "--", "*.md")
+    result = _git("diff", "--cached", "--name-only", "-z", "--", "*.md", repo=repo)
     if result.returncode != 0:
         raise MdFormatError(f"git diff --cached 失败：{result.stderr.strip()}")
     rels.update(rel for rel in result.stdout.split("\0") if rel)
-    result = _git("ls-files", "--others", "--exclude-standard", "-z", "--", "*.md")
+    result = _git("ls-files", "--others", "--exclude-standard", "-z", "--", "*.md", repo=repo)
     if result.returncode != 0:
         raise MdFormatError(f"git ls-files --others 失败：{result.stderr.strip()}")
     rels.update(rel for rel in result.stdout.split("\0") if rel)
-    return [rel for rel in sorted(rels) if not _is_staging_tmp(rel) and not _is_blacklisted(rel)]
+    return [rel for rel in sorted(rels) if not _is_staging_tmp(rel) and not _is_blacklisted(rel, repo=repo)]
 
 
 def _restore_snapshots(snapshots: dict[Path, bytes]) -> tuple[int, list[tuple[Path, str]]]:
@@ -157,7 +157,7 @@ def _restore_snapshots(snapshots: dict[Path, bytes]) -> tuple[int, list[tuple[Pa
     return restored, failures
 
 
-def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
+def format_paths(rel_paths: list[str], *, repo: RepoContext, check: bool = False) -> list[str]:
     """对指定相对路径跑 md_kx；返回变更/漂移的文件列表。
 
     check=True 时判断漂移（md_kx --check 对漂移文件 exit 1）不写入。
@@ -166,10 +166,10 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     """
     # 先统一规范相对路径（含 resolve 与越界检查），再判定黑名单：
     # ./、../、绝对路径都无法绕过 archive 黑名单。
-    rels = [_canonical_rel(rel) for rel in rel_paths]
+    rels = [_canonical_rel(rel, repo=repo) for rel in rel_paths]
     # 黑名单先于缺二进制：拒绝归档路径不依赖本机是否安装 md_kx。
     for rel in rels:
-        if _is_blacklisted(rel):
+        if _is_blacklisted(rel, repo=repo):
             raise MdFormatError(f"{rel} 在黑名单，拒绝格式化")
     executable = find_md_kx()
     if not executable:
@@ -183,13 +183,13 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
     snapshots: dict[Path, bytes] = {}
     if not check:
         for rel in rels:
-            path = REPO_ROOT / rel
+            path = repo.root / rel
             if path.is_file():
                 snapshots[path] = path.read_bytes()
     changed: list[str] = []
     try:
         for rel in rels:
-            path = REPO_ROOT / rel
+            path = repo.root / rel
             if not path.is_file():
                 continue
             if check:
@@ -218,7 +218,7 @@ def format_paths(rel_paths: list[str], *, check: bool = False) -> list[str]:
         restored, failures = _restore_snapshots(snapshots)
         if failures:
             details = "；".join(
-                f"{_rel(path)}: {reason}" for path, reason in failures
+                f"{_rel(path, repo=repo)}: {reason}" for path, reason in failures
             )
             raise MdFormatError(
                 f"{error}；成功回滚 {restored}/{len(snapshots)} 条，未恢复：{details}"
@@ -252,13 +252,15 @@ def format_file(path: Path) -> None:
         raise MdFormatError(f"md_kx 失败（{path.name}）：{result.stderr.strip()}")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> None:
     parser = argparse.ArgumentParser(description="md_kx 包装：Markdown 统一格式化")
+    parser.add_argument("--root", type=Path, help="目标仓库根（默认脚本所在仓库）")
     parser.add_argument("paths", nargs="*", help="点名相对路径")
     parser.add_argument("--changed", action="store_true", help="相对 HEAD 的改动 + staged + 未跟踪 .md")
     parser.add_argument("--all", action="store_true", help="全部已跟踪非黑名单 .md")
     parser.add_argument("--check", action="store_true", help="只检查不写入，漂移非 0")
     args = parser.parse_args(argv)
+    repo = repo if repo is not None else (RepoContext.for_root(args.root) if args.root else RepoContext.from_code_location(__file__))
 
     try:
         if args.changed and args.all:
@@ -266,14 +268,14 @@ def main(argv: list[str] | None = None) -> None:
         if args.paths:
             rels = args.paths
         elif args.changed:
-            rels = collect_changed()
+            rels = collect_changed(repo=repo)
         elif args.all or args.check:
             # --check 独立调用隐含检查全部非黑名单 md（方案 B 用法）
-            rels = collect_all()
+            rels = collect_all(repo=repo)
         else:
             parser.print_help()
             return
-        changed = format_paths(rels, check=args.check)
+        changed = format_paths(rels, check=args.check, repo=repo)
     except MdFormatError as error:
         print(f"错误: {error}", file=sys.stderr)
         sys.exit(1)

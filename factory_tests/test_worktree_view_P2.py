@@ -179,7 +179,7 @@ def _claimed_project(tmp_path: Path) -> Path:
 def test_current_worktree_rejects_identity_mismatch(tmp_path, caplog):
     """绑定 attempt/execution 与账本当前 identity 不一致时返回空。"""
     project = _claimed_project(tmp_path)
-    assert statusline.bind(str(project), "owner-b", "t001", 99, "exec-X") is True
+    assert statusline.bind(str(project), "owner-b", "t001", 99, "exec-X", owner_id="owner-b") is True
     with caplog.at_level(logging.WARNING):
         assert statusline.current_worktree(str(project), "owner-b") == ""
     assert "归属不符" in caplog.text
@@ -188,7 +188,7 @@ def test_current_worktree_rejects_identity_mismatch(tmp_path, caplog):
 def test_current_worktree_rejects_owner_mismatch(tmp_path, caplog):
     """identity 一致但账本 owner 与会话不一致时返回空。"""
     project = _claimed_project(tmp_path)
-    assert statusline.bind(str(project), "owner-b", "t001", 1, "exec-1") is True
+    assert statusline.bind(str(project), "owner-b", "t001", 1, "exec-1", owner_id="owner-b") is True
     with caplog.at_level(logging.WARNING):
         assert statusline.current_worktree(str(project), "owner-b") == ""
     assert "owner 不符" in caplog.text
@@ -197,7 +197,7 @@ def test_current_worktree_rejects_owner_mismatch(tmp_path, caplog):
 def test_current_worktree_accepts_matching_identity(tmp_path):
     """identity 与 owner 一致时照常返回 worktree。"""
     project = _claimed_project(tmp_path)
-    assert statusline.bind(str(project), "owner-a", "t001", 1, "exec-1") is True
+    assert statusline.bind(str(project), "owner-a", "t001", 1, "exec-1", owner_id="owner-a") is True
     assert statusline.current_worktree(str(project), "owner-a") == str(
         (tmp_path / "project_t001").resolve()
     )
@@ -259,7 +259,7 @@ def test_bind_propagates_persist_failure(tmp_path, caplog):
     project = _open_project(tmp_path, "project", ["t001"])
     (project / ".scratch").write_text("occupied\n", encoding="utf-8")
     with caplog.at_level(logging.WARNING):
-        assert statusline.bind(str(project), "sess-1", "t001") is False
+        assert statusline.bind(str(project), "sess-1", "t001", owner_id="sess-1") is False
     assert "持久化失败" in caplog.text
 
 
@@ -291,7 +291,7 @@ def test_bind_cli_accepts_attempt_and_execution_id(tmp_path, monkeypatch):
     """track_worktree bind 支持 --attempt/--execution-id 并落盘。"""
     project = _open_project(tmp_path, "project", ["t001"])
     monkeypatch.setattr(sys, "argv", [
-        "track_worktree.py", "bind", "--session", "owner-a", "--tid", "t001",
+        "track_worktree.py", "bind", "--session", "owner-a", "--owner-id", "owner-a", "--tid", "t001",
         "--project", str(project), "--attempt", "2", "--execution-id", "exec-2",
     ])
     assert statusline.main() == 0
@@ -306,8 +306,8 @@ def test_bind_cli_accepts_attempt_and_execution_id(tmp_path, monkeypatch):
 def test_unbind_pairs_by_session_and_tid(tmp_path):
     """同 session 跨 tid unbind 不清掉另一 tid 的打开绑定。"""
     project = _open_project(tmp_path, "project", ["t001", "t002"])
-    assert statusline.bind(str(project), "s", "t001", 1, "e1") is True
-    assert statusline.bind(str(project), "s", "t002", 1, "e2") is True
+    assert statusline.bind(str(project), "s", "t001", 1, "e1", owner_id="s") is True
+    assert statusline.bind(str(project), "s", "t002", 1, "e2", owner_id="s") is True
     assert statusline.current_worktree(str(project), "s") == str(
         (tmp_path / "project_t002").resolve()
     )
@@ -322,10 +322,10 @@ def test_unbind_pairs_by_session_and_tid(tmp_path):
 def test_stale_unbind_does_not_clear_newer_binding(tmp_path):
     """同 tid 先 unbind 后重绑：旧 unbind 不得清除新绑定。"""
     project = _open_project(tmp_path, "project", ["t001"])
-    assert statusline.bind(str(project), "s", "t001", 1, "e1") is True
+    assert statusline.bind(str(project), "s", "t001", 1, "e1", owner_id="s") is True
     assert statusline.unbind(str(project), "s", "t001") is True
     assert statusline.current_worktree(str(project), "s") == ""
-    assert statusline.bind(str(project), "s", "t001", 2, "e2") is True
+    assert statusline.bind(str(project), "s", "t001", 2, "e2", owner_id="s") is True
     assert statusline.current_worktree(str(project), "s") == str(
         (tmp_path / "project_t001").resolve()
     )

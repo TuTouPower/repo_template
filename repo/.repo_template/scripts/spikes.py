@@ -16,6 +16,7 @@ list 对 front matter 损坏或缺失的 spike 打印 stderr 警告并归入 unk
 from __future__ import annotations
 
 import argparse
+from repo_task.context import RepoContext, TaskDataError
 import re
 import sys
 from pathlib import Path
@@ -44,12 +45,8 @@ from repo_task.spikes import (
     validate_spike_metadata,
 )
 
-TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
-REPO_ROOT = TOOLKIT_ROOT.parent
 PREFIX = "s"
-SPIKES_DIR = REPO_ROOT / "docs/spikes"
 SCAN_DIRS = ("docs/spikes",)
-TEMPLATE_PATH = TOOLKIT_ROOT / "docs/spike_report_template.md"
 
 
 def _dir_slug(spike_dir: Path) -> str:
@@ -76,18 +73,19 @@ def _require_canonical_sid(sid: str) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> None:
+    repo = args.repo
     slug = args.slug or args.slug_opt
     if not slug:
         sys.exit("错误: 缺少 slug 参数")
     if not SLUG_RE.match(slug):
         sys.exit(f"错误: slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
-    if not TEMPLATE_PATH.is_file():
-        raise IdScanError(f"缺模板 {TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}")
+    if not (repo.toolkit_root / "docs/spike_report_template.md").is_file():
+        raise IdScanError(f"缺模板 {(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}")
 
-    template_text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    template_text = (repo.toolkit_root / "docs/spike_report_template.md").read_text(encoding="utf-8")
     if not template_text.startswith("---"):
         raise IdScanError(
-            f"模板缺少标准 Front Matter (---)：{TEMPLATE_PATH.relative_to(REPO_ROOT).as_posix()}"
+            f"模板缺少标准 Front Matter (---)：{(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}"
         )
     content = template_text.replace("{slug}", slug)
 
@@ -100,27 +98,28 @@ def cmd_new(args: argparse.Namespace) -> None:
 
     try:
         path = allocate_dir(
-            REPO_ROOT,
+            repo.root,
             prefix=PREFIX,
             dirs=SCAN_DIRS,
-            target_dir=SPIKES_DIR,
+            target_dir=(repo.root / "docs/spikes"),
             slug=slug,
             files={"report.md": content},
             formatter=format_file,
         )
     except (IdScanError, MdFormatError) as error:
         sys.exit(f"错误: {error}")
-    print(path.relative_to(REPO_ROOT).as_posix())
+    print(path.relative_to(repo.root).as_posix())
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    if SPIKES_DIR.is_symlink():
-        raise IdScanError(f"拒绝经软链目录列举 spike：{SPIKES_DIR}")
-    if not SPIKES_DIR.is_dir():
+    repo = args.repo
+    if (repo.root / "docs/spikes").is_symlink():
+        raise IdScanError(f"拒绝经软链目录列举 spike：{(repo.root / "docs/spikes")}")
+    if not (repo.root / "docs/spikes").is_dir():
         print("(no spikes)")
         return
     rows: list[tuple[str, str]] = []
-    for path in sorted(SPIKES_DIR.iterdir()):
+    for path in sorted((repo.root / "docs/spikes").iterdir()):
         if path.is_symlink() or not path.is_dir() or parse_entry_dir_name(PREFIX, path.name) is None:
             continue
         report = path / "report.md"
@@ -154,21 +153,22 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_complete(args: argparse.Namespace) -> None:
+    repo = args.repo
     sid = args.sid
     try:
         _require_canonical_sid(sid)
     except IdScanError as err:
         sys.exit(f"错误: {err}")
     try:
-        spike_dir = find_spike_dir(REPO_ROOT, sid)
+        spike_dir = find_spike_dir(repo.root, sid)
     except SpikeMetadataError as err:
         sys.exit(f"错误: {err}")
-    _assert_no_symlink(REPO_ROOT, spike_dir)
+    _assert_no_symlink(repo.root, spike_dir)
 
     report = spike_dir / "report.md"
     if report.is_symlink() or not report.is_file():
-        sys.exit(f"错误: 缺 {report.relative_to(REPO_ROOT).as_posix()}")
-    _assert_no_symlink(REPO_ROOT, report)
+        sys.exit(f"错误: 缺 {report.relative_to(repo.root).as_posix()}")
+    _assert_no_symlink(repo.root, report)
 
     try:
         fm, body = parse_front_matter(report)
@@ -183,7 +183,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
         sys.exit(f"错误: spike {sid} 已处于 superseded 状态，无法 complete")
 
     try:
-        validate_spike(REPO_ROOT, spike_dir)
+        validate_spike(repo.root, spike_dir)
     except (ValueError, ctx.TaskDataError) as err:
         sys.exit(f"错误: spike {sid} 闭环校验未通过：{err}")
 
@@ -191,9 +191,9 @@ def cmd_complete(args: argparse.Namespace) -> None:
         print(f"dry-run: spike {sid} 闭环校验通过，可标记为 completed（加 --write 落盘）")
         return
 
-    with id_lock(REPO_ROOT):
-        _assert_no_symlink(REPO_ROOT, spike_dir)
-        _assert_no_symlink(REPO_ROOT, report)
+    with id_lock(repo.root):
+        _assert_no_symlink(repo.root, spike_dir)
+        _assert_no_symlink(repo.root, report)
         fm, body = parse_front_matter(report)
         validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "completed":
@@ -201,7 +201,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
         if fm.get("status") == "superseded":
             sys.exit(f"错误: spike {sid} 已处于 superseded 状态，无法 complete")
         try:
-            validate_spike(REPO_ROOT, spike_dir)
+            validate_spike(repo.root, spike_dir)
         except (ValueError, ctx.TaskDataError) as err:
             sys.exit(f"错误: spike {sid} 闭环校验未通过：{err}")
         fm["status"] = "completed"
@@ -209,7 +209,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
         fm.pop("reason", None)
         if report.is_symlink():
             sys.exit(f"错误: 拒绝向软链写入：{report}")
-        _assert_no_symlink(REPO_ROOT, report)
+        _assert_no_symlink(repo.root, report)
         write_front_matter(report, fm, body)
 
     print(f"已完成 spike {sid}：{spike_dir.name}")
@@ -241,6 +241,7 @@ def check_supersede_cycle(root: Path, sid: str, successor_sid: str) -> None:
 
 
 def cmd_supersede(args: argparse.Namespace) -> None:
+    repo = args.repo
     sid = args.sid
     try:
         _require_canonical_sid(sid)
@@ -262,15 +263,15 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         sys.exit(f"错误: 严禁自引用：{sid} 不能替代自身")
 
     try:
-        spike_dir = find_spike_dir(REPO_ROOT, sid)
+        spike_dir = find_spike_dir(repo.root, sid)
     except SpikeMetadataError as err:
         sys.exit(f"错误: {err}")
-    _assert_no_symlink(REPO_ROOT, spike_dir)
+    _assert_no_symlink(repo.root, spike_dir)
 
     report = spike_dir / "report.md"
     if report.is_symlink() or not report.is_file():
-        sys.exit(f"错误: 缺 {report.relative_to(REPO_ROOT).as_posix()}")
-    _assert_no_symlink(REPO_ROOT, report)
+        sys.exit(f"错误: 缺 {report.relative_to(repo.root).as_posix()}")
+    _assert_no_symlink(repo.root, report)
 
     try:
         fm, body = parse_front_matter(report)
@@ -282,15 +283,15 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         sys.exit(f"错误: spike {sid} 已处于 superseded 状态")
 
     try:
-        succ_dir = find_spike_dir(REPO_ROOT, successor_sid)
+        succ_dir = find_spike_dir(repo.root, successor_sid)
     except SpikeMetadataError:
         sys.exit(f"错误: 替代目标 {successor_sid} 不存在")
-    _assert_no_symlink(REPO_ROOT, succ_dir)
+    _assert_no_symlink(repo.root, succ_dir)
 
     succ_report = succ_dir / "report.md"
     if succ_report.is_symlink() or not succ_report.is_file():
         sys.exit(f"错误: 替代目标缺 report.md：{succ_dir.name}")
-    _assert_no_symlink(REPO_ROOT, succ_report)
+    _assert_no_symlink(repo.root, succ_report)
 
     try:
         succ_fm, _ = parse_front_matter(succ_report)
@@ -301,7 +302,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         sys.exit(f"错误: 替代目标元数据非法：{err}")
 
     # 循环引用检查：若将 sid 替代为 successor_sid，检测是否存在反向或传递循环
-    check_supersede_cycle(REPO_ROOT, sid, successor_sid)
+    check_supersede_cycle(repo.root, sid, successor_sid)
 
     if succ_fm.get("status") != "completed":
         sys.exit(
@@ -309,7 +310,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         )
 
     try:
-        validate_spike(REPO_ROOT, succ_dir)
+        validate_spike(repo.root, succ_dir)
     except (ValueError, ctx.TaskDataError) as err:
         sys.exit(f"错误: 替代目标 {successor_sid} 证据校验未通过：{err}")
 
@@ -317,17 +318,17 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         print(f"dry-run: spike {sid} 可替代为 {successor_sid}（加 --write 落盘）")
         return
 
-    with id_lock(REPO_ROOT):
-        _assert_no_symlink(REPO_ROOT, spike_dir)
-        _assert_no_symlink(REPO_ROOT, report)
-        _assert_no_symlink(REPO_ROOT, succ_dir)
-        _assert_no_symlink(REPO_ROOT, succ_report)
+    with id_lock(repo.root):
+        _assert_no_symlink(repo.root, spike_dir)
+        _assert_no_symlink(repo.root, report)
+        _assert_no_symlink(repo.root, succ_dir)
+        _assert_no_symlink(repo.root, succ_report)
         fm, body = parse_front_matter(report)
         validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "superseded":
             sys.exit(f"错误: spike {sid} 已处于 superseded 状态")
-        check_supersede_cycle(REPO_ROOT, sid, successor_sid)
-        succ_dir = find_spike_dir(REPO_ROOT, successor_sid)
+        check_supersede_cycle(repo.root, sid, successor_sid)
+        succ_dir = find_spike_dir(repo.root, successor_sid)
         succ_fm, _ = parse_front_matter(succ_dir / "report.md")
         validate_spike_metadata(
             succ_fm, expected_sid=successor_sid, expected_slug=_dir_slug(succ_dir)
@@ -337,7 +338,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
                 f"错误: 替代目标 {successor_sid} 状态必须为 completed（当前为 {succ_fm.get('status')}）"
             )
         try:
-            validate_spike(REPO_ROOT, succ_dir)
+            validate_spike(repo.root, succ_dir)
         except (ValueError, ctx.TaskDataError) as err:
             sys.exit(f"错误: 替代目标 {successor_sid} 证据校验未通过：{err}")
         fm["status"] = "superseded"
@@ -345,14 +346,15 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         fm["reason"] = reason
         if report.is_symlink():
             sys.exit(f"错误: 拒绝向软链写入：{report}")
-        _assert_no_symlink(REPO_ROOT, report)
+        _assert_no_symlink(repo.root, report)
         write_front_matter(report, fm, body)
 
     print(f"已替代 spike {sid} -> {successor_sid}")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> None:
     parser = argparse.ArgumentParser(description="spike 条目分配与状态流转")
+    parser.add_argument("--root", type=Path, help="目标仓库根（默认脚本所在仓库）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     new_parser = sub.add_parser("new", help="锁内取号并从模板建 spike 目录")
@@ -383,9 +385,10 @@ def main(argv: list[str] | None = None) -> None:
     supersede_parser.set_defaults(func=cmd_supersede)
 
     args = parser.parse_args(argv)
+    args.repo = repo if repo is not None else (RepoContext.for_root(args.root) if args.root else RepoContext.from_code_location(__file__))
     try:
         args.func(args)
-    except IdScanError as e:
+    except (IdScanError, TaskDataError) as e:
         sys.exit(str(e))
 
 
