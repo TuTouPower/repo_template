@@ -17,18 +17,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 
+LOGGER = logging.getLogger(__name__)
+
 STATUSLINE_FILE = os.path.join(".scratch", "statusline_workdir.jsonl")
-# 打开窗口：start / attempt_reserved / execution_claimed 等非终态事件；
-# 以下事件关闭窗口。
+# 终态事件关闭窗口；仅以该 tid 的「最新事件」作为门禁（见 resolve_worktree）。
 TERMINAL_EVENTS = {"report", "integrated", "attempt_terminal"}
+# 账本只做尾部读取：绑定去重与窗口判定都只需要尾部若干行。
+_LEDGER_TAIL_BYTES = 8192
 
 
-def _iter_lines_reverse(path: str, block_size: int = 8192):
-    """从文件末尾向前逐行产出非空行。"""
+def _iter_lines_reverse(path: str, block_size: int = _LEDGER_TAIL_BYTES):
+    """从文件末尾向前逐行产出非空行；文件缺失视为空账本，其它读失败给诊断。"""
     try:
         with open(path, "rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -47,46 +51,68 @@ def _iter_lines_reverse(path: str, block_size: int = 8192):
                         yield cleaned.decode("utf-8", errors="replace")
             if remainder.strip():
                 yield remainder.strip().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return
     except OSError as error:
-        print(f"track_worktree: 无法读取 {path}：{error}", file=sys.stderr)
+        LOGGER.warning("track_worktree: 无法读取 %s：%s", path, error)
         return
 
 
+def _iter_records_reverse(path: str):
+    """逆序产出账本中的合法 JSON 对象；损坏行与非对象行跳过并给诊断。"""
+    for line in _iter_lines_reverse(path):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            LOGGER.warning("track_worktree: 跳过损坏账本行 %s：%s", path, error)
+            continue
+        if not isinstance(record, dict):
+            LOGGER.warning("track_worktree: 跳过非对象账本行 %s：%r", path, line[:120])
+            continue
+        yield record
+
+
 def resolve_worktree(project: str, tid: str) -> str:
-    """该 tid 当前打开的 worktree 绝对路径；已终结或不可判定时返回空。"""
+    """该 tid 当前打开的 worktree 绝对路径；已终结或不可判定时返回空。
+
+    事件模型以该 tid 的「最新事件」为终态门禁：最新事件非终态即视为窗口打开，
+    此时回溯最近的 start 事件取 worktree，忽略中间的历史终态事件。恢复重试只
+    reserve 新 attempt、不追加 start，旧的 report/attempt_terminal 不应关闭窗口。
+    """
     ledger = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
     if not os.path.isfile(ledger):
         return ""
+    latest_event = None
     worktree = ""
-    open_window = False
-    for line in _iter_lines_reverse(ledger):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for record in _iter_records_reverse(ledger):
         if record.get("tid") != tid:
             continue
-        event = record.get("event")
-        if event in TERMINAL_EVENTS:
-            open_window = False
-            break
-        if event == "start":
+        if latest_event is None:
+            latest_event = record.get("event")
+            if latest_event in TERMINAL_EVENTS:
+                return ""
+        if record.get("event") == "start":
             worktree = str(record.get("worktree") or "")
-            open_window = True
             break
-        open_window = True
-    if not open_window or not worktree:
+    if not worktree:
+        LOGGER.warning(
+            "track_worktree: 无法判定 worktree（最新事件=%r，未找到 start）："
+            "project=%s tid=%r", latest_event, project, tid,
+        )
         return ""
     return os.path.abspath(os.path.join(project, worktree))
 
 
 def _read_last_line(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
-            lines = [line for line in handle.read().splitlines() if line.strip()]
-    except OSError:
-        return ""
-    return lines[-1] if lines else ""
+    """只读账本尾部固定字节，返回最后一个非空行。"""
+    for line in _iter_lines_reverse(path):
+        return line
+    return ""
+
+
+def _identity(record: dict) -> dict:
+    """绑定身份：排除生成字段 ts，使重复 bind/unbind 可去重。"""
+    return {key: value for key, value in record.items() if key != "ts"}
 
 
 def append_record(path: str, record: dict) -> None:
@@ -94,16 +120,22 @@ def append_record(path: str, record: dict) -> None:
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
     except OSError as error:
-        print(f"track_worktree: 无法创建 {os.path.dirname(path)}：{error}", file=sys.stderr)
+        LOGGER.warning("track_worktree: 无法创建 %s：%s", os.path.dirname(path), error)
         return
+    last = _read_last_line(path)
+    if last:
+        try:
+            previous = json.loads(last)
+        except json.JSONDecodeError:
+            previous = None
+        if isinstance(previous, dict) and _identity(previous) == _identity(record):
+            return
     line = json.dumps(record, ensure_ascii=False)
-    if _read_last_line(path).strip() == line:
-        return
     try:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
     except OSError as error:
-        print(f"track_worktree: 无法写入 {path}：{error}", file=sys.stderr)
+        LOGGER.warning("track_worktree: 无法写入 %s：%s", path, error)
 
 
 def _statusline_path(project: str) -> str:
@@ -112,11 +144,20 @@ def _statusline_path(project: str) -> str:
 
 def bind(project: str, session: str, tid: str, attempt: int | None = None,
          execution_id: str = "") -> bool:
-    """显式建立 session → worktree 绑定；无打开窗口时返回 False。"""
+    """显式建立 session → worktree 绑定；无打开窗口时返回 False 并给诊断。"""
     if not session or not tid:
+        LOGGER.warning(
+            "track_worktree: 绑定跳过（session/tid 为空）：project=%s session=%r tid=%r",
+            project, session, tid,
+        )
         return False
     worktree = resolve_worktree(project, tid)
     if not worktree:
+        LOGGER.warning(
+            "track_worktree: 绑定失败，%r 无打开的 worktree 窗口："
+            "project=%s session=%r tid=%r；核对 dispatch_ledger 最新事件与 start 记录",
+            tid, project, session, tid,
+        )
         return False
     append_record(_statusline_path(project), {
         "session": session,
@@ -143,18 +184,14 @@ def unbind(project: str, session: str, tid: str) -> None:
 
 
 def current_worktree(project: str, session: str) -> str:
-    """会话当前 worktree；绑定已解除或 attempt 已终结时返回空。"""
+    """会话当前 worktree；绑定已解除、窗口已终结或目录已消失时返回空。"""
     if not session:
         return ""
     path = _statusline_path(project)
     if not os.path.isfile(path):
         return ""
     latest = None
-    for line in _iter_lines_reverse(path):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for record in _iter_records_reverse(path):
         if record.get("session") == session:
             latest = record
             break
@@ -162,7 +199,13 @@ def current_worktree(project: str, session: str) -> str:
         return ""
     tid = str(latest.get("tid") or "")
     reopened = resolve_worktree(project, tid)
-    return reopened if reopened else ""
+    if not reopened or not os.path.isdir(reopened):
+        LOGGER.warning(
+            "track_worktree: 会话绑定 worktree 已失效：project=%s session=%r "
+            "tid=%r resolved=%r", project, session, tid, reopened,
+        )
+        return ""
+    return reopened
 
 
 def main() -> int:
