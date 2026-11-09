@@ -3,28 +3,28 @@
 覆盖：
 1. dry-run：默认执行不改写任何文件，输出详细计划；
 2. --write 真实写入：
-   - docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (done 需 handoff.json 与实现血缘)
+   - docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时核验)
    - docs/tasks/tNNN_slug/ 原位保留
    - docs/pending/todo/pNNN.md -> docs/pending/pNNN.md (status: todo)
    - docs/pending/parked/pNNN.md -> docs/pending/pNNN.md (status: parked, 保留 reason)
    - docs/archive/pending/pNNN.md -> docs/pending/pNNN.md (status: closed, 保留 resolution 与 reason)
-   - docs/archive/spikes/sNNN/ -> docs/spikes/sNNN/ (status: completed, 校验闭环证据与 findings 关联)
+   - docs/archive/spikes/sNNN/ -> docs/spikes/sNNN/ (status: completed，校验报告与 findings 闭环证据)
    - docs/archive/tasks_audit.log -> docs/runtime/tasks_audit.log (保持原始字节)
    - 移除旧 docs/archive/handoff.md
-   - 更新 docs/handoff.md 中的引用并清理空旧目录
+   - 更新 docs/handoff.md 中的引用并清理空旧目录（含仅剩占位文件的旧目录）
 3. 重跑零写入（幂等性）
 4. 阻断条件：
    - 同号多处、目标占用
    - 缺少闭环依据（缺少 resolution 或 reason，无兜底）
    - 同字节 audit.log 存在时严格阻断，绝不擅自删除
-   - done 任务缺少合法实现 commit 或血缘不合
+   - 身份与文件名不符（声明 pid/slug 与文件名不一致，拒绝静默改写）
    - 归档 spike 报告缺少有效 findings 关联（dNNN）
    - 目录来源与 Front Matter 状态矛盾（归档 pending 声明 todo，todo pending 声明 closed，归档 spike 声明 active）
-   - 工作区存在未暂存或已暂存修改
+   - 工作区存在未暂存或已暂存修改（仅 entity-storage 生效）
    - 清理旧目录非空直接阻断报错
-5. 事务保护与失败回滚
+5. 事务保护与失败回滚（逐项事务，已完成步骤保留）
 6. apply 门禁阻断与提示
-7. 迁移后依赖实现 (dependency implementations) 统一查验
+7. 迁移后依赖实现 (dependency implementations) 统一在使用时查验（迁移不复验血缘）
 """
 
 import argparse

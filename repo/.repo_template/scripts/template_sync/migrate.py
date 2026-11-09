@@ -1,7 +1,8 @@
 """显式迁移入口：把旧布局一次性收敛到当前 schema。
 
 日常 `apply` 不再自动迁移；发现旧布局时阻断并指向本入口。
-每次迁移都在持久文件事务内执行：先备份，失败整体回滚，成功后校验目标数据。
+每项单项迁移在其持久文件事务内执行：先备份，失败回滚本项；`migrate all`
+按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。
 """
 
 from __future__ import annotations
@@ -63,9 +64,35 @@ def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None
 
 
 def migrate_command(src: Path, sync: ctx.SyncContext, kind: str = "all") -> str:
-    """基于固定来源 product 与消费仓身份的可直接执行迁移命令。"""
+    """基于固定来源 product 与消费仓身份的可直接执行迁移命令。
+
+    统一从来源 product 生成并带固定 pin（含 --source/--checkout，均 shlex.quote），
+    避免旧消费仓本地脚本缺子命令或来源漂移。--source 为 canonical 身份，
+    --checkout 为本轮固定本地 checkout，不自动联网。
+    """
+    import shlex
+
     script = src / ".repo_template/scripts/repo_sync.py"
-    return f"python3 {script} --consumer {sync.consumer} migrate {kind} --write"
+    source_value: str | None = None
+    try:
+        current = read_state(sync)
+    except ctx.SyncError:
+        current = None
+    if isinstance(current, dict):
+        ts = current.get("template_source")
+        if isinstance(ts, dict):
+            candidate = ts.get("value")
+            if isinstance(candidate, str) and candidate.strip():
+                source_value = candidate
+    if source_value is None:
+        source_value = str(src)
+    return (
+        f"python3 {shlex.quote(str(script))}"
+        f" --consumer {shlex.quote(str(sync.consumer))}"
+        f" --source {shlex.quote(source_value)}"
+        f" --checkout {shlex.quote(str(src))}"
+        f" migrate {kind} --write"
+    )
 
 
 def _transactional(paths: list[str], action, verify, label: str, *, sync: ctx.SyncContext) -> list[str]:
@@ -98,6 +125,15 @@ def _transactional(paths: list[str], action, verify, label: str, *, sync: ctx.Sy
 
 
 def _resolve_source(sync: ctx.SyncContext) -> Path:
+    import shlex
+
+    legacy = sync.legacy_state_path()
+    if legacy.exists():
+        raise ctx.SyncError(
+            "存在旧布局 state，须先单独迁移 legacy-state 后再迁移其他类型："
+            f"`python3 <product>/.repo_template/scripts/repo_sync.py"
+            f" --consumer {shlex.quote(str(sync.consumer))} migrate legacy-state --write`"
+        )
     state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无同步来源，无法读取模板 schema")
@@ -199,14 +235,35 @@ _STEPS = {
 def cmd_migrate(args: argparse.Namespace) -> int:
     """执行显式迁移；`all` 按固定顺序逐项执行，宁可停下也不猜测数据。
 
-    逐项事务、已完成步骤保留的语义不变；只在 all 入口统一做一次干净检查，
-    避免前序步骤落盘后 entity 步再查干净造成顺序死锁。
+    逐项事务、已完成步骤保留的语义不变；clean 门禁仅 entity-storage 生效
+    （workflow/conventions/specs-index/retired-hooks 可脏运行）。
+    all 写盘前仅当 entity-storage 有待迁移项时查干净，避免前序步骤落盘后
+    entity 步再查干净造成顺序死锁；entity 单项写盘仍自查干净。
+    dry-run 下仅有旧布局 state 时只展示 legacy-state 计划并指引先单迁，
+    不让后续步骤因无新 state 而报未初始化断层。
     """
     sync: ctx.SyncContext = args.sync
     kinds = KINDS if args.kind == "all" else (args.kind,)
     write = getattr(args, "write", False)
+    if args.kind == "all" and not write:
+        legacy_findings = migration_findings("legacy-state", sync)
+        if legacy_findings:
+            reports = _STEPS["legacy-state"](sync, write=False, require_clean=False)
+            if reports:
+                print("legacy-state: dry-run 拟定完成 "
+                      f"{len(reports)} 项")
+                for line in reports:
+                    print(f"  {line}")
+            print(
+                "存在旧布局 state：其他类型须先单独执行 "
+                "`migrate legacy-state --write` 生成新 state 后再评估，"
+                "本次 dry-run 仅展示 legacy-state 计划"
+            )
+            print("迁移完成（dry-run，未写盘；加 --write 执行落盘）")
+            return 0
     if write and args.kind == "all":
-        _check_clean_working_copy(sync.consumer)
+        if entity_storage_migration_status(sync=sync):
+            _check_clean_working_copy(sync.consumer)
     for kind in kinds:
         step = _STEPS.get(kind)
         if step is None:

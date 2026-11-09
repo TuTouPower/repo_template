@@ -12,7 +12,7 @@ from .conventions_migration import conventions_migration_status
 from .migrate import KINDS, migrate_command, migration_findings
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
-from .source import assert_not_self, resolve_src, src_dirty
+from .source import assert_not_self, require_template_source, resolve_src, src_dirty
 from .specs_index_migration import specs_index_migration_status, specs_index_report
 from .state import active_prompts, prompt_substrings, read_state, require_no_legacy_state
 from .workflow_migration import workflow_migration_status
@@ -35,6 +35,24 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _opencode_section(sync) -> tuple[list[dict] | None, str | None]:
+    """status/plan 专用的 registry 降级：缺失/未登记时返回 BLOCKED 指引，不抛错。
+
+    旧消费仓（registry 引入前）须能完成升级前评审；apply / link-skills 仍由
+    opencode_commands_status 直接 fail-closed。此处仅捕获 registry 相关的
+    SyncError，其余异常继续上抛。
+    """
+    try:
+        return opencode_commands_status(sync=sync), None
+    except ctx.SyncError as error:
+        message = str(error)
+        if "registry.json" in message or "未登记" in message or "条目结构错误" in message:
+            return None, (
+                f"BLOCKED: {message}；status/plan 仅展示，其余同步前须补登记"
+            )
+        raise
+
+
 @consumer_locked
 def cmd_status(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
@@ -44,12 +62,15 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
         return 0
     src = resolve_src(state, refresh=getattr(args, "fetch", False), sync=sync)
-    if state["template_source"].get("kind") == "url" and not getattr(args, "fetch", False):
+    assert_not_self(src, sync=sync)
+    kind, _ = require_template_source(state)
+    if kind == "url" and not getattr(args, "fetch", False):
         print("来源缓存：未联网刷新（--fetch 刷新；首次会自动建缓存）")
     head = _git(src, "rev-parse", "HEAD").stdout.strip() or "?"
     dirty = src_dirty(src)
     prompts = active_prompts(state)
-    print(f"template_source: {state['template_source']['kind']} {state['template_source']['value']}")
+    kind_value, source_value = require_template_source(state)
+    print(f"template_source: {kind_value} {source_value}")
     print(f"SRC HEAD: {head}  dirty={dirty}")
     print(f"last_synced_commit: {state.get('last_synced_commit')}")
     print(f"last_synced_at: {state.get('last_synced_at')}")
@@ -95,15 +116,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         print("  齐全")
     print("\nopencode 命令薄层 (.opencode/commands):")
-    cmd_items = opencode_commands_status(sync=sync)
-    drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
-    if not cmd_items:
-        print("  无")
-    elif not drifted_cmds:
-        print("  一致")
+    cmd_items, cmd_blocked = _opencode_section(sync)
+    if cmd_blocked is not None:
+        print(f"  {cmd_blocked}")
+        drifted_cmds: list[dict] = []
     else:
-        for item in drifted_cmds:
-            print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
+        assert cmd_items is not None
+        drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
+        if not cmd_items:
+            print("  无")
+        elif not drifted_cmds:
+            print("  一致")
+        else:
+            for item in drifted_cmds:
+                print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
     for warning in retired_template_warnings(sync=sync):
         print(f"  STALE: {warning}")
     print("\nspecs_index 契约:")
@@ -136,14 +162,15 @@ def cmd_plan(args: argparse.Namespace) -> int:
         return 0
     src = resolve_src(state, refresh=getattr(args, "fetch", False), sync=sync)
     assert_not_self(src, sync=sync)
-    if state["template_source"].get("kind") == "url" and not getattr(args, "fetch", False):
+    kind, source_value = require_template_source(state)
+    if kind == "url" and not getattr(args, "fetch", False):
         print("来源缓存：未联网刷新（--fetch 刷新；首次会自动建缓存）")
     head = _git(src, "rev-parse", "HEAD").stdout.strip() or "?"
     dirty = src_dirty(src)
     prompts = active_prompts(state)
 
     print("## repo-template-sync 预览")
-    print(f"\nSRC: {state['template_source']['value']} @ {head}  dirty={dirty}")
+    print(f"\nSRC: {source_value} @ {head}  dirty={dirty}")
     print("\n### 站立指令 user_prompts（裁定优先）")
     if prompts:
         rows = [[str(i), p.get("at", ""), p.get("text", "")] for i, p in enumerate(prompts)]
@@ -230,13 +257,18 @@ def cmd_plan(args: argparse.Namespace) -> int:
     else:
         print("齐全（模板自有路径已豁免）")
     print("\n### opencode 命令薄层 (.opencode/commands)")
-    cmd_items = opencode_commands_status(sync=sync)
-    drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
-    if not drifted_cmds:
-        print("齐全一致（各 public skill 与 .opencode/commands 描述一致）")
+    cmd_items, cmd_blocked = _opencode_section(sync)
+    if cmd_blocked is not None:
+        print(f"- BLOCKED: {cmd_blocked}")
+        drifted_cmds: list[dict] = []
     else:
-        rows = [[item["rel"], item["state"], item["desc"]] for item in drifted_cmds]
-        print(_md_table(["路径", "状态", "处置"], rows))
+        assert cmd_items is not None
+        drifted_cmds = [it for it in cmd_items if it["state"] not in ("same", "unmanaged")]
+        if not drifted_cmds:
+            print("齐全一致（各 public skill 与 .opencode/commands 描述一致）")
+        else:
+            rows = [[item["rel"], item["state"], item["desc"]] for item in drifted_cmds]
+            print(_md_table(["路径", "状态", "处置"], rows))
     for warning in retired_template_warnings(sync=sync):
         print(f"- STALE: {warning}")
 

@@ -21,11 +21,15 @@ def require_no_legacy_state(sync: ctx.SyncContext) -> None:
     旧布局 state 不参与运行期回退；若放行，apply 的软链修复会删掉宿主位真实目录，
     连带删除 user_prompts、同步记录与来源记录。存在时一律先走显式迁移。
     """
+    import shlex
+
     legacy = sync.legacy_state_path()
     if legacy.exists():
         raise ctx.SyncError(
             f"检测到旧布局 state：{sync.rel(legacy)}；本命令不读取它，"
-            "先运行 `python3 .repo_template/scripts/repo_sync.py migrate legacy-state --write`"
+            "先运行 `python3 <product>/.repo_template/scripts/repo_sync.py"
+            f" --consumer {shlex.quote(str(sync.consumer))} migrate legacy-state --write`"
+            "（<product> 为固定来源 product 根，旧消费仓本地脚本缺 migrate 子命令）"
         )
 
 
@@ -126,9 +130,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise ctx.SyncError("init 需要 --source <path|url>")
     legacy = legacy_state_path(sync)
     if not sync.state_path.exists() and legacy.exists():
+        import shlex
+
         raise ctx.SyncError(
             f"检测到旧布局 state：{sync.rel(legacy)}；普通 init 不再隐式合并。"
-            "先运行 `python3 .repo_template/scripts/repo_sync.py migrate legacy-state`"
+            "先运行 `python3 <product>/.repo_template/scripts/repo_sync.py"
+            f" --consumer {shlex.quote(str(sync.consumer))} migrate legacy-state --write`"
+            "（<product> 为固定来源 product 根）"
         )
     identity = source_identity(args.source)
     data = read_state(sync) or {
@@ -194,9 +202,25 @@ def cmd_prompt(args: argparse.Namespace) -> int:
             "state 未记录来源：先运行 init --source <path|url> 初始化来源；"
             "--source 仅为本次覆盖，不写入 state"
         )
+    # 仅有 manifest 的仓：read_state 回退生成内存 state 可能缺 template_source，
+    # 此时 prompt add 若写盘会生成缺来源的 state 遮蔽 manifest。拒绝写入并指引。
+    ts = state.get("template_source")
+    if not isinstance(ts, dict) or not isinstance(ts.get("value"), str) or not ts.get("value", "").strip():
+        raise ctx.SyncError(
+            "state 未记录来源：先运行 init --source <path|url> 初始化来源；"
+            "如为旧布局 state，先单独迁移 legacy-state"
+        )
     shared = getattr(args, "scope", "local") == "shared"
     policy_path = sync.consumer / ".repo_template/sync_policy.json"
-    data = (json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.exists() else {"version": 1, "user_prompts": []}) if shared else state
+    if shared:
+        policy_data = _load_json_object(
+            policy_path, f"策略文件 {sync.rel(policy_path)}"
+        ) if policy_path.exists() else {"version": 1, "user_prompts": []}
+        if not isinstance(policy_data.get("user_prompts", []), list):
+            raise ctx.SyncError(f"策略文件 {sync.rel(policy_path)} 的 user_prompts 必须是数组")
+        data = policy_data
+    else:
+        data = state
     def persist():
         if shared:
             from repo_task.documents import atomic_write_text

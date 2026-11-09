@@ -108,19 +108,19 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
 
 消费仓旧布局或旧 schema 升级须通过显式迁移命令完成，日常 `apply` 遇到旧 schema 会直接阻断并拒绝写入。
 
-- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`，默认 dry-run、`--write` 落盘：
-  `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage --write`。
+- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`/`--source`/`--checkout` 固定 pin，默认 dry-run、`--write` 落盘：
+  `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`。
   针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
-  - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验终态 done/dropped 证据）；
-  - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref）；
+  - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时由业务门禁核验）；
+  - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref；声明身份与文件名不符即阻断）；
   - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（恢复原位流转，校验报告与 findings 闭环证据）；
-  - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节）；
+  - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节；目标已存在即阻断）；
   - `docs/archive/handoff.md` -> 确认内容已完整进入 Git 历史后退役移除；
-  - 清理空旧目录并更新维护文档中确定引用。
-  默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败完整回滚。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
-- **其他历史迁移**：
+  - 清理空旧目录（含仅剩占位文件的旧目录）并更新维护文档中确定引用。
+  默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败回滚本项。`migrate all` 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
+- **其他历史迁移**（逐项事务，已完成步骤保留；`migrate all` 失败仅阻断当前类型，不整体回滚已完成步骤）：
   - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
-  - `legacy-state` 迁移（`repo_sync.py migrate legacy-state`）：将旧版 state 迁至 `.repo_template/sync_state.json`；
+  - `legacy-state` 迁移（来源 product 脚本 `repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate legacy-state --write`）：将旧版 state 迁至 `.repo_template/sync_state.json`（旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）；
   - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，存在时 `new` 一律 fail-closed 阻断，须先显式拆分。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
     `python3 .repo_template/scripts/pending.py migrate-legacy --write` 与
     `python3 .repo_template/scripts/findings.py migrate-legacy --write`。

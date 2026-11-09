@@ -22,7 +22,8 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 .repo_template/scripts/repo_sync.py migrate <legacy-state|workflow-schema|conventions|specs-index|retired-hooks|entity-storage|all> [--write]
 
 本脚本处理模板工具链与模板侧资产。日常 apply 只接受当前 schema；检测到旧布局时
-阻断并指向显式 migrate。迁移在持久文件事务内执行，失败整体回滚。不碰业务代码。
+阻断并指向显式 migrate。每项单项迁移在其持久文件事务内执行，失败回滚本项；
+migrate all 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。不碰业务代码。
 禁止自动 commit——写盘与 state 更新完成后由 agent 走审批门禁。
 """
 
