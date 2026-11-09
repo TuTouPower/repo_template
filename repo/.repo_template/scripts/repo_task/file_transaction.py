@@ -21,14 +21,23 @@ FINISHED_STATUSES = frozenset({"accepted", "rolled_back"})
 def open_transactions(root) -> list[tuple[str, str]]:
     """返回未结束或记录损坏的事务目录与状态。
 
-    仅检查 ``TRANSACTION_DIRS``；记录缺失视为无事务。记录无法解析或不是
-    对象时状态为 ``corrupt``，与未结束事务一样阻止 scratch 清理。
+    仅检查 ``TRANSACTION_DIRS``；事务目录不存在或为空视为无事务。目录非空但
+    缺少 journal，说明备份已成为无主残留，按 ``corrupt`` 阻断 scratch 清理；
+    记录无法解析或不是对象时同样为 ``corrupt``。
     """
     root = Path(root)
     findings: list[tuple[str, str]] = []
     for directory in TRANSACTION_DIRS:
-        journal = root / directory / "transaction.json"
+        transaction_dir = root / directory
+        journal = transaction_dir / "transaction.json"
         if not journal.is_file():
+            if transaction_dir.is_dir():
+                try:
+                    non_empty = any(transaction_dir.iterdir())
+                except OSError:
+                    non_empty = True
+                if non_empty:
+                    findings.append((directory, "corrupt"))
             continue
         try:
             data = json.loads(journal.read_text(encoding="utf-8"))

@@ -436,6 +436,44 @@ def test_corrupt_transaction_skips_scratch(tmp_path):
     assert (repo / ".scratch/repo_sync_rollback/transaction.json").is_file()
 
 
+def test_transaction_dir_without_journal_is_corrupt_and_keeps_backup(tmp_path):
+    """journal 被单独删除时残留备份不得按无主清掉，scratch 整体跳过。"""
+    repo = tmp_path / "repo"
+    transaction_dir = repo / ".scratch/repo_sync_rollback"
+    transaction_dir.mkdir(parents=True)
+    backup = transaction_dir / "backup.txt"
+    backup.write_text("backup\n", encoding="utf-8")
+    (repo / "scripts").mkdir()
+    (repo / "scripts/debug.log").write_text("log\n", encoding="utf-8")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and "记录损坏" in result.scratch_note
+    assert "transaction accept" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+    assert "scripts/debug.log" in {h["path"] for h in result.hits}
+
+    rc.apply_delete(repo, result.hits, [])
+    assert backup.is_file()
+
+
+@pytest.mark.parametrize("create_dir", [True, False])
+def test_empty_or_absent_transaction_dir_allows_scratch_cleanup(tmp_path, create_dir):
+    repo = tmp_path / "repo"
+    if create_dir:
+        (repo / ".scratch/repo_sync_rollback").mkdir(parents=True)
+    (repo / ".scratch/exp").mkdir(parents=True)
+    (repo / ".scratch/exp/tmp.txt").write_text("x\n", encoding="utf-8")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note is None
+    assert ".scratch/exp/tmp.txt" in {h["path"] for h in result.hits}
+
+    rc.apply_delete(repo, result.hits, [])
+    assert not (repo / ".scratch/exp").exists()
+
+
 def test_open_graph_transaction_skips_scratch_with_graph_hint(tmp_path):
     repo = tmp_path / "repo"
     _txn(repo, ".scratch/task_graph_transaction", "preparing")
