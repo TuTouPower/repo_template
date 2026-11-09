@@ -75,13 +75,17 @@ def validate_task_core_asset_changes(
     owner_names 为当前授权修改的 task 规范目录名集合（如 {"t001_foo"}）。
     核心资产定义：任何 task 目录（docs/tasks/{tid}_{slug}/）下的 progress.md、
     task.md、handoff.json、review_*.md（含子目录下同名文件）。
+    目录识别与 scan_tasks 对齐：docs/tasks/ 下任意一级子目录（模板目录除外）都是
+    task 目录，不依赖目录名正则，避免非常规目录名绕过保护。
     算法：遍历 before 与 after 并集，若任何路径属于非 owner 的 task 且命中核心资产，
     若存在新增、删除、内容变化（OID 变化）或模式变化，立即抛出 TaskDataError 阻断。
     允许修改非核心补充文件（普通文件需已审查），但绝不允许篡改非 owner 核心资产。
-    非 owner task 目录下的任何文件引入非法模式（symlink 120000 / gitlink 160000）同样阻断。
+    非法模式（symlink 120000 / gitlink 160000）仅在本次变更新引入时拒绝；历史存量
+    且未改动的非法模式不阻断无关 task 的 start/finish。
     """
     owners = set(owner_names)
     all_paths = set(before_entries.keys()) | set(after_entries.keys())
+    legal_modes = ("100644", "100755")
 
     for path in sorted(all_paths):
         parts = path.split("/")
@@ -90,19 +94,17 @@ def validate_task_core_asset_changes(
         task_dir_name = parts[2]
         if task_dir_name == "task_template":
             continue
-        match = ctx.TASK_BRANCH_RE.fullmatch(task_dir_name)
-        if not match:
-            continue
-        target_tid = match.group(1)
-
         if task_dir_name in owners:
             continue
 
         b_entry = before_entries.get(path)
         a_entry = after_entries.get(path)
+        if b_entry == a_entry:
+            continue
 
-        # 任何非 owner 目录下的文件，不允许引入非 100644/100755 的非法模式
-        if a_entry is not None and a_entry[0] not in ("100644", "100755"):
+        # 仅在「新引入」非法模式时拒绝：before 已是合法/不存在，after 才出现非法模式。
+        # 历史存量 symlink/gitlink 只要未被本次改动触碰，就不应阻断不相关 task。
+        if a_entry is not None and a_entry[0] not in legal_modes:
             raise ctx.TaskDataError(
                 f"非 owner task 目录含不支持的文件模式：执行者 {sorted(owners)} 引入非法模式 mode={a_entry[0]} 于 {path}"
             )
@@ -115,20 +117,19 @@ def validate_task_core_asset_changes(
         if not is_core:
             continue
 
-        if b_entry != a_entry:
-            if b_entry is None:
-                change_type = "added"
-            elif a_entry is None:
-                change_type = "deleted"
-            elif b_entry[0] != a_entry[0] and b_entry[1] != a_entry[1]:
-                change_type = "content_and_mode_changed"
-            elif b_entry[0] != a_entry[0]:
-                change_type = "mode_changed"
-            else:
-                change_type = "modified"
-            raise ctx.TaskDataError(
-                f"禁止修改其他 task 核心资产：执行者 {sorted(owners)} 试图修改 task {target_tid} 的核心资产 {path}（变更类型：{change_type}）"
-            )
+        if b_entry is None:
+            change_type = "added"
+        elif a_entry is None:
+            change_type = "deleted"
+        elif b_entry[0] != a_entry[0] and b_entry[1] != a_entry[1]:
+            change_type = "content_and_mode_changed"
+        elif b_entry[0] != a_entry[0]:
+            change_type = "mode_changed"
+        else:
+            change_type = "modified"
+        raise ctx.TaskDataError(
+            f"禁止修改其他 task 核心资产：执行者 {sorted(owners)} 试图修改 task {task_dir_name} 的核心资产 {path}（变更类型：{change_type}）"
+        )
 
 
 def git_tree_entries(
@@ -239,8 +240,8 @@ SCOPE_FINGERPRINT_EXCLUDES = (
 
 
 def _review_scope_path(path: str, task_name: str) -> str | None:
-    # 当前 task 目录在执行分支内始终位于 docs/tasks/（归档发生在 integrate 的 merge
-    # commit，之后不再对该 task 计算指纹）：过程文件排除，spec/附件保留。
+    # 当前 task 目录在执行分支内始终位于 docs/tasks/（原位保留；integrate 的 merge
+    # commit 只把状态更新为 done/dropped/integrated，不做物理归档）：过程文件排除，spec/附件保留。
     prefix = f"docs/tasks/{task_name}/"
     if path.startswith(prefix):
         return None if path[len(prefix):] in REVIEW_PROCESS_FILES else path
@@ -337,6 +338,7 @@ def review_scope_fingerprint(
     only immutable committed blobs. A deleted file, mode or symlink change is part
     of the scope. Process files are excluded, never the current task's spec.
     Old diff-serialization fingerprints deliberately require a fresh review.
+    读取或校验失败一律显式抛 TaskDataError，绝不返回空串让调用方静默降级。
     """
     root = (
         (repo.root if repo else None)
@@ -371,12 +373,8 @@ def review_scope_fingerprint(
                 value = " ".join(tree[path]).encode() if path in tree else b"deleted"
                 _hash_part(digest, label, value)
         return digest.hexdigest()[:16]
-    except ctx.TaskDataError as error:
-        import sys
-        print(f"WARNING: {error}", file=sys.stderr)
-        return ""
-    except (OSError, ValueError):
-        return ""  # fail closed; an unreadable output is never silently omitted
+    except (OSError, ValueError) as error:
+        raise ctx.TaskDataError(f"无法计算 review scope 指纹：{error}") from error
 
 
 def _required_git_bytes(args: list[str], root: Path) -> bytes:
@@ -599,7 +597,10 @@ def verify_integrate_ready(
     finish-unwind）按 kind 分流，不得匹配 detail 自然语言：
     ready（通过）、incomplete（条件未齐）、identity（参数非法）、branch（分支异常）、
     handoff（执行回执异常）、spec（验收标准异常）、provenance（血缘异常）、
+    privacy（分支 tip 提交快照隐私泄漏或扫描失败）、
     review_scope_mismatch（提交内容偏离 review 内容）、review_gate（review 门禁失败）。
+    集成前校验收敛于此单一入口：tip tree 隐私、review scope、实现血缘、核心资产守卫
+    一次判定；失败均返回机器可判 kind，绝不静默放行。
     """
     if (
         not isinstance(attempt, int)
@@ -726,9 +727,26 @@ def verify_integrate_ready(
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
             f"{diff_anchor!r} 与实现 commit 的 first parent {base!r} 不一致；{shape}"
         )
-    scope = review_scope_fingerprint(base, task["dir"], ref=tip, repo=repo)
-    if not scope:
-        return "contract", "provenance", f"无法计算分支 {branch!r} tip 的 review scope；{shape}"
+    # 集成前对分支 tip 的完整提交快照复用隐私门禁（提交后隐私闭环）：泄漏提交不得合入主干。
+    try:
+        from .privacy import PrivacyScanError, scan_git_tree_privacy
+        leaks = scan_git_tree_privacy(repo.root, tip)
+    except PrivacyScanError as error:
+        return "contract", "privacy", (
+            f"分支 {branch!r} tip 隐私扫描失败（fail-closed）：{error}；合入前必须重扫"
+        )
+    if leaks:
+        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
+        return "contract", "privacy", (
+            f"分支 {branch!r} tip 提交快照检测到开发者家目录绝对路径泄漏（{shown}）；"
+            "泄漏提交不得合入主干，请按 recovery 处理"
+        )
+    try:
+        scope = review_scope_fingerprint(base, task["dir"], ref=tip, repo=repo)
+    except ctx.TaskDataError as error:
+        return "contract", "provenance", (
+            f"无法计算分支 {branch!r} tip 的 review scope：{error}；{shape}"
+        )
     if handoff["review_scope"] != scope:
         return "contract", "review_scope_mismatch", (
             f"{handoff_path} review_scope={handoff['review_scope']!r} 与分支 {branch!r} tip "
