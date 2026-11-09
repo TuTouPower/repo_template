@@ -957,11 +957,13 @@ def _finish_prechecks(args) -> dict:
     }
 
 
-def _accept_finish_txn(worktree: Path, transaction: dict, *, repo) -> None:
+def _accept_finish_txn(worktree: Path, transaction: dict) -> None:
     """所有 committed 收尾共享验证顺序；任一验证失败都保留 journal 和快照。"""
     from .commit_txn import finalize, verify_committed_tree
+    worktree_repo = ctx.RepoContext.for_root(worktree)
     _verify_post_commit_scope(
-        transaction["review_scope"], transaction["diff_anchor"], transaction["task_rel"], transaction["tid"], repo=repo
+        transaction["review_scope"], transaction["diff_anchor"], transaction["task_rel"], transaction["tid"],
+        repo=worktree_repo,
     )
     verify_committed_tree(worktree, transaction)
     finalize(worktree)
@@ -989,7 +991,7 @@ def _settle_stale_finish_txn(tid: str, *, repo) -> None:
     verdict, detail = judge(worktree, existing)
     if verdict == "committed":
         # committed 统一完成 scope 重算与提交后隐私核对，再给出收尾/清理出口（P1-2）。
-        _accept_finish_txn(worktree, existing, repo=repo)
+        _accept_finish_txn(worktree, existing)
         sys.exit(
             f"finish=FAIL：上次提交已产生并验证、事务已清理（{detail}）；不重复提交，"
             f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 继续收尾"
@@ -1043,7 +1045,7 @@ def cmd_finish(args):
                 # 事务，避免 journal 残留形成 recovery/run-close 互锁（P1-2）。
                 mark_phase(worktree, txn, "committed")
                 try:
-                    _accept_finish_txn(worktree, txn, repo=repo)
+                    _accept_finish_txn(worktree, txn)
                 except ctx.TaskDataError as error:
                     sys.exit(
                         f"finish=FAIL：{reason}\n提交已产生（{detail}）；"
@@ -1098,7 +1100,7 @@ def cmd_finish(args):
             sys.exit(f"finish=FAIL：提交无法认领（{detail}）；保留 journal 与快照，按 recovery 核查")
         mark_phase(worktree, txn, "committed")
         try:
-            _accept_finish_txn(worktree, txn, repo=repo)
+            _accept_finish_txn(worktree, txn)
         except ctx.TaskDataError as error:
             sys.exit(f"finish=FAIL：实现提交已验证，事务清理失败（{error}）；运行 finish-txn-clear")
         print(f"finish=OK {tid} commit={_get_head(repo=repo)}")

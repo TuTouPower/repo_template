@@ -399,5 +399,5 @@ def cmd_finish_txn_clear(args):
                 "拒绝清理：tip 执行回执与该提交事务身份不符，实现 commit 对应关系不明；"
                 "保留 journal 与现场，按 recovery 人工核查"
             )
-        _accept_finish_txn(worktree, txn, repo=repo)
+        _accept_finish_txn(worktree, txn)
         print(f"{tid} 已清理已完成的提交事务 journal")
