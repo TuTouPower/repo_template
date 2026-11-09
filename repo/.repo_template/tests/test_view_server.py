@@ -1,4 +1,5 @@
 """task 看板 view_server 纯函数测试。"""
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -190,7 +191,8 @@ def test_handler_maps_system_exit_to_error_response():
     assert handler.result == (503, "此命令只能在主工作区执行；请 cd 回主仓")
 
 
-def test_handler_maps_unexpected_exception_to_500():
+def test_handler_maps_unexpected_exception_to_generic_500(caplog):
+    """意外异常详情只进服务端日志，HTTP 响应不回显内部文本（Issue #91 加固）。"""
     class FakeHandler:
         path = "/task-doc?tid=t001&doc=task"
 
@@ -201,8 +203,42 @@ def test_handler_maps_unexpected_exception_to_500():
             self.result = (status, message)
 
     handler = FakeHandler()
-    view_server._Handler.do_GET(handler)
-    assert handler.result == (500, "内部错误：boom")
+    with caplog.at_level(logging.ERROR):
+        view_server._Handler.do_GET(handler)
+    assert handler.result == (500, "内部错误，请查看服务端日志")
+    assert "boom" not in handler.result[1]
+    assert "boom" in caplog.text
+
+
+def test_http_error_response_does_not_leak_internal_path(repo_layout, monkeypatch, caplog):
+    """任务文档越界等 TaskDataError 详情只进日志，响应给通用文案，不回显绝对路径。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+    tasks = {"t001": {"tid": "t001", "dir": "../../../etc"}}
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            self.server = SimpleNamespace(
+                repo=RepoContext.for_root(tasks_dir.parent.parent),
+                board=SimpleNamespace(snapshot=lambda: ("<html>", {"tasks": tasks}, {})),
+            )
+
+        def _route_get(self):
+            view_server._Handler._route_get(self)
+
+        def _send_error_text(self, status, message):
+            self.result = (status, message)
+
+        def _send_bytes(self, status, body, ct):
+            self.result = (status, body)
+
+    handler = MockHandler("/task-doc?tid=t001&doc=task&token=test-session-token")
+    with caplog.at_level(logging.WARNING):
+        view_server._Handler.do_GET(handler)
+    assert handler.result == (404, "请求的任务资源不可用")
+    assert "etc" not in handler.result[1]
+    assert "etc" in caplog.text
 
 
 
@@ -321,7 +357,7 @@ def test_serve_rejects_non_loopback_without_allow(monkeypatch, capsys):
         view_server.serve(repo=RepoContext.for_root(Path.cwd()), host="0.0.0.0", port=8766)
 
 
-def test_build_model_has_no_schedule_status(monkeypatch):
+def test_build_model_has_no_schedule_status():
     schedule = {
         'tasks': {
             't001': {'tid': 't001', 'title': 'one', 'status': 'backlog', 'depends_on': '', 'conflicts_with': 't002'},
@@ -334,8 +370,7 @@ def test_build_model_has_no_schedule_status(monkeypatch):
         'dropped_set': set(), 'active_list': [], 'active_set': set(),
         'backlog_tasks': {}, 'ready': ['t001', 't002'],
     }
-    monkeypatch.setattr(view_server, 'compute_schedule', lambda **kwargs: schedule)
-    model = view_server._build_model(RepoContext.for_root(Path.cwd()))
+    model = view_server._build_model(schedule, "tok", repo=RepoContext.for_root(Path.cwd()))
     assert {node['id'] for node in model['nodes']} == {'t001', 't002'}
     assert all('schedule_status' not in node for node in model['nodes'])
     assert model['edges'] == [{'type': 'conflict', 'from': 't001', 'to': 't002'}]
@@ -420,25 +455,94 @@ def test_handler_sends_security_headers():
     assert "Content-Security-Policy" in hdr_dict
 
 
-def test_rendered_html_cache_debounce(monkeypatch):
-    """验证高频并发请求复用短缓存，避免重复跑全量拓扑计算（Issue #48）。"""
-    build_count = {"n": 0}
+def test_board_cache_reuses_bundle_within_ttl(monkeypatch):
+    """TTL 内多次 snapshot 只做一次有效状态发现，平抑高并发资源冲击（Issue #48）。"""
+    bundle_calls = {"n": 0}
 
-    def fake_build(_repo=None):
-        build_count["n"] += 1
-        return {"project": "demo", "nodes": [], "edges": [], "summary": {}}
+    def fake_bundle(*, repo):
+        bundle_calls["n"] += 1
+        return ({}, {})
 
-    monkeypatch.setattr(view_server, "_build_model", fake_build)
-    monkeypatch.setattr(view_server, "_CACHED_HTML", "")
-    monkeypatch.setattr(view_server, "_LAST_RENDER_TIME", 0.0)
+    monkeypatch.setattr(view_server, "discover_effective_bundle", fake_bundle)
+    monkeypatch.setattr(view_server, "compute_schedule", lambda tasks, **kwargs: {"tasks": tasks})
+    monkeypatch.setattr(view_server, "_build_model", lambda schedule, token, **kwargs: {"nodes": []})
+    monkeypatch.setattr(view_server, "_render_html", lambda model: "<html>board</html>")
 
-    # 1. 连续 5 次快速请求
+    cache = view_server._BoardCache(RepoContext.for_root(Path.cwd()), "tok")
     for _ in range(5):
-        html = view_server._get_rendered_html(RepoContext.for_root(Path.cwd()))
-        assert "window.__BOARD__ =" in html
+        html, _, _ = cache.snapshot()
+        assert html == "<html>board</html>"
+    assert bundle_calls["n"] == 1
 
-    # 只调用了一次全量构建
-    assert build_count["n"] == 1
+
+def test_no_module_level_render_cache_state():
+    """渲染缓存不再以模块级全局存在（避免同进程多 repo/token 串数据）。"""
+    for name in ("_CACHED_HTML", "_LAST_RENDER_TIME", "_RENDER_CACHE_LOCK", "_get_rendered_html"):
+        assert not hasattr(view_server, name)
+
+
+def test_board_cache_key_is_repo_and_token(monkeypatch):
+    """同一 cache 的 token 变化即失效，不返回旧 token 的渲染结果。"""
+    calls = {"n": 0}
+
+    def fake_bundle(*, repo):
+        calls["n"] += 1
+        return ({}, {})
+
+    monkeypatch.setattr(view_server, "discover_effective_bundle", fake_bundle)
+    monkeypatch.setattr(view_server, "compute_schedule", lambda tasks, **kwargs: {"tasks": tasks})
+    monkeypatch.setattr(view_server, "_build_model", lambda schedule, token, **kwargs: {"token": token})
+    monkeypatch.setattr(view_server, "_render_html", lambda model: model["token"])
+
+    cache = view_server._BoardCache(RepoContext.for_root(Path.cwd()), "token-a")
+    assert cache.snapshot()[0] == "token-a"
+    cache._token = "token-b"
+    assert cache.snapshot()[0] == "token-b"
+    assert calls["n"] == 2
+
+
+def test_task_doc_reuses_index_bundle(repo_layout, monkeypatch):
+    """首页与 /task-doc 共享同一份 bundle，TTL 内不重复 discover_effective_bundle。"""
+    tasks_dir, _ = repo_layout
+    monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
+    repo = RepoContext.for_root(tasks_dir.parent.parent)
+    tasks = {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}}
+    bundle_calls = {"n": 0}
+
+    def fake_bundle(*, repo):
+        bundle_calls["n"] += 1
+        return (tasks, {})
+
+    monkeypatch.setattr(view_server, "discover_effective_bundle", fake_bundle)
+    monkeypatch.setattr(
+        view_server, "compute_schedule",
+        lambda tasks=None, **kwargs: {"tasks": tasks, "selected": ["t001"]},
+    )
+    monkeypatch.setattr(view_server, "_build_model", lambda schedule, token, **kwargs: {"nodes": []})
+    monkeypatch.setattr(view_server, "_render_html", lambda model: "<html>board</html>")
+
+    board = view_server._BoardCache(repo, "test-session-token")
+
+    class MockHandler:
+        def __init__(self, path):
+            self.path = path
+            self.server = SimpleNamespace(repo=repo, board=board)
+            self.responses = []
+
+        def _send_error_text(self, status, message):
+            self.responses.append((status, message))
+
+        def _send_bytes(self, status, body, ct):
+            self.responses.append((status, body))
+
+    index = MockHandler("/?token=test-session-token")
+    doc = MockHandler("/task-doc?tid=t001&doc=task&token=test-session-token")
+    view_server._Handler._route_get(index)
+    view_server._Handler._route_get(doc)
+    assert index.responses[-1][0] == 200
+    assert doc.responses[-1][0] == 200
+    assert b"# task \xe6\xad\xa3\xe6\x96\x87" in doc.responses[-1][1]
+    assert bundle_calls["n"] == 1
 
 
 def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch):
@@ -446,11 +550,7 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
     tasks_dir, _ = repo_layout
     monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
     tasks = {"t001": {"tid": "t001", "dir": "docs/tasks/t001_spec_doc"}}
-    monkeypatch.setattr(view_server, "compute_schedule", lambda tasks=None, **kwargs: {
-        "tasks": tasks,
-        "selected": ["t001"],
-    })
-    monkeypatch.setattr(view_server, "discover_effective_bundle", lambda **kwargs: (tasks, {}))
+    schedule = {"tasks": tasks, "selected": ["t001"]}
 
     responses = []
 
@@ -458,7 +558,10 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
         def __init__(self, path):
             self.path = path
             self.server = SimpleNamespace(
-                repo=RepoContext.for_root(tasks_dir.parent.parent)
+                repo=RepoContext.for_root(tasks_dir.parent.parent),
+                board=SimpleNamespace(
+                    snapshot=lambda: ("<html>board</html>", schedule, {})
+                ),
             )
         def _send_error_text(self, status, message):
             responses.append((status, message))
@@ -486,7 +589,6 @@ def test_task_doc_endpoint_requires_valid_session_token(repo_layout, monkeypatch
 def test_root_requires_session_token_and_does_not_leak_it(repo_layout, monkeypatch):
     """首页也必须校验 token，未持有者无法从 403 响应取得 token（Issue #73）。"""
     tasks_dir, _ = repo_layout
-    monkeypatch.setattr(view_server, "_get_rendered_html", lambda _repo: "<html>board</html>")
     monkeypatch.setattr(view_server, "_SESSION_TOKEN", "test-session-token")
     responses = []
 
@@ -494,7 +596,8 @@ def test_root_requires_session_token_and_does_not_leak_it(repo_layout, monkeypat
         def __init__(self, path):
             self.path = path
             self.server = SimpleNamespace(
-                repo=RepoContext.for_root(tasks_dir.parent.parent)
+                repo=RepoContext.for_root(tasks_dir.parent.parent),
+                board=SimpleNamespace(snapshot=lambda: ("<html>board</html>", {}, {})),
             )
         def _send_error_text(self, status, message):
             responses.append((status, message))
