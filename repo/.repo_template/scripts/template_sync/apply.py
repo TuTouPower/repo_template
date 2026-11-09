@@ -60,28 +60,37 @@ def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
 
     与 status / plan / migrate 共用 migration_findings 这一单一可处理集合，
     消除「plan 显示一致但 apply 阻断」。引导命令基于固定来源 product 与消费仓身份，
-    不再指向旧消费仓本地脚本。
+    不再指向旧消费仓本地脚本。entity 与其它旧布局并存时引导 `migrate all`，
+    避免先跑 entity-storage 再被 workflow-schema 的缺 progress.md 卡住。
     """
     entity_problems = migration_findings("entity-storage", sync)
+    other_problems: list[str] = []
+    for kind in KINDS:
+        if kind == "entity-storage":
+            continue
+        other_problems.extend(
+            f"{kind} 旧布局：{item}"
+            for item in migration_findings(kind, sync, src=src)
+        )
+    if entity_problems and other_problems:
+        raise ctx.SyncError(
+            "检测到旧布局；apply 不再自动迁移。先运行 "
+            f"`{migrate_command(src, sync, 'all')}`：\n- "
+            + "\n- ".join(
+                [*(f"entity-storage 旧布局：{item}" for item in entity_problems), *other_problems]
+            )
+        )
     if entity_problems:
         raise ctx.SyncError(
             "检测到旧实体存储布局；apply 不再自动迁移。先运行 "
             f"`{migrate_command(src, sync, 'entity-storage')}`：\n- "
             + "\n- ".join(entity_problems)
         )
-    problems: list[str] = []
-    for kind in KINDS:
-        if kind == "entity-storage":
-            continue
-        problems.extend(
-            f"{kind} 旧布局：{item}"
-            for item in migration_findings(kind, sync, src=src)
-        )
-    if problems:
+    if other_problems:
         raise ctx.SyncError(
             "检测到旧布局；apply 不再自动迁移。先运行 "
             f"`{migrate_command(src, sync, 'all')}`（或按类型单项迁移）：\n- "
-            + "\n- ".join(problems)
+            + "\n- ".join(other_problems)
         )
 
 
