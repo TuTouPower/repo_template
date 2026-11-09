@@ -35,7 +35,7 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_reset_after_fork)
 
 
-class LockBusyError(Exception):
+class LockBusyError(OSError):
     """非阻塞取锁失败：锁已被其他进程或线程持有。"""
 
 
@@ -46,12 +46,16 @@ def lock_fh(fh, *, blocking: bool = True) -> None:
         try:
             msvcrt.locking(fh.fileno(), mode, 1)
         except OSError as error:
+            if blocking:
+                raise
             raise LockBusyError(f"锁被占用：{fh.name}") from error
     else:
         mode = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
         try:
             fcntl.flock(fh, mode)
         except BlockingIOError as error:
+            if blocking:
+                raise
             raise LockBusyError(f"锁被占用：{fh.name}") from error
 
 

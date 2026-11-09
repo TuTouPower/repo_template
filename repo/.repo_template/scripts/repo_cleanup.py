@@ -43,10 +43,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pending import open_scratch_references
-from repo_task.context import RepoContext
+from repo_task.context import RepoContext, TaskDataError
 from repo_task.documents import parse_front_matter_text
 from repo_task.file_transaction import (
+    FINISHED_STATUSES,
     GRAPH_TRANSACTION_DIR,
+    OPEN_STATUSES,
     SYNC_TRANSACTION_DIR,
     TRANSACTION_DIRS,
     open_transactions,
@@ -266,9 +268,11 @@ def _transaction_reason(repo: Path, rel: str) -> str | None:
         except (OSError, UnicodeError, ValueError):
             return "无主"
         status = data.get("status") if isinstance(data, dict) else None
-        if status in {"accepted", "rolled_back"}:
+        if status in FINISHED_STATUSES:
             return f"事务已结束（{status}）"
-        return "无主"
+        if status in OPEN_STATUSES:
+            return "未结束事务"
+        return "事务记录损坏"
     return None
 
 
@@ -605,6 +609,8 @@ def main(argv: list[str] | None = None) -> None:
                 raise CleanupError(
                     "控制面忙：同步或 task 控制命令正在运行，稍后重试"
                 ) from error
+            except (TaskDataError, OSError) as error:
+                raise CleanupError(f"无法获取控制面锁：{error}") from error
         else:
             _execute(args, repo, categories)
     except CleanupError as error:

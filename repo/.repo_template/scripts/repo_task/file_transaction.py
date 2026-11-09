@@ -15,6 +15,7 @@ SYNC_TRANSACTION_DIR = ".scratch/repo_sync_rollback"
 GRAPH_TRANSACTION_DIR = ".scratch/task_graph_transaction"
 TRANSACTION_DIRS = (SYNC_TRANSACTION_DIR, GRAPH_TRANSACTION_DIR)
 OPEN_STATUSES = frozenset({"preparing", "applying", "applied", "restore_failed"})
+FINISHED_STATUSES = frozenset({"accepted", "rolled_back"})
 
 
 def open_transactions(root) -> list[tuple[str, str]]:
@@ -37,7 +38,7 @@ def open_transactions(root) -> list[tuple[str, str]]:
         status = data.get("status") if isinstance(data, dict) else None
         if status in OPEN_STATUSES:
             findings.append((directory, status))
-        elif not isinstance(status, str):
+        elif status not in FINISHED_STATUSES:
             findings.append((directory, "corrupt"))
     return findings
 

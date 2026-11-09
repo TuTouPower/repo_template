@@ -8,7 +8,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from repo_task.locks import file_lock  # noqa: E402
+from repo_task.locks import LockBusyError, file_lock  # noqa: E402
 
 CLEANUP = SCRIPTS / "repo_cleanup.py"
 
@@ -49,3 +49,8 @@ def test_scratch_cleanup_fails_fast_when_control_lock_held(tmp_path):
         assert allowed.returncode == 0, allowed.stderr
         assert not log.exists()
         assert scratch_file.is_file()
+
+
+def test_lock_busy_error_remains_an_oserror():
+    """旧调用方的 except OSError 仍能接住非阻塞锁失败。"""
+    assert issubclass(LockBusyError, OSError)

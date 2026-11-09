@@ -7,6 +7,7 @@ main 子进程，覆盖默认类别扫描、docs/ 保护、node/scratch/artifact
 
 import json
 import os
+from contextlib import contextmanager
 import subprocess
 import sys
 import time
@@ -80,9 +81,8 @@ def test_scan_default_categories(tree):
     assert "README.md" not in paths
     assert "docs/runtime/tasks_audit.log" not in paths
     assert "docs/runtime/dispatch_ledger.jsonl" not in paths
-    # scratch 已进入默认类别；node/artifacts/data 仍须点名
+    # node/artifacts/data 仍须点名；scratch 默认行为由专项测试覆盖
     assert "node_modules" not in paths
-    assert ".scratch/exp/tmp.py" in paths
 
 
 def test_apply_deletes_only_listed(tree):
@@ -156,33 +156,43 @@ def test_apply_unlinks_symlink_dir(tree):
     assert not link.is_symlink()
 
 
-def test_default_categories_enter_scratch_but_not_other_bulk_dirs(tmp_path):
-    """默认类别包含 scratch；artifacts/data/node_modules 仍须点名。
+def test_default_categories_do_not_enter_unnamed_dirs(tmp_path):
+    """默认类别不得命中未点名目录树（artifacts/data/node_modules）内文件。
 
-    原「默认不进入 .scratch」断言按 L68 删除；scratch 默认清理由本测试和
-    后续事务/主人保护用例覆盖。
+    原「默认不进入 .scratch」断言按 L68 删除；scratch 默认清理由
+    test_default_scratch_is_default_cleaned 覆盖。
     """
     repo = tmp_path / "repo"
     (repo / "artifacts/out/__pycache__").mkdir(parents=True)
     (repo / "artifacts/out/__pycache__/m.pyc").write_bytes(b"x")
     (repo / "artifacts/run.log").write_text("log\n")
-    (repo / ".scratch/exp").mkdir(parents=True)
-    (repo / ".scratch/exp/note.log").write_text("log\n")
     (repo / "data/cache").mkdir(parents=True)
     (repo / "data/cache/.DS_Store").write_bytes(b"x")
     (repo / "node_modules/pkg").mkdir(parents=True)
     (repo / "node_modules/pkg/.DS_Store").write_bytes(b"x")
 
     hits, _ = rc.collect(repo, rc.DEFAULT_CATEGORIES, [])
-    assert {h["path"] for h in hits} == {".scratch/exp", ".scratch/exp/note.log"}
+    assert {h["path"] for h in hits} == set()
 
     # 点名类别仍能整树处理（不受剪枝影响）
-    hits, _ = rc.collect(repo, ["scratch", "artifacts", "data", "node"], [])
+    hits, _ = rc.collect(repo, ["artifacts", "data", "node"], [])
     paths = {h["path"] for h in hits}
-    assert ".scratch/exp/note.log" in paths
     assert "artifacts/run.log" in paths
     assert "data/cache/.DS_Store" in paths
     assert "node_modules" in paths
+
+
+def test_default_scratch_is_default_cleaned(tree):
+    """L68：scratch 默认清理无主内容，目录本身保留。"""
+    r = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "repo_cleanup.py"), "apply"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        env=get_controlled_git_env(),
+    )
+    assert r.returncode == 0, r.stderr
+    assert not (tree / ".scratch/exp/tmp.py").exists()
+    assert not (tree / ".scratch/exp").exists()
+    assert (tree / ".scratch").is_dir()
 
 
 def test_default_categories_skip_nested_unnamed_dirs(tmp_path):
@@ -261,8 +271,6 @@ def test_cli_apply_default(tree):
     assert r.returncode == 0, r.stderr
     assert "模式：apply" in r.stdout
     assert not (tree / "src/app/__pycache__").exists()
-    assert not (tree / ".scratch/exp/tmp.py").exists()
-    assert (tree / ".scratch").is_dir()
     assert (tree / "docs/guide.log").exists()
 
 
@@ -603,3 +611,34 @@ def test_corrupt_issue_front_matter_is_treated_as_unpublished(tmp_path):
     result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
     assert any(item["path"] == ".scratch/repo_template_issues/20261110-101500.md"
                for item in result.protected)
+
+
+def test_unknown_transaction_status_skips_scratch(tmp_path):
+    repo = tmp_path / "repo"
+    _txn(repo, ".scratch/repo_sync_rollback", "foo")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and "记录损坏" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+
+
+@pytest.mark.parametrize("error", [
+    rc.TaskDataError("同步验证子进程禁止修改当前仓库"),
+    OSError("无法解析 git 公共目录"),
+])
+def test_lock_errors_become_cleanup_errors(tmp_path, monkeypatch, error):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(rc, "repo_root", lambda: repo)
+
+    @contextmanager
+    def boom(*args, **kwargs):
+        raise error
+        yield
+
+    monkeypatch.setattr(rc, "git_common_lock", boom)
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["scan"])
+    assert "repo_cleanup:" in str(exc.value)
+    assert "无法获取控制面锁" in str(exc.value)
