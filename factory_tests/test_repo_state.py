@@ -9,6 +9,7 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts" / "repo_state.py"
 sys.path.insert(0, str(SCRIPT.parent))
+from git_repo_support import get_controlled_git_env
 import repo_state
 
 
@@ -20,6 +21,7 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         encoding="utf-8",
         errors="replace",
         check=check,
+        env=get_controlled_git_env(),
     )
 
 
@@ -31,6 +33,7 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=get_controlled_git_env(),
     )
 
 
@@ -215,6 +218,7 @@ def _run_from(repo: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=get_controlled_git_env(),
     )
 
 

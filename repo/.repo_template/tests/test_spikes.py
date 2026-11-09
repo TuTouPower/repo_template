@@ -308,9 +308,9 @@ def test_spikes_new_creates_directory_and_frontmatter(tmp_path, monkeypatch, cap
     assert fm == {"sid": "s001", "slug": "uv_lock", "status": "active"}
     assert "# Spike report: UV Lock Probe" in body
 
-    # 验证不自动 git add（工作区保留为未暂存）
-    staged = _git(repo, "status", "--porcelain").stdout
-    assert "??" in staged or "docs/spikes/s001_uv_lock" in staged
+    # 验证不自动 git add：index 中不得出现任何 staged 变更（DS L281）
+    staged = _git(repo, "diff", "--cached", "--name-only").stdout
+    assert staged == ""
 
 
 def test_spikes_new_supports_opt_slug_and_increments_id(tmp_path, monkeypatch, capsys):

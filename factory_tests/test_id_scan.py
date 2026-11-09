@@ -15,6 +15,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+from git_repo_support import get_controlled_git_env
 from _id_scan import IdScanError, allocate, allocate_dir, scan_max_id
 import pending as pending_mod
 import findings as findings_mod
@@ -32,6 +33,7 @@ def _git(repo, *args):
         text=True,
         encoding="utf-8", errors="replace",
         check=True,
+        env=get_controlled_git_env(),
     )
 
 

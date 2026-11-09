@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from test_task_start_flow import git_repo, _git, _task_cli
+from test_task_start_flow import git_repo, _task_cli
+from git_repo_support import git_run
 from repo_task import context as ctx
 from repo_task import lifecycle
 from repo_task.documents import parse_front_matter, write_front_matter
@@ -45,11 +46,11 @@ def test_purge_rejects_branch_with_unmerged_commit(git_repo):
     fm["branch"] = "t004_delta"
     write_front_matter(note, fm, body)
 
-    _git(git_repo, "checkout", "-b", "t004_delta")
+    git_run(git_repo, "checkout", "-b", "t004_delta")
     (git_repo / "unmerged.txt").write_text("x\n", encoding="utf-8")
-    _git(git_repo, "add", "unmerged.txt")
-    _git(git_repo, "commit", "-m", "unmerged work")
-    _git(git_repo, "checkout", "main")
+    git_run(git_repo, "add", "unmerged.txt")
+    git_run(git_repo, "commit", "-m", "unmerged work")
+    git_run(git_repo, "checkout", "main")
 
     result = _task_cli(git_repo, "purge", tid, "--reason", "miscreated")
     assert result.returncode != 0
@@ -71,7 +72,7 @@ def test_purge_rejects_worktree_removal_failure(git_repo, monkeypatch):
 
 
 def test_purge_rejects_non_main_branch(git_repo):
-    _git(git_repo, "checkout", "-b", "feature")
+    git_run(git_repo, "checkout", "-b", "feature")
     target = _task_dir(git_repo, "t001")
     result = _task_cli(git_repo, "purge", "t001", "--reason", "miscreated")
     assert result.returncode != 0

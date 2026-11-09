@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from git_repo_support import get_controlled_git_env
+
 FACTORY_DIR = Path(__file__).resolve().parent
 FACTORY_ROOT = FACTORY_DIR.parent
 TEMPLATE_SOURCE = FACTORY_ROOT / "repo/.repo_template"
@@ -22,6 +24,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
         encoding="utf-8",
         errors="replace",
         check=True,
+        env=get_controlled_git_env(),
     )
 
 
@@ -48,6 +51,7 @@ def _run_spikes(repo: Path, *args: str) -> subprocess.CompletedProcess:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=get_controlled_git_env(),
     )
 
 
