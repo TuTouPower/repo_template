@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REVIEWS_DIR = REPO_ROOT / "docs/reviews"
 ARCHIVE_REVIEWS = REPO_ROOT / "docs/archive/reviews"
+
+_GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _controlled_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in list(env.keys()):
+        if key in _GIT_REDIRECT_VARS or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            env.pop(key, None)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 class HygieneError(Exception):
@@ -35,9 +57,14 @@ def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
             ["git", "-C", str(REPO_ROOT), *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
+            env=_controlled_git_env(),
         )
     except subprocess.TimeoutExpired as err:
         raise HygieneError(f"git {' '.join(args)} 超时（{timeout}s）") from err
+    except FileNotFoundError as err:
+        raise HygieneError("git 不可用") from err
+    except OSError as err:
+        raise HygieneError(f"git 执行失败（{' '.join(args)}）：{err}") from err
 
 
 def _rel(path: Path) -> str:
@@ -74,13 +101,55 @@ def _delivery_files(dst: Path) -> list[Path]:
     return files
 
 
+def _filter_ignored(paths: list[Path]) -> list[Path]:
+    """用 git check-ignore/ls-files 扣除被忽略的交付文件，避免 git add 在忽略文件上报错。
+
+    `git add -A -- <ignored>` 在已忽略路径上直接报错；此处先过滤，保持交付集合精确。
+    git 不可用或判定失败时 fail-closed，不静默放行。
+    """
+    if not paths:
+        return []
+    rels = [_rel(p) for p in paths]
+    # 为避免改 _git 签名，直接跑独立 subprocess（同样受控环境）。
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "check-ignore", "--stdin"],
+            input="\n".join(rels) + "\n",
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+            env=_controlled_git_env(),
+        )
+    except subprocess.TimeoutExpired as err:
+        raise HygieneError("git check-ignore 超时（30s）") from err
+    except FileNotFoundError as err:
+        raise HygieneError("git 不可用") from err
+    except OSError as err:
+        raise HygieneError(f"git check-ignore 执行失败：{err}") from err
+    if proc.returncode not in (0, 1):
+        raise HygieneError(f"git check-ignore 失败：{proc.stderr.strip()}")
+    ignored = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    # check-ignore 输出可能为相对或绝对？统一按相对比较。
+    ignored_rels = set()
+    for line in ignored:
+        try:
+            ignored_rels.add((REPO_ROOT / line).relative_to(REPO_ROOT).as_posix())
+        except ValueError:
+            ignored_rels.add(line)
+    return [p for p in paths if _rel(p) not in ignored_rels]
+
+
 def _move_dir(src: Path, dst: Path, write: bool) -> None:
-    if dst.exists():
+    if dst.exists() or dst.is_symlink():
         raise HygieneError(f"目标已存在 {_rel(dst)}；不覆盖或合并")
+    if src.is_symlink():
+        raise HygieneError(f"拒绝迁移软链目录：{_rel(src)}")
     if not write:
         print(f"将迁移（dry-run）：{_rel(src)} -> {_rel(dst)}")
         return
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise HygieneError(f"创建归档父目录失败：{error}") from error
     # 整目录一次 move：要么全成功要么全失败，不产生「源与目标各留一部分」的中间状态。
     # git mv 只搬 tracked 文件、需二次搬运 gitignore 残留；残留搬运失败时源与目标
     # 会各留一部分且无回滚，下次运行因 dst.exists() 永久拒绝（DS L261）。
@@ -88,12 +157,34 @@ def _move_dir(src: Path, dst: Path, write: bool) -> None:
         shutil.move(str(src), str(dst))
     except OSError as error:
         raise HygieneError(f"移动目录失败：{error}") from error
-    # 只 add 显式枚举的交付文件 + 源删除：_meta/ 等过程文件随目录一起移动，
-    # 但永不进入 index（即使消费仓 .gitignore 缺忽略规则）。
-    targets = [_rel(src), *(_rel(path) for path in _delivery_files(dst))]
-    r = _git("add", "-A", "--", *targets)
+    # move 后到 add 成功前任何异常都必须回滚：保证「源仍在或目标已入 index」，
+    # 杜绝源消失且目标未入 index 的中间态；add 部分成功时先 git reset 再搬回目录。
+    try:
+        delivery = _filter_ignored(_delivery_files(dst))
+        targets = [_rel(src), *(_rel(path) for path in delivery)]
+        r = _git("add", "-A", "--", *targets)
+    except HygieneError as error:
+        _git("reset", "-q")
+        try:
+            shutil.move(str(dst), str(src))
+        except OSError:
+            pass
+        raise HygieneError(f"归档枚举/入 index 失败，已回滚目录：{error}") from error
+    except OSError as error:
+        _git("reset", "-q")
+        try:
+            shutil.move(str(dst), str(src))
+        except OSError:
+            pass
+        raise HygieneError(f"归档枚举失败，已回滚目录：{error}") from error
     if r.returncode != 0:
-        shutil.move(str(dst), str(src))
+        _git("reset", "-q")
+        try:
+            shutil.move(str(dst), str(src))
+        except OSError as move_error:
+            raise HygieneError(
+                f"git add -A 失败且回滚目录失败：{r.stderr.strip()}；{move_error}"
+            ) from move_error
         raise HygieneError(f"git add -A 失败，已回滚目录：{r.stderr.strip()}")
     print(f"已迁移：{_rel(src)} -> {_rel(dst)}")
 
