@@ -58,7 +58,7 @@ def test_finish_privacy_precheck_accepts_full_product_tree(full_tree_repo):
     """finish 前置的隐私检查（_check_privacy_leaks）在完整产物树上不阻断。"""
     repo = ctx.RepoContext.for_root(full_tree_repo)
     task_dir = full_tree_repo / "docs" / "tasks" / "t001_alpha"
-    lifecycle._check_privacy_leaks(task_dir, repo=repo)
+    lifecycle._check_privacy_leaks(task_dir, repo=repo, message="")
 
 
 def test_full_product_tree_still_blocks_real_leak(full_tree_repo, tmp_path):

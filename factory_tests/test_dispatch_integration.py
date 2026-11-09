@@ -771,6 +771,7 @@ def test_track_worktree_binds_session_explicitly_without_command_sniffing(tmp_pa
     spec.loader.exec_module(tw)
 
     project = tmp_path / "project"
+    (tmp_path / "project_t001").mkdir()
     runtime = project / "docs/runtime"
     runtime.mkdir(parents=True)
     ledger = runtime / "dispatch_ledger.jsonl"

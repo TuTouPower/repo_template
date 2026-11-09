@@ -700,12 +700,12 @@ def _index_blob_rels(*, repo) -> dict[str, str]:
 
 
 def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
-    """扫描本次提交候选内容 + commit message，统一复用 scan_text_privacy_leaks。"""
+    """扫描本次提交候选内容 + commit message，统一复用 privacy 单一扫描入口。"""
     from .git_ops import batch_cat_file
     from .privacy import (
         PrivacyScanError,
-        decode_candidate_text,
         is_privacy_candidate,
+        scan_candidate_bytes,
         scan_text_privacy_leaks,
     )
 
@@ -727,10 +727,7 @@ def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
             data = blobs.get(oid)
             if data is None:
                 raise PrivacyScanError(f"无法读取已暂存内容：{rel}")
-            text = decode_candidate_text(Path(rel), data)
-            if text is None:
-                continue
-            violations.extend(scan_text_privacy_leaks(text, label=rel))
+            violations.extend(scan_candidate_bytes(data, label=rel))
 
     # task 目录候选：lstat，软链只扫 os.readlink 文本，不跟随目标（DS L211）。
     for rel in task_rels:
@@ -740,17 +737,11 @@ def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
         try:
             mode = path.lstat().st_mode
             if stat.S_ISLNK(mode):
-                text = os.readlink(path)
+                violations.extend(scan_text_privacy_leaks(os.readlink(path), label=rel))
             elif stat.S_ISREG(mode):
-                data = path.read_bytes()
-                text = decode_candidate_text(path, data)
-                if text is None:
-                    continue
-            else:
-                continue
+                violations.extend(scan_candidate_bytes(path.read_bytes(), label=rel))
         except OSError as error:
             raise PrivacyScanError(f"无法读取待提交文件：{rel}（{error}）") from error
-        violations.extend(scan_text_privacy_leaks(text, label=rel))
 
     # commit message 同样会永久进入 Git 历史（DS L213）。
     violations.extend(scan_text_privacy_leaks(message, label="commit message"))
@@ -779,9 +770,8 @@ def _scan_commit_privacy_leaks(ref: str, *, repo) -> list[str]:
     from .git_ops import batch_cat_file
     from .privacy import (
         PrivacyScanError,
-        decode_candidate_text,
         is_privacy_candidate,
-        scan_text_privacy_leaks,
+        scan_candidate_bytes,
     )
 
     changed = _git(
@@ -817,10 +807,7 @@ def _scan_commit_privacy_leaks(ref: str, *, repo) -> list[str]:
         data = blobs.get(oid)
         if data is None:
             raise PrivacyScanError(f"无法读取 {ref}:{rel}")
-        text = decode_candidate_text(Path(rel), data)
-        if text is None:
-            continue
-        violations.extend(scan_text_privacy_leaks(text, label=rel))
+        violations.extend(scan_candidate_bytes(data, label=rel))
     return violations
 
 

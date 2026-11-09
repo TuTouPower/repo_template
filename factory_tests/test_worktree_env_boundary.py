@@ -145,10 +145,11 @@ def test_unignored_env_symlink_diagnostic_and_remediation_flow(git_repo, tmp_pat
     assert "因以 '/' 结尾仅忽略真实目录" in err_msg
     assert "在 .gitignore 或 info/exclude 补充精准规则" in err_msg
 
-    # 4. review_scope_fingerprint fail-closed 返回空串
+    # 4. review_scope_fingerprint 不再静默返回空串，改为 fail-closed 抛错
     fm, _ = parse_front_matter(wt / "docs/tasks/t001_alpha/progress.md")
     diff_anchor = fm["diff_anchor"]
-    assert monitoring.review_scope_fingerprint(diff_anchor, "docs/tasks/t001_alpha", repo_root=wt) == ""
+    with pytest.raises(ctx.TaskDataError, match="未被忽略的环境软链"):
+        monitoring.review_scope_fingerprint(diff_anchor, "docs/tasks/t001_alpha", repo_root=wt)
 
     # 5. finish 前置检查拦截，并给出精准诊断，不误导为 git add
     message_file = prepare_finish(wt, "t001", "alpha", stage=False, evidence=False)
