@@ -33,7 +33,7 @@
 
 ## 轮次上限
 
-`review_limit` / `verify_limit` 在 task front matter 持久保存，旧 task 默认 5；只有用户批准后由 `limits --review/--verify ... --reason ...` 增加，新 attempt 不清零历史轮次。
+`review_limit` / `verify_limit` 在 task front matter 持久保存，旧 task 默认 5；只有用户批准后由 `limits --review/--verify ... --reason ...` 增加，新 attempt 不清零历史轮次。这是 agent 必须遵守的流程约束：`--reason` 由调用方填写，代码只核对记录与上限变化一致，不核验批准来源。
 
 ## review 门禁失败后的修复
 

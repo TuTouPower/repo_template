@@ -35,7 +35,7 @@ run-begin(start → reserve → claim) → task-work(finish) → run-close(termi
 
 正式 task 状态只有 `backlog / active / done / dropped`。遇到阻塞时 task 保持 active，实施笔记记录原因；当前 attempt 写 `terminal=stopped` 和 `report=blocked`。条件补齐后 reserve 新 attempt 继续原 worktree。
 
-`review_limit` 和 `verify_limit` 跨 attempt 持久化，新 attempt 不清零历史。用户批准追加轮次时，只能通过 `task.py limits` 增加绝对上限并记录原因。
+`review_limit` 和 `verify_limit` 跨 attempt 持久化，新 attempt 不清零历史。用户批准追加轮次时，只能通过 `task.py limits` 增加绝对上限并记录原因。这是 agent 必须遵守的流程约束：`--reason` 由调用方填写，代码只核对记录与上限变化一致，不核验批准来源。
 
 ## 调度图与计划
 

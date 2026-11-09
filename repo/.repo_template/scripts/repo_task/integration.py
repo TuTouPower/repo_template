@@ -798,12 +798,14 @@ def _is_pure_backlog_to_done_member_conflict(
     保护规则：
     1. 存在任何未知 front matter 字段时拒绝自动消解；
     2. 定义字段（tid, slug, title, depends_on, conflicts_with）在主干与分支必须完全相等；
-    3. review_level 仅允许相等，或分支经授权 single -> full（note 含升级证据且主干未相对 merge-base 改写）；
-    4. review_limit / verify_limit 仅允许相等，或分支经授权调大（note 含 budget 证据且主干未相对 merge-base 改写）；
+    3. review_level 仅允许相等，或分支经 CLI 记录 single -> full（note 含升级证据且主干未相对 merge-base 改写）；
+    4. review_limit / verify_limit 仅允许相等，或分支经 CLI 记录调大（note 含 budget 证据且主干未相对 merge-base 改写）；
     5. 主干 note 若非空，必须是分支 note 的精确值或 `; ` 前缀；且主干未相对 merge-base 独立改写 note；
     6. progress.md 正文：若 merge-base 存在该文件，主干正文必须等于 merge-base 正文（无主干独立正文修改）；
        若 merge-base 不存在该文件（分叉后主干新建），主干非占位正文行必须全部保留在分支正文中。
 
+    第 3、4 条只确认上限变化带有 CLI 留下的记录，是一致性检查，不是授权证明；
+    「用户批准后调大上限」是调用方必须遵守的流程约束，代码不核验批准来源。
     merge-base 命令失败、或 merge-base 处文件存在但读取/解析失败时返回 False（fail-closed）。
     """
     matched_name = next(
