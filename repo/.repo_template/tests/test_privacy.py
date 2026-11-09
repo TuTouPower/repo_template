@@ -1,16 +1,17 @@
 """repo_task.privacy 契约测试：路径 token 边界、编码与 index/tree 扫描（A07/A08）。
 
 本文件随产物分发，含大量家目录路径样例；一律用运行期拼接构造，避免模板自带
-测试夹具自身被隐私门禁命中（P0-1）。契约测试不能依赖工厂测试模块，故受控 Git
-环境在本文件内自包含实现。
+测试夹具自身被隐私门禁命中（P0-1）。契约测试不能依赖工厂测试模块，受控 Git
+环境统一复用产物树内 git_env_support（单一真相源，DS L286）。
 """
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from git_env_support import git_run as _git
+from git_env_support import init_repo
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -55,40 +56,9 @@ def _file_uri(*parts: str) -> str:
     return "file://" + _joined("", *parts)
 
 
-def _controlled_git_env() -> dict[str, str]:
-    """屏蔽宿主 Git 配置与外部定位变量（DS L286）。
-
-    产物仓不含 factory_tests，无法复用其 git_repo_support；此处自包含等价环境。
-    """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update({
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_AUTHOR_NAME": "test",
-        "GIT_AUTHOR_EMAIL": "test@example.com",
-        "GIT_COMMITTER_NAME": "test",
-        "GIT_COMMITTER_EMAIL": "test@example.com",
-        "GIT_TERMINAL_PROMPT": "0",
-    })
-    return env
-
-
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        check=check, env=_controlled_git_env(),
-    )
-
-
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    root = tmp_path / "repo"
-    root.mkdir()
-    _git(root, "init", "-b", "main")
-    _git(root, "config", "user.email", "test@example.com")
-    _git(root, "config", "user.name", "test")
-    _git(root, "config", "commit.gpgsign", "false")
+    root = init_repo(tmp_path / "repo")
     (root / "tracked.md").write_text("clean\n", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-m", "init")

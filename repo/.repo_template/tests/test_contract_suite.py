@@ -16,6 +16,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from template_sync import context as ctx
 from template_sync.gates import _run_tests
 
+from git_env_support import get_controlled_git_env
+
 pytestmark = pytest.mark.contract
 
 CONTRACT_MODULES = frozenset({
@@ -34,6 +36,7 @@ CONTRACT_MODULES = frozenset({
     "test_pending.py",
     "test_spikes.py",
     "test_task_core_asset_guard.py",
+    "test_tooling_guards.py",
 })
 
 
@@ -73,7 +76,7 @@ def test_contract_collection_matches_allowlist():
     result = subprocess.run(
         [sys.executable, "-m", "pytest", str(TESTS_DIR), "--collect-only", "-q", "-m", "contract"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(REPO_ROOT),
+        cwd=str(REPO_ROOT), env=get_controlled_git_env(),
     )
     assert result.returncode == 0, result.stdout + result.stderr
     modules = set()
@@ -119,6 +122,7 @@ def test_sync_apply_runs_contract_suite(monkeypatch):
 
     def fake_run(command, **kwargs):
         if command and command[0] == "git":
+            kwargs.setdefault("env", get_controlled_git_env())
             return real_run(command, **kwargs)
         calls["command"] = command
         calls["timeout"] = kwargs.get("timeout")

@@ -15,11 +15,13 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from git_env_support import git_run as _git
+from git_env_support import init_repo
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 TESTS_DIR = Path(__file__).resolve().parent
@@ -33,24 +35,9 @@ from repo_task.documents import atomic_write_text
 pytestmark = pytest.mark.contract
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-    )
-
-
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    r = tmp_path / "repo"
-    r.mkdir()
-    _git(r, "init", "-b", "main")
-    _git(r, "config", "user.email", "t@t")
-    _git(r, "config", "user.name", "t")
+    r = init_repo(tmp_path / "repo")
     (r / "docs" / "pending").mkdir(parents=True)
     (r / "docs" / "pending" / ".gitkeep").write_text("", encoding="utf-8")
     _git(r, "add", "-A")
