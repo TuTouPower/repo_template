@@ -74,9 +74,31 @@ def test_task_body_is_excluded_but_review_level_is_bound(git_repo):
 
 
 def test_malformed_review_metadata_fails_closed(git_repo):
+    """非法 front matter 必须显式抛 TaskDataError（DS L221：不再静默返回空串 fail-open）。
+
+    旧断言 `== ""` 固化的是「静默空串」语义；采纳项改为显式失败后按新语义改写，
+    空串不再是可接受的兜底结果。
+    """
+    from repo_task.context import TaskDataError
+
     repo, anchor = git_repo
     (repo / TASK_REL / "progress.md").write_text("unstructured task metadata\n", encoding="utf-8")
-    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo) == ""
+    with pytest.raises(TaskDataError, match="front matter"):
+        review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+
+
+def test_os_error_is_wrapped_as_task_data_error(git_repo, monkeypatch):
+    """DS L221：OSError/ValueError 不再静默返回空串，统一包装成 TaskDataError 上抛。"""
+    from repo_task import monitoring
+
+    repo, anchor = git_repo
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(monitoring, "_review_worktree", boom)
+    with pytest.raises(monitoring.ctx.TaskDataError, match="disk failure"):
+        monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
 
 
 def test_untracked_foreign_file_changes_fingerprint(git_repo):
@@ -160,11 +182,11 @@ def test_review_scope_large_file_limit_and_streaming(git_repo, monkeypatch):
     oversized = repo / "huge.bin"
     oversized.write_bytes(b"x" * 150)
 
-    # 超过限制时，review_scope_fingerprint 因捕获 TaskDataError 返回空字符串 fail-closed
-    fp = monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
-    assert fp == ""
+    # 超过限制时 review_scope_fingerprint 显式抛 TaskDataError（DS L221 已废弃静默空串）
+    with pytest.raises(monitoring.ctx.TaskDataError, match="review scope 文件过大"):
+        monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
 
-    # 直接调用 _review_worktree 应触发 TaskDataError 并指出文件过大
+    # 直接调用 _review_worktree 同样触发 TaskDataError 并指出文件过大
     with pytest.raises(monitoring.ctx.TaskDataError, match="review scope 文件过大"):
         monitoring._review_worktree(repo, "t001_first")
 

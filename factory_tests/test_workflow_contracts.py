@@ -426,7 +426,9 @@ def test_merge_continue_rejects_modified_nonconflict_task_path(git_repo):
     _git(git_repo, 'add', str(path.relative_to(git_repo)))
     result = _task_cli(git_repo, 'integrate', 't001', *_identity_args(identity), '--continue')
     assert result.returncode != 0
-    assert '非冲突文件偏离 Git 自动合并结果' in result.stderr or '核心资产与已验证实现 tip 不一致' in result.stderr
+    # 该场景在 merge 准备完成后改写一个非冲突路径，唯一应触发的是「偏离 Git 自动合并结果」门禁。
+    # 旧 or 断言允许第二层门禁误触发也通过，弱化了验证（DS L282），按场景固定预期错误。
+    assert '非冲突文件偏离 Git 自动合并结果' in result.stderr
     assert f'docs/tasks/{branch}/progress.md' in result.stderr
     assert _git(git_repo, 'rev-parse', '--verify', 'MERGE_HEAD', check=False).returncode == 0
 

@@ -160,7 +160,9 @@ def test_integrate_continue_rejects_tampered_core_asset_before_commit(git_repo):
 
     finished = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity), "--continue")
     assert finished.returncode != 0
-    assert "偏离 Git 自动合并结果" in finished.stderr or "核心资产与已验证实现 tip 不一致" in finished.stderr
+    # 该场景篡改的是 merge 准备后新增的 handoff.json（非冲突路径），唯一应触发的是
+    # 「偏离 Git 自动合并结果」门禁；旧 or 断言允许第二层门禁误触发也通过（DS L282）。
+    assert "偏离 Git 自动合并结果" in finished.stderr
 
 
 def test_manual_merge_then_integrate_keeps_in_place_without_extra_commit(git_repo):
@@ -545,6 +547,64 @@ def test_auto_conflict_resolution_accepts_authorized_review_upgrade_and_limits(g
         "t004_delta", ["t001_alpha", "t004_delta"], "docs/tasks/t004_delta/progress.md",
         repo=RepoContext.for_root(git_repo),
     )
+
+
+def test_authorized_review_upgrade_runs_full_chain_and_preserves_tips(git_repo):
+    """DS L290：helper 只测私有判定不足；补完整 integrate-chain/--continue 成功路径，
+    并断言 merge commit 保留成员核心资产的分支 tip 内容、无物理归档与派生 index。"""
+    first, first_branch, _ = _prepare_done(git_repo, "t001", "alpha")
+    _cleanup(git_repo, "t001", first)
+    added = _task_cli(
+        git_repo, "add", "--title", "delta", "--slug", "delta", "--review-level", "single"
+    )
+    assert added.returncode == 0, added.stderr
+    t004_dir = git_repo / "docs/tasks/t004_delta"
+    (t004_dir / "task.md").write_text(valid_spec(), encoding="utf-8")
+    t004_note = t004_dir / "progress.md"
+    t004_note.write_text(
+        t004_note.read_text(encoding="utf-8") + "\n- specs_index: not_applicable: 测试。\n",
+        encoding="utf-8",
+    )
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-m", "add t004 on main")
+
+    begun = _task_cli(
+        git_repo, "run-begin", "t004", "--owner-id", OWNER, "--base", first_branch
+    )
+    assert begun.returncode == 0, begun.stderr
+    wt4 = _worktree(git_repo, "t004")
+    assert _task_cli(wt4, "review-upgrade", "t004", "--reason", "安全面扩大").returncode == 0
+    assert _task_cli(wt4, "limits", "t004", "--review", "8", "--reason", "用户批准").returncode == 0
+    msg4 = prepare_finish(wt4, "t004", "delta")
+    assert finish_cli(wt4, "t004", OWNER, msg4).returncode == 0
+    assert _task_cli(
+        git_repo, "run-close", "t004", "--owner-id", OWNER, "--result", "done"
+    ).returncode == 0
+
+    t001_tip_note = _git(git_repo, "show", "t001_alpha:docs/tasks/t001_alpha/progress.md").stdout
+    t004_tip_note = _git(git_repo, "show", "t004_delta:docs/tasks/t004_delta/progress.md").stdout
+    before = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+
+    assert _task_cli(git_repo, "integrate-chain", "t004").returncode == 0
+    finished = _task_cli(git_repo, "integrate-chain", "t004", "--continue")
+    assert finished.returncode == 0, finished.stderr
+
+    merge = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    assert _git(git_repo, "rev-parse", f"{merge}^1").stdout.strip() == before
+    assert len(_git(git_repo, "rev-parse", f"{merge}^@").stdout.split()) == 2
+    changes = _merge_changes(git_repo, merge)
+    assert changes["docs/tasks/t001_alpha/handoff.json"] == "A"
+    assert changes["docs/tasks/t004_delta/handoff.json"] == "A"
+    assert not [path for path in changes if path.startswith("docs/archive/")]
+    assert "docs/tasks_index.json" not in changes
+    assert (git_repo / "docs/tasks/t001_alpha/progress.md").read_text("utf-8") == t001_tip_note
+    assert (git_repo / "docs/tasks/t004_delta/progress.md").read_text("utf-8") == t004_tip_note
+    fm, _ = parse_front_matter(git_repo / "docs/tasks/t004_delta/progress.md")
+    assert fm["review_level"] == "full"
+    assert str(fm["review_limit"]) == "8"
+    # finish 流程会留下未跟踪的 .scratch/ 草稿，只断言已跟踪文件无残留改动
+    assert _git(git_repo, "status", "--porcelain", "--untracked-files=no").stdout == ""
+    assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 2
 
 
 def test_materialize_task_dir_rejects_symlink_and_preserves_executable_mode(git_repo):
