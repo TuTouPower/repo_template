@@ -5,8 +5,11 @@ main 子进程，覆盖默认类别扫描、docs/ 保护、node/scratch/artifact
 清理、--keep 引用保护、硬保护路径永不删、scan 只读。
 """
 
+import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,9 +80,9 @@ def test_scan_default_categories(tree):
     assert "README.md" not in paths
     assert "docs/runtime/tasks_audit.log" not in paths
     assert "docs/runtime/dispatch_ledger.jsonl" not in paths
-    # 点名类别未点名 → 不入默认扫描
+    # scratch 已进入默认类别；node/artifacts/data 仍须点名
     assert "node_modules" not in paths
-    assert ".scratch/exp/tmp.py" not in paths
+    assert ".scratch/exp/tmp.py" in paths
 
 
 def test_apply_deletes_only_listed(tree):
@@ -153,8 +156,12 @@ def test_apply_unlinks_symlink_dir(tree):
     assert not link.is_symlink()
 
 
-def test_default_categories_do_not_enter_unnamed_dirs(tmp_path):
-    """默认类别不得命中未点名目录树（.scratch/artifacts/data/node_modules）内文件。"""
+def test_default_categories_enter_scratch_but_not_other_bulk_dirs(tmp_path):
+    """默认类别包含 scratch；artifacts/data/node_modules 仍须点名。
+
+    原「默认不进入 .scratch」断言按 L68 删除；scratch 默认清理由本测试和
+    后续事务/主人保护用例覆盖。
+    """
     repo = tmp_path / "repo"
     (repo / "artifacts/out/__pycache__").mkdir(parents=True)
     (repo / "artifacts/out/__pycache__/m.pyc").write_bytes(b"x")
@@ -167,7 +174,7 @@ def test_default_categories_do_not_enter_unnamed_dirs(tmp_path):
     (repo / "node_modules/pkg/.DS_Store").write_bytes(b"x")
 
     hits, _ = rc.collect(repo, rc.DEFAULT_CATEGORIES, [])
-    assert {h["path"] for h in hits} == set()
+    assert {h["path"] for h in hits} == {".scratch/exp", ".scratch/exp/note.log"}
 
     # 点名类别仍能整树处理（不受剪枝影响）
     hits, _ = rc.collect(repo, ["scratch", "artifacts", "data", "node"], [])
@@ -241,7 +248,8 @@ def test_cli_scan_is_read_only(tree):
     assert "src/app/__pycache__" in r.stdout
     assert "合计：" in r.stdout
     after = {str(p) for p in tree.rglob("*")}
-    assert before == after
+    lock = str(tree / ".git" / "repo_template_control.lock")
+    assert before == after - {lock}
 
 
 def test_cli_apply_default(tree):
@@ -253,6 +261,8 @@ def test_cli_apply_default(tree):
     assert r.returncode == 0, r.stderr
     assert "模式：apply" in r.stdout
     assert not (tree / "src/app/__pycache__").exists()
+    assert not (tree / ".scratch/exp/tmp.py").exists()
+    assert (tree / ".scratch").is_dir()
     assert (tree / "docs/guide.log").exists()
 
 
@@ -350,3 +360,246 @@ def test_hard_protected_runtime_paths_are_never_collected_or_deleted(tree):
 
 
 
+
+
+def _txn(repo: Path, directory: str, status: str, *, corrupt: bool = False) -> Path:
+    path = repo / directory
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "backup.txt").write_text("backup\n", encoding="utf-8")
+    journal = path / "transaction.json"
+    journal.write_text("{bad" if corrupt else json.dumps({"status": status}), encoding="utf-8")
+    return path
+
+
+def _pending(repo: Path, pid: str, slug: str, status: str, body: str, **extra) -> Path:
+    directory = repo / "docs/pending"
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = ["---", f'pid: "{pid}"', f'slug: "{slug}"', f'status: "{status}"']
+    for key, value in extra.items():
+        lines.append(f'{key}: "{value}"')
+    lines.extend(["---", body, ""])
+    path = directory / f"{pid}_{slug}.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def _old(path: Path, days: float = 4) -> None:
+    stamp = time.time() - days * 86400
+    os.utime(path, (stamp, stamp))
+
+
+def _issue(repo: Path, stamp: str, issue: str = "") -> tuple[Path, Path]:
+    directory = repo / ".scratch/repo_template_issues"
+    directory.mkdir(parents=True, exist_ok=True)
+    full = directory / f"{stamp}.md"
+    copy = directory / f"{stamp}.issue.md"
+    full.write_text(f'---\nissue: "{issue}"\n---\n# 模板仓问题报告\n', encoding="utf-8")
+    copy.write_text("issue body\n", encoding="utf-8")
+    return full, copy
+
+
+@pytest.mark.parametrize("status", ["preparing", "applying", "applied", "restore_failed"])
+def test_open_transaction_skips_scratch_and_keeps_other_categories(tmp_path, status):
+    repo = tmp_path / "repo"
+    _txn(repo, ".scratch/repo_sync_rollback", status)
+    (repo / "scripts").mkdir()
+    (repo / "scripts/debug.log").write_text("log\n", encoding="utf-8")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and status in result.scratch_note
+    assert "transaction accept" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+    assert "scripts/debug.log" in {h["path"] for h in result.hits}
+
+    rc.apply_delete(repo, result.hits, [])
+    assert (repo / ".scratch/repo_sync_rollback/backup.txt").is_file()
+    assert not (repo / "scripts/debug.log").exists()
+
+
+def test_corrupt_transaction_skips_scratch(tmp_path):
+    repo = tmp_path / "repo"
+    _txn(repo, ".scratch/repo_sync_rollback", "", corrupt=True)
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and "记录损坏" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+    assert (repo / ".scratch/repo_sync_rollback/transaction.json").is_file()
+
+
+def test_open_graph_transaction_skips_scratch_with_graph_hint(tmp_path):
+    repo = tmp_path / "repo"
+    _txn(repo, ".scratch/task_graph_transaction", "preparing")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and "图事务" in result.scratch_note
+    assert "graph-transaction" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+
+
+@pytest.mark.parametrize(("directory", "status"), [
+    (".scratch/repo_sync_rollback", "accepted"),
+    (".scratch/task_graph_transaction", "rolled_back"),
+])
+def test_finished_transaction_backups_are_cleaned(tmp_path, directory, status):
+    repo = tmp_path / "repo"
+    _txn(repo, directory, status)
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    reasons = [h.get("reason", "") for h in result.hits if h["path"].startswith(directory)]
+    assert any(f"事务已结束（{status}）" in reason for reason in reasons)
+    rc.apply_delete(repo, result.hits, [])
+    assert not (repo / directory).exists()
+
+
+def test_pending_reference_protects_recent_draft(tmp_path):
+    repo = tmp_path / "repo"
+    target = repo / ".scratch/repro_p001"
+    target.mkdir(parents=True)
+    (target / "out.txt").write_text("draft\n", encoding="utf-8")
+    _pending(repo, "p001", "fix", "todo", "- 线索：`.scratch/repro_p001`")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert any(item["path"] == ".scratch/repro_p001" for item in result.protected)
+    assert not any(h["path"].startswith(".scratch/repro_p001") for h in result.hits)
+    keeps = [item["path"] for item in result.protected]
+    rc.apply_delete(repo, result.hits, keeps)
+    assert (target / "out.txt").is_file()
+
+
+def test_pending_reference_expires_after_three_days(tmp_path):
+    repo = tmp_path / "repo"
+    target = repo / ".scratch/repro_p001"
+    target.mkdir(parents=True)
+    (target / "out.txt").write_text("draft\n", encoding="utf-8")
+    _pending(repo, "p001", "fix", "todo", "- 线索：`.scratch/repro_p001`")
+    init_repo(repo)
+    _old(target)
+    _old(target / "out.txt")
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    hits = {h["path"]: h for h in result.hits}
+    assert "超期" in hits[".scratch/repro_p001/out.txt"]["reason"]
+    rc.apply_delete(repo, result.hits, [])
+    assert not target.exists()
+
+
+def test_closed_pending_reference_no_longer_protects(tmp_path):
+    repo = tmp_path / "repo"
+    target = repo / ".scratch/repro_p001"
+    target.mkdir(parents=True)
+    (target / "out.txt").write_text("draft\n", encoding="utf-8")
+    _pending(
+        repo, "p001", "fix", "closed", "- 线索：`.scratch/repro_p001`",
+        resolution="resolved", reason="fixed",
+    )
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert not result.protected
+    rc.apply_delete(repo, result.hits, [])
+    assert not target.exists()
+
+
+def test_dir_mtime_old_but_inner_file_new_stays_protected(tmp_path):
+    repo = tmp_path / "repo"
+    target = repo / ".scratch/repro_p001"
+    target.mkdir(parents=True)
+    inner = target / "out.txt"
+    inner.write_text("draft\n", encoding="utf-8")
+    _pending(repo, "p001", "fix", "todo", "- 线索：`.scratch/repro_p001`")
+    init_repo(repo)
+    _old(target)
+    os.utime(inner, None)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert any(item["path"] == ".scratch/repro_p001" for item in result.protected)
+
+
+def test_corrupt_pending_skips_scratch(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".scratch/exp").mkdir(parents=True)
+    (repo / ".scratch/exp/tmp.txt").write_text("x\n", encoding="utf-8")
+    (repo / "scripts").mkdir()
+    (repo / "scripts/debug.log").write_text("log\n", encoding="utf-8")
+    _pending(repo, "p001", "fix", "todo", "- 线索：`.scratch/exp`")
+    (repo / "docs/pending/p001_fix.md").write_text(
+        '---\npid: "p001"\n---\n# broken\n', encoding="utf-8"
+    )
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert result.scratch_note and "pending 条目损坏" in result.scratch_note
+    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
+    assert "scripts/debug.log" in {h["path"] for h in result.hits}
+
+
+def test_unpublished_issue_pair_is_protected_when_recent(tmp_path):
+    repo = tmp_path / "repo"
+    full, copy = _issue(repo, "20261110-101500")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    protected = {item["path"] for item in result.protected}
+    assert {".scratch/repo_template_issues/20261110-101500.md",
+            ".scratch/repo_template_issues/20261110-101500.issue.md"} <= protected
+    rc.apply_delete(repo, result.hits, [item["path"] for item in result.protected])
+    assert full.is_file() and copy.is_file()
+
+
+def test_unpublished_issue_pair_expires_after_three_days(tmp_path):
+    repo = tmp_path / "repo"
+    full, copy = _issue(repo, "20261110-101500")
+    init_repo(repo)
+    _old(full)
+    _old(copy)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    hits = {h["path"]: h for h in result.hits}
+    assert "超期" in hits[".scratch/repo_template_issues/20261110-101500.md"]["reason"]
+    rc.apply_delete(repo, result.hits, [])
+    assert not full.exists() and not copy.exists()
+
+
+def test_published_issue_pair_is_unowned_and_cleaned(tmp_path):
+    repo = tmp_path / "repo"
+    full, copy = _issue(repo, "20261110-101500", "https://github.com/o/r/issues/12")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    hits = {h["path"]: h for h in result.hits}
+    assert "已发布 issue" in hits[".scratch/repo_template_issues/20261110-101500.md"]["reason"]
+    rc.apply_delete(repo, result.hits, [])
+    assert not full.exists() and not copy.exists()
+
+
+def test_orphan_issue_copy_is_unowned_and_cleaned(tmp_path):
+    repo = tmp_path / "repo"
+    directory = repo / ".scratch/repo_template_issues"
+    directory.mkdir(parents=True)
+    copy = directory / "20261110-101500.issue.md"
+    copy.write_text("body\n", encoding="utf-8")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    hits = {h["path"]: h for h in result.hits}
+    assert "仅 .issue.md" in hits[".scratch/repo_template_issues/20261110-101500.issue.md"]["reason"]
+    rc.apply_delete(repo, result.hits, [])
+    assert not copy.exists()
+
+
+def test_corrupt_issue_front_matter_is_treated_as_unpublished(tmp_path):
+    repo = tmp_path / "repo"
+    directory = repo / ".scratch/repo_template_issues"
+    directory.mkdir(parents=True)
+    full = directory / "20261110-101500.md"
+    full.write_text("---\nissue: [\n---\n# broken\n", encoding="utf-8")
+    init_repo(repo)
+
+    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
+    assert any(item["path"] == ".scratch/repo_template_issues/20261110-101500.md"
+               for item in result.protected)

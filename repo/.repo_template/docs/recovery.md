@@ -60,3 +60,5 @@ journal v2 记录每一步原子业务写入的前后指纹；写 index 前先�
 prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committing/committed 阶段还须核对唯一父提交与 handoff 执行身份；清理快照之前必须验证实际 tree、review scope 与隐私。hook 改写导致 tree 不匹配时保留 journal；recovery 按 finish_tree_mismatch 诊断，满足原 finish-unwind 写权、running、无 done report、无后继约束后才可撤销重做。成功 unwind 后清理已认领事务，避免新 finish 被旧 journal 锁死。
 
 旧 journal 不自动升级；存在旧事务时先按原版本恢复或人工核验，禁止直接删除备份后升级。恢复流程本轮只做静态核对，未执行故障注入测试。
+
+存在未结束文件事务（`preparing / applying / applied / restore_failed`）或事务记录损坏时，`repo-cleanup` 跳过 `.scratch/`，其它类别照常清；先按同步 `transaction status` 后 `accept/rollback`，或按图事务 `graph-transaction status` / `rollback` 处理。带 scratch 的 cleanup 在控制面锁被占用时立即失败、零删除。

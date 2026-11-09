@@ -59,6 +59,8 @@ ENTRY_FILE_RE = re.compile(entry_file_pattern(PREFIX))
 _LOOSE_ENTRY_RE = re.compile(r"^p([0-9]+)_.*\.md$")
 HANDLE_RE = re.compile(r"^[ \t]*-[ \t]*处理[ \t]*[:：].*$")
 PARKED_RE = re.compile(r"^[ \t]*-[ \t]*暂搁[ \t]*[:：].*$")
+SCRATCH_REF_RE = re.compile(r"\.scratch/[^\s`'\"<>()\[\]{}，。；：、！？]+")
+_SCRATCH_TRAILING = ".,;:!?，。；：、！？'\"`)]}>"
 
 ALLOWED_FM_KEYS = frozenset({"pid", "slug", "status", "resolution", "reason", "fix_ref"})
 VALID_STATUSES = frozenset({"todo", "parked", "closed"})
@@ -218,6 +220,42 @@ def parse_pending_file(path: Path, *, repo: RepoContext) -> tuple[dict[str, str]
     """读取并解析 pending 文件的 front matter 与正文，校验严格字段。"""
     fm, body, _ = _read_and_parse_entry(path, repo=repo)
     return fm, body
+
+
+def open_scratch_references(repo: RepoContext) -> dict[str, str]:
+    """未关闭 pending 条目引用的现存 scratch 路径 → 主人说明。
+
+    只读取 todo / parked 条目的正文；引用必须写成 ``.scratch/...`` 形式、
+    位于仓库内且目标存在。条目损坏（front matter 或正文解析失败）向上抛出，
+    由清理器把 scratch 整体视为不可判定并跳过。
+    """
+    pending_dir = repo.root / "docs/pending"
+    if pending_dir.is_symlink():
+        raise IdScanError(f"拒绝经软链目录读取 pending 引用：{_rel(pending_dir, repo=repo)}")
+    if not pending_dir.is_dir():
+        return {}
+    references: dict[str, list[str]] = {}
+    for path in sorted(pending_dir.glob("*.md")):
+        if parse_entry_file_name(PREFIX, path.name) is None:
+            continue
+        fm, body = parse_pending_file(path, repo=repo)
+        if fm["status"] not in ("todo", "parked"):
+            continue
+        owner = f"{fm.get('pid', path.stem)}（{fm['status']}）"
+        for match in SCRATCH_REF_RE.findall(body):
+            rel = match.rstrip(_SCRATCH_TRAILING)
+            if not rel or rel.rstrip("/") == ".scratch":
+                continue
+            parts = Path(rel).parts
+            if Path(rel).is_absolute() or ".." in parts:
+                continue
+            target = repo.root / rel
+            if not target.exists() and not target.is_symlink():
+                continue
+            owners = references.setdefault(rel, [])
+            if owner not in owners:
+                owners.append(owner)
+    return {rel: "、".join(owners) for rel, owners in references.items()}
 
 
 def _malformed_for_number(number: int, *, repo: RepoContext) -> list[Path]:

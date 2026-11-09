@@ -3,14 +3,16 @@
 
 删除仓库内明确无用的文件系统垃圾（缓存、OS/编辑器垃圾、点名的运行产物）。
 扫描、类别匹配、保护名单过滤、dry-run 预览与 apply 删除全部由本脚本执行；
-agent 只保留裁定语义：scratch 活跃引用路径（--keep 传入）、审批 commit 门禁、
-「需用户决定」项汇报。
+agent 只保留裁定语义：人工额外保留路径（--keep 传入）、审批 commit 门禁、
+「需用户决定」项汇报；未结束事务与有主草稿由脚本机械保护。
 
 类别：
-  默认（scan/apply 未点名类别时）：pycache / pytest / logs / os / editor
-  点名才清：node / scratch / artifacts / data
+  默认（scan/apply 未点名类别时）：pycache / pytest / logs / os / editor / scratch
+  点名才清：node / artifacts / data
   scratch / artifacts / data 清目录内容、保留目录本身；
-  默认扫描不进入未点名的 node_modules 与这三棵目录树（防误删未点名内容）。
+  默认扫描不进入未点名的 node_modules 与 artifacts/data 目录树。
+  scratch 默认清理，但存在未结束事务时整体跳过；未关闭 pending 引用与
+  未发布 issue 报告按最后修改时间保留 3 天，无主内容直接清理。
 
 保护（永不删）：.git/、AGENTS.md、README.md、.gitignore、
 docs/runtime/tasks_audit.log、docs/runtime/dispatch_ledger.jsonl、
@@ -30,16 +32,36 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_CATEGORIES = ("pycache", "pytest", "logs", "os", "editor")
-NAMED_CATEGORIES = ("node", "scratch", "artifacts", "data")
+from pending import open_scratch_references
+from repo_task.context import RepoContext
+from repo_task.documents import parse_front_matter_text
+from repo_task.file_transaction import (
+    GRAPH_TRANSACTION_DIR,
+    SYNC_TRANSACTION_DIR,
+    TRANSACTION_DIRS,
+    open_transactions,
+)
+from repo_task.locks import CONTROL_LOCK_NAME, LockBusyError, git_common_lock
+
+DEFAULT_CATEGORIES = ("pycache", "pytest", "logs", "os", "editor", "scratch")
+NAMED_CATEGORIES = ("node", "artifacts", "data")
 ALL_CATEGORIES = DEFAULT_CATEGORIES + NAMED_CATEGORIES
 BULK_CATEGORY_DIRS = {"scratch": ".scratch", "artifacts": "artifacts", "data": "data"}
+# 有主草稿的最后修改保留期；未结束事务不适用此期限，直接跳过 scratch。
+OWNED_GRACE_SECONDS = 3 * 86400
+ISSUE_DIR = ".scratch/repo_template_issues"
+ISSUE_URL_RE = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+/issues/[1-9][0-9]*$")
+_REPORT_RE = re.compile(r"^(\d{8}-\d{6})(\.issue)?\.md$")
 # docs/ 下只允许清 OS/编辑器垃圾文件名；其余类别在 docs/ 下全部拒绝。
 DOCS_ONLY_CATEGORIES = {"os", "editor"}
 HARD_PROTECTED = {
@@ -155,11 +177,177 @@ def _prune(names: list[str], excluded: set[str]) -> list[str]:
     return [name for name in names if name not in excluded]
 
 
-def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[dict], list[str]]:
-    """返回 (hits, skipped)。hits 每项含 path / category / kind；skipped 为 keep 排除路径。"""
+@dataclass
+class ScanResult:
+    hits: list[dict]
+    skipped: list[str]
+    protected: list[dict]
+    scratch_note: str | None = None
+
+
+def _rel(repo: Path, path: Path) -> str:
+    return os.path.relpath(path, repo).replace(os.sep, "/")
+
+
+def _max_mtime(path: Path) -> float:
+    """路径自身及全部子项的最大 lstat 修改时间；不跟随软链。"""
+    try:
+        newest = path.lstat().st_mtime
+    except OSError:
+        return 0.0
+    if path.is_symlink() or not path.is_dir():
+        return newest
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in (*dirs, *files):
+            try:
+                newest = max(newest, (Path(root) / name).lstat().st_mtime)
+            except OSError:
+                continue
+    return newest
+
+
+def _days_ago(mtime: float, now: float) -> int:
+    return max(0, int((now - mtime) // 86400))
+
+
+def _issue_state(path: Path) -> tuple[bool, str]:
+    """本地完整版报告是否已发布；解析失败按未发布处理。"""
+    try:
+        fm, _ = parse_front_matter_text(path.read_text(encoding="utf-8"), source=str(path))
+    except Exception:
+        return False, "front matter 损坏"
+    value = fm.get("issue", "")
+    if isinstance(value, str) and ISSUE_URL_RE.fullmatch(value.strip()):
+        return True, value.strip()
+    return False, "未发布"
+
+
+def _scratch_metadata(repo: Path) -> tuple[dict[str, dict], dict[str, str]]:
+    """返回 (有主路径 → 元数据, 无主路径 → 说明)；有主路径含待判定修改时间。"""
+    owners: dict[str, dict] = {}
+    unowned: dict[str, str] = {}
+    pending_dir = repo / "docs/pending"
+    if pending_dir.is_dir():
+        references = open_scratch_references(RepoContext.for_root(repo))
+        for rel, owner in references.items():
+            owners[rel] = {"label": f"主人 {owner}", "mtime": _max_mtime(repo / rel)}
+    issue_dir = repo / ISSUE_DIR
+    if issue_dir.is_dir() and not issue_dir.is_symlink():
+        for path in sorted(issue_dir.glob("*.md")):
+            match = _REPORT_RE.match(path.name)
+            if not match or match.group(2):
+                continue
+            issue_copy = issue_dir / f"{match.group(1)}.issue.md"
+            files = [path] + ([issue_copy] if issue_copy.is_file() else [])
+            published, _detail = _issue_state(path)
+            if published:
+                for item in files:
+                    unowned[_rel(repo, item)] = "无主（已发布 issue）"
+                continue
+            mtime = max(_max_mtime(item) for item in files)
+            for item in files:
+                owners[_rel(repo, item)] = {"label": "主人 未发布 issue", "mtime": mtime}
+        for path in sorted(issue_dir.glob("*.issue.md")):
+            match = _REPORT_RE.match(path.name)
+            if not match:
+                continue
+            if not (issue_dir / f"{match.group(1)}.md").is_file():
+                unowned[_rel(repo, path)] = "无主（仅 .issue.md）"
+    return owners, unowned
+
+
+def _transaction_reason(repo: Path, rel: str) -> str | None:
+    for directory in TRANSACTION_DIRS:
+        if rel != directory and not rel.startswith(directory + "/"):
+            continue
+        journal = repo / directory / "transaction.json"
+        try:
+            data = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            return "无主"
+        status = data.get("status") if isinstance(data, dict) else None
+        if status in {"accepted", "rolled_back"}:
+            return f"事务已结束（{status}）"
+        return "无主"
+    return None
+
+
+def _scratch_reason(
+    repo: Path, rel: str, owners: dict[str, dict], unowned: dict[str, str], now: float
+) -> tuple[bool, str]:
+    matches = [
+        path for path in owners
+        if rel == path or rel.startswith(path.rstrip("/") + "/")
+    ]
+    if matches:
+        owner = max(matches, key=len)
+        meta = owners[owner]
+        days = _days_ago(meta["mtime"], now)
+        if now - meta["mtime"] < OWNED_GRACE_SECONDS:
+            return True, f"{meta['label']}，最后修改 {days} 天前"
+        return False, f"{meta['label']}，最后修改 {days} 天前，超期"
+    for path, reason in unowned.items():
+        if rel == path or rel.startswith(path.rstrip("/") + "/"):
+            return False, reason
+    reason = _transaction_reason(repo, rel)
+    if reason is not None:
+        return False, reason
+    return False, "无主"
+
+
+def _scratch_policy(
+    repo: Path,
+) -> tuple[dict[str, dict], dict[str, str], str | None]:
+    """返回 (owners, unowned, skip_note)；skip_note 非空表示本次跳过 scratch。"""
+    open_txns = open_transactions(repo)
+    if open_txns:
+        parts = []
+        hints = []
+        for directory, status in open_txns:
+            label = "同步" if directory == SYNC_TRANSACTION_DIR else "图"
+            state = "记录损坏" if status == "corrupt" else status
+            parts.append(f"{label}事务 {state}（{directory}）")
+            if directory == SYNC_TRANSACTION_DIR:
+                hints.append("先 `repo_sync.py transaction accept` 或 `transaction rollback`")
+            elif directory == GRAPH_TRANSACTION_DIR:
+                hints.append("先 `task.py graph-transaction status` / `rollback`")
+        return {}, {}, "；".join(parts) + "；" + "；".join(dict.fromkeys(hints))
+    try:
+        owners, unowned = _scratch_metadata(repo)
+    except Exception as error:
+        return {}, {}, f"pending 条目损坏，无法确定引用：{error}"
+    return owners, unowned, None
+
+
+
+def scan_repository(repo: Path, categories: list[str], keeps: list[str]) -> ScanResult:
+    """扫描并判定删除候选；带 scratch 时保护未结束事务与在用草稿。"""
     cats = set(categories)
     hits: list[dict] = []
     skipped: list[str] = []
+    protected: list[dict] = []
+    owners: dict[str, dict] = {}
+    unowned: dict[str, str] = {}
+    scratch_note: str | None = None
+    if "scratch" in cats:
+        owners, unowned, scratch_note = _scratch_policy(repo)
+        if scratch_note is not None:
+            cats.discard("scratch")
+    now = time.time()
+    protected_refs: set[str] = set()
+    if "scratch" in cats:
+        for rel, meta in owners.items():
+            if now - meta["mtime"] < OWNED_GRACE_SECONDS:
+                protected_refs.add(rel)
+                protected.append({
+                    "path": rel,
+                    "reason": f"{meta['label']}，最后修改 {_days_ago(meta['mtime'], now)} 天前",
+                })
+                skipped.append(rel)
+    effective_keeps = [*keeps, *sorted(protected_refs)]
+
+    def reason_for(rel: str) -> tuple[bool, str]:
+        return _scratch_reason(repo, rel, owners, unowned, now)
 
     bulk_roots: set[str] = set(BULK_CATEGORY_DIRS.values())
     for cat, rel_dir in BULK_CATEGORY_DIRS.items():
@@ -174,19 +362,40 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
         for root, dirs, files in os.walk(base, followlinks=False):
             dirs[:] = [d for d in dirs if d != ".git"]
             relroot = os.path.relpath(root, repo).replace(os.sep, "/")
+            kept_dirs: list[str] = []
             for d in dirs:
                 full_d = Path(root) / d
                 rel = f"{relroot}/{d}"
-                if _kept(rel, keeps):
-                    skipped.append(rel)
+                if cat == "scratch" and rel in protected_refs:
+                    if rel not in skipped:
+                        skipped.append(rel)
                     continue
-                hits.append({"path": rel, "category": cat, "kind": "dir" if full_d.is_dir() and not full_d.is_symlink() else "file"})
+                if _kept(rel, effective_keeps):
+                    skipped.append(rel)
+                else:
+                    hit = {
+                        "path": rel,
+                        "category": cat,
+                        "kind": "dir" if full_d.is_dir() and not full_d.is_symlink() else "file",
+                    }
+                    if cat == "scratch":
+                        hit["reason"] = reason_for(rel)[1]
+                    hits.append(hit)
+                kept_dirs.append(d)
+            dirs[:] = kept_dirs
             for f in files:
                 rel = f"{relroot}/{f}"
-                if _kept(rel, keeps):
+                if _kept(rel, effective_keeps):
                     skipped.append(rel)
                     continue
-                hits.append({"path": rel, "category": cat, "kind": "file"})
+                hit = {"path": rel, "category": cat, "kind": "file"}
+                if cat == "scratch":
+                    is_protected, reason = reason_for(rel)
+                    if is_protected:
+                        skipped.append(rel)
+                        continue
+                    hit["reason"] = reason
+                hits.append(hit)
 
     # 未点名类别的目录整树不进普通 walk：bulk 三类（.scratch/artifacts/data）只由
     # 点名类别整树处理；node_modules 仅在点名 node 时接受 walk 分类。
@@ -215,14 +424,14 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
                 continue
             if rel.startswith("docs/") and cat not in DOCS_ONLY_CATEGORIES:
                 continue
-            if _kept(rel, keeps):
+            if _kept(rel, effective_keeps):
                 skipped.append(rel)
                 continue
             hits.append({"path": rel, "category": cat, "kind": "dir" if is_dir else "file"})
 
     # glob keep 不会在 _kept 里挡住祖先目录；按已跳过路径再滤一遍，避免 rmtree 父目录。
     keep_refs = [s for s in skipped]
-    for k in keeps:
+    for k in effective_keeps:
         k = k.strip().rstrip("/")
         if k and not _is_glob(k):
             keep_refs.append(k)
@@ -233,9 +442,20 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
                 skipped.append(h["path"])
             continue
         filtered.append(h)
-    hits = filtered
-    hits.sort(key=lambda h: h["path"])
-    return hits, skipped
+    hits = sorted(filtered, key=lambda h: h["path"])
+    skipped = list(dict.fromkeys(skipped))
+    seen: set[str] = set()
+    protected = [
+        item for item in protected
+        if not (item["path"] in seen or seen.add(item["path"]))
+    ]
+    return ScanResult(hits, skipped, protected, scratch_note)
+
+
+def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[dict], list[str]]:
+    """返回 (hits, skipped)；skipped 含用户 keep 与在用草稿保护路径。"""
+    result = scan_repository(repo, categories, keeps)
+    return result.hits, result.skipped
 
 
 def apply_delete(repo: Path, hits: list[dict], keeps: list[str] | None = None) -> list[str]:
@@ -277,16 +497,21 @@ def _table(rows: list[list[str]]) -> list[str]:
     return lines
 
 
-def _print_scan(categories: list[str], hits: list[dict], skipped: list[str]) -> None:
+def _print_scan(categories: list[str], result: ScanResult) -> None:
     print("## repo-cleanup 预览（未删除）")
     print("模式：dry-run")
     print(f"类别：{', '.join(categories)}")
+    if result.scratch_note:
+        print(f"scratch 已跳过：{result.scratch_note}；其它类别照常处理")
     print()
     rows = [["路径", "类别", "说明"]]
-    for h in hits:
-        note = "目录" if h["kind"] == "dir" else "文件"
-        if h["category"] in BULK_CATEGORY_DIRS:
-            note = "目录内容"
+    for h in result.hits:
+        if h["category"] == "scratch" and h.get("reason"):
+            note = h["reason"]
+        else:
+            note = "目录" if h["kind"] == "dir" else "文件"
+            if h["category"] in BULK_CATEGORY_DIRS:
+                note = "目录内容"
         rows.append([f"./{h['path']}", h["category"], note])
     if len(rows) == 1:
         print("（无命中）")
@@ -294,25 +519,40 @@ def _print_scan(categories: list[str], hits: list[dict], skipped: list[str]) -> 
         for line in _table(rows):
             print(line)
     print()
-    print(f"合计：{len(hits)} 项")
-    if skipped:
+    print(f"合计：{len(result.hits)} 项")
+    if result.protected:
+        print("保留（在用）：")
+        for item in result.protected:
+            print(f"- {item['path']} — {item['reason']}")
+    protected_paths = {item["path"] for item in result.protected}
+    user_skipped = [path for path in result.skipped if path not in protected_paths]
+    if user_skipped:
         print("跳过（--keep 引用保护）：")
-        for s in skipped:
-            print(f"- {s}")
+        for path in user_skipped:
+            print(f"- {path}")
     print("下一步：确认后 `/repo-cleanup apply`（或带类别）。")
 
 
-def _print_apply(deleted: list[str], skipped: list[str]) -> None:
+def _print_apply(deleted: list[str], result: ScanResult) -> None:
     print("## repo-cleanup 结果")
     print("模式：apply")
+    if result.scratch_note:
+        print(f"scratch 已跳过：{result.scratch_note}；其它类别照常处理")
     print("已删除：")
     if not deleted:
         print("- （无）")
-    for d in deleted:
-        print(f"- {d}")
-    print("跳过（保护/不存在）：")
-    for s in skipped:
-        print(f"- {s}")
+    for path in deleted:
+        print(f"- {path}")
+    if result.protected:
+        print("保留（在用）：")
+        for item in result.protected:
+            print(f"- {item['path']} — {item['reason']}")
+    protected_paths = {item["path"] for item in result.protected}
+    user_skipped = [path for path in result.skipped if path not in protected_paths]
+    if user_skipped:
+        print("跳过（保护/不存在）：")
+        for path in user_skipped:
+            print(f"- {path}")
 
 
 def _resolve_categories(args) -> list[str]:
@@ -324,15 +564,31 @@ def _resolve_categories(args) -> list[str]:
     return list(DEFAULT_CATEGORIES)
 
 
+def _execute(args, repo: Path, categories: list[str]) -> None:
+    result = scan_repository(repo, categories, args.keep)
+    if args._mode == "scan":
+        _print_scan(categories, result)
+        return
+    if getattr(args, "expected_count", None) is not None:
+        if len(result.hits) != args.expected_count:
+            raise CleanupError(
+                f"清理候选数量发生变化（预期 {args.expected_count}，实际 {len(result.hits)}）；"
+                "请重新运行 scan 确认后再执行 apply"
+            )
+    effective_keeps = [*args.keep, *[item["path"] for item in result.protected]]
+    deleted = apply_delete(repo, result.hits, effective_keeps)
+    _print_apply(deleted, result)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="repo-cleanup 机械化执行器")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for cmd in ("scan", "apply"):
         p = sub.add_parser(cmd, help="scan=只列不删；apply=删除列表内路径")
         p.add_argument("categories", nargs="*", metavar="CAT",
-                       help=f"类别（默认 {DEFAULT_CATEGORIES}）；node/scratch/artifacts/data 须点名")
+                       help=f"类别（默认 {DEFAULT_CATEGORIES}）；node/artifacts/data 须点名")
         p.add_argument("--keep", action="append", default=[], metavar="REL",
-                       help="相对仓库根路径（glob 或前缀），排除不删（scratch 活跃引用）")
+                       help="相对仓库根路径（glob 或前缀），排除不删（人工保留）")
         if cmd == "apply":
             p.add_argument("--expected-count", type=int, default=None,
                            help="核对候选总数；scan 到 apply 期间若候选变化则拒绝删除")
@@ -341,18 +597,16 @@ def main(argv: list[str] | None = None) -> None:
     try:
         repo = repo_root()
         categories = _resolve_categories(args)
-        hits, skipped = collect(repo, categories, args.keep)
-        if args._mode == "scan":
-            _print_scan(categories, hits, skipped)
+        if "scratch" in categories:
+            try:
+                with git_common_lock(repo, CONTROL_LOCK_NAME, blocking=False):
+                    _execute(args, repo, categories)
+            except LockBusyError as error:
+                raise CleanupError(
+                    "控制面忙：同步或 task 控制命令正在运行，稍后重试"
+                ) from error
         else:
-            if getattr(args, "expected_count", None) is not None:
-                if len(hits) != args.expected_count:
-                    raise CleanupError(
-                        f"清理候选数量发生变化（预期 {args.expected_count}，实际 {len(hits)}）；"
-                        "请重新运行 scan 确认后再执行 apply"
-                    )
-            deleted = apply_delete(repo, hits, args.keep)
-            _print_apply(deleted, skipped)
+            _execute(args, repo, categories)
     except CleanupError as error:
         sys.exit(f"repo_cleanup: {error}")
 
