@@ -579,7 +579,8 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
         )
     else:
         removed, wt_msg = remove_worktree(
-            repo.effective_worktree(fm), expected_branch=fm.get("branch"), repo=repo
+            repo.effective_worktree(fm), expected_branch=fm.get("branch"), repo=repo,
+            tid=args.tid,
         )
 
     fm = dict(fm)
@@ -1187,7 +1188,7 @@ def cmd_rewind(args):
                 answer = ""
             if answer.strip().lower() not in ("y", "yes"):
                 sys.exit("rewind aborted by user")
-        removed, wt_msg = discard_worktree(worktree_rel, repo=repo)
+        removed, wt_msg = discard_worktree(worktree_rel, repo=repo, tid=args.tid)
         if not removed:
             sys.exit(f"{wt_msg}\nrewind 中止：worktree 未清理时不能回到 backlog")
         if branch and not own_commits:

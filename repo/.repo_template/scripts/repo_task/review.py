@@ -5,7 +5,11 @@ import re
 from pathlib import Path
 
 from .context import FenceState, PROGRESS_FILE, TaskDataError
-from .documents import extract_ac_statuses, parse_front_matter as _parse_front_matter
+from .documents import (
+    _INDENTED_CODE_RE,
+    extract_ac_statuses,
+    parse_front_matter as _parse_front_matter,
+)
 from .privacy import scan_text_privacy_leaks
 
 VERDICT_RE = re.compile(r"^verdict:\s*(PASS|FAIL)\s*$", re.MULTILINE)
@@ -46,14 +50,18 @@ def read(path: Path) -> str:
 
 
 def visible_markdown_lines(text: str) -> list[str]:
-    """移除 fenced code 与 blockquote，保留可参与结构解析的正文行。
+    """移除 fenced code、缩进代码块与 blockquote，保留可参与结构解析的正文行。
 
-    围栏规则统一委托 ctx.FenceState（与 documents/render_review_prompts 同源）。
+    围栏规则统一委托 ctx.FenceState（与 documents/render_review_prompts 同源）；
+    缩进代码块（行首 4 空格或制表符）与 documents._strip_code_blocks 同口径跳过，
+    其中的 AC/verdict/scope 示例不得被采信。
     """
     lines = []
     fence = FenceState()
     for line in text.splitlines():
         if fence.feed(line):
+            continue
+        if _INDENTED_CODE_RE.match(line):
             continue
         if line.lstrip().startswith(">"):
             continue

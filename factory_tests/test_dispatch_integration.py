@@ -704,15 +704,15 @@ def test_track_worktree_reverse_lookup_and_dedup(tmp_path):
 
     # 1. 填充 300 条历史无关事件
     lines = [json.dumps({"tid": f"t{i:04d}", "event": "start", "worktree": f"wt_{i}"}) for i in range(1, 300)]
-    # 加入目标 t999 的 start 事件
-    lines.append(json.dumps({"tid": "t999", "event": "start", "worktree": "worktrees/t999_wt"}))
+    # 加入目标 t999 的 start 事件（账本 worktree 值须为 worktree_rel 规范形）
+    lines.append(json.dumps({"tid": "t999", "event": "start", "worktree": "../proj_t999"}))
     # 加入 300 条后续无关事件
     lines.extend(json.dumps({"tid": f"t{i:04d}", "event": "report"}) for i in range(300, 600))
     ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # 2. 逆序解析应当正确找到 t999 的 worktree
     resolved = tw.resolve_worktree(str(project), "t999")
-    assert resolved == str((project / "worktrees/t999_wt").resolve())
+    assert resolved == str((tmp_path / "proj_t999").resolve())
 
     # 3. 追加 t999 的 terminal 事件（report），解析立即闭合为 ""
     with open(ledger, "a", encoding="utf-8") as f:
@@ -747,13 +747,13 @@ def test_track_worktree_resolves_from_start_through_execution_claim(tmp_path):
     ledger = runtime / "dispatch_ledger.jsonl"
     ledger.write_text(
         "\n".join([
-            json.dumps({"tid": "t001", "event": "start", "worktree": "worktrees/t001_alpha"}),
+            json.dumps({"tid": "t001", "event": "start", "worktree": "../proj_t001"}),
             json.dumps({"tid": "t001", "event": "attempt_reserved", "attempt": 1, "state": "running"}),
             json.dumps({"tid": "t001", "event": "execution_claimed", "attempt": 1, "owner_id": "o"}),
         ]) + "\n",
         encoding="utf-8",
     )
-    expected = str((project / "worktrees/t001_alpha").resolve())
+    expected = str((tmp_path / "proj_t001").resolve())
     assert tw.resolve_worktree(str(project), "t001") == expected
 
     with ledger.open("a", encoding="utf-8") as stream:
