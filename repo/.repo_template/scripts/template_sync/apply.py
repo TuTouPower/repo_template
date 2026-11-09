@@ -98,7 +98,7 @@ def _apply_sync_write(
             shutil.rmtree(d)
             changed.add(d)
     for rel in ctx.HARD_SYNC_FILES:
-        sync_file(src / rel, sync.consumer / rel, changed)
+        sync_file(src / rel, sync.consumer / rel, changed, sync)
 
     reports = repair_symlinks(changed, sync=sync)
     for r in reports:
@@ -135,8 +135,8 @@ def _print_changed(paths: set[Path], header: str, sync: ctx.SyncContext) -> None
 
 
 @consumer_locked
-def cmd_apply(args: argparse.Namespace, sync=None) -> int:
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+def cmd_apply(args: argparse.Namespace) -> int:
+    sync: ctx.SyncContext = args.sync
     require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:

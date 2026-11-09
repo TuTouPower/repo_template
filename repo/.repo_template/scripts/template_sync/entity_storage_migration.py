@@ -960,14 +960,13 @@ def _collect_transaction_paths(consumer: Path, plan: MigrationPlan) -> list[str]
 
 
 def migrate_entity_storage(
-    sync=None, *, write: bool = False, require_clean: bool = True,
+    sync: ctx.SyncContext, *, write: bool = False, require_clean: bool = True,
 ) -> list[str]:
     """执行 entity-storage 迁移：默认 dry-run，加 write=True 在事务中落盘。
 
     require_clean 由 cmd_migrate 在 all 模式置 False：all 入口已统一做一次干净检查，
     逐项事务落盘造成的工作区变更不得被 entity 步误判为「现场脏」而死锁。
     """
-    sync = sync or ctx.current_sync()
     consumer = sync.consumer
 
     with git_common_lock(consumer, CONTROL_LOCK_NAME):

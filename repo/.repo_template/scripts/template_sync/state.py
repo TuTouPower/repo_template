@@ -29,9 +29,8 @@ def require_no_legacy_state(sync: ctx.SyncContext) -> None:
         )
 
 
-def read_state(sync=None) -> dict | None:
+def read_state(sync: ctx.SyncContext) -> dict | None:
     """只读当前本地 state；旧布局 state 必须经 `migrate legacy-state` 显式迁移。"""
-    sync = sync or ctx.current_sync()
     path = sync.state_path
     data = _load_json_object(path, f"状态文件 {sync.rel(path)}") if path.exists() else None
     manifest = sync.consumer / ".repo_template/sync_manifest.json"
@@ -46,7 +45,7 @@ def read_state(sync=None) -> dict | None:
         data = {"last_synced_commit": resolved, "user_prompts": []}
         if portable.get("source_url"):
             data["template_source"] = {"kind": "url", "value": portable["source_url"]}
-    if ctx.SOURCE_OVERRIDE:
+    if sync.source_override:
         had_persisted_source = data is not None and "template_source" in data
         data = dict(data or {"last_synced_commit": None, "user_prompts": []})
         if had_persisted_source:
@@ -54,7 +53,7 @@ def read_state(sync=None) -> dict | None:
         else:
             # 覆盖值是临时的：持久化 state 里本来就没有来源，prompt 不得把它写盘。
             data["_ephemeral_source"] = True
-        data["template_source"] = source_identity(ctx.SOURCE_OVERRIDE)
+        data["template_source"] = source_identity(sync.source_override)
     policy = sync.consumer / ".repo_template/sync_policy.json"
     if data is not None and policy.exists():
         policy_data = _load_json_object(policy, f"策略文件 {sync.rel(policy)}")
@@ -65,9 +64,8 @@ def read_state(sync=None) -> dict | None:
     return data
 
 
-def write_state(data: dict, sync=None) -> None:
+def write_state(data: dict, sync: ctx.SyncContext) -> None:
     from repo_task.documents import atomic_write_text
-    sync = sync or ctx.current_sync()
     sync.state_path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(
         {key: value for key, value in data.items() if not key.startswith("_")},
@@ -123,7 +121,7 @@ def _merge_legacy_state(data: dict, legacy: dict) -> list[str]:
 
 @consumer_locked
 def cmd_init(args: argparse.Namespace) -> int:
-    sync = getattr(args, "sync", None) or ctx.current_sync()
+    sync: ctx.SyncContext = args.sync
     if not args.source:
         raise ctx.SyncError("init 需要 --source <path|url>")
     legacy = legacy_state_path(sync)
@@ -146,9 +144,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def migrate_legacy_state(sync=None, *, write: bool = False) -> list[str]:
+def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     """迁移旧布局 state。默认 dry-run，仅在 write=True 时写盘与删除旧文件。"""
-    sync = sync or ctx.current_sync()
     legacy = legacy_state_path(sync)
     if not legacy.exists():
         return []
@@ -187,26 +184,8 @@ def migrate_legacy_state(sync=None, *, write: bool = False) -> list[str]:
 
 
 @consumer_locked
-def cmd_migrate(args: argparse.Namespace) -> int:
-    """显式迁移入口：把旧布局数据一次性收敛到当前格式。"""
-    sync = getattr(args, "sync", None) or ctx.current_sync()
-    if args.kind != "legacy-state":
-        raise ctx.SyncError(f"未知迁移目标：{args.kind}")
-    legacy = legacy_state_path(sync)
-    if not legacy.exists():
-        raise ctx.SyncError(f"未找到旧布局 state：{sync.rel(legacy)}")
-    write = getattr(args, "write", False)
-    reports = migrate_legacy_state(sync=sync, write=write)
-    mode_str = "落盘" if write else "dry-run 拟定"
-    print(f"legacy-state: {mode_str}完成 {len(reports)} 项")
-    for r in reports:
-        print(f"  {r}")
-    return 0
-
-
-@consumer_locked
 def cmd_prompt(args: argparse.Namespace) -> int:
-    sync = getattr(args, "sync", None) or ctx.current_sync()
+    sync: ctx.SyncContext = args.sync
     state = read_state(sync)
     if not state:
         raise ctx.SyncError("未初始化：无 sync_state.json。先运行 init --source <path|url>")

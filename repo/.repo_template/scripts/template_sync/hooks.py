@@ -126,9 +126,8 @@ def _retired_guard_state(sync: ctx.SyncContext) -> tuple[Path, bool]:
     return legacy, managed
 
 
-def retired_hooks_status(sync=None) -> list[str]:
+def retired_hooks_status(sync: ctx.SyncContext) -> list[str]:
     """返回仍残留的退役 hook 现场；与 migrate_retired_hooks 的可处理集合完全一致。"""
-    sync = sync or ctx.current_sync()
     legacy, managed = _retired_guard_state(sync)
     findings: list[str] = []
     if managed:
@@ -139,9 +138,8 @@ def retired_hooks_status(sync=None) -> list[str]:
     return sorted(set(findings))
 
 
-def migrate_retired_hooks(sync=None) -> list[str]:
+def migrate_retired_hooks(sync: ctx.SyncContext) -> list[str]:
     """按 retired_hooks_status 的可处理集合逐项处理，保留消费方自定义 hook。"""
-    sync = sync or ctx.current_sync()
     findings = retired_hooks_status(sync=sync)
     if not findings:
         return []
@@ -159,14 +157,14 @@ def migrate_retired_hooks(sync=None) -> list[str]:
 
 
 @consumer_locked
-def cmd_install_hooks(args: argparse.Namespace, sync=None) -> int:
+def cmd_install_hooks(args: argparse.Namespace) -> int:
     """幂等设置 core.hooksPath 指向工具链 hooks。
 
     git 对相对路径按仓库顶层解析。消费仓 hooks 在 `.repo_template/hooks`；
     工厂仓产物在 `repo/` 下时须写成 `repo/.repo_template/hooks`。已有其它
     hooksPath 时拒绝，须 --force。
     """
-    sync = getattr(args, "sync", None) or sync or ctx.current_sync()
+    sync: ctx.SyncContext = args.sync
     hooks_dir = sync.consumer / ".repo_template" / "hooks"
     hook_script = hooks_dir / "pre-commit"
     if not hook_script.is_file():

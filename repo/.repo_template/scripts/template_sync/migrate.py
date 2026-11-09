@@ -202,7 +202,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     逐项事务、已完成步骤保留的语义不变；只在 all 入口统一做一次干净检查，
     避免前序步骤落盘后 entity 步再查干净造成顺序死锁。
     """
-    sync = getattr(args, "sync", None) or ctx.current_sync()
+    sync: ctx.SyncContext = args.sync
     kinds = KINDS if args.kind == "all" else (args.kind,)
     write = getattr(args, "write", False)
     if write and args.kind == "all":

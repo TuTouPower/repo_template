@@ -20,9 +20,8 @@ def _file_differs(a: Path, b: Path) -> bool:
     return a.read_bytes() != b.read_bytes()
 
 
-def _reject_unsafe_target(dst: Path, reason: str, sync=None) -> None:
+def _reject_unsafe_target(dst: Path, reason: str, sync: ctx.SyncContext) -> None:
     """拒绝目录与软链目标：copy2 会跟随文件软链写仓外，也会把文件写进同名目录。"""
-    sync = sync or ctx.current_sync()
     if dst.is_symlink():
         raise ctx.SyncError(
             f"{sync.rel(dst)} 是软链：{reason}。同步不得经软链写到仓外；请人工处理后重跑 apply"
@@ -31,9 +30,8 @@ def _reject_unsafe_target(dst: Path, reason: str, sync=None) -> None:
         raise ctx.SyncError(f"{sync.rel(dst)} 是目录：{reason}。请人工处理该目录后重跑 apply")
 
 
-def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync=None) -> None:
+def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync: ctx.SyncContext) -> None:
     """树对树同步：src 全量复制（含覆盖），dst 中 src 没有的非噪声条目删除。"""
-    sync = sync or ctx.current_sync()
     if dst_dir.is_symlink():
         raise ctx.SyncError(
             f"{sync.rel(dst_dir)} 是目录软链，拒绝向软链目标执行树对树同步以防越界。请人工处理后重跑 apply"
@@ -52,14 +50,14 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync=None) -> Non
         if target.is_symlink() and entry.is_dir() and not entry.is_symlink():
             raise ctx.SyncError(f"{sync.rel(target)} 是目录软链，模板源是真实目录，拒绝覆盖；停止")
         if entry.is_dir() and not entry.is_symlink():
-            sync_dir(entry, target, changed)
+            sync_dir(entry, target, changed, sync)
         elif entry.is_symlink():
-            _reject_unsafe_target(target, "模板源是文件/软链，拒绝写入目录内部")
+            _reject_unsafe_target(target, "模板源是文件/软链，拒绝写入目录内部", sync)
             if not target.exists() or _file_differs(entry, target):
                 shutil.copy2(entry, target, follow_symlinks=False)
                 changed.add(target)
         else:
-            _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部")
+            _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部", sync)
             if not target.exists() or _file_differs(entry, target):
                 shutil.copy2(entry, target)
                 changed.add(target)
@@ -74,15 +72,15 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync=None) -> Non
             changed.add(entry)
 
 
-def sync_file(src: Path, dst: Path, changed: set[Path]) -> None:
+def sync_file(src: Path, dst: Path, changed: set[Path], sync: ctx.SyncContext) -> None:
     """单文件：src 有 → 拷贝（相同则不动）；src 无 → 删 dst。"""
     if not src.exists():
         if dst.exists():
-            _reject_unsafe_target(dst, "模板已无此文件，拒绝删除同名目录")
+            _reject_unsafe_target(dst, "模板已无此文件，拒绝删除同名目录", sync)
             dst.unlink()
             changed.add(dst)
         return
-    _reject_unsafe_target(dst, "模板源是文件，拒绝写入目录内部")
+    _reject_unsafe_target(dst, "模板源是文件，拒绝写入目录内部", sync)
     if not dst.exists() or _file_differs(src, dst):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
@@ -107,9 +105,8 @@ def _dir_has_diff(src_dir: Path, dst_dir: Path) -> bool:
     return False
 
 
-def hard_sync_status(src: Path, sync=None) -> list[dict]:
+def hard_sync_status(src: Path, sync: ctx.SyncContext) -> list[dict]:
     """硬同步清单状态：write / delete / same。"""
-    sync = sync or ctx.current_sync()
     out: list[dict] = []
     for rel in ctx.HARD_SYNC_DIRS:
         s, d = src / rel, sync.consumer / rel
@@ -134,9 +131,8 @@ def hard_sync_status(src: Path, sync=None) -> list[dict]:
     return out
 
 
-def retired_template_warnings(sync=None) -> list[str]:
+def retired_template_warnings(sync: ctx.SyncContext) -> list[str]:
     """已下线模板产物残留提醒：只读检查，不写盘。"""
-    sync = sync or ctx.current_sync()
     warnings = []
     for rel in ctx.RETIRED_TEMPLATE_PATHS:
         if (sync.consumer / rel).exists():

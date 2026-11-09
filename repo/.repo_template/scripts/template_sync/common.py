@@ -15,8 +15,13 @@ from . import context as ctx
 def consumer_locked(function):
     @wraps(function)
     def locked(*args, **kwargs):
-        sync = kwargs.get("sync") or getattr(args[0], "sync", None) if args or "sync" in kwargs else None
-        sync = sync or ctx.current_sync()
+        sync = kwargs.get("sync")
+        if sync is None and args:
+            sync = getattr(args[0], "sync", None)
+        if sync is None:
+            raise ctx.SyncError(
+                f"{function.__name__} 缺少显式 SyncContext；调用方须经 args.sync 传入"
+            )
         with git_common_lock(sync.consumer, CONTROL_LOCK_NAME):
             return function(*args, **kwargs)
     return locked

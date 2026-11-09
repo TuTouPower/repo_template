@@ -24,8 +24,7 @@ def _migrate_conventions_text(text: str) -> str:
     return text
 
 
-def conventions_migration_status(sync=None) -> list[str]:
-    sync = sync or ctx.current_sync()
+def conventions_migration_status(sync: ctx.SyncContext) -> list[str]:
     if not sync.conventions_path.is_file():
         return []
     before = sync.conventions_path.read_text(encoding="utf-8")
@@ -35,8 +34,7 @@ def conventions_migration_status(sync=None) -> list[str]:
     return []
 
 
-def migrate_conventions(changed: set[Path], sync=None) -> list[str]:
-    sync = sync or ctx.current_sync()
+def migrate_conventions(changed: set[Path], sync: ctx.SyncContext) -> list[str]:
     if not sync.conventions_path.is_file():
         return []
     before = sync.conventions_path.read_text(encoding="utf-8")
