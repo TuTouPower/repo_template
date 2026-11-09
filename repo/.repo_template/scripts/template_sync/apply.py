@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_template import export_template, is_non_distributable
-from repo_task.file_transaction import FileTransaction
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
 from repo_task.validation import load_policy
 
 from . import context as ctx
@@ -167,7 +167,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         return 1
     if (sync.consumer / "AGENTS.md").is_symlink():
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
-    transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
+    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
     # 事务范围收敛为 apply 实际写入集合：硬同步树、软链宿主、命令薄层、
     # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs_index、
     # settings/hooks 等迁移专属或消费自有路径，避免用户 task 改动阻塞 accept、
@@ -275,11 +275,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if rollback_ok:
             _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===", sync=sync)
             print(f"错误: {error}；已完整回滚本次写入与 state。"
-                  "回滚备份保留在 .scratch/repo_sync_rollback", file=sys.stderr)
+                  f"回滚备份保留在 {SYNC_TRANSACTION_DIR}", file=sys.stderr)
         else:
             _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===", sync=sync)
             print(f"错误: {error}；自动回滚未完全成功，现场可能存在混合版本工具文件！"
-                  "备份保留在 .scratch/repo_sync_rollback，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
+                  f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
         return 1
     _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===", sync=sync)
     print("state 推进：last_synced_commit=" + ("已更新" if not dirty else "SRC dirty，未推进"))

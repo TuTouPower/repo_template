@@ -158,9 +158,9 @@ def test_finish_txn_clear_holds_txn_lock(git_repo, monkeypatch):
     real = locks.file_lock
 
     @contextmanager
-    def spy(lock_path):
+    def spy(lock_path, **kwargs):
         paths.append(str(lock_path))
-        with real(lock_path):
+        with real(lock_path, **kwargs):
             yield
 
     monkeypatch.setattr(locks, "file_lock", spy)

@@ -173,9 +173,9 @@ def test_nested_exception_does_not_release_the_outer_os_lock(git_repo):
 def test_shared_lock_sentinel_is_written_only_after_os_lock(tmp_path, monkeypatch):
     observed = []
     original = locks.lock_fh
-    def check(fh):
+    def check(fh, **kwargs):
         observed.append(os.fstat(fh.fileno()).st_size)
-        original(fh)
+        original(fh, **kwargs)
     monkeypatch.setattr(locks, "lock_fh", check)
     path = tmp_path / "shared.lock"
     with file_lock(path):

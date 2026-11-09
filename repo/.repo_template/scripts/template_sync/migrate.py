@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from repo_task.file_transaction import FileTransaction
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
 
 from . import context as ctx
 from .common import consumer_locked
@@ -101,7 +101,7 @@ def migrate_command(src: Path, sync: ctx.SyncContext, kind: str = "all") -> str:
 
 
 def _transactional(paths: list[str], action, verify, label: str, *, sync: ctx.SyncContext) -> list[str]:
-    transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
+    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
     try:
         transaction.begin(paths)
     except ValueError as error:
@@ -123,7 +123,7 @@ def _transactional(paths: list[str], action, verify, label: str, *, sync: ctx.Sy
         except Exception as rollback_error:  # noqa: BLE001 - 恢复失败必须显式报告
             raise ctx.SyncError(
                 f"{label} 迁移失败（{error}）；自动回滚失败：{rollback_error}；"
-                "备份保留在 .scratch/repo_sync_rollback，请人工恢复"
+                f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工恢复"
             ) from error
         raise ctx.SyncError(f"{label} 迁移失败，已回滚：{error}") from error
     return reports

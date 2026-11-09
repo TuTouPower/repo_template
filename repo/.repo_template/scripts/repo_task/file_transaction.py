@@ -11,6 +11,36 @@ from pathlib import Path
 
 from .documents import atomic_write_text
 
+SYNC_TRANSACTION_DIR = ".scratch/repo_sync_rollback"
+GRAPH_TRANSACTION_DIR = ".scratch/task_graph_transaction"
+TRANSACTION_DIRS = (SYNC_TRANSACTION_DIR, GRAPH_TRANSACTION_DIR)
+OPEN_STATUSES = frozenset({"preparing", "applying", "applied", "restore_failed"})
+
+
+def open_transactions(root) -> list[tuple[str, str]]:
+    """返回未结束或记录损坏的事务目录与状态。
+
+    仅检查 ``TRANSACTION_DIRS``；记录缺失视为无事务。记录无法解析或不是
+    对象时状态为 ``corrupt``，与未结束事务一样阻止 scratch 清理。
+    """
+    root = Path(root)
+    findings: list[tuple[str, str]] = []
+    for directory in TRANSACTION_DIRS:
+        journal = root / directory / "transaction.json"
+        if not journal.is_file():
+            continue
+        try:
+            data = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            findings.append((directory, "corrupt"))
+            continue
+        status = data.get("status") if isinstance(data, dict) else None
+        if status in OPEN_STATUSES:
+            findings.append((directory, status))
+        elif not isinstance(status, str):
+            findings.append((directory, "corrupt"))
+    return findings
+
 
 def _remove(path):
     if path.is_symlink() or path.is_file():
@@ -66,7 +96,7 @@ class FileTransaction:
 
     def begin(self, paths):
         old = self.read()
-        if old and old["status"] in {"preparing", "applying", "restore_failed", "applied"}:
+        if old and old["status"] in OPEN_STATUSES:
             raise ValueError("存在未结束文件事务；先 transaction status，再 rollback 或 accept")
         if self.backup.exists():
             shutil.rmtree(self.backup)

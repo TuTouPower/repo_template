@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from repo_task.file_transaction import FileTransaction, fingerprint
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, fingerprint
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.validation import ValidationError, load_policy
 
@@ -16,7 +16,7 @@ from .gates import _run_tests
 def cmd_transaction(args):
     sync: ctx.SyncContext = args.sync
     with git_common_lock(sync.consumer, CONTROL_LOCK_NAME):
-        transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
+        transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
         try:
             if args.action == "status":
                 print(json.dumps(transaction.read(), ensure_ascii=False, indent=2))
