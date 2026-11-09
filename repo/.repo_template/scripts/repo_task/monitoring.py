@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 import repo_task.context as ctx
+from .handoff import validate_handoff
 
 from .attempts import (
     attempt_for_identity,
@@ -185,13 +186,8 @@ def git_worktree_entries(
             entries[p] = ("120000", hashlib.new(algorithm, blob).hexdigest())
         elif stat.S_ISREG(mode):
             git_mode = "100755" if mode & 0o111 else "100644"
-            size = source.stat().st_size
-            h = hashlib.new(algorithm)
-            h.update(f"blob {size}\0".encode())
-            with open(source, "rb") as f:
-                while chunk := f.read(65536):
-                    h.update(chunk)
-            entries[p] = (git_mode, h.hexdigest())
+            oid = _required_git_bytes(["hash-object", f"--path={p}", "--", p], root).decode("ascii").strip()
+            entries[p] = (git_mode, oid)
         elif stat.S_ISDIR(mode):
             git_mode = "160000"
             try:
@@ -312,12 +308,8 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
                     f"review scope 文件过大（{physical} 达到 {size // (1024 * 1024)}MB，上限 50MB）；"
                     "请将其放入 .gitignore 或划入排除目录"
                 )
-            h = hashlib.new(algorithm)
-            h.update(f"blob {size}\0".encode())
-            with open(source, "rb") as f:
-                while chunk := f.read(65536):
-                    h.update(chunk)
-            tree[path] = (git_mode, h.hexdigest())
+            oid = _required_git_bytes(["hash-object", f"--path={physical}", "--", physical], root).decode("ascii").strip()
+            tree[path] = (git_mode, oid)
         elif stat.S_ISDIR(mode):
             # Gitlinks are opaque dependencies. Bind their checked-out commit.
             git_mode = "160000"
@@ -482,21 +474,6 @@ def worktree_dirty_summary(root: Path) -> str:
     if not any((staged, unstaged, untracked)):
         return "clean"
     return f"staged={staged} unstaged={unstaged} untracked={untracked}"
-_HANDOFF_TYPES = {
-    "tid": str,
-    "attempt": int,
-    "execution_id": str,
-    "status": str,
-    "branch": str,
-    "base_sha": str,
-    "spec_source_sha": str,
-    "tests": str,
-    "blackbox": str,
-    "review": str,
-    "review_scope": str,
-    "pending": list,
-    "findings": list,
-}
 
 
 # progress.md「收尾报告 / 验收与验证」中的模板占位；handoff 的 tests/blackbox/review 不得是这些值
@@ -573,16 +550,8 @@ def build_handoff(
         "pending": pending,
         "findings": findings,
     }
-    for key, expected in _HANDOFF_TYPES.items():
-        if not isinstance(handoff.get(key), expected) or (expected is str and not handoff[key]):
-            raise ctx.TaskDataError(f"生成的 handoff 字段 {key} 类型或值非法：{handoff.get(key)!r}")
+    validate_handoff(handoff, source="生成 handoff")
     return handoff
-
-
-def _validate_string_list(name: str, value) -> str | None:
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        return f"{name} 必须是字符串数组"
-    return None
 
 
 def verify_integrate_ready(
@@ -620,6 +589,13 @@ def verify_integrate_ready(
         task, fm, _ = load_task_at_ref(tid, branch, repo=repo)
     except ctx.TaskDataError as error:
         return "incomplete", "incomplete", str(error)
+    try:
+        from _id_scan import IdScanError, branch_uses_current_schema, validate_snapshot_ids
+        if not branch_uses_current_schema(repo.root, branch):
+            return "contract", "provenance", "执行分支未完成当前实体 schema 切换，禁止合入"
+        validate_snapshot_ids(repo.root, branch)
+    except IdScanError as error:
+        return "contract", "provenance", str(error)
     status = fm.get("status")
     if status not in ctx.TERMINAL_STATUSES:
         return "incomplete", "incomplete", f"分支 {branch!r} tip status={status!r} 非终态"
@@ -630,22 +606,10 @@ def verify_integrate_ready(
         return "contract", "handoff", f"分支 {branch!r} tip 缺 {handoff_path}"
     except json.JSONDecodeError:
         return "contract", "handoff", f"分支 {branch!r} tip {handoff_path} 无法解析"
-    if not isinstance(handoff, dict):
-        return "contract", "handoff", f"{handoff_path} 非 JSON 对象"
-    for key, expected in _HANDOFF_TYPES.items():
-        if key not in handoff:
-            return "contract", "handoff", f"{handoff_path} 缺必填字段 {key}"
-        if (
-            not isinstance(handoff[key], expected)
-            or (key == "attempt" and isinstance(handoff[key], bool))
-            or (key == "attempt" and handoff[key] <= 0)
-            or (expected is str and not handoff[key])
-        ):
-            return "contract", "handoff", f"{handoff_path} 字段 {key} 类型或值非法"
-    for key in ("pending", "findings"):
-        problem = _validate_string_list(key, handoff[key])
-        if problem:
-            return "contract", "handoff", f"{handoff_path} {problem}"
+    try:
+        validate_handoff(handoff, source=handoff_path)
+    except ctx.TaskDataError as error:
+        return "contract", "handoff", str(error)
     spec_path = f"{task['dir']}/task.md"
     try:
         spec_text = git_text_at_ref(branch, spec_path, repo=repo)
@@ -675,6 +639,17 @@ def verify_integrate_ready(
         return "contract", "handoff", f"{handoff_path} base_sha 无法解析 commit"
     base = base_result.stdout.strip()
     tip = tip_result.stdout.strip()
+    worktree = (repo.primary_root / repo.worktree_rel(tid)).resolve()
+    if worktree_paths(repo=repo).get(str(worktree)) == branch:
+        from .commit_txn import load as load_finish_txn, verify_committed_tree
+        try:
+            transaction = load_finish_txn(worktree)
+            if transaction is not None:
+                if any(transaction[key] != value for key, value in (("tid", tid), ("attempt", attempt), ("execution_id", execution_id))):
+                    raise ctx.TaskDataError("遗留 finish 事务身份不匹配")
+                verify_committed_tree(worktree, transaction)
+        except ctx.TaskDataError as error:
+            return "contract", "finish_tree_mismatch", str(error)
     diff_anchor = fm.get("diff_anchor")
     if not isinstance(diff_anchor, str) or not diff_anchor:
         return "contract", "provenance", f"分支 {branch!r} task diff_anchor 缺失或非法"

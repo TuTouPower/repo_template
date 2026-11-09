@@ -361,7 +361,7 @@ def test_close_task_in_place_done(fake_repo, repo_ctx, monkeypatch):
     monkeypatch.setattr(lifecycle, "in_own_task_worktree", lambda fm, **kwargs: True)
     monkeypatch.setattr(lifecycle, "_check_done_ready", lambda tid, d, repo=None: None)
 
-    lifecycle._close_task(argparse.Namespace(tid="t001"), "done", None, prechecked=True, repo=repo_ctx)
+    lifecycle._close_task(argparse.Namespace(tid="t001"), "done", None, repo=repo_ctx)
 
     fm, _ = parse_front_matter(d / "progress.md", repo=repo_ctx)
     assert fm["status"] == "done"

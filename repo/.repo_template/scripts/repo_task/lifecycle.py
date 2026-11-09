@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,7 +15,7 @@ import repo_task.context as ctx
 
 from .locks import control_locked
 
-from .documents import dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
+from .documents import dump_front_matter, dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
 from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, is_ancestor, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
 from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
@@ -547,17 +548,32 @@ def _check_done_ready(tid: str, task_dir: Path, *, repo) -> None:
         sys.exit(f"finish=FAIL：{error}")
 
 
-def _close_task(args, status: str, note: str | None, *, prechecked: bool = False, repo) -> None:
-    """done / dropped 收尾：原位写 front matter，所有 task 终生存储于 docs/tasks/。
+def _closed_task_front_matter(
+    fm: dict, status: str, note: str | None, *, worktree_cleared: bool, repo,
+) -> dict:
+    """done / dropped 收尾共用的 front matter 变更，finish 与 _close_task 共用。
 
-    prechecked=True 表示调用方（finish）已完成 done 的写前检查。
+    finish 在自己的 worktree 内提交，只需清空 worktree 归属；_close_task
+    视 worktree 是否真实移除决定是否留 note。
     """
+    closed = dict(fm)
+    closed["status"] = status
+    if note:
+        append_note(closed, note)
+    if worktree_cleared:
+        closed["worktree"] = ""
+    else:
+        append_note(closed, f"worktree 未移除：{repo.effective_worktree(closed)}")
+    return closed
+
+
+def _close_task(args, status: str, note: str | None, *, repo) -> None:
+    """done / dropped 收尾：原位写 front matter，所有 task 终生存储于 docs/tasks/。"""
     task, path, fm, body = load_task(args.tid, repo=repo)
     if status == "done":
         require_status(fm, "active")
         require_own_task_worktree(fm, repo=repo)
-        if not prechecked:
-            _check_done_ready(args.tid, path.parent, repo=repo)
+        _check_done_ready(args.tid, path.parent, repo=repo)
     elif fm["status"] in ctx.TERMINAL_STATUSES:
         sys.exit(f"{args.tid} 已是 {fm['status']}")
     elif fm["status"] == "active":
@@ -583,14 +599,9 @@ def _close_task(args, status: str, note: str | None, *, prechecked: bool = False
             tid=args.tid,
         )
 
-    fm = dict(fm)
-    fm["status"] = status
-    if note:
-        append_note(fm, note)
-    if in_own_worktree or removed:
-        fm["worktree"] = ""
-    else:
-        append_note(fm, f"worktree 未移除：{repo.effective_worktree(fm)}")
+    fm = _closed_task_front_matter(
+        fm, status, note, worktree_cleared=in_own_worktree or removed, repo=repo,
+    )
     write_front_matter(path, fm, body)
     print(f"{args.tid} status={status}; 目录留在 {task['dir']}; {wt_msg}")
     if not removed and not in_own_worktree:
@@ -648,7 +659,7 @@ def _check_markdown_format(task_dir: Path, *, repo) -> None:
     if not rels:
         return
     try:
-        drifted = md_format.format_paths(rels, check=True)
+        drifted = md_format.format_paths(rels, repo=repo, check=True)
     except md_format.MdFormatError as error:
         sys.exit(f"finish=FAIL：Markdown 格式检查失败：{error}；零写入退出")
     if drifted:
@@ -691,20 +702,10 @@ def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
     与超大对象由 privacy 入口预过滤；task 目录侧走 worktree 扫描（软链只扫
     链接文本，不跟随目标；已删除文件跳过，删文件不引入新内容）。
     """
-    from .privacy import (
-        scan_staged_blob_candidates,
-        scan_text_privacy_leaks,
-        scan_worktree_candidates,
-    )
+    from .privacy import scan_privacy_changes
 
-    task_rels, other_rels = _finish_candidate_rels(task_rel, repo=repo)
-    violations: list[str] = []
-    violations.extend(scan_staged_blob_candidates(repo.root, other_rels))
-    violations.extend(scan_worktree_candidates(repo.root, task_rels))
-
-    # commit message 同样会永久进入 Git 历史（DS L213）。
-    violations.extend(scan_text_privacy_leaks(message, label="commit message"))
-    return violations
+    task_rels, _other_rels = _finish_candidate_rels(task_rel, repo=repo)
+    return scan_privacy_changes(repo.root, worktree_paths=task_rels, message=message)
 
 
 def _check_privacy_leaks(task_dir: Path, *, repo, message: str) -> None:
@@ -956,6 +957,16 @@ def _finish_prechecks(args) -> dict:
     }
 
 
+def _accept_finish_txn(worktree: Path, transaction: dict, *, repo) -> None:
+    """所有 committed 收尾共享验证顺序；任一验证失败都保留 journal 和快照。"""
+    from .commit_txn import finalize, verify_committed_tree
+    _verify_post_commit_scope(
+        transaction["review_scope"], transaction["diff_anchor"], transaction["task_rel"], transaction["tid"], repo=repo
+    )
+    verify_committed_tree(worktree, transaction)
+    finalize(worktree)
+
+
 def _settle_stale_finish_txn(tid: str, *, repo) -> None:
     """start/finish 前置：处理遗留提交事务，幂等判定并恢复或阻断（A01）。"""
     from .commit_txn import judge, load, rollback
@@ -978,13 +989,10 @@ def _settle_stale_finish_txn(tid: str, *, repo) -> None:
     verdict, detail = judge(worktree, existing)
     if verdict == "committed":
         # committed 统一完成 scope 重算与提交后隐私核对，再给出收尾/清理出口（P1-2）。
-        _verify_post_commit_scope(
-            existing["review_scope"], existing["diff_anchor"], existing["task_rel"], tid, repo=repo
-        )
+        _accept_finish_txn(worktree, existing, repo=repo)
         sys.exit(
-            f"finish=FAIL：上次提交已产生（{detail}）；不重复提交，"
-            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 继续收尾；"
-            f"收尾完成后用 `python3 .repo_template/scripts/task.py finish-txn-clear {tid}` 清理已完成事务"
+            f"finish=FAIL：上次提交已产生并验证、事务已清理（{detail}）；不重复提交，"
+            f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 继续收尾"
         )
     if verdict == "rollback_safe":
         problems = rollback(worktree, existing)
@@ -1004,7 +1012,7 @@ def _settle_stale_finish_txn(tid: str, *, repo) -> None:
 def cmd_finish(args):
     """active -> done 原子收尾：全程 file_lock 互斥，持久提交事务提交；失败按 HEAD 实际状态恢复。"""
     from .commit_txn import (
-        begin, finalize, judge, mark_phase, mark_staged, rollback, run_git_commit,
+        begin, judge, mark_phase, stage, write_file, rollback, run_git_commit,
         txn_lock_path,
     )
     from .locks import file_lock
@@ -1035,7 +1043,7 @@ def cmd_finish(args):
                 # 事务，避免 journal 残留形成 recovery/run-close 互锁（P1-2）。
                 mark_phase(worktree, txn, "committed")
                 try:
-                    finalize(worktree)
+                    _accept_finish_txn(worktree, txn, repo=repo)
                 except ctx.TaskDataError as error:
                     sys.exit(
                         f"finish=FAIL：{reason}\n提交已产生（{detail}）；"
@@ -1043,9 +1051,6 @@ def cmd_finish(args):
                         f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾；"
                         f"收尾完成后用 finish-txn-clear 清理"
                     )
-                _verify_post_commit_scope(
-                    plan["review_scope"], plan["diff_anchor"], plan["task_rel"], tid, repo=repo
-                )
                 sys.exit(
                     f"finish=FAIL：{reason}\n提交已产生（{detail}）；不回滚，"
                     f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾"
@@ -1071,39 +1076,31 @@ def cmd_finish(args):
             sys.exit(f"finish=FAIL：{reason}\nfinish 自身写入已全部回滚（front matter、handoff.json、暂存）")
 
         try:
-            mark_phase(worktree, txn, "writing")
-            _close_task(args, "done", None, prechecked=True, repo=repo)
-        except (SystemExit, OSError, ctx.TaskDataError) as stop:
-            detail = stop.code if isinstance(stop, SystemExit) else stop
-            settle_failure(f"done 写入失败：{detail}")
-        try:
-            from .documents import atomic_write_text
-            atomic_write_text(
-                repo.root / plan["task_rel"] / "handoff.json",
+            fm, body = parse_front_matter(plan["note_path"])
+            fm = _closed_task_front_matter(
+                fm, "done", None, worktree_cleared=True, repo=repo,
+            )
+            write_file(worktree, txn, ctx.PROGRESS_FILE, dump_front_matter(fm) + "\n" + body)
+            write_file(
+                worktree, txn, "handoff.json",
                 json.dumps(plan["handoff"], ensure_ascii=False, indent=2) + "\n",
             )
-            staged = _git(["add", "-A", "--", plan["task_rel"]], repo=repo)
-            if staged.returncode != 0:
-                raise ctx.TaskDataError(f"git add 失败：{staged.stderr.strip()}")
-            mark_staged(worktree, txn)
-        except (SystemExit, OSError, ctx.TaskDataError) as error:
+            stage(worktree, txn)
+        except (SystemExit, OSError, ctx.TaskDataError, subprocess.SubprocessError) as error:
             detail = error.code if isinstance(error, SystemExit) else error
             settle_failure(str(detail))
         committed = run_git_commit(worktree, str(message_path))
         if committed.returncode != 0:
             detail = (committed.stderr.strip() or committed.stdout.strip())[-1500:]
             settle_failure(f"git commit 失败（pre-commit / commit-msg hook 拒绝或其它原因）：\n{detail}")
+        verdict, detail = judge(worktree, txn)
+        if verdict != "committed":
+            sys.exit(f"finish=FAIL：提交无法认领（{detail}）；保留 journal 与快照，按 recovery 核查")
         mark_phase(worktree, txn, "committed")
         try:
-            finalize(worktree)
+            _accept_finish_txn(worktree, txn, repo=repo)
         except ctx.TaskDataError as error:
-            sys.exit(
-                f"finish=FAIL：实现 commit 已产生，但提交事务清理失败（{error}）；不回滚，"
-                f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 核对并继续收尾"
-            )
-        _verify_post_commit_scope(
-            plan["review_scope"], plan["diff_anchor"], plan["task_rel"], tid, repo=repo
-        )
+            sys.exit(f"finish=FAIL：实现提交已验证，事务清理失败（{error}）；运行 finish-txn-clear")
         print(f"finish=OK {tid} commit={_get_head(repo=repo)}")
 
 @control_locked
@@ -1284,86 +1281,95 @@ def cmd_finish_unwind(args):
         sys.exit(f"{tid} 不存在")
     branch = effective.get("branch") or f"{tid}_{effective['slug']}"
     worktree = (repo.root / repo.worktree_rel(tid)).resolve()
-    registered = worktree_paths(repo=repo).get(str(worktree))
-    if registered is None:
-        sys.exit(f"{tid} 无登记 worktree；按 recovery 判定处理，不撤销")
-    if registered != branch:
-        sys.exit(f"{tid} 登记分支 {registered!r} 与 task ownership {branch!r} 不符；停止并报告")
-    task_dir = worktree / effective["dir"]
-    try:
-        wt_fm, wt_body = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
-    except (OSError, ctx.TaskDataError) as error:
-        sys.exit(f"{tid} worktree 进展无法解析（{error}）；停止并人工核查")
-    if wt_fm.get("status") != "done":
-        sys.exit(f"{tid} worktree 进展 status={wt_fm.get('status')!r}；只有 done 且提交偏离时可撤销")
-    diff_anchor = wt_fm.get("diff_anchor") or ""
-    head = _git(["rev-parse", "HEAD"], root=worktree)
-    if head.returncode != 0:
-        sys.exit(f"{tid} worktree HEAD 无法解析：{head.stderr.strip()}")
-    tip_sha = head.stdout.strip()
-    if tip_sha == diff_anchor:
-        sys.exit(f"{tid} 分支 tip 已在 diff_anchor，无实现 commit 可撤销；按 recovery 判定处理")
-    try:
-        implementation_commit(tip_sha, diff_anchor, repo=repo)
-    except ctx.TaskDataError as error:
-        sys.exit(f"{tid} 分支形状不符（{error}）；只有恰好一个实现 commit 时可撤销")
-    try:
-        _, committed_fm, _ = load_task_at_ref(tid, tip_sha, repo=repo)
-        committed = json.loads(git_text_at_ref(tip_sha, f"{effective['dir']}/handoff.json", repo=repo))
-        handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, KeyError, TypeError, ctx.TaskDataError) as error:
-        sys.exit(f"{tid} tip 执行回执无法核验（{error}）；停止并人工核查")
-    expected = {"tid": tid, "branch": branch, "status": "done",
-                "attempt": attempt, "execution_id": execution_id, "base_sha": diff_anchor}
-    if (
-        any(handoff.get(key) != value for key, value in expected.items())
-        or committed != handoff or committed_fm.get("status") != "done"
-    ):
-        sys.exit(f"{tid} tip 未包含当前 handoff；现场与 ledger 不一致，停止并人工核查")
-    verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
-    if verdict == "ready":
-        sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
-    if kind != "review_scope_mismatch":
-        sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
-    listing = _git(["branch", "--format=%(refname:short)"], repo=repo)
-    if listing.returncode != 0:
-        sys.exit(f"无法列出分支：{listing.stderr.strip()}")
-    for other in [name.strip() for name in listing.stdout.splitlines() if name.strip()]:
-        if other == branch:
-            continue
-        if is_ancestor(tip_sha, other, repo=repo):
-            sys.exit(f"已有后继分支 {other!r} 包含当前 tip；撤销会使其悬空，停止并报告")
-    dirty = porcelain_entries(worktree, repo=repo)
-    if dirty:
-        sys.exit(f"worktree 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先恢复干净再撤销")
-    reset = _git(["reset", "--soft", diff_anchor], root=worktree)
-    if reset.returncode != 0:
-        sys.exit(f"{tid} git reset --soft 失败（{reset.stderr.strip()}）；分支未动，人工核查后重试")
-    wt_fm = dict(wt_fm)
-    wt_fm["status"] = "active"
-    # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
-    # 否则后续 finish 的 require_own_task_worktree 认不出自身 worktree。
-    wt_fm["worktree"] = repo.worktree_rel(tid)
-    append_note(wt_fm, f"finish-unwind: 撤销与 review 不一致的实现 commit {tip_sha[:12]}，回到 active 重做（{args.reason}）")
-    try:
-        write_front_matter(task_dir / ctx.PROGRESS_FILE, wt_fm, wt_body)
-    except (OSError, ctx.TaskDataError) as error:
-        sys.exit(
-            f"{tid} 分支已退回 {diff_anchor[:12]}，但 {ctx.PROGRESS_FILE} 写回 active 失败（{error}）；"
-            "手动把 status 改回 active 后重新 review 再 finish"
+    from .commit_txn import (load as load_finish_txn, judge as judge_finish_txn,
+                             finalize as finalize_finish_txn, txn_lock_path)
+    from .locks import file_lock
+    with file_lock(txn_lock_path(worktree)):
+        registered = worktree_paths(repo=repo).get(str(worktree))
+        if registered is None:
+            sys.exit(f"{tid} 无登记 worktree；按 recovery 判定处理，不撤销")
+        if registered != branch:
+            sys.exit(f"{tid} 登记分支 {registered!r} 与 task ownership {branch!r} 不符；停止并报告")
+        transaction = load_finish_txn(worktree)
+        if transaction is not None and judge_finish_txn(worktree, transaction)[0] != "committed":
+            sys.exit("finish-unwind 拒绝：遗留事务无法认领，保留 journal 与快照")
+        task_dir = worktree / effective["dir"]
+        try:
+            wt_fm, wt_body = parse_front_matter(task_dir / ctx.PROGRESS_FILE)
+        except (OSError, ctx.TaskDataError) as error:
+            sys.exit(f"{tid} worktree 进展无法解析（{error}）；停止并人工核查")
+        if wt_fm.get("status") != "done":
+            sys.exit(f"{tid} worktree 进展 status={wt_fm.get('status')!r}；只有 done 且提交偏离时可撤销")
+        diff_anchor = wt_fm.get("diff_anchor") or ""
+        head = _git(["rev-parse", "HEAD"], root=worktree)
+        if head.returncode != 0:
+            sys.exit(f"{tid} worktree HEAD 无法解析：{head.stderr.strip()}")
+        tip_sha = head.stdout.strip()
+        if tip_sha == diff_anchor:
+            sys.exit(f"{tid} 分支 tip 已在 diff_anchor，无实现 commit 可撤销；按 recovery 判定处理")
+        try:
+            implementation_commit(tip_sha, diff_anchor, repo=repo)
+        except ctx.TaskDataError as error:
+            sys.exit(f"{tid} 分支形状不符（{error}）；只有恰好一个实现 commit 时可撤销")
+        try:
+            _, committed_fm, _ = load_task_at_ref(tid, tip_sha, repo=repo)
+            committed = json.loads(git_text_at_ref(tip_sha, f"{effective['dir']}/handoff.json", repo=repo))
+            handoff = json.loads((task_dir / "handoff.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError, TypeError, ctx.TaskDataError) as error:
+            sys.exit(f"{tid} tip 执行回执无法核验（{error}）；停止并人工核查")
+        expected = {"tid": tid, "branch": branch, "status": "done",
+                    "attempt": attempt, "execution_id": execution_id, "base_sha": diff_anchor}
+        if (
+            any(handoff.get(key) != value for key, value in expected.items())
+            or committed != handoff or committed_fm.get("status") != "done"
+        ):
+            sys.exit(f"{tid} tip 未包含当前 handoff；现场与 ledger 不一致，停止并人工核查")
+        verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
+        if verdict == "ready":
+            sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
+        if kind not in {"review_scope_mismatch", "finish_tree_mismatch", "privacy"}:
+            sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
+        listing = _git(["branch", "--format=%(refname:short)"], repo=repo)
+        if listing.returncode != 0:
+            sys.exit(f"无法列出分支：{listing.stderr.strip()}")
+        for other in [name.strip() for name in listing.stdout.splitlines() if name.strip()]:
+            if other == branch:
+                continue
+            if is_ancestor(tip_sha, other, repo=repo):
+                sys.exit(f"已有后继分支 {other!r} 包含当前 tip；撤销会使其悬空，停止并报告")
+        dirty = porcelain_entries(worktree, repo=repo)
+        if dirty:
+            sys.exit(f"worktree 有 {len(dirty)} 项未提交改动：{', '.join(dirty[:5])}；先恢复干净再撤销")
+        reset = _git(["reset", "--soft", diff_anchor], root=worktree)
+        if reset.returncode != 0:
+            sys.exit(f"{tid} git reset --soft 失败（{reset.stderr.strip()}）；分支未动，人工核查后重试")
+        wt_fm = dict(wt_fm)
+        wt_fm["status"] = "active"
+        # _close_task 在 done 写入时清空了 worktree 归属；撤销后必须恢复，
+        # 否则后续 finish 的 require_own_task_worktree 认不出自身 worktree。
+        wt_fm["worktree"] = repo.worktree_rel(tid)
+        append_note(wt_fm, f"finish-unwind: 撤销与 review 不一致的实现 commit {tip_sha[:12]}，回到 active 重做（{args.reason}）")
+        try:
+            write_front_matter(task_dir / ctx.PROGRESS_FILE, wt_fm, wt_body)
+        except (OSError, ctx.TaskDataError) as error:
+            sys.exit(
+                f"{tid} 分支已退回 {diff_anchor[:12]}，但 {ctx.PROGRESS_FILE} 写回 active 失败（{error}）；"
+                "手动把 status 改回 active 后重新 review 再 finish"
+            )
+        try:
+            append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason, repo=repo)
+        except ctx.TaskDataError as error:
+            sys.exit(
+                f"{tid} 已撤销且进展已回 active，仅审计缺失（{error}）；"
+                "人工补记审计后重新 review 再 finish"
+            )
+        if transaction is not None:
+            finalize_finish_txn(worktree)
+        print(
+            f"{tid} 已撤销实现 commit {tip_sha[:12]}：分支退回 {diff_anchor[:12]}，进展回到 active。"
+            "旧 handoff.json 仍暂存于 worktree，finish 会重新生成，无需手动处理。"
+            "后续：重新 review（报告须对应当前内容），再跑 finish；禁止 amend 旧 commit。"
         )
-    try:
-        append_audit("finish_unwind", tid=tid, fr="done", to="active", reason=args.reason, repo=repo)
-    except ctx.TaskDataError as error:
-        sys.exit(
-            f"{tid} 已撤销且进展已回 active，仅审计缺失（{error}）；"
-            "人工补记审计后重新 review 再 finish"
-        )
-    print(
-        f"{tid} 已撤销实现 commit {tip_sha[:12]}：分支退回 {diff_anchor[:12]}，进展回到 active。"
-        "旧 handoff.json 仍暂存于 worktree，finish 会重新生成，无需手动处理。"
-        "后续：重新 review（报告须对应当前内容），再跑 finish；禁止 amend 旧 commit。"
-    )
 
 @control_locked
 def cmd_purge(args):

@@ -492,8 +492,8 @@ def test_finish_destructive_hook_reports_unknown_and_keeps_journal(git_repo):
     assert "不重复提交" in state["action"] or "人工核查" in state["action"]
 
 
-def test_transaction_judge_reports_committed_when_head_advanced(git_repo):
-    """A01：HEAD 已前进时 judge 判 committed，恢复路径不得回滚。"""
+def test_transaction_judge_rejects_external_head_advance(git_repo):
+    """外部 HEAD 前进不能认领为 finish 提交；保留现场且不得回滚。"""
     from repo_task import commit_txn
 
     _, worktree, message = _ready(git_repo)
@@ -506,11 +506,11 @@ def test_transaction_judge_reports_committed_when_head_advanced(git_repo):
         "diff_anchor": parent, "review_scope": "x", "task_rel": "docs/tasks/t001_alpha",
         "message_file": str(message), "original_head": parent,
         "index_existed": True, "files": {}, "phase": "committing",
-        "expected_tree": "", "expected_files": {},
+        "expected_tree": "", "expected_files": {}, "pending_files": {}, "pending_tree": "",
     }
     verdict, detail = commit_txn.judge(worktree, journal)
-    assert verdict == "committed"
-    assert head[:12] in detail
+    assert verdict == "unknown"
+    assert "执行回执" in detail
 
 
 def test_leftover_transaction_with_git_lock_reports_unknown_without_rollback(git_repo):
@@ -775,20 +775,24 @@ def test_finish_rejects_developer_home_path_in_review_report_and_task_docs(git_r
 # --------------------------------------------------------------------------
 
 
-def _committed_journal(worktree, anchor, message, execution_id="x"):
+def _committed_journal(worktree, anchor, message, execution_id=None):
     """构造「实现 commit 已产生但 journal 残留」的 committed 事务。"""
     from repo_task import commit_txn, monitoring
 
     scope = monitoring.review_scope_fingerprint(
         anchor, "docs/tasks/t001_alpha", repo_root=worktree, ref="HEAD"
     )
+    receipt = json.loads(_git(worktree, "show", "HEAD:docs/tasks/t001_alpha/handoff.json").stdout)
+    if execution_id is None:
+        execution_id = receipt["execution_id"]
+    expected_tree = _git(worktree, "rev-parse", "HEAD^{tree}").stdout.strip()
     data = {
-        "version": commit_txn.JOURNAL_VERSION, "tid": "t001", "attempt": 1,
+        "version": commit_txn.JOURNAL_VERSION, "tid": "t001", "attempt": receipt["attempt"],
         "execution_id": execution_id, "branch": "t001_alpha", "diff_anchor": anchor,
         "review_scope": scope, "task_rel": "docs/tasks/t001_alpha",
         "message_file": str(message), "original_head": anchor,
         "index_existed": True, "files": {}, "phase": "committed",
-        "expected_tree": "", "expected_files": {},
+        "expected_tree": expected_tree, "expected_files": {}, "pending_files": {}, "pending_tree": "",
     }
     directory = commit_txn.txn_dir(worktree)
     directory.mkdir(parents=True, exist_ok=True)
@@ -811,7 +815,7 @@ def test_finish_refuses_leftover_committed_transaction(git_repo):
 
     assert result.returncode != 0
     assert "不重复提交" in result.stderr
-    assert "finish-txn-clear" in result.stderr
+    assert "事务已清理" in result.stderr
     assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == head
 
 

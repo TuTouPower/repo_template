@@ -189,7 +189,7 @@ def recovery_state(tid: str, *, repo) -> dict:
         verdict, kind, gate_detail = verify_integrate_ready(
             tid, record["attempt"], record["execution_id"], repo=repo
         )
-        if verdict != "ready" and kind == "review_scope_mismatch":
+        if verdict != "ready" and kind in {"review_scope_mismatch", "finish_tree_mismatch"}:
             if report_done:
                 state["action"] = (
                     f"停止：report 已写入 done，但实现 commit 内容偏离 review 内容（{gate_detail}）；"
@@ -356,8 +356,8 @@ def cmd_finish_txn_clear(args):
     隐私核对通过才 finalize，避免清理掉一个泄漏提交的唯一现场证据。与 finish
     共用同一 txn 锁，防止清理与提交并发交错。
     """
-    from .commit_txn import finalize, judge, load, txn_lock_path
-    from .lifecycle import scan_tip_privacy_leaks
+    from .commit_txn import judge, load, txn_lock_path
+    from .lifecycle import _accept_finish_txn
     from .locks import file_lock
     from .store import git_text_at_ref
 
@@ -389,6 +389,8 @@ def cmd_finish_txn_clear(args):
             )
         except (ValueError, ctx.TaskDataError) as error:
             sys.exit(f"拒绝清理：实现 commit 缺少可核对的执行回执（{error}）；保留现场人工核查")
+        from .handoff import validate_handoff
+        validate_handoff(committed_handoff, source=f"{head_sha}:{txn['task_rel']}/handoff.json")
         if not isinstance(committed_handoff, dict) or any(
             committed_handoff.get(key) != txn[key]
             for key in ("tid", "attempt", "execution_id")
@@ -397,8 +399,5 @@ def cmd_finish_txn_clear(args):
                 "拒绝清理：tip 执行回执与该提交事务身份不符，实现 commit 对应关系不明；"
                 "保留 journal 与现场，按 recovery 人工核查"
             )
-        leaks = scan_tip_privacy_leaks(head_sha, repo=repo)
-        if leaks:
-            sys.exit(f"拒绝清理：实现 commit 含隐私泄漏（{leaks[:3]}）；先按 recovery 修正")
-        finalize(worktree)
+        _accept_finish_txn(worktree, txn, repo=repo)
         print(f"{tid} 已清理已完成的提交事务 journal")

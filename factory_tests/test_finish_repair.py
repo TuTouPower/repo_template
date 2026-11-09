@@ -55,14 +55,14 @@ def test_judge_unknown_when_head_diverged_to_unrelated_commit(txn_repo, controll
     assert "偏离" in detail
 
 
-def test_judge_committed_when_head_is_descendant(txn_repo, controlled_env):
+def test_judge_rejects_external_descendant_before_commit_phase(txn_repo, controlled_env):
     txn = commit_txn.begin(
         txn_repo, tid=TID, attempt=1, execution_id="e" * 32, branch="t001_alpha",
         diff_anchor="anchor", review_scope="scope", task_rel=TASK_REL,
         message_file="/tmp/message.txt",
     )
     git_run(txn_repo, "commit", "--allow-empty", "-m", "advance")
-    assert commit_txn.judge(txn_repo, txn)[0] == "committed"
+    assert commit_txn.judge(txn_repo, txn)[0] == "unknown"
 
 
 # --- P2 commit_txn：prepared/writing 暂存区比对 ----------------------------------
@@ -112,11 +112,11 @@ def test_load_rejects_nonregular_journal(txn_repo, controlled_env, tmp_path, cor
     if corrupt == "symlink":
         real = tmp_path / "journal.json"
         real.write_text(json.dumps({
-            "version": 1, "tid": TID, "attempt": 1, "execution_id": "e" * 32,
+            "version": commit_txn.JOURNAL_VERSION, "tid": TID, "attempt": 1, "execution_id": "e" * 32,
             "branch": "t001_alpha", "diff_anchor": "a", "review_scope": "s",
             "task_rel": TASK_REL, "message_file": "/tmp/m", "original_head": "h",
             "index_existed": False, "files": {}, "phase": "prepared",
-            "expected_tree": "", "expected_files": {},
+            "expected_tree": "", "expected_files": {}, "pending_files": {}, "pending_tree": "",
         }), encoding="utf-8")
         target.symlink_to(real)
     else:
@@ -176,7 +176,7 @@ def test_finish_txn_clear_refuses_mismatched_identity(git_repo):
     anchor = _git(worktree, "rev-parse", "HEAD").stdout.strip()
     assert finish_cli(worktree, "t001", "owner-fin", message).returncode == 0
     # 默认伪造 journal 身份与实现 commit 执行回执不符：拒绝清理。
-    _committed_journal(worktree, anchor, message)
+    _committed_journal(worktree, anchor, message, execution_id="forged-execution")
     result = _task_cli(git_repo, "finish-txn-clear", "t001")
     assert result.returncode != 0
     assert "身份不符" in result.stderr

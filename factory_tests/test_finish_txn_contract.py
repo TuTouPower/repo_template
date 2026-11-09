@@ -46,6 +46,8 @@ def _valid_journal() -> dict:
         "phase": "prepared",
         "expected_tree": "",
         "expected_files": {},
+        "pending_files": {},
+        "pending_tree": "",
     }
 
 
@@ -227,7 +229,7 @@ def _fake_repo():
 
 def test_bind_statusline_reports_false_result(capfd, monkeypatch):
     monkeypatch.setattr(statusline, "bind", lambda *a, **k: False)
-    control._bind_statusline(_fake_repo(), "session-1", TID, 2, "e" * 32)
+    control._bind_statusline(_fake_repo(), "session-1", TID, 2, "e" * 32, "session-1")
     err = capfd.readouterr().err
     assert "状态行绑定" in err
     assert "/tmp/fake_project" in err and "session-1" in err and TID in err
@@ -239,7 +241,7 @@ def test_bind_statusline_degrades_exception(capfd, monkeypatch):
         raise AttributeError("'int' object has no attribute 'get'")
 
     monkeypatch.setattr(statusline, "bind", boom)
-    control._bind_statusline(_fake_repo(), "session-1", TID, 1, "e" * 32)
+    control._bind_statusline(_fake_repo(), "session-1", TID, 1, "e" * 32, "session-1")
     err = capfd.readouterr().err
     assert "状态行绑定" in err and "has no attribute" in err
 
