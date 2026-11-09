@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import os
 import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -66,6 +68,8 @@ from .worktrees import (
     rollback_start,
     unlink_managed_links,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _order_by_ancestry(
@@ -682,49 +686,143 @@ def _validate_merge_lineage(
     return first_parent
 
 
+def _merge_tree_result(
+    first: str, second: str, *, repo: "ctx.RepoContext",
+) -> tuple[str, set[str]]:
+    """用 git merge-tree 重算 first+second 的自动合并结果，返回 (tree_oid, conflict_paths)。
+
+    与 Git 合并语义一致：非冲突路径以自动合并为准，冲突路径需人工解决。
+    调用方不得用 base..tip 差异冒充期望合并结果（重叠文件干净合并即反例）。
+    """
+    result = _git(
+        ["merge-tree", "--write-tree", "--name-only", "-z", first, second],
+        timeout=120, repo=repo,
+    )
+    fields = result.stdout.split("\0")
+    tree = fields[0] if fields else ""
+    if result.returncode not in {0, 1} or not re.fullmatch(r"[0-9a-f]{40,64}", tree):
+        detail = result.stderr.strip()
+        if result.returncode == 129 or "unknown option" in detail.lower():
+            raise ctx.TaskDataError("内容门禁需要 Git >= 2.38（merge-tree --write-tree --name-only）")
+        raise ctx.TaskDataError(
+            "无法重算 Git 自动合并结果，不能校验 merge 内容"
+            + (f"：{detail}" if detail else "")
+        )
+    try:
+        end = fields.index("", 1)
+    except ValueError:
+        end = len(fields)
+    return tree, {path for path in fields[1:end] if path}
+
+
+def _scan_merge_changeset_privacy(
+    changed: set[str],
+    entries: dict[str, tuple[str, str]],
+    *,
+    repo: "ctx.RepoContext",
+) -> None:
+    """扫描 merge 变更集文本中的开发者家目录泄漏，fail-closed。
+
+    只扫描变更后仍存在的 blob（删除路径无内容可扫）；复用稳定的
+    ``scan_text_privacy_leaks`` 逐文本扫描，解码/读取失败一律抛 TaskDataError。
+    """
+    from .privacy import (
+        PrivacyScanError,
+        decode_candidate_bytes,
+        is_binary_candidate,
+        is_privacy_candidate,
+        scan_text_privacy_leaks,
+    )
+
+    selected = sorted(
+        path for path in changed
+        if path in entries
+        and entries[path][0] != "160000"
+        and is_privacy_candidate(path)
+        and not is_binary_candidate(path)
+    )
+    if not selected:
+        return
+    oids = [entries[path][1] for path in selected]
+    try:
+        blobs = batch_cat_file(oids, repo=repo)
+    except ctx.TaskDataError as error:
+        raise ctx.TaskDataError(f"merge 隐私扫描读取失败（fail-closed）：{error}") from error
+    violations: list[str] = []
+    for path, oid in zip(selected, oids):
+        data = blobs.get(oid)
+        if data is None:
+            raise ctx.TaskDataError(f"merge 隐私扫描无法读取内容：{path}（fail-closed）")
+        try:
+            text = decode_candidate_bytes(data, label=path)
+        except PrivacyScanError as error:
+            raise ctx.TaskDataError(f"merge 隐私扫描失败（fail-closed）：{error}") from error
+        violations.extend(scan_text_privacy_leaks(text, label=path))
+    if violations:
+        shown = "；".join(violations[:8]) + (
+            f" 等共 {len(violations)} 处" if len(violations) > 8 else ""
+        )
+        raise ctx.TaskDataError(
+            f"merge 结果检测到开发者家目录绝对路径泄漏（{shown}）；"
+            "请改用仓库相对路径后重做 merge"
+        )
+
+
 def _validate_claimed_merge_commit(
     merge_sha: str,
     second_parent: str,
     *,
     repo: "ctx.RepoContext",
+    names: list[str] | None = None,
+    member_tips: dict[str, str] | None = None,
 ) -> None:
-    """认领既有 merge commit 前复验血缘、变更范围与内容（防手工/伪造 merge 绕过门禁）。
+    """认领既有 merge commit 前复验血缘、自动合并一致性、核心资产与隐私（防伪造 merge 绕过门禁）。
 
-    merge^1..merge 的变更必须恰好等于 merge-base..branch 的差异，且变更路径内容
-    等于分支实现 tip；任何夹带或篡改都不认领。tip 层核心资产由 verify_integrate_ready
-    统一把关，此处只判定「merge 未夹带 tip 之外的任何内容」，避免链成员分支已清理时
-    用不完整的 owner 集合误报。
+    根因修正：期望合并结果必须用 ``git merge-tree --write-tree`` 重算，而非
+    ``base..tip`` 差异冒充。分支与主干重叠修改同一文件不同行时，Git 干净合并
+    结果同时包含两侧改动（与 tip 不等），旧的逐路径 ``tip == merge`` 断言会误拒
+    合法 clean merge，导致 --continue 重入与幂等清理不可重入（恢复阻断）。
+    非冲突路径必须等于自动合并结果；冲突解决路径显式放行，但叠加核心资产
+    （成员核心资产必须等于已验证 tip）与变更集隐私校验。
     """
     first_parent = _validate_merge_lineage(merge_sha, second_parent, repo=repo)
-    mb = _git(["merge-base", first_parent, second_parent], repo=repo)
-    if mb.returncode != 0 or not mb.stdout.strip():
-        raise ctx.TaskDataError("无法解析被认领 merge commit 的 merge-base")
-    base_entries = git_tree_entries(mb.stdout.strip(), repo=repo)
-    first_entries = git_tree_entries(first_parent, repo=repo)
-    tip_entries = git_tree_entries(second_parent, repo=repo)
+    auto_tree_oid, conflict_paths = _merge_tree_result(first_parent, second_parent, repo=repo)
+    auto_entries = git_tree_entries(auto_tree_oid, repo=repo)
     merge_entries = git_tree_entries(merge_sha, repo=repo)
-    expected_changed = {
-        path for path in set(base_entries) | set(tip_entries)
-        if base_entries.get(path) != tip_entries.get(path)
-    }
-    actual_changed = {
+    tampered = sorted(
+        path for path in set(auto_entries) | set(merge_entries)
+        if auto_entries.get(path) != merge_entries.get(path)
+        and path not in conflict_paths
+    )
+    if tampered:
+        raise ctx.TaskDataError(
+            "被认领的 merge commit 内容与 Git 自动合并结果不一致："
+            + ", ".join(tampered[:10])
+            + "；拒绝认领"
+        )
+    resolved_names = list(names) if names else []
+    tips = dict(member_tips) if member_tips else {}
+    if resolved_names:
+        mb = _git(["merge-base", first_parent, second_parent], repo=repo)
+        if mb.returncode != 0 or not mb.stdout.strip():
+            raise ctx.TaskDataError("无法解析被认领 merge commit 的 merge-base")
+        main_touched = set(_member_paths_changed_between(
+            mb.stdout.strip(), first_parent, resolved_names, repo=repo
+        ))
+        _validate_main_touched_from_tip(
+            main_touched - conflict_paths, resolved_names, tips, merge_entries, repo=repo
+        )
+        _validate_member_core_from_tips(merge_entries, resolved_names, tips, repo=repo)
+    first_entries = git_tree_entries(first_parent, repo=repo)
+    changeset = {
         path for path in set(first_entries) | set(merge_entries)
         if first_entries.get(path) != merge_entries.get(path)
     }
-    if expected_changed != actual_changed:
-        extra = sorted(actual_changed - expected_changed)[:10]
-        missing = sorted(expected_changed - actual_changed)[:10]
-        raise ctx.TaskDataError(
-            "被认领的 merge commit 变更范围与 task 分支实现不一致"
-            + (f"；夹带路径：{', '.join(extra)}" if extra else "")
-            + (f"；缺失路径：{', '.join(missing)}" if missing else "")
-            + "；拒绝认领无关历史"
-        )
-    for path in sorted(expected_changed):
-        if tip_entries.get(path) != merge_entries.get(path):
-            raise ctx.TaskDataError(
-                f"被认领的 merge commit 内容与 task 分支实现不一致：{path}；拒绝认领"
-            )
+    _scan_merge_changeset_privacy(changeset, merge_entries, repo=repo)
+    LOGGER.debug(
+        "claimed merge validated: merge=%s first=%s second=%s conflicts=%d",
+        merge_sha[:12], first_parent[:12], second_parent[:12], len(conflict_paths),
+    )
 
 
 def _merge_head(*, repo: "ctx.RepoContext") -> str:
@@ -875,20 +973,33 @@ def _is_pure_backlog_to_done_member_conflict(
     return _normalize_spec_checkboxes(head_spec) == _normalize_spec_checkboxes(branch_spec)
 
 
-def _main_touched_member_paths(
-    branch: str, names: list[str], *, repo: "ctx.RepoContext",
+def _member_paths_changed_between(
+    base_ref: str, head_ref: str, names: list[str], *, repo: "ctx.RepoContext",
 ) -> list[str]:
-    """返回主干 HEAD 相对 merge-base(HEAD, branch) 在成员 task 目录下新增或修改的路径。"""
-    mb = _git(["merge-base", "HEAD", branch], repo=repo)
-    if mb.returncode != 0 or not mb.stdout.strip():
-        return []
+    """返回 head_ref 相对 base_ref 在成员 task 目录下新增或修改的路径（fail-closed）。
+
+    git diff 失败一律抛 TaskDataError，绝不返回空集合让调用方误判「主干无改写」。
+    """
     prefixes = [f"docs/tasks/{name}" for name in names]
     diff = _git(
-        ["diff", "--name-only", "-z", mb.stdout.strip(), "HEAD", "--", *prefixes], repo=repo
+        ["diff", "--name-only", "-z", base_ref, head_ref, "--", *prefixes], repo=repo
     )
     if diff.returncode != 0:
-        return []
+        raise ctx.TaskDataError(
+            f"无法比较 {base_ref[:12]}..{head_ref[:12]} 的成员目录变更：{diff.stderr.strip()}"
+        )
     return [p for p in diff.stdout.split("\0") if p]
+
+
+def _main_touched_member_paths(
+    branch: str, names: list[str], *, repo: "ctx.RepoContext",
+    main_ref: str = "HEAD",
+) -> list[str]:
+    """返回主干 main_ref 相对 merge-base(main_ref, branch) 在成员 task 目录下新增或修改的路径。"""
+    mb = _git(["merge-base", main_ref, branch], repo=repo)
+    if mb.returncode != 0 or not mb.stdout.strip():
+        raise ctx.TaskDataError("无法解析 merge-base，不能判定主干独立改写")
+    return _member_paths_changed_between(mb.stdout.strip(), main_ref, names, repo=repo)
 
 
 def _owner_of_member_path(path: str, names: list[str]) -> str | None:
@@ -898,7 +1009,9 @@ def _owner_of_member_path(path: str, names: list[str]) -> str | None:
 def _main_rewrite_command(path: str, ref: str, *, repo: "ctx.RepoContext") -> str:
     """生成「取分支 tip 内容」的可执行命令：分支有该路径则 checkout，否则删除主干新增项。"""
     exists = _git(["cat-file", "-e", f"{ref}:{path}"], repo=repo).returncode == 0
-    return f"git checkout {ref} -- {path}" if exists else f"git rm -f -- {path}"
+    if exists:
+        return f"git checkout {shlex.quote(ref)} -- {shlex.quote(path)}"
+    return f"git rm -f -- {shlex.quote(path)}"
 
 
 def _resolve_backlog_member_conflicts(
@@ -945,9 +1058,12 @@ def _prepare_native_merge(
         if _merge_in_progress(repo=repo):
             sys.exit(f"merge 未完成：{result.stderr.strip()}；修复后 --continue，或 git merge --abort")
         sys.exit(f"merge 失败：{result.stderr.strip()}")
-    native, main_rewrites = _resolve_backlog_member_conflicts(
-        branch, names, initial_conflicts, repo=repo
-    )
+    try:
+        native, main_rewrites = _resolve_backlog_member_conflicts(
+            branch, names, initial_conflicts, repo=repo
+        )
+    except ctx.TaskDataError as error:
+        sys.exit(f"无法判定主干独立改写：{error}")
     if native:
         print(f"merge 原生冲突，共 {len(native)} 个文件：", file=sys.stderr)
         for path in native:
@@ -979,25 +1095,7 @@ def _expected_auto_merge(
     merge-tree returns the synthetic tree first.  With --name-only -z, paths
     between that tree id and the first empty field are the original conflicts.
     """
-    result = _git([
-        "merge-tree", "--write-tree", "--name-only", "-z",
-        "HEAD", expected_head,
-    ], timeout=120, repo=repo)
-    fields = result.stdout.split("\0")
-    tree = fields[0] if fields else ""
-    if result.returncode not in {0, 1} or not re.fullmatch(r"[0-9a-f]{40,64}", tree):
-        detail = result.stderr.strip()
-        if result.returncode == 129 or "unknown option" in detail.lower():
-            raise ctx.TaskDataError("内容门禁需要 Git >= 2.38（merge-tree --write-tree --name-only）")
-        raise ctx.TaskDataError(
-            "无法重算 Git 自动合并结果，不能校验 staged 内容"
-            + (f"：{detail}" if detail else "")
-        )
-    try:
-        end = fields.index("", 1)
-    except ValueError:
-        end = len(fields)
-    return tree, {path for path in fields[1:end] if path}
+    return _merge_tree_result("HEAD", expected_head, repo=repo)
 
 
 def _validate_core_assets(
@@ -1007,11 +1105,47 @@ def _validate_core_assets(
     tips: dict[str, str],
     *, repo: "ctx.RepoContext",
 ) -> None:
-    """核心资产门禁两层严格保护（方案第 212 行），供进行中 merge 与既有 merge 认领共用：
+    """核心资产门禁两层严格保护（方案第 212 行），供进行中 merge 提交前校验：
     第一层：非成员核心资产相对 before 必须完全不变；
     第二层：成员核心资产必须等于该成员已验证实现 tip 中的相应条目，缺失也视为条目差异。
+
+    注意：第一层要求 owner 集合完整。链恢复时部分成员分支已清理，owner 不完整，
+    认领路径不得用第一层误报合法合并（改用 _validate_member_core_from_tips 只做第二层）。
     """
     validate_task_core_asset_changes(head_entries, after_entries, set(names))
+    for name in names:
+        tip_sha = tips.get(name)
+        if not tip_sha:
+            continue
+        member_tip_entries = git_tree_entries(tip_sha, repo=repo)
+        prefix = f"docs/tasks/{name}/"
+        core_paths = {
+            p for p in set(member_tip_entries) | set(after_entries)
+            if p.startswith(prefix) and (
+                p.split("/")[-1] in (ctx.PROGRESS_FILE, "task.md", "handoff.json")
+                or (p.split("/")[-1].startswith("review_") and p.split("/")[-1].endswith(".md"))
+            )
+        }
+        for p in sorted(core_paths):
+            if member_tip_entries.get(p) != after_entries.get(p):
+                raise ctx.TaskDataError(
+                    f"成员 {name} 核心资产与已验证实现 tip 不一致：{p}；"
+                    "成员核心资产只能在所属实现提交中变更，不得在 merge 期间修改或覆盖"
+                )
+
+
+def _validate_member_core_from_tips(
+    after_entries: dict[str, tuple[str, str]],
+    names: list[str],
+    tips: dict[str, str],
+    *, repo: "ctx.RepoContext",
+) -> None:
+    """认领路径专用：只做核心资产第二层（成员核心资产必须等于已验证 tip）。
+
+    链恢复时部分成员分支已清理，owner 集合不完整，第一层（非成员不变）会把
+    已清理成员的合法核心资产误报为「夹带」。篡改拦截由自动合并一致性承担
+    （非冲突路径必须等于 merge-tree 重算结果），此处不再做第一层。
+    """
     for name in names:
         tip_sha = tips.get(name)
         if not tip_sha:
@@ -1063,7 +1197,8 @@ def _validate_merge_staged_scope(
     *,
     member_tips: dict[str, str] | None = None,
     repo: "ctx.RepoContext",
-) -> None:
+) -> str:
+    """校验进行中 merge 的 staged 范围/内容/核心资产/隐私，返回已校验的 staged tree oid。"""
     merge_base = _git(["merge-base", "HEAD", expected_head], repo=repo)
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
         raise ctx.TaskDataError("无法解析 merge-base，不能校验 staged 范围")
@@ -1119,6 +1254,12 @@ def _validate_merge_staged_scope(
         main_touched - conflict_paths, names, tips, staged_entries, repo=repo
     )
     _validate_core_assets(head_entries, staged_entries, names, tips, repo=repo)
+    changeset = {
+        path for path in set(head_entries) | set(staged_entries)
+        if head_entries.get(path) != staged_entries.get(path)
+    }
+    _scan_merge_changeset_privacy(changeset, staged_entries, repo=repo)
+    return current_tree_oid
 
 
 def _commit_native_merge(
@@ -1135,15 +1276,28 @@ def _commit_native_merge(
             raise ctx.TaskDataError(f"仍有未解决冲突：{', '.join(conflicts[:5])}")
         if _merge_head(repo=repo) != expected_head:
             raise ctx.TaskDataError("MERGE_HEAD 与目标分支 tip 不符")
-        _validate_merge_staged_scope(expected_head, names, member_tips=member_tips, repo=repo)
+        validated_tree = _validate_merge_staged_scope(
+            expected_head, names, member_tips=member_tips, repo=repo
+        )
         result = _git(["commit", "--no-edit"], timeout=120, repo=repo)
         if result.returncode != 0:
             raise ctx.TaskDataError(f"merge commit 失败：{result.stderr.strip()}")
-        return _get_head(repo=repo)
+        new_head = _get_head(repo=repo)
+        landed = _git(["rev-parse", f"{new_head}^{{tree}}"], repo=repo)
+        if landed.returncode != 0 or not landed.stdout.strip():
+            raise ctx.TaskDataError("无法读取落盘 merge commit 的 tree，不能复验已校验内容")
+        if landed.stdout.strip() != validated_tree:
+            raise ctx.TaskDataError(
+                "merge commit 落盘 tree 与已校验 staged tree 不一致"
+                "（疑似 pre-commit hook 改写已校验内容）；拒绝认领，请检查 hook 后重做 merge"
+            )
+        return new_head
     existing = _find_merge_commit(expected_head, subject_prefix, repo=repo)
     if existing is None:
         raise ctx.TaskDataError("当前无对应 pending merge 或已完成 merge commit；无法安全继续")
-    _validate_claimed_merge_commit(existing, expected_head, repo=repo)
+    _validate_claimed_merge_commit(
+        existing, expected_head, names=names, member_tips=member_tips, repo=repo
+    )
     return existing
 
 
@@ -1208,7 +1362,9 @@ def cmd_integrate(args):
                 "拒绝认领无关历史"
             )
         try:
-            _validate_claimed_merge_commit(merge_sha, sha, repo=repo)
+            _validate_claimed_merge_commit(
+                merge_sha, sha, names=[branch], member_tips={branch: sha}, repo=repo
+            )
             append_integrated(args.tid, attempt, execution_id, merge_sha, repo=repo)
             if not args.keep_branch:
                 _delete_branches([branch], repo=repo)
