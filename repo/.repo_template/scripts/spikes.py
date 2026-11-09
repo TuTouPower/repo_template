@@ -21,7 +21,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _id_scan import IdScanError, allocate_dir, id_lock, parse_entry_dir_name
+from _id_scan import (
+    IdScanError,
+    _assert_no_symlink,
+    allocate_dir,
+    id_lock,
+    parse_entry_dir_name,
+)
 from md_format import MdFormatError, format_file
 from repo_task import context as ctx
 from repo_task.documents import (
@@ -52,6 +58,21 @@ def _dir_slug(spike_dir: Path) -> str:
     if parsed is None:
         raise IdScanError(f"spike 目录名不符合规范 sNNN_slug：{spike_dir.name}")
     return parsed[1]
+
+
+def _require_canonical_sid(sid: str) -> int:
+    """sid 须为规范编号（s001 而非 s0001）：正则 + 零填充双校验。"""
+    if not SPIKE_SID_RE.match(sid):
+        raise IdScanError(f"spike sid 格式应为 sNNN，收到 {sid!r}")
+    try:
+        number = int(sid[1:])
+    except ValueError as error:
+        raise IdScanError(f"spike sid 格式非法：{sid!r}") from error
+    if sid != f"s{number:03d}":
+        raise IdScanError(
+            f"spike sid 须为规范编号（s{number:03d}，不允许 s0001 这类非规范 padding）：收到 {sid!r}"
+        )
+    return number
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -93,26 +114,36 @@ def cmd_new(args: argparse.Namespace) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
+    if SPIKES_DIR.is_symlink():
+        raise IdScanError(f"拒绝经软链目录列举 spike：{SPIKES_DIR}")
     if not SPIKES_DIR.is_dir():
         print("(no spikes)")
         return
     rows: list[tuple[str, str]] = []
     for path in sorted(SPIKES_DIR.iterdir()):
-        if not path.is_dir() or parse_entry_dir_name(PREFIX, path.name) is None:
+        if path.is_symlink() or not path.is_dir() or parse_entry_dir_name(PREFIX, path.name) is None:
             continue
         report = path / "report.md"
         status = "unknown"
-        if report.is_file():
+        if report.is_file() and not report.is_symlink():
             try:
                 fm, _ = parse_front_matter(report)
+                validate_spike_metadata(
+                    fm,
+                    expected_sid=f"s{parse_entry_dir_name(PREFIX, path.name)[0]:03d}",
+                    expected_slug=_dir_slug(path),
+                )
                 status = fm.get("status", "unknown")
             except Exception as error:
                 status = "unknown"
                 sys.stderr.write(
-                    f"警告：{path.name} 无法解析 front matter，按 unknown 处理：{error}\n"
+                    f"警告：{path.name} 元数据非法，按 unknown 处理：{error}\n"
                 )
         else:
-            sys.stderr.write(f"警告：{path.name} 缺 report.md，按 unknown 处理\n")
+            if report.is_symlink():
+                sys.stderr.write(f"警告：{path.name} report.md 为软链，按 unknown 处理\n")
+            else:
+                sys.stderr.write(f"警告：{path.name} 缺 report.md，按 unknown 处理\n")
         if args.state == "all" or status == args.state:
             rows.append((status, path.name))
     if not rows:
@@ -124,16 +155,20 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 def cmd_complete(args: argparse.Namespace) -> None:
     sid = args.sid
-    if not SPIKE_SID_RE.match(sid):
-        sys.exit(f"错误: spike sid 格式应为 sNNN，收到 {sid!r}")
+    try:
+        _require_canonical_sid(sid)
+    except IdScanError as err:
+        sys.exit(f"错误: {err}")
     try:
         spike_dir = find_spike_dir(REPO_ROOT, sid)
     except SpikeMetadataError as err:
         sys.exit(f"错误: {err}")
+    _assert_no_symlink(REPO_ROOT, spike_dir)
 
     report = spike_dir / "report.md"
-    if not report.is_file():
+    if report.is_symlink() or not report.is_file():
         sys.exit(f"错误: 缺 {report.relative_to(REPO_ROOT).as_posix()}")
+    _assert_no_symlink(REPO_ROOT, report)
 
     try:
         fm, body = parse_front_matter(report)
@@ -157,6 +192,8 @@ def cmd_complete(args: argparse.Namespace) -> None:
         return
 
     with id_lock(REPO_ROOT):
+        _assert_no_symlink(REPO_ROOT, spike_dir)
+        _assert_no_symlink(REPO_ROOT, report)
         fm, body = parse_front_matter(report)
         validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "completed":
@@ -170,6 +207,9 @@ def cmd_complete(args: argparse.Namespace) -> None:
         fm["status"] = "completed"
         fm.pop("superseded_by", None)
         fm.pop("reason", None)
+        if report.is_symlink():
+            sys.exit(f"错误: 拒绝向软链写入：{report}")
+        _assert_no_symlink(REPO_ROOT, report)
         write_front_matter(report, fm, body)
 
     print(f"已完成 spike {sid}：{spike_dir.name}")
@@ -202,10 +242,14 @@ def check_supersede_cycle(root: Path, sid: str, successor_sid: str) -> None:
 
 def cmd_supersede(args: argparse.Namespace) -> None:
     sid = args.sid
-    if not SPIKE_SID_RE.match(sid):
-        sys.exit(f"错误: spike sid 格式应为 sNNN，收到 {sid!r}")
+    try:
+        _require_canonical_sid(sid)
+    except IdScanError as err:
+        sys.exit(f"错误: {err}")
     successor_sid = args.by
-    if not SPIKE_SID_RE.match(successor_sid):
+    try:
+        _require_canonical_sid(successor_sid)
+    except IdScanError:
         sys.exit(f"错误: --by 参数格式应为 sNNN，收到 {successor_sid!r}")
 
     if not args.reason or not args.reason.strip():
@@ -221,10 +265,12 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         spike_dir = find_spike_dir(REPO_ROOT, sid)
     except SpikeMetadataError as err:
         sys.exit(f"错误: {err}")
+    _assert_no_symlink(REPO_ROOT, spike_dir)
 
     report = spike_dir / "report.md"
-    if not report.is_file():
+    if report.is_symlink() or not report.is_file():
         sys.exit(f"错误: 缺 {report.relative_to(REPO_ROOT).as_posix()}")
+    _assert_no_symlink(REPO_ROOT, report)
 
     try:
         fm, body = parse_front_matter(report)
@@ -239,10 +285,12 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         succ_dir = find_spike_dir(REPO_ROOT, successor_sid)
     except SpikeMetadataError:
         sys.exit(f"错误: 替代目标 {successor_sid} 不存在")
+    _assert_no_symlink(REPO_ROOT, succ_dir)
 
     succ_report = succ_dir / "report.md"
-    if not succ_report.is_file():
+    if succ_report.is_symlink() or not succ_report.is_file():
         sys.exit(f"错误: 替代目标缺 report.md：{succ_dir.name}")
+    _assert_no_symlink(REPO_ROOT, succ_report)
 
     try:
         succ_fm, _ = parse_front_matter(succ_report)
@@ -270,6 +318,10 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         return
 
     with id_lock(REPO_ROOT):
+        _assert_no_symlink(REPO_ROOT, spike_dir)
+        _assert_no_symlink(REPO_ROOT, report)
+        _assert_no_symlink(REPO_ROOT, succ_dir)
+        _assert_no_symlink(REPO_ROOT, succ_report)
         fm, body = parse_front_matter(report)
         validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "superseded":
@@ -291,6 +343,9 @@ def cmd_supersede(args: argparse.Namespace) -> None:
         fm["status"] = "superseded"
         fm["superseded_by"] = successor_sid
         fm["reason"] = reason
+        if report.is_symlink():
+            sys.exit(f"错误: 拒绝向软链写入：{report}")
+        _assert_no_symlink(REPO_ROOT, report)
         write_front_matter(report, fm, body)
 
     print(f"已替代 spike {sid} -> {successor_sid}")

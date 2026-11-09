@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -23,8 +24,30 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# 黑名单：不格式化的已跟踪 md（方案 B）。
+# 黑名单：不格式化的已跟踪 md（方案 B）。判定按路径段 casefold 比较，
+# macOS/NTFS 大小写不敏感文件系统上 Docs/ARCHIVE 不得绕过。
 BLACKLIST_PREFIXES = ("docs/archive/", ".scratch/")
+
+_GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _controlled_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in list(env.keys()):
+        if key in _GIT_REDIRECT_VARS or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            env.pop(key, None)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 class MdFormatError(Exception):
@@ -57,15 +80,34 @@ def _canonical_rel(rel: str) -> str:
 
 
 def _is_blacklisted(rel: str) -> bool:
-    return _canonical_rel(rel).startswith(BLACKLIST_PREFIXES)
+    canon = _canonical_rel(rel)
+    parts = [segment.casefold() for segment in canon.split("/")]
+    if len(parts) >= 2 and parts[0] == "docs" and parts[1] == "archive":
+        return True
+    if parts and parts[0] == ".scratch":
+        return True
+    return canon.startswith(BLACKLIST_PREFIXES)
+
+
+def _is_staging_tmp(rel: str) -> bool:
+    """_id_scan 崩溃残留的 .tmp_* staging 永不纳入格式化集合。"""
+    return Path(rel).name.startswith(".tmp_")
 
 
 def _git(*args: str, root: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(root or REPO_ROOT), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=30,
-    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root or REPO_ROOT), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+            env=_controlled_git_env(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise MdFormatError(f"git {' '.join(args)} 超时（30s）") from error
+    except FileNotFoundError as error:
+        raise MdFormatError("git 不可用") from error
+    except OSError as error:
+        raise MdFormatError(f"git 执行失败（{' '.join(args)}）：{error}") from error
 
 
 def collect_all() -> list[str]:
@@ -75,7 +117,7 @@ def collect_all() -> list[str]:
         raise MdFormatError(f"git ls-files 失败：{result.stderr.strip()}")
     return [
         rel for rel in result.stdout.split("\0")
-        if rel and not _is_blacklisted(rel)
+        if rel and not _is_staging_tmp(rel) and not _is_blacklisted(rel)
     ]
 
 
@@ -94,7 +136,7 @@ def collect_changed() -> list[str]:
     if result.returncode != 0:
         raise MdFormatError(f"git ls-files --others 失败：{result.stderr.strip()}")
     rels.update(rel for rel in result.stdout.split("\0") if rel)
-    return [rel for rel in sorted(rels) if not _is_blacklisted(rel)]
+    return [rel for rel in sorted(rels) if not _is_staging_tmp(rel) and not _is_blacklisted(rel)]
 
 
 def _restore_snapshots(snapshots: dict[Path, bytes]) -> tuple[int, list[tuple[Path, str]]]:

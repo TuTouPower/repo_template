@@ -13,7 +13,8 @@ agent 只保留裁定语义：scratch 活跃引用路径（--keep 传入）、�
   默认扫描不进入未点名的 node_modules 与这三棵目录树（防误删未点名内容）。
 
 保护（永不删）：.git/、AGENTS.md、README.md、.gitignore、
-docs/runtime/tasks_audit.log、docs/runtime/dispatch_ledger.jsonl；
+docs/runtime/tasks_audit.log、docs/runtime/dispatch_ledger.jsonl、
+docs/archive/tasks_audit.log（旧布局审计日志，迁移前保留）；
 docs/ 下仅 os/editor 类放行；src/tests/schemas/
 config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不因「目录」被误删）。
 
@@ -47,7 +48,29 @@ HARD_PROTECTED = {
     ".gitignore",
     "docs/runtime/tasks_audit.log",
     "docs/runtime/dispatch_ledger.jsonl",
+    "docs/archive/tasks_audit.log",
 }
+
+_GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _controlled_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in list(env.keys()):
+        if key in _GIT_REDIRECT_VARS or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            env.pop(key, None)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 class CleanupError(Exception):
@@ -60,9 +83,14 @@ def repo_root(timeout: int = 30) -> Path:
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
+            env=_controlled_git_env(),
         )
     except subprocess.TimeoutExpired as err:
         raise CleanupError(f"git rev-parse 超时（{timeout}s）") from err
+    except FileNotFoundError as err:
+        raise CleanupError("git 不可用") from err
+    except OSError as err:
+        raise CleanupError(f"git 执行失败：{err}") from err
     if r.returncode != 0:
         raise CleanupError(f"不在 git 仓库：{r.stderr.strip()}")
     return Path(r.stdout.strip())

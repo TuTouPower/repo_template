@@ -39,31 +39,58 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+_GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _controlled_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for key in list(env.keys()):
+        if key in _GIT_REDIRECT_VARS or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            env.pop(key, None)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def _run_git_raw(args: list[str], root: Path | None = None) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *args] if root is not None else ["git", *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+            env=_controlled_git_env(),
+        )
+    except subprocess.TimeoutExpired:
+        sys.exit(f"git {' '.join(args)} 超时（30s）")
+    except FileNotFoundError:
+        sys.exit("git 不可用，repo_state 不可用")
+    except OSError as error:
+        sys.exit(f"git 执行失败（{' '.join(args)}）：{error}")
+
 
 def _repo_root() -> Path:
     """返回仓库根绝对路径；非 git 仓库或无法解析时立即退出（fail-closed）。"""
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
-    )
+    result = _run_git_raw(["rev-parse", "--show-toplevel"])
     if result.returncode != 0 or not result.stdout.strip():
         sys.exit("非 git 仓库，repo_state 不可用")
     return Path(result.stdout.strip())
 
 
 def _git(args: list[str], *, root: Path, check: bool = False) -> subprocess.CompletedProcess:
-    result = subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-    )
+    result = _run_git_raw(args, root=root)
     if check and result.returncode != 0:
         sys.exit(f"git {' '.join(args)} 失败：{result.stderr.strip()}")
     return result
@@ -186,6 +213,7 @@ def cmd_added_lines(args) -> int:
                 f"WARNING: 未跟踪文件读取时已消失，新增行未计入：{path}",
                 file=sys.stderr,
             )
+            failed = True
             continue
         except OSError as error:
             print(
