@@ -35,6 +35,8 @@ ls-files 未跟踪路径与 --exclude glob 都使用同一套「仓库根相对�
 --exclude 取 fnmatch glob（如 'docs/*'），同时作用于 diff 路径与未跟踪文件。
 """
 
+from __future__ import annotations
+
 import argparse
 import fnmatch
 import subprocess
