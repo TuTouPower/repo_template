@@ -47,10 +47,27 @@ gh issue list --repo <owner>/<repo> --state open --limit 50 --json number,title,
 仅当 `gh` 不可用、未登录，或用户明确要求核对本地交接时，才扫描消费仓本地报告：
 
 ```bash
-python3 -c 'import pathlib; files = [p for p in pathlib.Path("~/kar/code").expanduser().glob("*/.scratch/repo_template_issues/*.md") if p.is_file() and not p.name.endswith(".issue.md")]; [print(f"{p.stat().st_mtime:.0f} {p}") for p in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)]'
+python3 - <<'PY'
+import pathlib, re
+valid = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+/issues/[1-9][0-9]*$")
+files = []
+for p in pathlib.Path("~/kar/code").expanduser().glob("*/.scratch/repo_template_issues/*.md"):
+    if not p.is_file() or p.name.endswith(".issue.md"):
+        continue
+    parts = p.read_text(encoding="utf-8", errors="replace").split("---", 2)
+    issue = ""
+    if len(parts) > 2:
+        for line in parts[1].splitlines():
+            if line.startswith("issue:"):
+                issue = line.split(":", 1)[1].strip().strip('"\'')
+    if not valid.fullmatch(issue):
+        files.append(p)
+for p in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True):
+    print(f"{p.stat().st_mtime:.0f} {p}")
+PY
 ```
 
-读取不带 `.issue.md` 的完整版；列清单（路径 + 修改时间），已含「## 处理结果」段的报告默认跳过。若 GitHub 和本地同时存在，以 GitHub Issue 为准，本地文件只用于补充复现上下文。
+只列未发布（`issue` 字段为空或格式非法）的完整版，已发布报告跳过；读取不带 `.issue.md` 的文件。列清单（路径 + 修改时间），已含「## 处理结果」段的报告默认跳过。未发布报告 3 天未修改可能被 `repo-cleanup` 清理，处理前先核对。若 GitHub 和本地同时存在，以 GitHub Issue 为准，本地文件只用于补充复现上下文。
 
 ### 2. 读 Issue / 报告
 

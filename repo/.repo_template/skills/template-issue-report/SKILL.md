@@ -19,13 +19,19 @@ metadata:
 1. 收集可复现事实：触发操作、实际结果、期望结果、复现步骤和涉及的 `.repo_template` 组成部分。只读复现或写 `.scratch/`。
 2. 判断归属：模板分发的 skill/script/hook/template 或通用工作流约定属于模板问题；消费项目业务代码走正常 task。
 3. 分类为 `bug` 或 `需求`。
-4. 在 `.scratch/repo_template_issues/` 写本地完整版，使用既定报告模板。
+4. 在 `.scratch/repo_template_issues/` 写本地完整版，使用既定报告模板；文件以 front matter `issue: ""` 开头，发布地址回写此字段。
 5. 生成 `.issue.md` 脱敏版：去除用户名、绝对路径、仓库名、业务细节、内部 URL/IP 和所有 secret；模板相对路径可保留。
-6. 从已确认的模板源确定 GitHub `<owner>/<repo>`，不要默认用消费仓 origin。核对 `gh` 可用且已登录、目标仓库与脱敏正文，查重后用 `gh issue create --repo <owner>/<repo> --title <问题摘要> --body-file <脱敏版路径>` 发布。目标无法确认或 GitHub 不可用则停止发布，报告两份本地文件供人工交接。成功须取得 issue 编号或地址；超时先查询是否已创建，避免重复发布。
+6. 从已确认的模板源确定 GitHub `<owner>/<repo>`，不要默认用消费仓 origin。核对 `gh` 可用且已登录、目标仓库与脱敏正文，查重后用 `gh issue create --repo <owner>/<repo> --title <问题摘要> --body-file <脱敏版路径>` 发布。目标无法确认或 GitHub 不可用则停止发布，报告两份本地文件供人工交接。成功须取得 issue 编号或地址，并把 `https://github.com/<owner>/<repo>/issues/<编号>` 回写到本地完整版 front matter 的 `issue` 字段；超时先查询是否已创建，查到后同样回写。发布失败时字段保持为空，并提示用户：未发布报告 3 天未修改会被 `repo-cleanup` 清理，需长期保留请移到 `local/`。
 
 ## 报告结构
 
+本地完整版带发布状态 front matter；脱敏版不加该字段。
+
 ```markdown
+---
+issue: ""
+---
+
 # 模板仓问题报告
 
 ## 元信息
