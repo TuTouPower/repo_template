@@ -79,7 +79,10 @@ def _ensure_links_ignored(
         before, block, after = lines[:start], lines[start + 1:end], lines[end + 1:]
     else:
         before, block, after = lines, [], []
-    block += [f"/{rel}" for rel in missing if f"/{rel}" not in block]
+    block += [
+        _escape_exclude_segment(rel) for rel in missing
+        if _escape_exclude_segment(rel) not in block
+    ]
     exclude.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(
         exclude,
@@ -88,6 +91,21 @@ def _ensure_links_ignored(
     still = _untracked_in(worktree, linked)
     if still:
         raise ctx.TaskDataError(f"软链在 worktree 中未被忽略：{', '.join(still)}")
+
+
+def _escape_exclude_segment(rel: str) -> str:
+    """转义 info/exclude 锚定规则中的 glob 元字符。
+
+    路径含 ``* ? [ ]`` 时 git 按 glob 解释，一条规则会误匹配一批无关路径。
+    锚定规则只表达字面路径：反斜杠与 glob 元字符加反斜杠转义，尾随空格转义
+    （gitignore 会吞掉未转义的尾随空格）。
+    """
+    out = rel.replace("\\", "\\\\")
+    out = re.sub(r"([*?\[\]])", r"\\\1", out)
+    stripped = out.rstrip(" ")
+    if len(stripped) != len(out):
+        out = stripped + "\\ " * (len(out) - len(stripped))
+    return "/" + out
 
 
 def _normalize_rel(p: str) -> str:
@@ -135,6 +153,7 @@ def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, s
             check_map[cand] = rel
 
         cmd = [
+            "-c", "core.quotePath=false",
             "--git-dir", str(git_dir), "--work-tree", str(td_path),
             "check-ignore", "-v", "--no-index", "--", *check_paths,
         ]
@@ -144,13 +163,14 @@ def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, s
             for line in check.stdout.strip().splitlines():
                 if not line:
                     continue
-                parts = line.split("\t")
-                if len(parts) >= 2:
-                    matched_rule = parts[0]
-                    matched_cand = parts[1]
-                    orig = check_map.get(matched_cand)
-                    if orig:
-                        results[orig] = matched_rule
+                # -v 格式 "<source>:<linenum>:<pattern>\t<pathname>"：路径本身可含
+                # 制表符时按最后一个制表符切分；quotePath 已关闭，不再出现 C 引号。
+                pre, sep, matched_cand = line.rpartition("\t")
+                if not sep:
+                    continue
+                orig = check_map.get(matched_cand)
+                if orig:
+                    results[orig] = pre
         return results
 
 
@@ -310,13 +330,68 @@ def resolve_start_base(
         )
     return base_branch, base_sha
 
+def _tid_from_worktree_rel(rel: str, repo: "ctx.RepoContext") -> str | None:
+    """从 worktree 相对路径反解归属 tid：必须形如 ``../{repo.name}_{tid}``。
+
+    形如 ``/``、绝对路径或命名不符的一律返回 None（fail-closed，由调用方拒绝）。
+    repo 名本身可含下划线，按最后一个下划线切分 tid 后缀。
+    """
+    prefix = f"../{repo.name}_"
+    if not rel.startswith(prefix):
+        return None
+    tid = rel[len(prefix):]
+    return tid if ctx.TID_RE.fullmatch(tid) else None
+
+
+def _check_worktree_ownership(
+    rel: str, registered_branch: str | None, tid: str | None,
+    *, repo: "ctx.RepoContext",
+) -> str | None:
+    """破坏性操作前的归属校验；通过返回 None，否则返回拒绝理由。
+
+    ``tid`` 给定时：``rel`` 必须恰等于 ``repo.worktree_rel(tid)`` 派生路径；
+    已登记分支必须满足 task 分支命名约束且 tid 前缀与 ``tid`` 一致。``tid``
+    缺省时只做路径/分支一致性比对（两者都能解析且 tid 不一致才拒绝），保持
+    旧调用兼容；跨 task 伪造（同源篡改 rel 与 branch）须由调用方传 ``tid``。
+    """
+    if tid is not None:
+        if not ctx.TID_RE.fullmatch(tid):
+            return f"tid 非法：{tid!r}；拒绝破坏性 worktree 操作"
+        expected = repo.worktree_rel(tid)
+        if rel != expected:
+            return (
+                f"{rel} 与 {tid} 派生路径 {expected} 不符；"
+                "拒绝操作非归属 worktree"
+            )
+        if registered_branch:
+            match = ctx.TASK_BRANCH_RE.fullmatch(registered_branch)
+            if not match or match.group(1) != tid:
+                return (
+                    f"{rel} 登记分支为 {registered_branch!r}，与 {tid} 不符；"
+                    "拒绝操作非归属 worktree"
+                )
+        return None
+    rel_tid = _tid_from_worktree_rel(rel, repo)
+    if rel_tid is not None and registered_branch:
+        match = ctx.TASK_BRANCH_RE.fullmatch(registered_branch)
+        if match and match.group(1) != rel_tid:
+            return (
+                f"{rel} 登记分支为 {registered_branch!r}，"
+                f"与路径归属 {rel_tid} 不符；拒绝操作非归属 worktree"
+            )
+    return None
+
+
 def create_worktree(
     tid: str, branch: str, base_sha: str, *, repo: "ctx.RepoContext",
 ) -> str:
     """从固定 base SHA 创建全新的 task branch/worktree；调用方负责补偿失败。"""
     rel = repo.worktree_rel(tid)
-    path = (repo.primary_root / rel).resolve()
-    if path.exists() or str(path) in worktree_paths(repo=repo):
+    raw = repo.primary_root / rel
+    path = raw.resolve()
+    # 存在判定用未解析路径 lexists：目标是 dangling 软链时 resolve() 会跟随到
+    # 不存在的 target 而漏判，随后 git worktree add 因路径已存在失败。
+    if os.path.lexists(raw) or str(path) in worktree_paths(repo=repo):
         raise ctx.TaskDataError(f"{rel} 已存在；请先清理后再 start")
     if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo=repo).returncode == 0:
         raise ctx.TaskDataError(f"分支 {branch!r} 已存在；请先处理后再 start")
@@ -339,10 +414,11 @@ def rollback_start(
     上述条件，原样保留并报告，由用户裁决。
     """
     failures = []
-    worktree = (repo.primary_root / worktree_rel).resolve()
+    raw = repo.primary_root / worktree_rel
+    worktree = raw.resolve()
     registered_branch = worktree_paths(repo=repo).get(str(worktree))
     if registered_branch == branch:
-        if worktree.exists():
+        if os.path.lexists(raw):
             unlink_managed_links(worktree, repo=repo)
         r = _git(["worktree", "remove", "--force", str(worktree)], repo=repo)
         if r.returncode != 0:
@@ -354,7 +430,7 @@ def rollback_start(
             f"worktree {worktree_rel} 登记分支为 {registered_branch!r}，"
             f"非本次分支 {branch!r}；可能与其他 start 并发冲突，未移除"
         )
-    elif worktree.exists():
+    elif os.path.lexists(raw):
         failures.append(f"路径 {worktree_rel} 存在但未登记本次分支，未自动删除未知内容")
     _git(["worktree", "prune"], repo=repo)
 
@@ -371,7 +447,7 @@ def rollback_start(
             if r.returncode != 0:
                 failures.append(f"删除分支 {branch!r} 失败：{r.stderr.strip()}")
 
-    if worktree.exists():
+    if os.path.lexists(raw):
         failures.append(f"路径 {worktree_rel} 仍存在，未自动删除未知内容")
     return "; ".join(failures) or None
 
@@ -386,7 +462,7 @@ def _prune_unregistered(
             f"git worktree prune 失败（{prune.stderr.strip()}）；"
             f"无法确认 {rel} 清理状态",
         )
-    if path.exists():
+    if os.path.lexists(path) or os.path.lexists(repo.primary_root / rel):
         return (
             False,
             f"git worktree prune 后 {rel} 路径仍存在；该 worktree 未登记且无分支归属，"
@@ -395,12 +471,22 @@ def _prune_unregistered(
     return True, f"worktree 不在登记表且路径已不存在，已 prune：{rel}"
 
 def discard_worktree(
-    rel: str, *, repo: "ctx.RepoContext",
+    rel: str, *, repo: "ctx.RepoContext", tid: str | None = None,
 ) -> tuple[bool, str]:
-    """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。"""
+    """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。
+
+    ``tid`` 给定时做归属校验：``rel`` 必须恰等于 ``repo.worktree_rel(tid)``
+    派生路径，且登记分支的 tid 前缀须一致；不符直接拒绝。破坏性入口
+    （rewind/drop）必须传 ``tid``，否则同源篡改的 front matter 可借此删除
+    其他 task 的 worktree 与分支。
+    """
     path = (repo.primary_root / rel).resolve()
-    if str(path) not in worktree_paths(repo=repo):
+    registered = worktree_paths(repo=repo).get(str(path))
+    if registered is None:
         return _prune_unregistered(path, rel, repo=repo)
+    refusal = _check_worktree_ownership(rel, registered, tid, repo=repo)
+    if refusal:
+        return False, refusal
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 回主仓"
     unlink_managed_links(path, repo=repo)
@@ -417,12 +503,13 @@ def discard_worktree(
 
 def remove_worktree(
     rel: str, *, expected_branch: str | None = None,
-    repo: "ctx.RepoContext",
+    repo: "ctx.RepoContext", tid: str | None = None,
 ) -> tuple[bool, str]:
     """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。
 
     expected_branch 非空时校验登记分支归属，防止 front matter 损坏/冲突解决
-    错误导致一个 task 清理另一个 task 的工作区。
+    错误导致一个 task 清理另一个 task 的工作区。expected_branch 本身可与 rel
+    同源伪造：``tid`` 给定时额外校验派生路径与分支 tid 前缀，不符直接拒绝。
     """
     if not rel:
         return True, "无 worktree"
@@ -430,11 +517,22 @@ def remove_worktree(
     registered_branch = worktree_paths(repo=repo).get(str(path))
     if registered_branch is None:
         return _prune_unregistered(path, rel, repo=repo)
-    if expected_branch and registered_branch != expected_branch:
-        return False, (
-            f"{rel} 登记分支为 {registered_branch!r}，预期 {expected_branch!r}；"
-            "拒绝移除其他 task 的 worktree"
-        )
+    refusal = _check_worktree_ownership(rel, registered_branch, tid, repo=repo)
+    if refusal:
+        return False, refusal
+    if expected_branch is not None:
+        if tid is not None:
+            forged = ctx.TASK_BRANCH_RE.fullmatch(expected_branch)
+            if not forged or forged.group(1) != tid:
+                return False, (
+                    f"预期分支 {expected_branch!r} 与 {tid} 不符"
+                    "（须为该 task 自身分支）；拒绝移除其他 task 的 worktree"
+                )
+        if registered_branch != expected_branch:
+            return False, (
+                f"{rel} 登记分支为 {registered_branch!r}，预期 {expected_branch!r}；"
+                "拒绝移除其他 task 的 worktree"
+            )
     if Path.cwd().resolve().is_relative_to(path):
         return False, f"当前目录在 {rel} 内，无法移除；请 cd 出去后执行 git worktree remove {rel}"
     unlink_managed_links(path, repo=repo)
