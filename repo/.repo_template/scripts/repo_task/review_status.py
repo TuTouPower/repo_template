@@ -110,18 +110,33 @@ def cmd_review_status(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None, *, repo: ctx.RepoContext | None = None) -> None:
     parser = argparse.ArgumentParser(description="review 状态门禁（与 finish/integrate 同源）")
     parser.add_argument("--task-dir", required=True)
+    parser.add_argument("--root", help="仓库根；找不到 docs/tasks 祖先时必须显式指定")
     args = parser.parse_args(argv)
     if repo is None:
-        cand = Path(args.task_dir)
-        if not cand.is_absolute():
-            cand = Path.cwd() / cand
-        cand = cand.resolve()
-        root = None
-        for p in (cand, *cand.parents):
-            if (p / "docs" / "tasks").is_dir():
-                root = p
-                break
-        repo = ctx.RepoContext.for_root(root or Path.cwd().resolve())
+        if args.root:
+            root = Path(args.root).expanduser().resolve()
+            if not (root / "docs" / "tasks").is_dir():
+                print(f"--root {root} 下不存在 docs/tasks；请指定正确的仓库根", file=sys.stderr)
+                sys.exit(1)
+            repo = ctx.RepoContext.for_root(root)
+        else:
+            cand = Path(args.task_dir)
+            if not cand.is_absolute():
+                cand = Path.cwd() / cand
+            cand = cand.resolve()
+            root = None
+            for p in (cand, *cand.parents):
+                if (p / "docs" / "tasks").is_dir():
+                    root = p
+                    break
+            if root is None:
+                print(
+                    f"无法从 {args.task_dir} 定位仓库根（docs/tasks）；"
+                    "请用 --root 显式指定仓库根",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            repo = ctx.RepoContext.for_root(root)
     args.repo = repo
     cmd_review_status(args)
 

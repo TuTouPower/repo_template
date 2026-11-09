@@ -19,7 +19,12 @@ from pathlib import Path
 
 
 def _git_common_root(code_root: Path) -> Path:
-    """由当前工作区解析主工作区根；非独立 git 工作区时退回 code_root。"""
+    """由当前工作区解析主工作区根；仅在 .git 不存在时退回 code_root。
+
+    .git 存在即代表这是 Git 工作区（含 linked worktree 的 gitfile）。此时 git 调用
+    失败、超时或输出为空都意味着无法确认主工作区身份，必须显式报错，禁止把
+    工作区本地目录静默当作主工作区根。
+    """
     if not (code_root / ".git").exists():
         return code_root
     try:
@@ -27,10 +32,22 @@ def _git_common_root(code_root: Path) -> Path:
             ["git", "-C", str(code_root), "rev-parse", "--git-common-dir"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
-        return code_root
-    if result.returncode != 0 or not result.stdout.strip():
-        return code_root
+    except (OSError, subprocess.SubprocessError) as error:
+        raise TaskDataError(
+            f"无法解析 {code_root} 的 git 公共目录（{error}）；"
+            "拒绝把工作区本地目录当作主工作区根"
+        ) from error
+    if result.returncode != 0:
+        raise TaskDataError(
+            f"无法解析 {code_root} 的 git 公共目录："
+            f"git rev-parse --git-common-dir 退出码 {result.returncode}"
+            f"（{result.stderr.strip()}）；拒绝把工作区本地目录当作主工作区根"
+        )
+    if not result.stdout.strip():
+        raise TaskDataError(
+            f"无法解析 {code_root} 的 git 公共目录：git rev-parse --git-common-dir 输出为空；"
+            "拒绝把工作区本地目录当作主工作区根"
+        )
     common = Path(result.stdout.strip())
     if not common.is_absolute():
         common = (code_root / common).resolve()

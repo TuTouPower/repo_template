@@ -61,6 +61,37 @@ def _begin(repo: Path, tid: str = "t001", owner: str = OWNER) -> dict:
     return json.loads(result.stdout)
 
 
+@pytest.mark.parametrize("failure", ["timeout", "oserror", "nonzero", "empty"])
+def test_repo_context_rejects_worktree_local_fallback_when_git_common_dir_fails(
+    git_repo, monkeypatch, failure,
+):
+    """linked worktree 中 git 公共目录解析失败时构造 RepoContext 必须显式报错。"""
+    _begin(git_repo)
+    wt = _worktree(git_repo)
+    assert (wt / ".git").is_file()
+
+    main_ctx = ctx.RepoContext.for_root(git_repo)
+    wt_ctx = ctx.RepoContext.for_root(wt)
+    assert wt_ctx.primary_root == git_repo.resolve()
+    assert wt_ctx.ledger_path == main_ctx.ledger_path
+    assert wt_ctx.audit_path == main_ctx.audit_path
+    assert wt.resolve() not in wt_ctx.ledger_path.parents
+    assert wt.resolve() not in wt_ctx.audit_path.parents
+
+    def fail_git(*args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args[0], 30)
+        if failure == "oserror":
+            raise OSError("git missing")
+        if failure == "nonzero":
+            return subprocess.CompletedProcess(args[0], 1, "", "fatal: not a git repository")
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr("repo_task.context.subprocess.run", fail_git)
+    with pytest.raises(ctx.TaskDataError, match="git 公共目录"):
+        ctx.RepoContext.for_root(wt)
+
+
 def test_explicit_env_symlink_fingerprint_stability(git_repo, tmp_path):
     """显式声明的环境软链在存在、目标删除/断链、恢复与重建时，review 指纹不漂移。"""
     # 1. 在主仓建立 .worktreeinclude 与 node_modules 目录

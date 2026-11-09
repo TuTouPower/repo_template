@@ -702,24 +702,22 @@ def load_task_backlog_baseline(
 
 
 def resolve_baseline_spec_text(
-    tid: str, spec_rel: str, spec_source_sha: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext | None" = None,
+    tid: str, spec_rel: str, spec_source_sha: str, *, repo: "ctx.RepoContext",
 ) -> tuple[str, str]:
     """解析 spec 的契约基线文本与来源 commit SHA，供 render_review_prompts 与监控共用（A04/C90）。
 
     Issue #90：读取启动时锁定的固定来源 commit SHA (spec_source_sha)；
     验证该位置的初始 backlog 状态；缺失、空值、非 backlog、Git 故障或数据损坏明确报错，
-    不回退到 diff_anchor 猜测。
+    不回退到 diff_anchor 猜测。仓库身份必须由调用方显式传入，不读 CWD。
     """
-    repo = repo or ctx.RepoContext.for_root(root or Path.cwd())
     if not spec_source_sha or not isinstance(spec_source_sha, str):
         raise ctx.TaskDataError(f"spec_source_sha 缺失或为空（got {spec_source_sha!r}）")
-    source_sha = _resolve_commit_sha(spec_source_sha, label="spec_source_sha", root=root, repo=repo)
+    source_sha = _resolve_commit_sha(spec_source_sha, label="spec_source_sha", repo=repo)
     progress_path = f"{Path(spec_rel).parent.as_posix()}/{ctx.PROGRESS_FILE}"
 
     r = _git(
         ["ls-tree", "-z", "--end-of-options", source_sha, "--", progress_path, spec_rel],
-        root=root, repo=repo,
+        repo=repo,
     )
     if r.returncode != 0:
         raise ctx.TaskDataError(f"无法读取 {source_sha}:{progress_path}：{r.stderr.strip()}")
@@ -740,7 +738,7 @@ def resolve_baseline_spec_text(
     if spec_rel in blobs:
         needed_oids.append(blobs[spec_rel])
 
-    cat_map = batch_cat_file(needed_oids, root=root, repo=repo)
+    cat_map = batch_cat_file(needed_oids, repo=repo)
     prog_bytes = cat_map.get(blobs[progress_path])
     if prog_bytes is None:
         raise ctx.TaskNotFoundError(f"{source_sha[:12]}:{progress_path} 不存在或无法读取")
