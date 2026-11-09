@@ -1516,7 +1516,9 @@ def test_worktree_removal_keeps_linked_primary_data(git_repo):
     rel = repo_ctx.worktree_rel("t001")
     _git(wt, "commit", "-am", "active")
 
-    removed, message = worktrees.remove_worktree(rel, expected_branch="t001_alpha", repo=repo_ctx)
+    removed, message = worktrees.remove_worktree(
+        rel, expected_branch="t001_alpha", repo=repo_ctx, tid="t001",
+    )
 
     assert removed, message
     assert not wt.exists()
@@ -1534,7 +1536,9 @@ def test_forced_worktree_discard_does_not_follow_unmanaged_dir_link(git_repo):
     (wt / "extra_data").symlink_to(git_repo / "data")
 
     repo_ctx = ctx.RepoContext.for_root(git_repo)
-    removed, message = worktrees.discard_worktree(repo_ctx.worktree_rel("t001"), repo=repo_ctx)
+    removed, message = worktrees.discard_worktree(
+        repo_ctx.worktree_rel("t001"), repo=repo_ctx, tid="t001",
+    )
 
     assert removed, message
     assert not wt.exists()
