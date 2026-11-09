@@ -52,7 +52,11 @@ def test_integrate_rejects_leaking_tip_before_merge(git_repo):
 
 
 def test_claimed_merge_commit_rejects_forged_core_asset_tampering(git_repo):
-    """DS L218：手工/伪造 merge 夹带核心资产篡改，认领时按变更范围一致性拒绝。"""
+    """DS L218：手工/伪造 merge 夹带核心资产篡改，认领时按自动合并一致性拒绝。
+
+    根因修正后期望树改用 merge-tree 重算，旧「变更范围与 task 分支实现不一致」
+    断言已失效并删除；伪造夹带现由「与 Git 自动合并结果不一致」门禁拦截。
+    """
     identity, branch, _ = _prepare_done(git_repo, "t001", "alpha")
     _cleanup(git_repo, "t001", identity)
     _git(git_repo, "merge", "--no-ff", "--no-commit", "-m", "merge(t001): t001_alpha", branch)
@@ -63,7 +67,7 @@ def test_claimed_merge_commit_rejects_forged_core_asset_tampering(git_repo):
 
     result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
     assert result.returncode != 0
-    assert "变更范围与 task 分支实现不一致" in result.stderr
+    assert "与 Git 自动合并结果不一致" in result.stderr
     assert "docs/tasks/t002_beta/progress.md" in result.stderr
     assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
 
