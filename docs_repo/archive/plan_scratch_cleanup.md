@@ -2,7 +2,7 @@
 
 > 编写时间：2026-11-10T02:12:40+08:00。
 >
-> 文档性质：已实施方案。决策状态：用户已批准并要求按本方案执行（2026-11-10）；「3 天期限不适用于未结束事务」按方案原文落地。实现状态：已实施；验证状态：工厂全量通过（1538 passed, 1 skipped，2026-11-10）。目标版本待定。
+> 文档性质：已实施方案。决策状态：用户已批准并要求按本方案执行（2026-11-10）；「3 天期限不适用于未结束事务」按方案原文落地。实现状态：已实施；验证状态：工厂全量通过（1543 passed, 1 skipped，2026-11-10）。目标版本待定。
 >
 > 适用范围：模板产物 `repo/` 的 `repo_cleanup.py`、事务与锁原语、`pending.py`、`repo-cleanup` 与 `template-issue-report` skill，以及工厂 `issue-handler` skill。面向模板工具链维护者。裁决状态以[裁决总账](../decision_log.md)（L68）为准。
 
@@ -200,7 +200,7 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 
 工厂测试：子进程持有控制面锁时，带 scratch 的 cleanup 立即失败且零删除；不带 scratch 时照常执行。
 
-## 11. 风险与待确认
+## 11. 风险与结论
 
 风险：
 
@@ -209,6 +209,6 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 - 只有写成 `.scratch/...` 形式的复现引用能被识别。
 - 控制面锁由 task 控制命令与同步共用；任何控制面命令运行期间，带 scratch 的清理都会立即失败。
 
-待确认：
+结论：
 
 - 3 天期限只用于草稿类主人，不用于未结束事务（第 3 节）。用户已确认按本方案执行：事务保留「未结束即跳过 scratch」，不适用期限规则。
