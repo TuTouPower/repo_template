@@ -6,9 +6,11 @@
 
 用法：
   python3 .repo_template/scripts/spikes.py new <slug> [--title ...]
-  python3 .repo_template/scripts/spikes.py list [--state {active,completed,superseded,all}]
+  python3 .repo_template/scripts/spikes.py list [--state {active,completed,superseded,unknown,all}]
   python3 .repo_template/scripts/spikes.py complete <sid> [--write]
   python3 .repo_template/scripts/spikes.py supersede <sid> --by <successor_sid> --reason "..." [--write]
+
+list 对 front matter 损坏或缺失的 spike 打印 stderr 警告并归入 unknown，不静默吞错。
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _id_scan import IdScanError, allocate_dir, id_lock
+from _id_scan import IdScanError, allocate_dir, id_lock, parse_entry_dir_name
 from md_format import MdFormatError, format_file
 from repo_task import context as ctx
 from repo_task.documents import (
@@ -29,7 +31,6 @@ from repo_task.documents import (
 )
 from repo_task.finalization import validate_spike
 from repo_task.spikes import (
-    ENTRY_DIR_RE,
     SLUG_RE,
     SPIKE_SID_RE,
     SpikeMetadataError,
@@ -43,6 +44,14 @@ PREFIX = "s"
 SPIKES_DIR = REPO_ROOT / "docs/spikes"
 SCAN_DIRS = ("docs/spikes",)
 TEMPLATE_PATH = TOOLKIT_ROOT / "docs/spike_report_template.md"
+
+
+def _dir_slug(spike_dir: Path) -> str:
+    """从规范 spike 目录名取 slug；目录名非法直接拒绝，避免文件身份与目录分叉。"""
+    parsed = parse_entry_dir_name(PREFIX, spike_dir.name)
+    if parsed is None:
+        raise IdScanError(f"spike 目录名不符合规范 sNNN_slug：{spike_dir.name}")
+    return parsed[1]
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -89,7 +98,7 @@ def cmd_list(args: argparse.Namespace) -> None:
         return
     rows: list[tuple[str, str]] = []
     for path in sorted(SPIKES_DIR.iterdir()):
-        if not path.is_dir() or not ENTRY_DIR_RE.match(path.name):
+        if not path.is_dir() or parse_entry_dir_name(PREFIX, path.name) is None:
             continue
         report = path / "report.md"
         status = "unknown"
@@ -97,8 +106,13 @@ def cmd_list(args: argparse.Namespace) -> None:
             try:
                 fm, _ = parse_front_matter(report)
                 status = fm.get("status", "unknown")
-            except Exception:
+            except Exception as error:
                 status = "unknown"
+                sys.stderr.write(
+                    f"警告：{path.name} 无法解析 front matter，按 unknown 处理：{error}\n"
+                )
+        else:
+            sys.stderr.write(f"警告：{path.name} 缺 report.md，按 unknown 处理\n")
         if args.state == "all" or status == args.state:
             rows.append((status, path.name))
     if not rows:
@@ -123,7 +137,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
 
     try:
         fm, body = parse_front_matter(report)
-        validate_spike_metadata(fm, expected_sid=sid)
+        validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
     except Exception as err:
         sys.exit(f"错误: {err}")
 
@@ -144,7 +158,7 @@ def cmd_complete(args: argparse.Namespace) -> None:
 
     with id_lock(REPO_ROOT):
         fm, body = parse_front_matter(report)
-        validate_spike_metadata(fm, expected_sid=sid)
+        validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "completed":
             sys.exit(f"错误: spike {sid} 已处于 completed 状态")
         if fm.get("status") == "superseded":
@@ -214,7 +228,7 @@ def cmd_supersede(args: argparse.Namespace) -> None:
 
     try:
         fm, body = parse_front_matter(report)
-        validate_spike_metadata(fm, expected_sid=sid)
+        validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
     except Exception as err:
         sys.exit(f"错误: {err}")
 
@@ -232,7 +246,9 @@ def cmd_supersede(args: argparse.Namespace) -> None:
 
     try:
         succ_fm, _ = parse_front_matter(succ_report)
-        validate_spike_metadata(succ_fm, expected_sid=successor_sid)
+        validate_spike_metadata(
+            succ_fm, expected_sid=successor_sid, expected_slug=_dir_slug(succ_dir)
+        )
     except Exception as err:
         sys.exit(f"错误: 替代目标元数据非法：{err}")
 
@@ -255,12 +271,15 @@ def cmd_supersede(args: argparse.Namespace) -> None:
 
     with id_lock(REPO_ROOT):
         fm, body = parse_front_matter(report)
-        validate_spike_metadata(fm, expected_sid=sid)
+        validate_spike_metadata(fm, expected_sid=sid, expected_slug=_dir_slug(spike_dir))
         if fm.get("status") == "superseded":
             sys.exit(f"错误: spike {sid} 已处于 superseded 状态")
         check_supersede_cycle(REPO_ROOT, sid, successor_sid)
         succ_dir = find_spike_dir(REPO_ROOT, successor_sid)
         succ_fm, _ = parse_front_matter(succ_dir / "report.md")
+        validate_spike_metadata(
+            succ_fm, expected_sid=successor_sid, expected_slug=_dir_slug(succ_dir)
+        )
         if succ_fm.get("status") != "completed":
             sys.exit(
                 f"错误: 替代目标 {successor_sid} 状态必须为 completed（当前为 {succ_fm.get('status')}）"
@@ -290,9 +309,9 @@ def main(argv: list[str] | None = None) -> None:
     list_parser = sub.add_parser("list", help="列举 spike")
     list_parser.add_argument(
         "--state",
-        choices=("active", "completed", "superseded", "all"),
+        choices=("active", "completed", "superseded", "unknown", "all"),
         default="active",
-        help="按状态过滤（默认 active）",
+        help="按状态过滤（默认 active；损坏/缺 report.md 的条目归 unknown）",
     )
     list_parser.set_defaults(func=cmd_list)
 
