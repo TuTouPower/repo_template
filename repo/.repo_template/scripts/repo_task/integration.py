@@ -803,6 +803,8 @@ def _is_pure_backlog_to_done_member_conflict(
     5. 主干 note 若非空，必须是分支 note 的精确值或 `; ` 前缀；且主干未相对 merge-base 独立改写 note；
     6. progress.md 正文：若 merge-base 存在该文件，主干正文必须等于 merge-base 正文（无主干独立正文修改）；
        若 merge-base 不存在该文件（分叉后主干新建），主干非占位正文行必须全部保留在分支正文中。
+
+    merge-base 命令失败、或 merge-base 处文件存在但读取/解析失败时返回 False（fail-closed）。
     """
     matched_name = next(
         (name for name in names if path.startswith(f"docs/tasks/{name}/")),
@@ -838,14 +840,22 @@ def _is_pure_backlog_to_done_member_conflict(
     base_fm = None
     base_body = None
     mb = _git(["merge-base", "HEAD", branch], repo=repo)
-    if mb.returncode == 0 and mb.stdout.strip():
-        mb_sha = mb.stdout.strip()
+    if mb.returncode != 0 or not mb.stdout.strip():
+        return False
+    mb_sha = mb.stdout.strip()
+    base_listing = _git(
+        ["ls-tree", "-z", "--name-only", "--end-of-options", mb_sha, "--", progress_path],
+        repo=repo,
+    )
+    if base_listing.returncode != 0:
+        return False
+    if base_listing.stdout.strip("\0"):
         try:
             base_fm, base_body = parse_front_matter_text(
                 git_text_at_ref(mb_sha, progress_path, repo=repo), source=f"{mb_sha}:{progress_path}"
             )
         except ctx.TaskDataError:
-            base_fm, base_body = None, None
+            return False
 
     branch_note = branch_fm.get("note", "")
     head_level = head_fm.get("review_level", "full")
