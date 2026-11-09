@@ -40,7 +40,9 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
+from typing import Callable, NamedTuple
 
+from repo_task.documents import atomic_write_text
 from repo_task.locks import TASK_ID_LOCK_NAME, git_common_lock
 
 LOCK_NAME = TASK_ID_LOCK_NAME
@@ -143,6 +145,16 @@ def parse_entry_dir_name(prefix: str, name: str) -> tuple[int, str] | None:
     """解析规范的 `{prefix}NNN_{slug}` 目录名，返回 (number, slug)；非规范返回 None。"""
     match = re.fullmatch(rf"{prefix}({_CANONICAL_NUMBER})_([a-z0-9_]+)", name)
     return (int(match.group(1)), match.group(2)) if match else None
+
+
+def entry_file_pattern(prefix: str) -> str:
+    """供各脚本编译文件名正则：group(1) 为编号串、group(2) 为 slug。"""
+    return rf"^{prefix}({_CANONICAL_NUMBER})_([a-z0-9_]+)\.md$"
+
+
+def entry_dir_pattern(prefix: str) -> str:
+    """供各脚本编译目录名正则：group(1) 为编号串、group(2) 为 slug。"""
+    return rf"^{prefix}({_CANONICAL_NUMBER})_([a-z0-9_]+)$"
 
 
 def _entry_number(prefix: str, name: str, *, kind: str) -> int | None:
@@ -569,6 +581,118 @@ def legacy_ledger_entries(text: str, prefix: str) -> list[tuple[int, str, str]]:
             f"仅解析出 {len(entries)} 条；拒绝迁移以避免条目静默丢失"
         )
     return entries
+
+
+class LegacyMigrationItem(NamedTuple):
+    """旧总账一条待迁移条目：编号、规范 ID、slug、标题、正文、目标文件。"""
+
+    number: int
+    entry_id: str
+    slug: str
+    title: str
+    body: str
+    target: Path
+
+
+def plan_legacy_migration(
+    repo_root: Path, *, prefix: str, ledger_rel: str, target_dir: Path
+) -> list[LegacyMigrationItem]:
+    """解析旧单文件总账，返回待迁移条目；完整性校验与重复编号在此统一完成。"""
+    legacy_path = repo_root / ledger_rel
+    if not legacy_path.is_file():
+        raise IdScanError(f"未找到旧单文件总账：{ledger_rel}")
+    try:
+        text = legacy_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise IdScanError(f"读取旧总账失败（{ledger_rel}）：{error}") from error
+    entries = legacy_ledger_entries(text, prefix)
+    if not entries:
+        raise IdScanError(f"{ledger_rel} 未解析出任何 {prefix}NNN 条目")
+    items: list[LegacyMigrationItem] = []
+    seen: set[int] = set()
+    for number, title, body in entries:
+        if number in seen:
+            raise IdScanError(f"{ledger_rel} 存在重复编号 {prefix}{number:03d}；迁移中止")
+        seen.add(number)
+        entry_id = canonical_entry_id(prefix, number)
+        slug = slug_from_title(title)
+        items.append(
+            LegacyMigrationItem(
+                number, entry_id, slug, title, body,
+                target_dir / f"{entry_id}_{slug}.md",
+            )
+        )
+    return items
+
+
+def _try_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30,
+    )
+
+
+def _remove_legacy_ledger(repo_root: Path, ledger_rel: str) -> None:
+    """已入库用 git rm 保留删除记录，未跟踪直接 unlink；失败统一包装 IdScanError。"""
+    tracked = _try_git(repo_root, ["ls-files", "--error-unmatch", "--", ledger_rel]).returncode == 0
+    if not tracked:
+        (repo_root / ledger_rel).unlink()
+        return
+    result = _try_git(repo_root, ["rm", "-f", "--", ledger_rel])
+    if result.returncode != 0:
+        raise IdScanError(f"git rm 旧总账失败：{result.stderr.strip()}")
+
+
+def apply_legacy_migration(
+    items: list[LegacyMigrationItem],
+    *,
+    repo_root: Path,
+    prefix: str,
+    ledger_rel: str,
+    render: Callable[[str, str, str, str], str],
+    formatter: Callable[[Path], None] | None = None,
+) -> list[Path]:
+    """锁内把旧总账条目逐条原子发布为新文件，最后删除旧总账。
+
+    写入前预扫描同号占用与目标冲突；任何失败删除本次已创建条目，避免格式化失败
+    留下「已写入但不在清理列表」的残留导致重试永久中止。
+    """
+    target_dir = items[0].target.parent
+    for item in items:
+        occupied = sorted(
+            path
+            for path in target_dir.glob("*.md")
+            if (parsed := parse_entry_file_name(prefix, path.name))
+            and parsed[0] == item.number
+        )
+        if occupied:
+            raise IdScanError(
+                f"{item.entry_id} 已有条目文件："
+                f"{', '.join(path.as_posix() for path in occupied)}；迁移中止"
+            )
+        if item.target.exists() or item.target.is_symlink():
+            raise IdScanError(f"{item.target} 已存在；迁移中止")
+    created: list[Path] = []
+    try:
+        with id_lock(repo_root):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for item in items:
+                created.append(item.target)
+                atomic_write_text(
+                    item.target,
+                    render(item.entry_id, item.slug, item.title, item.body),
+                )
+                if formatter is not None:
+                    formatter(item.target)
+            _remove_legacy_ledger(repo_root, ledger_rel)
+    except BaseException as error:
+        for path in created:
+            path.unlink(missing_ok=True)
+        if isinstance(error, OSError) and not isinstance(error, IdScanError):
+            raise IdScanError(f"旧总账迁移 I/O 失败：{error}") from error
+        raise
+    return created
 
 
 def slug_from_title(title: str) -> str:
