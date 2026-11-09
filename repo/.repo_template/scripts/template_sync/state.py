@@ -154,6 +154,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     """迁移旧布局 state。默认 dry-run，仅在 write=True 时写盘与删除旧文件。"""
+    from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+
     legacy = legacy_state_path(sync)
     if not legacy.exists():
         return []
@@ -171,20 +173,37 @@ def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[
         "last_synced_at": None,
         "user_prompts": [],
     }
-    merged = _merge_legacy_state(dict(data), legacy_data)
+    merged_data = dict(data)
+    merged = _merge_legacy_state(merged_data, legacy_data)
     if not write:
         return [
             f"{sync.rel(legacy)} 拟迁移至 {sync.rel(sync.state_path)}"
             + (f"（并入字段 {', '.join(sorted(set(merged)))}）" if merged else "")
         ]
-    _merge_legacy_state(data, legacy_data)
-    write_state(data, sync)
+    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
     try:
+        transaction.begin([sync.rel(sync.state_path), sync.rel(legacy)])
+    except ValueError as error:
+        raise ctx.SyncError(str(error)) from error
+    try:
+        write_state(merged_data, sync)
+        expected = {
+            key: value for key, value in merged_data.items() if not key.startswith("_")
+        }
+        if json.loads(sync.state_path.read_text(encoding="utf-8")) != expected:
+            raise ctx.SyncError("迁移后回读新 state 与合并结果不一致")
         legacy.unlink()
-    except OSError as error:
-        raise ctx.SyncError(
-            f"state 已迁移，但旧文件删除失败：{sync.rel(legacy)}（{error}）；请人工删除"
-        ) from error
+        transaction.applied()
+        transaction.accept()
+    except Exception as error:
+        try:
+            transaction.rollback(automatic=True)
+        except Exception as rollback_error:  # noqa: BLE001 - 恢复失败必须显式报告
+            raise ctx.SyncError(
+                f"legacy-state 迁移失败（{error}）；自动回滚失败：{rollback_error}；"
+                f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工恢复"
+            ) from error
+        raise ctx.SyncError(f"legacy-state 迁移失败，已回滚：{error}") from error
     return [
         f"已迁移旧布局 state：{sync.rel(legacy)} → {sync.rel(sync.state_path)}"
         + (f"；并入字段 {', '.join(sorted(set(merged)))}" if merged else "")
