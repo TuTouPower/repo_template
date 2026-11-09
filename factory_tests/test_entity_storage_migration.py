@@ -543,7 +543,7 @@ def test_apply_blocks_on_legacy_entity_storage(repo, capsys):
     }), encoding="utf-8")
 
     args = argparse.Namespace(sync=sync, allow_dirty_source=True, skip_tests=True)
-    ret = cmd_apply(args, sync=sync)
+    ret = cmd_apply(args)
     assert ret == 1
     err = capsys.readouterr().err
     assert "检测到旧实体存储布局" in err
