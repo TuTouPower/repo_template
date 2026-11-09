@@ -210,6 +210,30 @@ def test_added_lines_warns_and_fails_on_unreadable_untracked(repo, monkeypatch, 
     assert "WARNING" in stderr and "locked.py" in stderr
 
 
+def test_added_lines_emits_nothing_when_untracked_file_vanishes_mid_read(
+    repo, monkeypatch, capsys
+):
+    """未跟踪文件读取途中消失时，已收集的行不得部分写出到 stdout。"""
+    baseline = _baseline(repo)
+    (repo / "tracked.txt").write_text("base\nprint('tracked')\n", encoding="utf-8")
+    (repo / "good.py").write_text("print('good')\n", encoding="utf-8")
+    (repo / "vanishing.py").write_text("print('gone')\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    real_read_text = Path.read_text
+
+    def vanish(self, *args, **kwargs):
+        if self.name == "vanishing.py":
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    rc = repo_state.cmd_added_lines(Namespace(baseline=baseline, exclude=[]))
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "vanishing.py" in captured.err
+
+
 def _run_from(repo: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],

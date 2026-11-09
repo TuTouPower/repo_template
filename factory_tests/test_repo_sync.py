@@ -1172,6 +1172,74 @@ def test_migrate_legacy_state_preserves_provenance_and_prompts(env):
     assert any(p["text"] == "旧规则" for p in data["user_prompts"])
 
 
+def test_migrate_legacy_state_rollback_after_write_is_byte_identical(env, monkeypatch):
+    """写入后、删除旧文件前失败：事务回滚，新旧 state 均恢复原字节。"""
+    consumer = env["consumer"]
+    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({
+        "template_source": {"kind": "path", "value": str(env["src"])},
+        "last_synced_commit": "abc123",
+        "last_synced_at": "2026-01-01T00:00:00+08:00",
+        "user_prompts": [{"at": "2026-01-01T00:00:00+08:00", "text": "旧规则", "tags": []}],
+    }, indent=2), encoding="utf-8")
+    state_before = env["state_file"].read_bytes()
+    legacy_before = legacy.read_bytes()
+
+    from template_sync import state as state_module
+    from template_sync.migrate import cmd_migrate
+
+    real_write = state_module.write_state
+
+    def write_then_fail(data, sync):
+        real_write(data, sync)
+        raise OSError("injected failure before legacy unlink")
+
+    monkeypatch.setattr(state_module, "write_state", write_then_fail)
+    with pytest.raises(ctx.SyncError, match="已回滚"):
+        cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=True))
+
+    assert env["state_file"].read_bytes() == state_before
+    assert legacy.read_bytes() == legacy_before
+
+    from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+
+    assert FileTransaction(consumer, SYNC_TRANSACTION_DIR).read()["status"] == "rolled_back"
+
+
+def test_migrate_legacy_state_success_readback_matches_merged_state(env):
+    """迁移成功后回读新 state 与合并预期逐字段一致，事务接受且备份保留。"""
+    consumer = env["consumer"]
+    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
+    legacy.parent.mkdir(parents=True)
+    prompt = {"at": "2026-01-01T00:00:00+08:00", "text": "旧规则", "tags": ["lang"]}
+    legacy.write_text(json.dumps({
+        "template_source": {"kind": "path", "value": "/legacy/source"},
+        "last_synced_commit": "abc123",
+        "last_synced_at": "2026-01-01T00:00:00+08:00",
+        "user_prompts": [prompt],
+    }, indent=2), encoding="utf-8")
+
+    from template_sync.migrate import cmd_migrate
+
+    assert cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=True)) == 0
+    assert not legacy.exists()
+    data = json.loads(env["state_file"].read_text(encoding="utf-8"))
+    assert data == {
+        "template_source": {"kind": "path", "value": str(env["src"])},
+        "last_synced_commit": "abc123",
+        "last_synced_at": "2026-01-01T00:00:00+08:00",
+        "user_prompts": [prompt],
+    }
+
+    from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+
+    transaction = FileTransaction(consumer, SYNC_TRANSACTION_DIR)
+    assert transaction.read()["status"] == "accepted"
+    assert (transaction.backup / ".repo_template/sync_state.json").is_file()
+    assert (transaction.backup / ".agents/skills/repo-template-sync/sync_state.json").is_file()
+
+
 def test_resolve_src_rejects_invalid(env):
     state = read_state(env["sync"])
     state["template_source"]["value"] = "/nonexistent/not_a_template"
