@@ -44,9 +44,9 @@ from .git_ops import (
     tracked_dirty_entries,
     worktree_paths,
 )
+from .handoff import validate_handoff
 from .ledger import _ledger_append_safely, ledger_read
 from .monitoring import (
-    _HANDOFF_TYPES,
     git_tree_entries,
     validate_task_core_asset_changes,
     verify_integrate_ready,
@@ -109,89 +109,51 @@ _is_ancestor = is_ancestor
 
 
 def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[str]:
-    """通过 Git 对象与 commit 血缘定位已完成依赖的唯一实现提交（方案第 257–269 行）。"""
-    refs = [
-        resolve_local_branch(branch, repo=repo)[1]
-        for branch in _task_branch_names(dep, repo=repo)
-    ]
+    """按 handoff 对象与唯一实现血缘定位；缺失、损坏、Git 故障分别保留诊断。"""
+    refs = [resolve_local_branch(branch, repo=repo)[1] for branch in _task_branch_names(dep, repo=repo)]
     if refs:
         return refs
     main = default_branch(repo=repo)
+    main_sha = _resolve_commit_sha(f"refs/heads/{main}", label=f"主干 {main!r}", repo=repo)
+    task, fm, _ = load_task_at_ref(dep, main_sha, repo=repo)
+    if fm["status"] != "done":
+        raise ctx.TaskDataError(f"依赖 {dep} 在主干非 done：{fm['status']!r}")
+    path = f"{task['dir']}/handoff.json"
     try:
-        main_sha = _resolve_commit_sha(f"refs/heads/{main}", label=f"主干 {main!r}", repo=repo)
-        task, fm, _ = load_task_at_ref(dep, main_sha, repo=repo)
-        if fm.get("status") != "done":
-            raise ValueError(f"依赖 {dep} 在主干非 done（status={fm.get('status')!r}）")
-        handoff_path = f"{task['dir']}/handoff.json"
+        receipt = json.loads(git_text_at_ref(main_sha, path, repo=repo))
+    except json.JSONDecodeError as error:
+        raise ctx.TaskDataError(f"{main_sha[:12]}:{path} JSON 损坏：{error}") from error
+    validate_handoff(receipt, source=f"{main_sha[:12]}:{path}")
+    if receipt["tid"] != dep:
+        raise ctx.TaskDataError(f"{path}: handoff tid {receipt['tid']!r} 与依赖 {dep} 不符")
+    base = _resolve_commit_sha(receipt["base_sha"], label=f"{dep} handoff.base_sha", repo=repo)
 
-        # 1. 从锁定来源 SHA 的规范 task 目录读取 handoff.json，取得其 Blob OID
-        tree_result = _git(["ls-tree", "-z", "--end-of-options", main_sha, "--", handoff_path], repo=repo)
-        if tree_result.returncode != 0 or not tree_result.stdout.strip():
-            raise ValueError(f"无法读取 {handoff_path} 的 Git 对象信息")
-        meta, _ = tree_result.stdout.split("\0")[0].split("\t", 1)
-        parts = meta.split()
-        if len(parts) < 3 or parts[1] != "blob":
-            raise ValueError(f"{handoff_path} 非合法 blob 对象")
-        blob_oid = parts[2]
+    def required(args: list[str]) -> str:
+        result = _git(args, repo=repo)
+        if result.returncode != 0:
+            raise ctx.TaskDataError(f"依赖 {dep} Git 查询失败（git {' '.join(args)}）：{result.stderr.strip()}")
+        return result.stdout
 
-        handoff = json.loads(git_text_at_ref(main_sha, handoff_path, repo=repo))
-        if not isinstance(handoff, dict) or handoff.get("tid") != dep:
-            raise ValueError("handoff tid 不匹配")
-        for key, expected in _HANDOFF_TYPES.items():
-            if key not in handoff:
-                raise ValueError(f"handoff 缺失必需键 {key}")
-            val = handoff[key]
-            if not isinstance(val, expected) or (expected is int and isinstance(val, bool)):
-                raise ValueError(f"handoff 字段 {key} 类型非法")
-        if not (isinstance(handoff.get("attempt"), int) and not isinstance(handoff.get("attempt"), bool) and handoff["attempt"] > 0):
-            raise ValueError("handoff attempt 必须为正整数")
-        if not (isinstance(handoff.get("execution_id"), str) and bool(handoff["execution_id"].strip())):
-            raise ValueError("handoff execution_id 必须为非空字符串")
-        base_sha = handoff.get("base_sha")
-        if not base_sha or not isinstance(base_sha, str):
-            raise ValueError("handoff base_sha 缺失")
-        resolved_base = _resolve_commit_sha(base_sha, label="base_sha", repo=repo)
-
-        # 2. 在提交历史中按 Blob OID 定位引入该对象的唯一非 merge 实现提交
-        log_res = _git([
-            "log", "--format=%H", "--no-merges", f"--find-object={blob_oid}",
-            main_sha,
-        ], repo=repo)
-        if log_res.returncode != 0:
-            raise ValueError(f"git log --find-object 失败：{log_res.stderr.strip()}")
-        candidates = [line.strip() for line in log_res.stdout.splitlines() if line.strip()]
-
-        # 3. 验证候选：恰好一个 parent，first parent 等于 base_sha，且包含完全一致的 handoff 对象
-        matched_commits = []
-        for sha in candidates:
-            parents_res = _git(["rev-parse", f"{sha}^@"], repo=repo)
-            if parents_res.returncode != 0:
-                continue
-            parents = parents_res.stdout.splitlines()
-            if len(parents) != 1:
-                continue
-            first_parent = parents[0].strip()
-            if _resolve_commit_sha(first_parent, label="parent", repo=repo) != resolved_base:
-                continue
-            tree_res = _git(["ls-tree", "-r", "-z", sha], repo=repo)
-            if tree_res.returncode != 0:
-                continue
-            sha_blobs = {
-                entry.split("\t", 1)[0].split()[2]
-                for entry in tree_res.stdout.split("\0")
-                if entry and len(entry.split("\t", 1)[0].split()) >= 3 and entry.split("\t", 1)[0].split()[1] == "blob"
-            }
-            if blob_oid in sha_blobs:
-                matched_commits.append(sha)
-
-        if len(matched_commits) == 1:
-            return matched_commits
-    except (ctx.TaskDataError, ValueError, KeyError, TypeError, AttributeError):
-        pass
-    raise ctx.TaskDataError(
-        f"start=FAIL：{dep} 缺依赖实现的可验证 SHA；"
-        "须恢复 handoff/实现提交证据，不能仅凭 done 放行"
-    )
+    entry = required(["ls-tree", "-z", main_sha, "--", path]).split("\0")[0]
+    if not entry:
+        raise ctx.TaskNotFoundError(f"{main_sha[:12]}:{path} 缺 handoff 对象")
+    meta = entry.split("\t", 1)[0].split()
+    if len(meta) != 3 or meta[0] not in {"100644", "100755"} or meta[1] != "blob":
+        raise ctx.TaskDataError(f"{path}: handoff 必须为普通 blob")
+    oid = meta[2]
+    candidates = required(["log", "--format=%H", "--no-merges", f"--find-object={oid}", main_sha]).splitlines()
+    matches = []
+    for sha in candidates:
+        parents = required(["rev-parse", f"{sha}^@"]).splitlines()
+        if parents != [base]:
+            continue
+        entries = git_tree_entries(sha, repo=repo)
+        if any(mode in {"100644", "100755"} and blob == oid for mode, blob in entries.values()):
+            matches.append(sha)
+    if len(matches) != 1:
+        detail = "没有符合 handoff 与 first-parent 的实现提交" if not matches else f"实现来源有歧义：{', '.join(matches)}"
+        raise ctx.TaskDataError(f"依赖 {dep} 来源核验失败：{detail}")
+    return matches
 
 
 def _validate_task_dir_tree_modes(
@@ -715,56 +677,24 @@ def _merge_tree_result(
     return tree, {path for path in fields[1:end] if path}
 
 
-def _scan_merge_changeset_privacy(
-    changed: set[str],
-    entries: dict[str, tuple[str, str]],
-    *,
-    repo: "ctx.RepoContext",
-) -> None:
-    """扫描 merge 变更集文本中的开发者家目录泄漏，fail-closed。
-
-    只扫描变更后仍存在的 blob（删除路径无内容可扫）；复用稳定的
-    ``scan_text_privacy_leaks`` 逐文本扫描，解码/读取失败一律抛 TaskDataError。
-    """
-    from .privacy import (
-        PrivacyScanError,
-        decode_candidate_bytes,
-        is_binary_candidate,
-        is_privacy_candidate,
-        scan_text_privacy_leaks,
-    )
-
-    selected = sorted(
-        path for path in changed
-        if path in entries
-        and entries[path][0] != "160000"
-        and is_privacy_candidate(path)
-        and not is_binary_candidate(path)
-    )
-    if not selected:
-        return
-    oids = [entries[path][1] for path in selected]
+def _validate_entry_snapshot(ref: str, *, repo: "ctx.RepoContext") -> None:
+    from _id_scan import IdScanError, validate_snapshot_ids
     try:
-        blobs = batch_cat_file(oids, repo=repo)
-    except ctx.TaskDataError as error:
-        raise ctx.TaskDataError(f"merge 隐私扫描读取失败（fail-closed）：{error}") from error
-    violations: list[str] = []
-    for path, oid in zip(selected, oids):
-        data = blobs.get(oid)
-        if data is None:
-            raise ctx.TaskDataError(f"merge 隐私扫描无法读取内容：{path}（fail-closed）")
-        try:
-            text = decode_candidate_bytes(data, label=path)
-        except PrivacyScanError as error:
-            raise ctx.TaskDataError(f"merge 隐私扫描失败（fail-closed）：{error}") from error
-        violations.extend(scan_text_privacy_leaks(text, label=path))
+        validate_snapshot_ids(repo.root, ref)
+    except IdScanError as error:
+        raise ctx.TaskDataError(f"合并条目编号校验失败：{error}") from error
+
+
+def _verify_merge_privacy(base: str, target: str, *, repo: "ctx.RepoContext") -> None:
+    from .privacy import PrivacyScanError, scan_privacy_changes
+
+    try:
+        violations = scan_privacy_changes(repo.root, base=base, target=target)
+    except PrivacyScanError as error:
+        raise ctx.TaskDataError(f"merge 隐私扫描失败（fail-closed）：{error}") from error
     if violations:
-        shown = "；".join(violations[:8]) + (
-            f" 等共 {len(violations)} 处" if len(violations) > 8 else ""
-        )
         raise ctx.TaskDataError(
-            f"merge 结果检测到开发者家目录绝对路径泄漏（{shown}）；"
-            "请改用仓库相对路径后重做 merge"
+            "merge 新增内容含开发者家目录绝对路径泄漏：" + "；".join(violations[:8])
         )
 
 
@@ -813,12 +743,8 @@ def _validate_claimed_merge_commit(
             main_touched - conflict_paths, resolved_names, tips, merge_entries, repo=repo
         )
         _validate_member_core_from_tips(merge_entries, resolved_names, tips, repo=repo)
-    first_entries = git_tree_entries(first_parent, repo=repo)
-    changeset = {
-        path for path in set(first_entries) | set(merge_entries)
-        if first_entries.get(path) != merge_entries.get(path)
-    }
-    _scan_merge_changeset_privacy(changeset, merge_entries, repo=repo)
+    _validate_entry_snapshot(merge_sha, repo=repo)
+    _verify_merge_privacy(first_parent, merge_sha, repo=repo)
     LOGGER.debug(
         "claimed merge validated: merge=%s first=%s second=%s conflicts=%d",
         merge_sha[:12], first_parent[:12], second_parent[:12], len(conflict_paths),
@@ -1254,11 +1180,8 @@ def _validate_merge_staged_scope(
         main_touched - conflict_paths, names, tips, staged_entries, repo=repo
     )
     _validate_core_assets(head_entries, staged_entries, names, tips, repo=repo)
-    changeset = {
-        path for path in set(head_entries) | set(staged_entries)
-        if head_entries.get(path) != staged_entries.get(path)
-    }
-    _scan_merge_changeset_privacy(changeset, staged_entries, repo=repo)
+    _validate_entry_snapshot(current_tree_oid, repo=repo)
+    _verify_merge_privacy("HEAD", current_tree_oid, repo=repo)
     return current_tree_oid
 
 
