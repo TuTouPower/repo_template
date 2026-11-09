@@ -192,6 +192,7 @@ def cmd_added_lines(args) -> int:
         root=root,
         check=True,
     )
+    output: list[str] = []
     current_path = ""
     skip_file = False
     for line in result.stdout.splitlines():
@@ -202,7 +203,7 @@ def cmd_added_lines(args) -> int:
         if skip_file:
             continue
         if line.startswith("+") and not line.startswith("+++"):
-            print(line[1:])
+            output.append(line[1:])
     failed = False
     for path in _untracked_files(args.exclude, root):
         file_path = root / path
@@ -222,9 +223,13 @@ def cmd_added_lines(args) -> int:
             )
             failed = True
             continue
-        for line in content.splitlines():
-            print(line)
-    return 1 if failed else 0
+        output.extend(content.splitlines())
+    if failed:
+        # 失败即零输出：只消费 stdout 的调用方不得看到部分结果。
+        return 1
+    if output:
+        sys.stdout.write("\n".join(output) + "\n")
+    return 0
 
 
 def main() -> None:
