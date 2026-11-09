@@ -23,15 +23,23 @@ HANDOFF_TYPES = {
 
 def validate_handoff(value, *, source: str) -> None:
     if not isinstance(value, dict):
-        raise TaskDataError(f"{source}: handoff 必须为 JSON 对象")
+        raise TaskDataError(f"{source}: handoff 非 JSON 对象")
     for key, expected in HANDOFF_TYPES.items():
-        item = value.get(key)
+        if key not in value:
+            raise TaskDataError(f"{source}: handoff 缺必填字段 {key}")
+        item = value[key]
         if not isinstance(item, expected) or (expected is int and isinstance(item, bool)):
-            raise TaskDataError(f"{source}: handoff 字段 {key} 缺失或类型非法")
+            raise TaskDataError(f"{source}: handoff 字段 {key} 类型或值非法")
         if expected is str and not item.strip():
             raise TaskDataError(f"{source}: handoff 字段 {key} 不能为空")
-    if value["attempt"] <= 0 or value["status"] != "done":
-        raise TaskDataError(f"{source}: handoff attempt 必须为正整数，status 必须为 done")
+    if value["attempt"] <= 0:
+        raise TaskDataError(
+            f"{source}: handoff attempt 必须为正整数（实际 attempt={value['attempt']!r}）"
+        )
+    if value["status"] != "done":
+        raise TaskDataError(
+            f"{source}: handoff status 必须为 done（实际 status={value['status']!r}）"
+        )
     for key in ("pending", "findings"):
         if any(not isinstance(item, str) for item in value[key]):
             raise TaskDataError(f"{source}: handoff {key} 必须为字符串数组")
