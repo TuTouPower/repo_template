@@ -29,7 +29,6 @@ from repo_task.store import (
     CommitSnapshotCache,
     CommitTaskSnapshot,
     _load_tasks_at_commit,
-    clear_commit_snapshot_cache,
     load_owner_task_at_ref,
     load_task_at_ref,
     resolve_baseline_spec_text,
@@ -296,7 +295,6 @@ def repo_with_tasks(sample_repo):
 
 
 def test_scan_and_load_tasks_at_ref(repo_with_tasks):
-    clear_commit_snapshot_cache()
     repo = repo_with_tasks
     tasks = scan_tasks_at_ref("HEAD", repo=repo)
     tids = [t["tid"] for t in tasks]

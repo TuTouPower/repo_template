@@ -82,10 +82,6 @@ def _cache_key(target: Path, template_name: str) -> str:
     return f"{target.resolve()}|{template_name}"
 
 
-def clear_commit_snapshot_cache() -> None:
-    """兼容只读调用方：缓存已改为操作级显式注入，随调用结束回收，无进程级状态可清。"""
-
-
 def task_schedule_references(
     target_tid: str, tasks: list[dict] | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> list[str]:

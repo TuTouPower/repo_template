@@ -51,23 +51,16 @@ from repo_task.review import (
 def current_scope_fingerprint(
     task_dir: Path, diff_anchor: str, *, repo: ctx.RepoContext,
 ) -> str | None:
-    """当前被审 diff 指纹；缺 diff_anchor 或 git 失败返回 None（不可验证）。"""
+    """当前被审 diff 指纹；缺 diff_anchor 或目录越界返回 None，git 失败 fail-closed 抛错。"""
     if not diff_anchor:
         return None
     try:
         rel = task_dir.resolve().relative_to(repo.root.resolve())
     except ValueError:
         return None
-    fingerprint = monitoring_scope_fingerprint(
+    return monitoring_scope_fingerprint(
         diff_anchor, rel.as_posix(), repo_root=repo.root
     )
-    if not fingerprint:
-        print(
-            "WARNING: review scope 指纹无法计算（git 失败或 anchor 无效）；按不可验证处理",
-            file=sys.stderr,
-        )
-        return None
-    return fingerprint
 
 
 def resolve_task_dir(value: str, *, repo: ctx.RepoContext) -> Path:

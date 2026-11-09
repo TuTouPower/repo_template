@@ -184,7 +184,6 @@ def test_commit_message_is_scanned(txn_repo, controlled_env):
 
 
 def test_snapshot_cache_is_bounded_and_keyed_by_template():
-    store.clear_commit_snapshot_cache()
     snapshot = store.CommitTaskSnapshot("s", (), {}, {})
     cache = store.CommitSnapshotCache(max_entries=2)
     cache.set_commit("repo|tmplA", "s1", snapshot)
