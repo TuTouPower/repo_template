@@ -197,7 +197,7 @@ def contract_drift_notice(
         sys.exit(f"契约区 drift 基线读取失败（{spec_rel}）：缺 spec_source_sha")
     try:
         anchored_text, source_sha = resolve_baseline_spec_text(
-            tid, spec_rel, spec_source_sha, root=REPO_ROOT, repo=RepoContext.for_root(REPO_ROOT),
+            tid, spec_rel, spec_source_sha, repo=RepoContext.for_root(REPO_ROOT),
         )
     except (OSError, subprocess.SubprocessError, TaskDataError) as e:
         sys.exit(f"契约区 drift 基线读取失败（{spec_source_sha[:12]}:{spec_rel}）：{e}")

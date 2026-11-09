@@ -294,6 +294,7 @@ def test_main_rejects_invalid_review_level(tmp_path, monkeypatch, capsys):
 def test_main_rejects_missing_task_directory(tmp_path, monkeypatch, capsys):
     """--task-dir 指向不存在的目录时，review-status 拦截并以非零码退出。"""
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs" / "tasks").mkdir(parents=True)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -305,12 +306,67 @@ def test_main_rejects_missing_task_directory(tmp_path, monkeypatch, capsys):
     assert "task directory does not exist" in capsys.readouterr().err
 
 
+def test_main_requires_explicit_root_when_repository_root_not_found(tmp_path, monkeypatch, capsys):
+    """找不到 docs/tasks 祖先时不得退回 CWD；报错并提示 --root。"""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["task.py", "--task-dir", "docs/tasks/missing"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        crs.main()
+    assert exc.value.code == 1
+    assert "--root" in capsys.readouterr().err
+
+
+def test_main_explicit_root_resolves_relative_task_dir(tmp_path, monkeypatch, capsys):
+    """CWD 在仓外时，--root 可显式定位仓库并按相对 task-dir 评估。"""
+    repo = tmp_path / "repo"
+    task_dir = repo / "docs" / "tasks" / "t001_x"
+    task_dir.mkdir(parents=True)
+    (task_dir / "progress.md").write_text(
+        "---\ntid: t001\nreview_level: single\n---\n## Review 处置\n",
+        encoding="utf-8",
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["task.py", "--task-dir", "docs/tasks/t001_x", "--root", str(repo)],
+    )
+    crs.main()
+    out = capsys.readouterr().out
+    assert "review_level=single" in out
+
+
+def test_main_rejects_root_without_tasks_dir(tmp_path, monkeypatch, capsys):
+    """--root 指向无 docs/tasks 的目录时明确拒绝，不继续猜路径。"""
+    root = tmp_path / "not_a_repo"
+    root.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["task.py", "--task-dir", "docs/tasks/t001_x", "--root", str(root)],
+    )
+    with pytest.raises(SystemExit) as exc:
+        crs.main()
+    assert exc.value.code == 1
+    assert "docs/tasks" in capsys.readouterr().err
+
+
 # --- DS L283：resolve_task_dir 仓库包含性防护的越界场景 ---
 def test_main_rejects_relative_task_dir_escaping_repository(tmp_path, monkeypatch, capsys):
     """--task-dir ../../etc：resolve 后越出仓库根，明确拒绝。"""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "docs" / "tasks").mkdir(parents=True)
-    monkeypatch.setattr(sys, "argv", ["task.py", "--task-dir", "../../etc"])
+    monkeypatch.setattr(
+        sys, "argv", ["task.py", "--task-dir", "../../etc", "--root", str(tmp_path)]
+    )
     with pytest.raises(SystemExit) as exc:
         crs.main()
     assert exc.value.code == 1

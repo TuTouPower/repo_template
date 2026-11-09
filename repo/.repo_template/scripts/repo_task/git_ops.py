@@ -248,7 +248,10 @@ def batch_object_sizes(
 def default_branch(
     root: Path | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> str:
-    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → 本地唯一非 task 分支。"""
+    """主干分支名：origin/HEAD → init.defaultBranch → 探测 main/master → 本地唯一非 task 分支。
+
+    全部来源落空时抛 TaskDataError，不兜底返回 main。
+    """
     if root is None and repo is None:
         raise ctx.TaskDataError("git 调用必须显式提供 repo 或 root")
     root = root or repo.root
@@ -271,7 +274,12 @@ def default_branch(
         ]
         if len(non_task) == 1:
             return non_task[0]
-    return "main"
+    raise ctx.TaskDataError(
+        "无法确定主干分支；已尝试来源：origin/HEAD、init.defaultBranch（且本地分支存在）、"
+        "本地 main/master、本地唯一非 task 分支。"
+        "请运行 `git remote set-head origin --auto` 或 "
+        "`git config init.defaultBranch <name>` 后重试"
+    )
 
 def resolve_local_branch(
     name: str, *, repo: "ctx.RepoContext",

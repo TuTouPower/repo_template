@@ -344,6 +344,16 @@ def test_resolve_baseline_spec_text_batch(repo_with_tasks):
         resolve_baseline_spec_text("t001", "docs/tasks/t001_first/nonexistent.md", head_sha, repo=repo)
 
 
+def test_resolve_baseline_spec_text_requires_repo():
+    """库函数不得用 CWD 或缺省 root 兜底：缺 repo 直接 TypeError。"""
+    with pytest.raises(TypeError):
+        resolve_baseline_spec_text("t001", "docs/tasks/t001_first/task.md", "deadbeef")
+    with pytest.raises(TypeError):
+        resolve_baseline_spec_text(
+            "t001", "docs/tasks/t001_first/task.md", "deadbeef", root=Path("/tmp")
+        )
+
+
 def test_materialize_task_dir_from_ref_batch(repo_with_tasks, tmp_path):
     repo = repo_with_tasks
     dest_worktree = tmp_path / "wt"
