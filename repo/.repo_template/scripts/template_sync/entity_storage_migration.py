@@ -2,18 +2,18 @@
 
 把 Tasks、Pending、Spikes、审计日志与交接历史从旧的多目录/归档布局
 一次性迁移到固定路径契约：
-- docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (需终态证据 done/dropped)
+- docs/archive/tasks/tNNN_slug/ -> docs/tasks/tNNN_slug/ (校验状态字段为 done/dropped；不复验 handoff/实现血缘，使用时由业务门禁核验)
 - docs/tasks/tNNN_slug/         -> 保留原路径并校验身份
 - docs/pending/todo/pNNN.md     -> docs/pending/pNNN.md (status: todo)
 - docs/pending/parked/pNNN.md   -> docs/pending/pNNN.md (status: parked, 保留 reason)
 - docs/archive/pending/pNNN.md  -> docs/pending/pNNN.md (status: closed, 保留 resolution 与 reason)
-- docs/archive/spikes/sNNN/     -> docs/spikes/sNNN/ (status: completed, 校验闭环证据与 findings 关联)
+- docs/archive/spikes/sNNN/     -> docs/spikes/sNNN/ (status: completed，校验报告与 findings 闭环证据)
 - docs/spikes/sNNN/             -> 保持原路径并校验身份
 - docs/archive/tasks_audit.log  -> docs/runtime/tasks_audit.log (保持原始字节)
 - docs/archive/handoff.md       -> 确认进入 Git 历史后移除
-- 更新维护文档中的确定引用并清理空旧目录。
+- 更新维护文档中的确定引用并清理空旧目录（含仅剩占位文件的旧目录）。
 
-默认 dry-run；加 --write 在 FileTransaction 内执行，失败完整回滚。
+默认 dry-run；加 --write 在 FileTransaction 内执行，失败回滚本项。
 """
 
 from __future__ import annotations
@@ -29,17 +29,13 @@ from typing import Any
 from pending import (
     ALLOWED_FM_KEYS as PENDING_ALLOWED_FM_KEYS,
     ENTRY_FILE_RE as PENDING_FILE_RE,
-    ID_RE as PENDING_ID_RE,
     VALID_RESOLUTIONS as PENDING_VALID_RESOLUTIONS,
-    VALID_STATUSES as PENDING_VALID_STATUSES,
     dump_pending_front_matter,
     validate_pending_front_matter,
 )
 from repo_task.context import (
     PROGRESS_FILE,
     TaskDataError,
-    TID_RE,
-    VALID_STATUSES as TASK_VALID_STATUSES,
 )
 from repo_task.documents import (
     atomic_write_text,
@@ -50,11 +46,11 @@ from repo_task.file_transaction import FileTransaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.spikes import (
     ENTRY_DIR_RE as SPIKE_DIR_RE,
-    SPIKE_SID_RE,
     validate_spike_metadata,
 )
 
 from . import context as ctx
+from .common import _git
 
 _IGNORED_NAMES = frozenset({".DS_Store", ".gitkeep", ".git"})
 _CLEANABLE_NAMES = frozenset({".DS_Store", ".gitkeep"})
@@ -152,20 +148,12 @@ class MigrationPlan:
     stale_index_paths: list[Path]
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-    )
-
-
 def _check_clean_working_copy(consumer: Path) -> None:
-    """检查工作区是否干净（staged 和 unstaged 均无修改）。"""
-    res = _git(consumer, "status", "--porcelain")
+    """检查工作区是否干净（staged 和 unstaged 均无修改）。复用 common._git 统一超时语义。"""
+    try:
+        res = _git(consumer, "status", "--porcelain")
+    except ctx.SyncError as error:
+        raise MigrationError(f"检查工作区状态失败：{error}") from error
     if res.returncode != 0:
         raise MigrationError(f"检查工作区状态失败：{res.stderr.strip()}")
     dirty = []
@@ -180,8 +168,23 @@ def _check_clean_working_copy(consumer: Path) -> None:
         raise MigrationError(f"迁移前工作区必须干净（存在已暂存或未暂存修改）：\n{details}")
 
 
+def _is_placeholder_only_dir(path: Path) -> bool:
+    """仅含占位文件（.gitkeep/.DS_Store）或空目录即待清理，不视为已收敛。"""
+    if not path.is_dir():
+        return False
+    for item in path.iterdir():
+        if item.name not in _IGNORED_NAMES:
+            return False
+    return True
+
+
 def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
-    """检测消费仓是否仍存在旧实体存储布局，返回待迁移项描述列表。"""
+    """检测消费仓是否仍存在旧实体存储布局，返回待迁移项描述列表。
+
+    与 build_migration_plan 同一可处理集合：原始 FM 先校验、身份不符即
+    BLOCKED（不静默改写）；软链实体与 audit 目标冲突在 status 即 BLOCKED；
+    仅含占位文件的旧目录列为待清理项。
+    """
     consumer = sync.consumer
     problems: list[str] = []
 
@@ -196,6 +199,8 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
         children = [p for p in archived_tasks_dir.iterdir() if p.is_dir() and TASK_DIR_RE.match(p.name)]
         if children:
             problems.append(f"docs/archive/tasks 存在 {len(children)} 个归档任务目录")
+        elif _is_placeholder_only_dir(archived_tasks_dir):
+            problems.append("docs/archive/tasks 仅含占位文件待清理")
 
     # 2. 旧 pending 子目录
     for sub_rel in ("docs/pending/todo", "docs/pending/parked", "docs/archive/pending"):
@@ -211,6 +216,8 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
                     valid_files.append(item)
             if valid_files:
                 problems.append(f"{sub_rel} 存在 {len(valid_files)} 个待办文件")
+            elif _is_placeholder_only_dir(d):
+                problems.append(f"{sub_rel} 仅含占位文件待清理")
 
     # 3. 检查扁平 docs/pending 下的文件是否都具备合格的 front matter
     pending_root = consumer / "docs/pending"
@@ -235,11 +242,19 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
         children = [p for p in archived_spikes_dir.iterdir() if p.is_dir() and SPIKE_DIR_RE.match(p.name)]
         if children:
             problems.append(f"docs/archive/spikes 存在 {len(children)} 个归档 spike 目录")
+        elif _is_placeholder_only_dir(archived_spikes_dir):
+            problems.append("docs/archive/spikes 仅含占位文件待清理")
 
-    # 5. 旧 tasks_audit.log
+    # 5. 旧 tasks_audit.log（含目标冲突：与 build 同口径，不再只报需迁）
     old_audit = consumer / "docs/archive/tasks_audit.log"
+    new_audit = consumer / "docs/runtime/tasks_audit.log"
     if old_audit.is_file():
-        problems.append("docs/archive/tasks_audit.log 需迁至 docs/runtime/tasks_audit.log")
+        if new_audit.is_file():
+            problems.append(
+                f"目标占用：{sync.rel(new_audit)} 已存在，禁止擅自覆盖或删除旧归档日志，请人工介入处理"
+            )
+        else:
+            problems.append("docs/archive/tasks_audit.log 需迁至 docs/runtime/tasks_audit.log")
 
     # 6. 旧 handoff.md 归档
     old_handoff = consumer / "docs/archive/handoff.md"
@@ -251,7 +266,27 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
         if (consumer / rel).is_file():
             problems.append(f"{rel} 为已废弃派生索引，迁移将删除")
 
-    return sorted(problems)
+    # 8. 软链实体：与 build 同口径，status 即 BLOCKED，不等 migrate 才暴露
+    try:
+        _reject_symlink_entities(consumer, sync)
+    except MigrationError as error:
+        problems.append(f"BLOCKED: {error}")
+
+    # 9. 复用 build 的只读校验：身份不符/证据缺失等在 status 即 BLOCKED。
+    #    仅当已有旧布局迹象时才跑 build，避免干净仓因 worktree 查询噪音误报。
+    if problems:
+        try:
+            build_migration_plan(sync=sync)
+        except MigrationError as error:
+            marker = f"BLOCKED: {error}"
+            if marker not in problems:
+                problems.append(marker)
+        except ctx.SyncError as error:
+            marker = f"BLOCKED: {error}"
+            if marker not in problems:
+                problems.append(marker)
+
+    return sorted(set(problems))
 
 
 def _parse_legacy_pending_content(
@@ -276,6 +311,21 @@ def _parse_legacy_pending_content(
         raise MigrationError(f"{source_label}: 文件名不符合规范 pNNN_slug.md")
     pid = f"p{int(file_match.group(1)):03d}"
     slug = file_match.group(2)
+
+    # 身份一致性：原始 FM 先校验，声明 pid/slug 与文件名不符即 BLOCKED，
+    # 禁止按文件名静默改写身份（与 validate_pending_front_matter 同口径）。
+    declared_pid = fm.get("pid")
+    if declared_pid is not None and str(declared_pid) != pid:
+        raise MigrationError(
+            f"{source_label}: 身份与文件名矛盾（声明 pid {declared_pid!r} != 文件编号 {pid}），"
+            "拒绝静默改写，请人工对齐后重跑"
+        )
+    declared_slug = fm.get("slug")
+    if declared_slug is not None and str(declared_slug) != slug:
+        raise MigrationError(
+            f"{source_label}: 身份与文件名矛盾（声明 slug {declared_slug!r} != 文件名 slug {slug!r}），"
+            "拒绝静默改写，请人工对齐后重跑"
+        )
 
     declared_status = fm.get("status")
     # 目录来源与 Front Matter 状态一致性检查（契约第 253 行）
@@ -440,7 +490,10 @@ def _clean_empty_dir_strictly(dir_path: Path, sync: ctx.SyncContext) -> None:
 
 
 def _check_worktrees_clean(root: Path) -> None:
-    r = _git(root, "worktree", "list", "--porcelain")
+    try:
+        r = _git(root, "worktree", "list", "--porcelain")
+    except ctx.SyncError as error:
+        raise MigrationError(f"无法查询 git worktree（{error}）；拒绝放行迁移") from error
     if r.returncode != 0:
         raise MigrationError(f"无法查询 git worktree（{r.stderr.strip()}）；拒绝放行迁移")
     active_wt = []
@@ -723,9 +776,14 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
     old_handoff = consumer / "docs/archive/handoff.md"
     handoff_remove = None
     if old_handoff.is_file():
-        diff_res = _git(consumer, "diff", "--quiet", "--", "docs/archive/handoff.md")
-        cached_diff = _git(consumer, "diff", "--cached", "--quiet", "--", "docs/archive/handoff.md")
-        ls_res = _git(consumer, "ls-files", "--error-unmatch", "docs/archive/handoff.md")
+        try:
+            diff_res = _git(consumer, "diff", "--quiet", "--", "docs/archive/handoff.md")
+            cached_diff = _git(consumer, "diff", "--cached", "--quiet", "--", "docs/archive/handoff.md")
+            ls_res = _git(consumer, "ls-files", "--error-unmatch", "docs/archive/handoff.md")
+        except ctx.SyncError as error:
+            raise MigrationError(
+                f"无法核验 docs/archive/handoff.md 入库状态（{error}），拒绝擅自移除"
+            ) from error
         if diff_res.returncode != 0 or cached_diff.returncode != 0 or ls_res.returncode != 0:
             raise MigrationError(
                 "docs/archive/handoff.md 含有未提交修改或未入库内容，请先提交或备份到 Git 历史"

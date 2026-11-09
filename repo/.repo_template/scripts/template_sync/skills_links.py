@@ -143,12 +143,23 @@ def _load_skill_roles(sync: ctx.SyncContext) -> dict:
 
 
 def _public_skill_names(names: list[str], sync: ctx.SyncContext) -> list[str]:
-    """校验 registry 覆盖全部 skill；缺失/未登记即 fail-closed，status 与 apply 同口径。"""
+    """校验 registry 覆盖全部 skill；缺失/未登记/条目非对象即 fail-closed，apply 与 link-skills 同口径。
+
+    status / plan 调用方须自行捕获本函数经 opencode_commands_status 抛出的
+    SyncError 并降级为 BLOCKED 待办（指引补登记），不得在此直接放行。
+    """
     roles = _load_skill_roles(sync)
     missing = sorted(name for name in names if name not in roles)
     if missing:
         raise ctx.SyncError(
             "skills/registry.json 未登记 skill：" + ", ".join(missing) + "；先补登记后重跑"
+        )
+    bad = sorted(name for name in names if not isinstance(roles[name], dict))
+    if bad:
+        raise ctx.SyncError(
+            "skills/registry.json 条目结构错误（须为对象）："
+            + ", ".join(bad)
+            + "；先补登记后重跑"
         )
     return [name for name in names if roles[name].get("role") == "public"]
 
@@ -345,7 +356,10 @@ def cmd_link_skills(args: argparse.Namespace) -> int:
         reports += sync_opencode_commands(changed, sync=sync)
         transaction.applied()
         transaction.accept()
-    except (OSError, ValueError, ctx.SyncError, subprocess.SubprocessError) as error:
+    except Exception as error:
+        # 任意异常（含 KeyError / AttributeError 等嵌套结构异常）都必须回滚，
+        # 绝不让 journal 停留在 applying。KeyboardInterrupt / SystemExit 属
+        # BaseException，不在此捕获。
         rollback_ok = True
         try:
             transaction.rollback(automatic=True)

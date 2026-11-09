@@ -30,13 +30,34 @@ def source_identity(value: str) -> dict:
     raise ctx.SyncError(f"模板源路径不存在：{value}；不把拼错路径当 URL")
 
 
+def require_template_source(state: dict | None) -> tuple[str, str]:
+    """校验 state 内嵌 template_source 为 {kind, value} 对象，非法即 SyncError。
+
+    顶层 JSON 已由 _load_json_object 校验为对象，但嵌套字段仍可能是手改后的
+    字符串/数组；直接 .get 会抛 AttributeError 逃逸事务回滚。此处统一校验，
+    调用方不得再对 template_source 做裸 .get。
+    """
+    if not isinstance(state, dict):
+        raise ctx.SyncError("未初始化：缺少 template_source。先运行 init --source <path|url>")
+    ts = state.get("template_source")
+    if not isinstance(ts, dict):
+        raise ctx.SyncError(
+            "状态文件 template_source 结构错误（须为对象）："
+            "请修复或重新运行 init --source <path|url>"
+        )
+    kind = ts.get("kind", "path")
+    value = ts.get("value")
+    if not isinstance(kind, str) or not isinstance(value, str) or not value.strip():
+        raise ctx.SyncError(
+            "状态文件 template_source 缺 kind/value 字符串："
+            "请修复或重新运行 init --source <path|url>"
+        )
+    return kind, value
+
+
 def resolve_src(state: dict | None, *, refresh: bool = True, sync: ctx.SyncContext) -> Path:
     """解析模板源。URL 源 refresh=False 时只读缓存，不 clone/pull（Issue #72）。"""
-    if not state or not state.get("template_source", {}).get("value"):
-        raise ctx.SyncError("未初始化：缺少 template_source。先运行 init --source <path|url>")
-    ts = state["template_source"]
-    kind = ts.get("kind", "path")
-    value = ts["value"]
+    kind, value = require_template_source(state)
     if sync.checkout_override is not None:
         src = _as_product(sync.checkout_override)
         if kind == "url":

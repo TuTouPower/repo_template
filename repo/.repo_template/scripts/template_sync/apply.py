@@ -159,10 +159,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if (sync.consumer / "AGENTS.md").is_symlink():
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     transaction = FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
-    paths = [".repo_template", ".agents/skills", ".claude/skills", ".claude/settings.json",
-             ".claude/hooks", ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
-             "AGENTS.md", "docs/tasks", "docs/blueprint/conventions.md",
-             "docs/specs_index.md",
+    # 事务范围收敛为 apply 实际写入集合：硬同步树、软链宿主、命令薄层、
+    # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs_index、
+    # settings/hooks 等迁移专属或消费自有路径，避免用户 task 改动阻塞 accept、
+    # 回滚误删用户文档，以及每轮整树快照 docs/tasks。
+    paths = [".repo_template", ".agents/skills", ".claude/skills",
+             ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
+             "AGENTS.md",
              *ctx.MCP_CANDIDATES]
     try:
         transaction.begin(paths)
@@ -230,8 +233,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
             head = source_commit
             state["last_synced_commit"] = head
             # Portable provenance. Local source paths and private policies stay local.
-            source = state["template_source"]
-            remote = source["value"] if source["kind"] == "url" else _git(src, "remote", "get-url", "origin").stdout.strip()
+            from .source import require_template_source as _require_ts
+            _kind, _value = _require_ts(state)
+            remote = _value if _kind == "url" else _git(src, "remote", "get-url", "origin").stdout.strip()
             if remote and not re.match(r"^(?:https?://|ssh://|git://|[^/\s]+@[^:]+:)", remote):
                 remote = None
             if remote and re.match(r"https?://[^/]*@", remote):
@@ -248,7 +252,10 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state["resolved_checkout"] = str(src)
         write_state(state, sync=sync)
         transaction.applied(verified=not args.skip_tests)
-    except (OSError, ValueError, ctx.SyncError, subprocess.SubprocessError) as error:
+    except Exception as error:
+        # 任意异常（含 KeyError / AttributeError 等嵌套结构异常）都必须回滚，
+        # 绝不让 journal 停留在 applying。KeyboardInterrupt / SystemExit 属
+        # BaseException，不在此捕获。
         rollback_ok = False
         try:
             transaction.rollback(automatic=True)
