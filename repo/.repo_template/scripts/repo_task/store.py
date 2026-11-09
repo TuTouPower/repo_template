@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,42 +36,62 @@ class CommitTaskSnapshot:
 
 
 class CommitSnapshotCache:
-    """操作内确定 commit 只读解析结果缓存。"""
+    """操作内确定 commit 只读解析结果缓存。
 
-    def __init__(self) -> None:
-        self._commit_cache: dict[tuple[str, str], CommitTaskSnapshot] = {}
-        self._owner_cache: dict[tuple[str, str, str], tuple[dict, dict, str]] = {}
+    显式注入到调用链，不设模块级全局实例；有界 LRU 防止长操作内内存单调增长。
+    repo_key 由调用方带上模板名，同一 commit 换模板名不会命中旧快照。
+    """
+
+    def __init__(self, max_entries: int = 256) -> None:
+        self._max_entries = max_entries
+        self._commit_cache: OrderedDict[tuple[str, str], CommitTaskSnapshot] = OrderedDict()
+        self._owner_cache: OrderedDict[tuple[str, str, str], tuple[dict, dict, str]] = OrderedDict()
+
+    @staticmethod
+    def _get(store: OrderedDict, key):
+        if key not in store:
+            return None
+        store.move_to_end(key)
+        return store[key]
+
+    def _set(self, store: OrderedDict, key, value) -> None:
+        store[key] = value
+        store.move_to_end(key)
+        while len(store) > self._max_entries:
+            store.popitem(last=False)
 
     def get_commit(self, repo_key: str, sha: str) -> CommitTaskSnapshot | None:
-        return self._commit_cache.get((repo_key, sha))
+        return self._get(self._commit_cache, (repo_key, sha))
 
     def set_commit(self, repo_key: str, sha: str, snapshot: CommitTaskSnapshot) -> None:
-        self._commit_cache[(repo_key, sha)] = snapshot
+        self._set(self._commit_cache, (repo_key, sha), snapshot)
 
     def get_owner(self, repo_key: str, sha: str, tid: str) -> tuple[dict, dict, str] | None:
-        return self._owner_cache.get((repo_key, sha, tid))
+        return self._get(self._owner_cache, (repo_key, sha, tid))
 
     def set_owner(self, repo_key: str, sha: str, tid: str, bundle: tuple[dict, dict, str]) -> None:
-        self._owner_cache[(repo_key, sha, tid)] = bundle
+        self._set(self._owner_cache, (repo_key, sha, tid), bundle)
 
     def clear(self) -> None:
         self._commit_cache.clear()
         self._owner_cache.clear()
 
 
-_GLOBAL_SNAPSHOT_CACHE = CommitSnapshotCache()
+def _cache_key(target: Path, template_name: str) -> str:
+    """缓存键含模板名，避免同一 commit 换模板名返回错误快照（DS L214）。"""
+    return f"{target.resolve()}|{template_name}"
 
 
 def clear_commit_snapshot_cache() -> None:
-    """清理全局操作快照缓存。"""
-    _GLOBAL_SNAPSHOT_CACHE.clear()
+    """兼容只读调用方：缓存已改为操作级显式注入，随调用结束回收，无进程级状态可清。"""
+
 
 def task_schedule_references(
     target_tid: str, tasks: list[dict] | None = None, *, repo: "ctx.RepoContext | None" = None,
 ) -> list[str]:
-    """返回非归档 task 中引用 target_tid 的字段，供 drop/purge 拒绝悬空边。
+    """返回非终态 task 中引用 target_tid 的字段，供 drop/purge 拒绝悬空边。
 
-    只扫活跃目录：归档 task 的历史边无脚本清理途径（edit 拒绝归档、归档只准新增），
+    只扫活跃目录：done/dropped/integrated task 的历史边无脚本清理途径，
     若计入会永久锁死被引用 task 的 drop。
     """
     references = []
@@ -167,17 +187,16 @@ def _load_tasks_at_commit(
     target = root or (repo.root if repo is not None else None)
     if target is None:
         raise ctx.TaskDataError("读取 commit tasks 需要显式 repo 或 root")
-    repo_key = str(target.resolve())
-    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
-
-    cached = cache_store.get_commit(repo_key, commit_sha)
-    if cached is not None:
-        return cached
-
     if template_name is None:
         if repo is None:
             raise ctx.TaskDataError("扫描 ref 需要显式 repo 或 template_name")
         template_name = repo.template_dir.name
+    repo_key = _cache_key(target, template_name)
+    cache_store = cache if cache is not None else CommitSnapshotCache()
+
+    cached = cache_store.get_commit(repo_key, commit_sha)
+    if cached is not None:
+        return cached
 
     display_ref = ref_label or commit_sha
     r = _git(
@@ -274,8 +293,8 @@ def scan_tasks_at_ref(
     return [copy.deepcopy(t) for t in snapshot.tasks]
 
 
-def find_task(tid: str, tasks: list[dict] | None = None) -> dict | None:
-    for t in (scan_tasks() if tasks is None else tasks):
+def find_task(tid: str, tasks: list[dict]) -> dict | None:
+    for t in tasks:
         if t["tid"] == tid:
             return t
     return None
@@ -298,9 +317,9 @@ def load_owner_task_at_ref(
     if repo is None:
         raise ctx.TaskDataError("读取 owner task 需要显式 repo")
     target = root or repo.root
-    repo_key = str(target.resolve())
-    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
     template_name = repo.template_dir.name
+    repo_key = _cache_key(target, template_name)
+    cache_store = cache if cache is not None else CommitSnapshotCache()
 
     commit_sha = None
     if ref and not ref.startswith("-"):
@@ -453,7 +472,8 @@ def discover_effective_bundle(
     """
     tasks: dict[str, dict] = {}
     sources: dict[str, dict] = {}
-    for tid, task, source, read_at in _discover_effective_entries(repo=repo):
+    cache = CommitSnapshotCache()
+    for tid, task, source, read_at in _discover_effective_entries(repo=repo, cache=cache):
         if not allow_corrupt and task.get("status") == "corrupt":
             raise ctx.TaskDataError(task.get("note") or f"{tid} 状态损坏（来源 {source}）")
         tasks[tid] = task
@@ -491,7 +511,7 @@ def discover_effective_sources(
 
 
 def _discover_effective_entries(
-    *, repo: "ctx.RepoContext",
+    *, repo: "ctx.RepoContext", cache: CommitSnapshotCache,
 ) -> list[tuple[str, dict, str, str | None]]:
     """(tid, task, source, read_at) 列表，按 worktree → 未合并分支 → main 优先级。"""
     require_primary_worktree(repo=repo)
@@ -503,7 +523,7 @@ def _discover_effective_entries(
     for branch in _unmerged_task_branches(repo=repo):
         owner_tid = ctx.TASK_BRANCH_RE.fullmatch(branch).group(1)
         try:
-            branch_task = load_owner_task_at_ref(owner_tid, branch, repo=repo)
+            branch_task = load_owner_task_at_ref(owner_tid, branch, repo=repo, cache=cache)
         except ctx.TaskNotFoundError:
             # 从未合并链尾分叉出的新分支在 finish 提交前，其 git tree 尚不含主干新建的 owner_tid。
             continue
@@ -633,8 +653,8 @@ def _owner_bundle_at_ref(
     cache: CommitSnapshotCache | None = None,
 ) -> tuple[dict, dict, str]:
     target = root or repo.root
-    repo_key = str(target.resolve())
-    cache_store = cache if cache is not None else _GLOBAL_SNAPSHOT_CACHE
+    repo_key = _cache_key(target, repo.template_dir.name)
+    cache_store = cache if cache is not None else CommitSnapshotCache()
 
     snap = cache_store.get_commit(repo_key, ref_sha)
     if snap is not None:
@@ -649,7 +669,7 @@ def _owner_bundle_at_ref(
         record, fm, body = owner_bundle
         return copy.deepcopy(record), copy.deepcopy(fm), body
 
-    record = load_owner_task_at_ref(tid, ref_sha, root=root, repo=repo, cache=cache)
+    record = load_owner_task_at_ref(tid, ref_sha, root=root, repo=repo, cache=cache_store)
     owner_bundle = cache_store.get_owner(repo_key, ref_sha, tid)
     if owner_bundle is not None:
         r, f, b = owner_bundle
@@ -682,19 +702,6 @@ def load_task_backlog_baseline(
             f"status={fm.get('status')!r} 非 backlog"
         )
     return task, fm, body, primary_sha
-
-
-def _path_exists_in_tree(
-    ref_sha: str, rel_path: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
-) -> bool:
-    r = _git(
-        ["ls-tree", "--name-only", "--end-of-options", ref_sha, "--", rel_path],
-        root=root, repo=repo,
-    )
-    if r.returncode != 0:
-        raise ctx.TaskDataError(f"无法读取 {ref_sha}:{rel_path}：{r.stderr.strip()}")
-    return bool(r.stdout.strip())
 
 
 def resolve_baseline_spec_text(

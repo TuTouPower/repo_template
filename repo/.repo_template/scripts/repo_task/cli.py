@@ -19,7 +19,7 @@ from .control import (
     cmd_view,
 )
 from .goal import cmd_goal, cmd_goal_check
-from .recovery import cmd_recovery, cmd_ledger_import
+from .recovery import cmd_recovery, cmd_ledger_import, cmd_finish_txn_clear
 from .graph import cmd_merge_backlog, cmd_graph_transaction
 from .plan import cmd_plan
 from .review_status import cmd_review_status
@@ -152,6 +152,13 @@ def main():
     purge.add_argument("tid")
     purge.add_argument("--reason", required=True)
     purge.set_defaults(func=cmd_purge)
+
+    txn_clear = sub.add_parser(
+        "finish-txn-clear",
+        help="清理已完成（committed）的 finish 提交事务 journal（recovery 收尾出口）",
+    )
+    txn_clear.add_argument("tid")
+    txn_clear.set_defaults(func=cmd_finish_txn_clear)
 
     listing = sub.add_parser("list", help="列出 task")
     listing.add_argument("--status", choices=ctx.VALID_STATUSES)
@@ -333,3 +340,6 @@ def main():
     except OSError as error:
         # 磁盘/权限等系统错误统一入口，避免多步命令中途裸 traceback（F20）
         sys.exit(f"{args.cmd} 失败（{error}）")
+    except (ValueError, TypeError, AttributeError) as error:
+        # 展示层账本/绑定记录非法结构统一降级，避免裸 traceback 打断已完成业务（DS L268）
+        sys.exit(f"{args.cmd} 失败（数据结构异常：{error}）；请检查相关 JSON/绑定记录")

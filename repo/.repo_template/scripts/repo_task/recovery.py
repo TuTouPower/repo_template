@@ -1,5 +1,6 @@
 """Read-only recovery classification. Never reserve, commit, finish, or remove files."""
 import json
+import sys
 
 from . import context as ctx
 from .attempts import current_attempt_record, overlapping_attempts, validate_execution_context
@@ -26,6 +27,7 @@ def recovery_state(tid: str, *, repo) -> dict:
     events = ledger_read(repo=repo)
     record = current_attempt_record(tid, events)
     state = {"tid": tid, "phase": "needs_attention", "action": "停止并报告状态冲突"}
+    txn_committed = False
     if record:
         state.update({name: record[name] for name in ("attempt", "execution_id")})
         state["owner_id"] = record.get("owner_id", "")
@@ -37,8 +39,16 @@ def recovery_state(tid: str, *, repo) -> dict:
     branch = task.get("branch") or f"{tid}_{task['slug']}"
     state.update(branch=branch, worktree=str(worktree))
 
+    clear_hint = (
+        f"；收尾完成后运行 `python3 .repo_template/scripts/task.py finish-txn-clear {tid}` "
+        "清理已完成事务"
+    )
+
     def phase(value: str, action: str) -> dict:
         state.update(phase=value, action=action)
+        if txn_committed:
+            state["finish_txn"] = "committed"
+            state["action"] += clear_hint
         return state
 
     if registered_branch and worktree.is_dir():
@@ -50,22 +60,26 @@ def recovery_state(tid: str, *, repo) -> dict:
             return phase("finish_txn_corrupt", f"提交事务 journal 损坏：{error}；人工核查后清理")
         if txn is not None:
             verdict, detail = judge_txn(worktree, txn)
-            actions = {
-                "committed": "实现 commit 已产生；核对 review/handoff 后按 run-close 收尾，不重复提交",
-                "rollback_safe": "HEAD 未前进且现场未变；重跑 finish 会先幂等回滚该事务再继续",
-                "unknown": "提交结果未知或现场被外部修改；保留 journal，人工核查 HEAD、git log 与工作区后决定",
-            }
-            return phase(f"finish_txn_{verdict}", f"{detail}；{actions[verdict]}")
+            # committed 不短路：落入常规状态判定，给出 committed_unreported /
+            # reported_uncleaned / review_mismatch 等准确 phase（P1-2）。
+            if verdict == "committed":
+                txn_committed = True
+            else:
+                actions = {
+                    "rollback_safe": "HEAD 未前进且现场未变；重跑 finish 会先幂等回滚该事务再继续",
+                    "unknown": "提交结果未知或现场被外部修改；保留 journal，人工核查 HEAD、git log 与工作区后决定",
+                }
+                return phase(f"finish_txn_{verdict}", f"{detail}；{actions[verdict]}")
     if task.get("status") == "corrupt":
         return phase("corrupt", corrupt_detail or task.get("note") or "现场数据损坏；人工核查后处理")
 
     if not registered_branch:
         if task["status"] in ctx.TERMINAL_STATUSES and (not record or record["state"] == "integrated"):
-            return phase("integrated_or_archived", "检查 Git merge 状态和 integrated 记录；不重复执行")
+            return phase("integrated_or_terminal", "检查 Git merge 状态和 integrated 记录；不重复执行")
         if record:
             verdict, _kind, detail = verify_integrate_ready(
-            tid, record["attempt"], record["execution_id"], repo=repo
-        )
+                tid, record["attempt"], record["execution_id"], repo=repo
+            )
             report = record.get("report") or {}
             if verdict == "ready" and record.get("terminal_status") == "completed" and report.get("status") == "done":
                 return phase("closed", "保留分支作下一 --base；整链完成后询问合并授权")
@@ -96,7 +110,11 @@ def recovery_state(tid: str, *, repo) -> dict:
                 return phase("executing", "尚未 claim：按原 identity 用 attempt claim 领取执行权（run-begin 中途失败时的现场），不重复 start/reserve")
             return phase("executing", "核对 owner_id；同一 owner 直接续行。跨会话接管必须确认原会话已停止并 attempt claim --replace-owner ... --confirm-stopped，不得直接复用 identity 并行实施")
         if (record.get("report") or {}).get("status") in {"blocked", "failed"}:
-            return phase("retry_ready", "task 保持 active；直接 reserve 新 identity 后继续")
+            return phase(
+                "retry_ready",
+                "task 保持 active；reserve 新 identity 后继续。新 attempt 须重新绑定状态行："
+                "若 bind 失败会输出含 session/tid/identity 的诊断，按诊断排查，不猜补 start 历史",
+            )
         return state
     if fm["status"] != "done" or record is None:
         return state
@@ -134,6 +152,21 @@ def recovery_state(tid: str, *, repo) -> dict:
         state["action"] = f"停止：{error}"
         return state
     tip_sha = head.stdout.strip()
+    # P1-3：recovery 边界统一校验 tip commit 隐私，泄漏则给出专用 phase，
+    # 不再让泄漏提交经 committed_unreported / run-close 一路合入主干。
+    try:
+        from .lifecycle import scan_tip_privacy_leaks
+        tip_leaks = scan_tip_privacy_leaks(tip_sha, repo=repo)
+    except ctx.TaskDataError as error:
+        state["action"] = f"停止：{error}"
+        return state
+    if tip_leaks:
+        shown = "；".join(tip_leaks[:8])
+        return phase(
+            "committed_privacy_leak",
+            f"实现 commit {tip_sha[:12]} 含开发者家目录绝对路径泄漏（{shown}）；"
+            "HEAD 已前移不回滚，停止收尾/合入，人工修正后按 finish-unwind 或 recovery 处理",
+        )
     diff_anchor = fm.get("diff_anchor", "")
     report = record.get("report") or {}
     report_done = report.get("status") == "done"
@@ -197,7 +230,7 @@ def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: "ctx.RepoCont
     """tip 是否已被其它本地分支包含（后继分支或已合入）。"""
     result = _git(["branch", "--format=%(refname:short)"], repo=repo)
     if result.returncode != 0:
-        return False
+        raise ctx.TaskDataError(f"无法列出本地分支，后继判定失败：{result.stderr.strip()}")
     for branch in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
         if branch == current_branch:
             continue
@@ -272,3 +305,38 @@ def cmd_ledger_import(args):
     ledger_locked_append_many(build, repo=repo)
     print(json.dumps({"tid": args.tid, "attempt": attempt, "execution_id": execution_id,
                       "recovered_from": sha}, ensure_ascii=False))
+
+
+@control_locked
+def cmd_finish_txn_clear(args):
+    """显式清理已完成（committed）的 finish 提交事务 journal（P1-2 出口）。
+
+    unknown 保留现场、rollback_safe 交给重跑 finish 幂等回滚、committed 且 tip
+    隐私核对通过才 finalize，避免清理掉一个泄漏提交的唯一现场证据。
+    """
+    from .commit_txn import finalize, judge, load
+    from .lifecycle import scan_tip_privacy_leaks
+
+    repo = args.repo
+    require_primary_worktree(repo=repo)
+    tid = args.tid
+    worktree = (repo.primary_root / repo.worktree_rel(tid)).resolve()
+    txn = load(worktree)
+    if txn is None:
+        print(f"{tid} 无遗留提交事务")
+        return
+    if txn.get("tid") != tid:
+        sys.exit(f"拒绝清理：worktree 内是 {txn.get('tid')} 的提交事务，不是 {tid}")
+    verdict, detail = judge(worktree, txn)
+    if verdict == "unknown":
+        sys.exit(f"拒绝清理：提交结果未知（{detail}）；保留 journal 与现场，按 recovery 人工核查")
+    if verdict == "rollback_safe":
+        sys.exit(f"拒绝清理：HEAD 未前进（{detail}）；重跑 finish 会幂等回滚该事务，无需手工清理")
+    head = _git(["rev-parse", "HEAD"], root=worktree)
+    if head.returncode != 0 or not head.stdout.strip():
+        sys.exit("拒绝清理：无法读取 worktree HEAD")
+    leaks = scan_tip_privacy_leaks(head.stdout.strip(), repo=repo)
+    if leaks:
+        sys.exit(f"拒绝清理：实现 commit 含隐私泄漏（{leaks[:3]}）；先按 recovery 修正")
+    finalize(worktree)
+    print(f"{tid} 已清理已完成的提交事务 journal")

@@ -114,7 +114,7 @@ def _show_snapshot(snapshot: dict, repo) -> None:
     stale = _stale_members(queue, repo)
     if stale:
         print(
-            f"注意：队列含已归档或不存在成员（{_format_queue(stale)}），"
+            f"注意：队列含已闭环或不存在成员（{_format_queue(stale)}），"
             "/goal 行不可直接执行"
         )
     print()
@@ -308,7 +308,7 @@ def _classify(
 ) -> tuple[str, str]:
     main_status = main_statuses.get(tid)
     if main_status == "done":
-        return "integrated", "主干已归档"
+        return "integrated", "主干已 done（原位保留，未迁移）"
     if main_status == "dropped":
         return "dropped", "已 dropped；队列快照过期，重新 task.py goal --reset"
     records = attempts_for_tid(tid, events)

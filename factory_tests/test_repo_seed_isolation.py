@@ -18,7 +18,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -241,47 +240,48 @@ def test_mutation_of_repo_a_does_not_affect_repo_b_or_seed(
 def test_cross_process_control_lock_isolation(
     workflow_three_tasks_seed: Path, tmp_path: Path
 ):
-    """A 持有其业务锁时，B 对独立副本的操作能在受控超时内完成；使用独立进程验证。"""
+    """A 持有其业务锁时，B 对独立副本的锁操作能顺利完成；文件事件同步，不依赖墙钟阈值。"""
     repo_a = tmp_path / "repo_a"
     repo_b = tmp_path / "repo_b"
     copy_seed_repo(workflow_three_tasks_seed, repo_a)
     copy_seed_repo(workflow_three_tasks_seed, repo_b)
 
+    release = tmp_path / "release_a"
     lock_worker_code = """
 import sys
 import time
 from pathlib import Path
 
 repo_path = Path(sys.argv[1]).resolve()
+release = Path(sys.argv[2])
 sys.path.insert(0, str(repo_path / ".repo_template" / "scripts"))
 from repo_task.locks import git_common_lock, CONTROL_LOCK_NAME
 
 with git_common_lock(repo_path, CONTROL_LOCK_NAME):
     sys.stdout.write("ACQUIRED\\n")
     sys.stdout.flush()
-    # 保持锁直到父进程通知或超时
-    time.sleep(3.0)
+    while not release.exists():
+        time.sleep(0.02)
 sys.stdout.write("RELEASED\\n")
 sys.stdout.flush()
 """
 
-    # 启动进程 A，在 repo_a 上申请锁并持有 3 秒
+    # A 获取 repo_a 的锁后一直持有，直到父进程写入 release 事件。
     proc_a = subprocess.Popen(
-        [sys.executable, "-c", lock_worker_code, str(repo_a)],
+        [sys.executable, "-c", lock_worker_code, str(repo_a), str(release)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
 
     try:
-        # 等待 proc_a 获得锁
         assert proc_a.stdout is not None
         line = proc_a.stdout.readline().strip()
         assert line == "ACQUIRED", f"proc_a 未能成功获取锁: {proc_a.stderr.read()}"
 
-        # 此时进程 A 正在持有 repo_a 的锁！
-        # 在独立副本 repo_b 上尝试获取锁，应该能立即成功
-        t0 = time.monotonic()
+        # 锁隔离正确时 B 立即拿到 repo_b 的锁；若两个副本错误共享同一把锁，
+        # B 会被 A 阻塞，而 A 在等 release、父进程在等 B，形成死锁，
+        # 最终由 proc_b 的 timeout 暴露。timeout 只是死锁安全网，不是墙钟阈值断言。
         test_b_code = """
 import sys
 from pathlib import Path
@@ -298,15 +298,13 @@ with git_common_lock(repo_path, CONTROL_LOCK_NAME):
             [sys.executable, "-c", test_b_code, str(repo_b)],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
-        elapsed = time.monotonic() - t0
         assert proc_b.returncode == 0, f"proc_b 失败: {proc_b.stderr}"
         assert "B_SUCCESS" in proc_b.stdout
-        # 证明没有被 proc_a 阻塞 3 秒
-        assert elapsed < 2.5, f"proc_b 被 repo_a 的锁阻塞了: 耗时 {elapsed}s"
 
     finally:
+        release.write_text("release", encoding="utf-8")
         proc_a.terminate()
         try:
             proc_a.wait(timeout=5)

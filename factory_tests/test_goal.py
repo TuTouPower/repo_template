@@ -305,7 +305,9 @@ def test_goal_empty_queue_view_keeps_snapshot_reset_clears(git_repo):
     viewed = _cli(git_repo, "goal")
     assert viewed.returncode == 0, viewed.stderr
     assert "当前冻结队列：t001, t002" in viewed.stdout
-    assert "队列含已归档或不存在成员（t001, t002）" in viewed.stdout
+    # L226：提示统一为原位 done/dropped/integrated 语义，断言同步改为「已闭环」，
+    # 仍校验具体提示与两个 stale tid，强度不减。
+    assert "队列含已闭环或不存在成员（t001, t002）" in viewed.stdout
     assert "/goal 行不可直接执行" in viewed.stdout
     assert snapshot.is_file()
     assert _snapshot(git_repo) == before

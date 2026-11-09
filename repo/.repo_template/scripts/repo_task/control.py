@@ -150,16 +150,38 @@ def _print_json(event: dict) -> None:
     print(json.dumps(event, ensure_ascii=False))
 
 
+# 展示层账本/绑定记录可能出现合法 JSON 非对象、编码异常等；统一降级为诊断，
+# 不让裸 traceback 打断已完成的业务事务（DS L268）。
+_STATUSLINE_ERRORS = (OSError, ValueError, TypeError, AttributeError)
+
+
+def _statusline_diagnostic(
+    action: str, repo: "ctx.RepoContext", owner_id: str, tid: str, detail: str,
+) -> None:
+    print(
+        f"WARNING: 状态行{action}失败（project={repo.root} session={owner_id!r} "
+        f"tid={tid}：{detail}）；不影响任务收尾",
+        file=sys.stderr,
+    )
+
+
 def _bind_statusline(
     repo: "ctx.RepoContext", owner_id: str, tid: str, attempt: int, execution_id: str,
 ) -> None:
-    """展示层副作用：显式写入会话 → worktree 绑定；失败只诊断，不影响业务事务。"""
+    """展示层副作用：显式写入会话 → worktree 绑定；不吞 bind 返回值，失败只诊断。"""
     from . import statusline
 
+    identity = f"attempt={attempt} execution_id={execution_id}"
     try:
-        statusline.bind(str(repo.root), owner_id, tid, attempt, execution_id)
-    except (OSError, ValueError) as error:
-        print(f"WARNING: 状态行绑定失败（{error}）；不影响任务收尾", file=sys.stderr)
+        bound = statusline.bind(str(repo.root), owner_id, tid, attempt, execution_id)
+    except _STATUSLINE_ERRORS as error:
+        _statusline_diagnostic(f"绑定（{identity}）", repo, owner_id, tid, str(error))
+        return
+    if not bound:
+        _statusline_diagnostic(
+            f"绑定（{identity}）", repo, owner_id, tid,
+            "无打开的 worktree 窗口；新 attempt 须有可判定的最新 start 事件",
+        )
 
 
 def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str) -> None:
@@ -167,8 +189,8 @@ def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str) -> None
 
     try:
         statusline.unbind(str(repo.root), owner_id, tid)
-    except (OSError, ValueError) as error:
-        print(f"WARNING: 状态行解绑失败（{error}）；不影响任务收尾", file=sys.stderr)
+    except _STATUSLINE_ERRORS as error:
+        _statusline_diagnostic("解绑", repo, owner_id, tid, str(error))
 
 
 @control_locked
@@ -354,6 +376,9 @@ def cmd_run_close(args):
         except ctx.TaskDataError as error:
             sys.exit(f"report=done 拒绝：{error}；先在 worktree 执行 finish")
         require_report_done_ready(tid, attempt, execution_id, repo=repo)
+        # P1-3：run-close 边界统一校验 tip commit 隐私，泄漏提交不得闭环。
+        from .lifecycle import verify_tip_privacy
+        verify_tip_privacy(sha, repo=repo)
     written = []
     step = "terminal"
     try:
