@@ -24,7 +24,6 @@ from repo_task.privacy import (  # noqa: E402
     PrivacyScanError,
     decode_candidate_bytes,
     find_developer_path_leaks,
-    is_binary_candidate,
     is_privacy_candidate,
     scan_candidate_bytes,
     scan_git_index_privacy,
@@ -305,34 +304,11 @@ def test_tree_scan_reads_committed_snapshot(repo):
 
 
 # --- P1-4：读取前按后缀/大小预过滤，复用 git_ops.batch_cat_file ---
-def test_binary_suffix_is_excluded_from_candidates():
-    assert is_binary_candidate("a.png")
-    assert is_binary_candidate("a.PNG")
-    assert not is_binary_candidate("a.md")
-
-
-def test_binary_suffix_is_filtered_before_git_read(repo, monkeypatch):
+def test_text_cannot_bypass_scan_by_binary_filename(repo):
     token = _joined("", "Users", "alice")
-    (repo / "image.png").write_bytes((token + "\n").encode())
+    (repo / "image.png").write_text(token + "\n", encoding="utf-8")
     _git(repo, "add", "-A")
-    png_sha = _git(repo, "ls-files", "-s", "--", "image.png").stdout.split()[1]
-
-    seen: list[str] = []
-    real_sizes = git_ops.batch_object_sizes
-    real_cat = git_ops.batch_cat_file
-
-    def spy_sizes(oids, **kw):
-        seen.extend(oids)
-        return real_sizes(oids, **kw)
-
-    def spy_cat(oids, **kw):
-        seen.extend(oids)
-        return real_cat(oids, **kw)
-
-    monkeypatch.setattr(git_ops, "batch_object_sizes", spy_sizes)
-    monkeypatch.setattr(git_ops, "batch_cat_file", spy_cat)
-    assert scan_git_index_privacy(repo) == []
-    assert png_sha not in seen
+    assert any("image.png" in item for item in scan_git_index_privacy(repo))
 
 
 def test_oversized_blob_is_scanned_per_object_instead_of_failing_whole_scan(

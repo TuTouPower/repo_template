@@ -50,6 +50,11 @@ def main():
         description=f"task 状态入口（状态权威 = {ctx.PROGRESS_FILE}；执行权威 = exact attempt identity）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
+    from .privacy import PrivacyScanError, cmd_privacy_audit
+    audit = sub.add_parser("privacy-audit", help="显式扫描指定 Git 快照全部非归档文本")
+    audit.add_argument("--ref", default="HEAD")
+    audit.set_defaults(func=cmd_privacy_audit)
+
     recovery = sub.add_parser("recovery", help="只读判定 start/finish/commit/attempt 中断阶段（JSON）")
     recovery.add_argument("tid")
     recovery.set_defaults(func=cmd_recovery)
@@ -337,7 +342,7 @@ def main():
     args.repo = ctx.RepoContext.from_code_location(Path(__file__))
     try:
         args.func(args)
-    except ctx.TaskDataError as error:
+    except (ctx.TaskDataError, PrivacyScanError) as error:
         sys.exit(f"{error}\n数据不一致；请提示用户处理。")
     except OSError as error:
         # 磁盘/权限等系统错误统一入口，避免多步命令中途裸 traceback（F20）
