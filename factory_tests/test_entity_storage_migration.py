@@ -39,7 +39,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from repo_task.context import RepoContext
+from repo_task.context import RepoContext, TaskDataError
 from repo_task.documents import parse_front_matter_text
 from repo_task.integration import _dependency_implementations
 from repo_task.spikes import validate_spike_metadata
@@ -390,19 +390,31 @@ def test_entity_storage_migration_blocks_on_identical_audit_log_existing(repo):
         migrate_entity_storage(sync=sync, write=False)
 
 
-def test_entity_storage_migration_blocks_on_tampered_task_lineage(repo):
-    """迁移预检中自动调用实现提交与血缘复验门禁：篡改 base_sha 导致无法匹配实现提交时直接阻断。"""
+def test_entity_storage_migration_preserves_tampered_handoff_bytes_and_defers_verification_to_use(repo):
+    """信任边界（D3-T7）：迁移只做存储转换与完整性校验，不复验历史实现关联。
+    篡改 base_sha 的 handoff 不再阻断迁移且字节原样保留；被用作依赖时仍被业务门禁拒绝。"""
     _setup_legacy_repo(repo)
     t1_handoff = repo / "docs/archive/tasks/t001_alpha/handoff.json"
     data = json.loads(t1_handoff.read_text(encoding="utf-8"))
     data["base_sha"] = "0" * 40
-    t1_handoff.write_text(json.dumps(data), encoding="utf-8")
+    tampered_bytes = json.dumps(data).encode("utf-8")
+    t1_handoff.write_bytes(tampered_bytes)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "tamper t001 handoff base_sha")
     sync = ctx.SyncContext.for_consumer(repo)
 
-    with pytest.raises(MigrationError, match="无法解析为 commit|复验失败|血缘不合法"):
-        migrate_entity_storage(sync=sync, write=False)
+    # 历史证据缺失/损坏不再阻断迁移
+    migrate_entity_storage(sync=sync, write=True)
+
+    # 证据保真：handoff.json 字节原样保留，不补造字段、不重新签发
+    moved = repo / "docs/tasks/t001_alpha/handoff.json"
+    assert moved.read_bytes() == tampered_bytes
+
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "chore: migrate entity storage and tampered handoff")
+    # 用作依赖时仍被业务门禁拒绝（无 override、无历史格式兼容分支）
+    with pytest.raises(TaskDataError, match="缺依赖实现的可验证 SHA"):
+        _dependency_implementations("t001", repo=RepoContext.for_root(repo))
 
 
 def test_entity_storage_migration_blocks_on_spike_missing_findings_ref(repo):

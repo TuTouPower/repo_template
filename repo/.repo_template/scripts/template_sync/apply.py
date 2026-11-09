@@ -60,7 +60,7 @@ def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
 
     与 status / plan / migrate 共用 migration_findings 这一单一可处理集合，
     消除「plan 显示一致但 apply 阻断」。引导命令基于固定来源 product 与消费仓身份，
-    不再指向旧消费仓本地脚本（旧工具链无 migrate 子命令）。
+    不再指向旧消费仓本地脚本。
     """
     entity_problems = migration_findings("entity-storage", sync)
     if entity_problems:

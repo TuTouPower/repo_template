@@ -41,7 +41,7 @@
    - 检查打印的实体映射清单与校验状态，确认无异常。
 3. **正式执行落盘**：
    - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage --write`；
-   - 迁移器在排他锁与持久文件事务 `FileTransaction` 内原子执行；若任一步骤校验失败，整体回滚原状态。
+    - 迁移器在排他锁与持久文件事务 `FileTransaction` 内原子执行；单次迁移内任一步骤校验失败，整体回滚原状态（作用域限单次迁移内部；`migrate all` 按类型逐项提交，已完成步骤保留）。
 4. **提交与恢复正常工作**：
    - 检查 `git status` 与 diff，提交迁移 commit；
    - 随后可正常执行 `repo_sync.py apply` 或日常开发流程。
@@ -50,7 +50,7 @@
 
 日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、退役 hook 残留、旧实体存储布局或旧布局 state 时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。迁移不再隐含在同步写盘里。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（含 entity-storage、retired-hooks、legacy-state），并给出可直接执行的迁移命令，避免 plan 显示一致但 apply 阻断。
 
-显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：失败整体回滚，成功后校验目标 schema，不可机械转换的数据列出并中止。若仍存在 `docs/archive/tasks/` 等旧多目录布局，须先按上一节执行 `entity-storage` 迁移。
+显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：单次迁移内失败整体回滚（作用域限单次迁移内部），成功后校验目标 schema，不可机械转换的数据列出并中止。若仍存在 `docs/archive/tasks/` 等旧多目录布局，须先按上一节执行 `entity-storage` 迁移。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 

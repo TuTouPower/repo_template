@@ -1630,8 +1630,9 @@ def test_progress_migration_rejects_duplicate_names_before_any_writes(env, paren
     assert {path: path.read_bytes() for path in (consumer / parent).rglob('*') if path.is_file()} == before
 
 
-def test_migrate_all_failure_restores_workflow_migration_and_history(env, monkeypatch):
-    """A10：显式迁移中途失败时整体回滚，旧布局与历史文件原样保留。"""
+def test_migrate_all_failure_keeps_completed_steps_and_blocks_only_failed_kind(env, monkeypatch):
+    """A10（逐项事务语义）：显式 migrate all 中途失败时，已完成步骤保留、仅失败步骤未写入；
+    旧布局与历史文件原样保留，不存在跨类型全局回滚。"""
     consumer = env['consumer']
     _bind_repo_task_context(monkeypatch, consumer)
     spec, progress = _install_current_workflow_templates(env['src'])

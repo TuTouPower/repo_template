@@ -108,7 +108,7 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
 
 消费仓旧布局或旧 schema 升级须通过显式迁移命令完成，日常 `apply` 遇到旧 schema 会直接阻断并拒绝写入。
 
-- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`（旧消费仓本地脚本不含 `migrate` 子命令），默认 dry-run、`--write` 落盘：
+- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`，默认 dry-run、`--write` 落盘：
   `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate entity-storage --write`。
   针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
   - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验终态 done/dropped 证据）；

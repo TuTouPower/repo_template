@@ -406,136 +406,6 @@ def _validate_spike_closed_evidence(report_text: str, source_label: str, consume
     _validate_spike_findings_references(report_text, source_label, consumer)
 
 
-def _validate_done_task_implementation_and_lineage(
-    consumer: Path, task: TaskItem, sync: ctx.SyncContext
-) -> str:
-    """对 status: done 任务执行 _dependency_implementations 算法验证实现提交与血缘（方案第 257–269 行）。"""
-    source_label = sync.rel(task.source_dir)
-    handoff_file = task.source_dir / "handoff.json"
-    if not handoff_file.is_file():
-        raise MigrationError(f"{source_label}: done 任务缺失 handoff.json 终态证据")
-    try:
-        handoff_data = json.loads(handoff_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as err:
-        raise MigrationError(f"{source_label}: handoff.json 损坏或无法读取：{err}") from err
-
-    if not isinstance(handoff_data, dict):
-        raise MigrationError(f"{source_label}: handoff.json 格式错误（须为 JSON 对象）")
-    if handoff_data.get("tid") != task.tid:
-        raise MigrationError(
-            f"{source_label}: handoff.json tid 不匹配（{handoff_data.get('tid')} != {task.tid}）"
-        )
-
-    _HANDOFF_TYPES = {
-        "tid": str,
-        "attempt": int,
-        "execution_id": str,
-        "status": str,
-        "branch": str,
-        "base_sha": str,
-        "spec_source_sha": str,
-        "tests": str,
-        "blackbox": str,
-        "review": str,
-        "review_scope": str,
-        "pending": list,
-        "findings": list,
-    }
-    for key, expected in _HANDOFF_TYPES.items():
-        if key not in handoff_data:
-            raise MigrationError(f"{source_label}: handoff 缺失必需键 {key}")
-        val = handoff_data[key]
-        if not isinstance(val, expected) or (expected is int and isinstance(val, bool)):
-            raise MigrationError(f"{source_label}: handoff 字段 {key} 类型非法")
-
-    if not (
-        isinstance(handoff_data.get("attempt"), int)
-        and not isinstance(handoff_data.get("attempt"), bool)
-        and handoff_data["attempt"] > 0
-    ):
-        raise MigrationError(f"{source_label}: handoff attempt 必须为正整数")
-    if not (
-        isinstance(handoff_data.get("execution_id"), str)
-        and bool(handoff_data["execution_id"].strip())
-    ):
-        raise MigrationError(f"{source_label}: handoff execution_id 必须为非空字符串")
-    if handoff_data.get("status") != "done":
-        raise MigrationError(
-            f"{source_label}: handoff status 必须为 done（实际为 {handoff_data.get('status')!r}）"
-        )
-
-    base_sha = handoff_data.get("base_sha")
-    if not base_sha or not isinstance(base_sha, str):
-        raise MigrationError(f"{source_label}: handoff base_sha 缺失")
-
-    res_base = _git(
-        consumer, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base_sha}^{{commit}}"
-    )
-    if res_base.returncode != 0 or not res_base.stdout.strip():
-        raise MigrationError(f"{source_label}: handoff base_sha {base_sha!r} 无法解析为 commit")
-    resolved_base = res_base.stdout.strip()
-
-    res_hash = _git(consumer, "hash-object", str(handoff_file))
-    if res_hash.returncode != 0 or not res_hash.stdout.strip():
-        raise MigrationError(f"{source_label}: 无法计算 handoff.json blob OID")
-    blob_oid = res_hash.stdout.strip()
-
-    # 获取主干分支 sha
-    res_def = _git(consumer, "rev-parse", "--verify", "--quiet", "refs/heads/main")
-    main_ref = "refs/heads/main" if res_def.returncode == 0 else "HEAD"
-    main_commit_res = _git(consumer, "rev-parse", "--verify", "--quiet", f"{main_ref}^{{commit}}")
-    if main_commit_res.returncode != 0 or not main_commit_res.stdout.strip():
-        raise MigrationError(f"{source_label}: 无法解析主干分支提交")
-    main_sha = main_commit_res.stdout.strip()
-
-    # 在提交历史中按 Blob OID 定位非 merge 实现提交
-    log_res = _git(
-        consumer, "log", "--format=%H", "--no-merges", f"--find-object={blob_oid}", main_sha
-    )
-    if log_res.returncode != 0:
-        raise MigrationError(f"{source_label}: git log --find-object 失败：{log_res.stderr.strip()}")
-    candidates = [line.strip() for line in log_res.stdout.splitlines() if line.strip()]
-
-    matched_commits = []
-    for sha in candidates:
-        parents_res = _git(consumer, "rev-parse", f"{sha}^@")
-        if parents_res.returncode != 0:
-            continue
-        parents = parents_res.stdout.splitlines()
-        if len(parents) != 1:
-            continue
-        first_parent = parents[0].strip()
-        fp_resolve = _git(consumer, "rev-parse", "--verify", "--quiet", f"{first_parent}^{{commit}}")
-        if fp_resolve.returncode != 0 or fp_resolve.stdout.strip() != resolved_base:
-            continue
-        tree_res = _git(consumer, "ls-tree", "-r", "-z", sha)
-        if tree_res.returncode != 0:
-            continue
-        sha_blobs = {
-            entry.split("\t", 1)[0].split()[2]
-            for entry in tree_res.stdout.split("\0")
-            if entry
-            and len(entry.split("\t", 1)[0].split()) >= 3
-            and entry.split("\t", 1)[0].split()[1] == "blob"
-        }
-        if blob_oid in sha_blobs:
-            matched_commits.append(sha)
-
-    if len(matched_commits) != 1:
-        raise MigrationError(
-            f"{source_label}: done 任务实现提交复验失败：预期唯一匹配，实际找到 {len(matched_commits)} 个候选"
-        )
-    impl_sha = matched_commits[0]
-
-    anc_res = _git(consumer, "merge-base", "--is-ancestor", impl_sha, main_sha)
-    if anc_res.returncode != 0:
-        raise MigrationError(
-            f"{source_label}: done 任务实现提交 {impl_sha} 血缘不合法（不在主干祖先链中）"
-        )
-
-    return impl_sha
-
-
 def _clean_empty_dir_strictly(dir_path: Path, sync: ctx.SyncContext) -> None:
     """严格清理空目录：若非空直接抛出 MigrationError 阻断，严禁 rmtree 或静默忽略。"""
     if not dir_path.exists():
@@ -642,10 +512,7 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
             if fm.get("tid") != tid:
                 raise MigrationError(f"{sync.rel(prog)}: tid 不匹配（{fm.get('tid')} != {tid}）")
             t_status = fm.get("status", "unknown")
-            item = TaskItem(tid, slug, child, child, t_status)
-            if t_status == "done":
-                _validate_done_task_implementation_and_lineage(consumer, item, sync)
-            tasks_plan.append(item)
+            tasks_plan.append(TaskItem(tid, slug, child, child, t_status))
 
     # 收集 docs/archive/tasks/
     if archived_tasks_dir.is_dir():
@@ -678,12 +545,9 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
                 raise MigrationError(
                     f"{sync.rel(child)}: 归档任务状态与目录矛盾，必须为 done 或 dropped（实际为 {status!r}）"
                 )
-            item = TaskItem(tid, slug, child, target_dir, status)
-            if status == "done":
-                _validate_done_task_implementation_and_lineage(consumer, item, sync)
+            tasks_plan.append(TaskItem(tid, slug, child, target_dir, status))
 
             seen_tids[tid] = child
-            tasks_plan.append(item)
 
     # 3. Pending 预检
     seen_pids: dict[str, Path] = {}
