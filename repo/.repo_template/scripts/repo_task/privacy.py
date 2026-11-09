@@ -260,7 +260,7 @@ def _read_blobs(root: Path, oids: list[str]) -> dict[str, bytes]:
         detail = ", ".join(f"{oid[:12]} ({size} B)" for oid, size in huge[:5])
         raise PrivacyScanError(
             f"以下对象超过 {MAX_SCAN_BLOB_HARD_CAP} B，无法安全扫描：{detail}；"
-            "请拆分或改放 docs/archive/、.scratch/ 等豁免目录"
+            "大文件不入库：移到仓库根 local/（已 gitignore，用户私有）或拆分后再提交"
         )
     normal = [oid for oid in oids if sizes[oid] <= MAX_SCAN_BLOB_BYTES]
     large = [oid for oid in oids if sizes[oid] > MAX_SCAN_BLOB_BYTES]

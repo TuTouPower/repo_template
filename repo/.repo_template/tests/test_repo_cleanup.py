@@ -200,6 +200,35 @@ def test_default_categories_skip_nested_unnamed_dirs(tmp_path):
     assert "src/node_modules" in {h["path"] for h in hits}
 
 
+def test_private_local_dir_is_never_collected_or_deleted(tmp_path):
+    """仓库根 local/ 是用户私有目录：任何类别都不进入，伪造 hits 也不删除。"""
+    repo = tmp_path / "repo"
+    for rel in (
+        "local/backup/run.log",
+        "local/backup/.DS_Store",
+        "local/backup/__pycache__/m.pyc",
+        "local/node_modules/pkg/index.js",
+        "src/local/debug.log",
+    ):
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x\n", encoding="utf-8")
+
+    hits, _ = rc.collect(repo, list(rc.ALL_CATEGORIES), [])
+    paths = {h["path"] for h in hits}
+    assert not any(path == "local" or path.startswith("local/") for path in paths)
+    # 只保护仓库根 local/；嵌套同名目录仍按类别处理。
+    assert "src/local/debug.log" in paths
+
+    forged = [
+        {"path": "local/backup/run.log", "category": "logs", "kind": "file"},
+        {"path": "local/backup", "category": "data", "kind": "dir"},
+        {"path": "local", "category": "data", "kind": "dir"},
+    ]
+    assert rc.apply_delete(repo, forged) == []
+    assert (repo / "local/backup/run.log").is_file()
+
+
 def test_cli_scan_is_read_only(tree):
     before = {str(p) for p in tree.rglob("*")}
     r = subprocess.run(

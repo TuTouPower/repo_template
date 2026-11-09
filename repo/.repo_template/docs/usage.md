@@ -39,7 +39,7 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 
 ## task worktree 本地文件
 
-`start`（含 `run-begin`）把主仓任意层级（跳过依赖、缓存与产物目录）的 `.env` 软链进 task worktree；主仓根有 `.worktreeinclude` 时，另把其命中且确被 `.gitignore` 忽略的文件或整目录软链到同相对路径，用于本地配置、证书、容器数据等不入库但测试必需的内容。未被忽略的未跟踪文件（在途工作）、已入库文件、`.git` 与 `docs/runtime/` 不链接；worktree 已有同名路径时跳过。`.gitignore` 以 `/` 结尾的规则（如 `node_modules/`）只匹配目录、不匹配同名软链，脚本对这类链接在 Git 公共目录 `info/exclude` 的托管块追加锚定规则（如 `/node_modules`），保证链接在 worktree 中仍被忽略、不会被暂存；该路径在主仓本已忽略，规则不改变主仓行为。清理、drop、rewind 只删除脚本创建的软链，不触及主仓目标。
+`start`（含 `run-begin`）把主仓任意层级（跳过依赖、缓存与产物目录）的 `.env` 软链进 task worktree；主仓根有 `.worktreeinclude` 时，另把其命中且确被 `.gitignore` 忽略的文件或整目录软链到同相对路径，用于本地配置、证书、容器数据等不入库但测试必需的内容。未被忽略的未跟踪文件（在途工作）、已入库文件、`.git` 与 `docs/runtime/` 不链接；仓库根 `local/`（用户私有本地文件）默认不链接，`.env` 扫描也不进入，需要时在 `.worktreeinclude` 显式声明 `/local/` 或其子路径；worktree 已有同名路径时跳过。`.gitignore` 以 `/` 结尾的规则（如 `node_modules/`）只匹配目录、不匹配同名软链，脚本对这类链接在 Git 公共目录 `info/exclude` 的托管块追加锚定规则（如 `/node_modules`），保证链接在 worktree 中仍被忽略、不会被暂存；该路径在主仓本已忽略，规则不改变主仓行为。清理、drop、rewind 只删除脚本创建的软链，不触及主仓目标。
 
 环境声明与软链规则：若开发者在 worktree 手工建立环境软链（例如软链到外部 `node_modules`），但项目 `.gitignore` 仅配置了带尾斜杠的目录规则（如 `node_modules/`），Git 原生规则不会忽略该软链。工具链在 `review` 指纹计算与 `finish` 门禁时均会进行精准诊断并报错阻断，禁止将其作为交付物暂存；开发者应在 `.gitignore` 或 `info/exclude` 补充精准规则（如 `/node_modules`），或在主仓 `.worktreeinclude` 中声明由环境托管机制维护。项目合法的代码软链（如相对软链）则属于交付物，须正常 `git add` 纳入交付指纹与实现 commit。
 

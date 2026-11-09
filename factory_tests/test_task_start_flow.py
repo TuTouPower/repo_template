@@ -1443,6 +1443,22 @@ def test_link_local_files_excludes_foreign_and_worktree_envs(git_repo):
     assert not (new_wt / "worktrees/t001_alpha/.env").exists()
 
 
+def test_link_local_files_skips_private_local_dir(git_repo):
+    """仓库根 local/ 是用户私有目录：其中备份的 .env 不得被默认 .env 扫描链入 worktree。"""
+    from repo_task import worktrees
+
+    (git_repo / ".env").write_text("ROOT=1\n")
+    (git_repo / "local/backup").mkdir(parents=True)
+    (git_repo / "local/backup/.env").write_text("BACKUP=1\n")
+    new_wt = git_repo / "worktrees/t002_beta"
+    new_wt.mkdir(parents=True, exist_ok=True)
+
+    linked = worktrees.link_local_files(new_wt, repo=ctx.RepoContext.for_root(git_repo))
+
+    assert linked == [".env"]
+    assert not (new_wt / "local").exists()
+
+
 def _write_worktree_include(repo):
     (repo / ".gitignore").write_text(
         "__pycache__/\n*.py[cod]\ndocs/runtime/\n.env\n.env.*\n/data/\nconfig/local.*\n",

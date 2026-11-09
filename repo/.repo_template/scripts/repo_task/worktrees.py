@@ -185,7 +185,7 @@ def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
     linked = []
     skip_dirs = {
         ".git", "node_modules", ".scratch", "__pycache__", "venv", ".venv",
-        "target", "worktrees", "artifacts", "data", "docs", ".repo_template",
+        "target", "worktrees", "artifacts", "data", "local", "docs", ".repo_template",
     }
     try:
         worktree_resolved = worktree.resolve()

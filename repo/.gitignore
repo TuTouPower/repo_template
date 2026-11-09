@@ -1,6 +1,9 @@
 /artifacts/
 /data/
 .scratch/
+
+# 用户私有本地文件（备份、大文件、参考资料），不入库、工具链不清理
+/local/
 node_modules/
 *.log
 __pycache__/

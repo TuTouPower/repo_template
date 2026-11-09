@@ -25,5 +25,5 @@ metadata:
 ## 边界
 
 - 不使用通配 `rm` 代替脚本保护。
-- 不清 `.git`、`.repo_template`、docs 账本、`.env`、用户数据或未识别目录。
+- 不清 `.git`、`.repo_template`、docs 账本、`.env`、用户数据或未识别目录；仓库根 `local/` 是用户私有目录，脚本不扫描不删除，也不得手工清理。
 - 用户给出的 keep 始终优先。

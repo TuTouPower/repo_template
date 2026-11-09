@@ -83,6 +83,14 @@ def test_task_dirs_stay_in_tasks_and_agents_has_no_archive_exception():
     assert "归档移动在集成时进入同一个 merge commit" not in agents
 
 
+def test_private_local_dir_is_declared_and_ignored():
+    """local/ 是用户私有不入库目录，与项目运行数据 data/ 分离。"""
+    local_row = _agents_row("|`local/`|")
+    assert "不入库" in local_row and "不清理" in local_row and ".worktreeinclude" in local_row
+    assert "不放需长期保留的文件" in _agents_row("|`artifacts/` `data/` `.scratch/`|")
+    assert "/local/" in _text(PRODUCT / ".gitignore").splitlines()
+
+
 def test_evidence_commit_removed_and_amend_only_in_recovery_repair_section():
     """D01：分发文本不含证据 commit；amend 只在 recovery 的 review 修复一节。"""
     paths = [PRODUCT / "AGENTS.md", *DOCS.glob("*.md"), *SKILLS.glob("*/SKILL.md")]

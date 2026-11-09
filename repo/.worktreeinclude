@@ -9,3 +9,4 @@
 # config/local.*
 # certs/
 # /data/
+# /local/fixtures/

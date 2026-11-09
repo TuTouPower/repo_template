@@ -15,6 +15,7 @@ agent 只保留裁定语义：scratch 活跃引用路径（--keep 传入）、�
 保护（永不删）：.git/、AGENTS.md、README.md、.gitignore、
 docs/runtime/tasks_audit.log、docs/runtime/dispatch_ledger.jsonl、
 docs/archive/tasks_audit.log（旧布局审计日志，迁移前保留）；
+仓库根 local/ 整树（用户私有本地文件，任何类别都不进入）；
 docs/ 下仅 os/editor 类放行；src/tests/schemas/
 config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不因「目录」被误删）。
 
@@ -50,6 +51,8 @@ HARD_PROTECTED = {
     "docs/runtime/dispatch_ledger.jsonl",
     "docs/archive/tasks_audit.log",
 }
+# 仓库根下整树保护的目录：用户私有本地文件，scan 不进入、apply 不删除。
+PROTECTED_ROOT_DIRS = ("local",)
 
 _GIT_REDIRECT_VARS = (
     "GIT_DIR",
@@ -141,6 +144,12 @@ def _dir_holds_keep(rel: str, refs: list[str]) -> bool:
     return any(ref.rstrip("/").startswith(prefix) for ref in refs if ref.strip())
 
 
+def _is_protected(rel: str) -> bool:
+    return rel in HARD_PROTECTED or any(
+        rel == root or rel.startswith(root + "/") for root in PROTECTED_ROOT_DIRS
+    )
+
+
 def _prune(names: list[str], excluded: set[str]) -> list[str]:
     """按目录 basename 剪枝，使保护在任意深度生效（Issue #71）。"""
     return [name for name in names if name not in excluded]
@@ -189,6 +198,8 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
         relroot = os.path.relpath(root, repo)
         relroot = "" if relroot == "." else relroot.replace(os.sep, "/")
         dirs[:] = _prune(dirs, prune)
+        if not relroot:
+            dirs[:] = _prune(dirs, set(PROTECTED_ROOT_DIRS))
         entries = []
         for d in dirs:
             rel = f"{relroot}/{d}" if relroot else d
@@ -197,7 +208,7 @@ def collect(repo: Path, categories: list[str], keeps: list[str]) -> tuple[list[d
             rel = f"{relroot}/{f}" if relroot else f
             entries.append((rel, False))
         for rel, is_dir in entries:
-            if rel in HARD_PROTECTED:
+            if _is_protected(rel):
                 continue
             cat = classify(Path(rel).name, is_dir)
             if cat is None or cat not in cats:
@@ -240,7 +251,7 @@ def apply_delete(repo: Path, hits: list[dict], keeps: list[str] | None = None) -
         target = repo / h["path"]
         if not target.exists() and not target.is_symlink():
             continue
-        if h["path"] in HARD_PROTECTED:
+        if _is_protected(h["path"]):
             continue
         # 二次防线：apply 独立重查 keep（文件级与目录级），防止调用方
         # 传入未经 collect 过滤的 hits（或 scan/apply 之间 keep 变化）。
