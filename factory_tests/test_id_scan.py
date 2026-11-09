@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from functools import partial
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -25,6 +26,8 @@ PENDING_DIRS = ("docs/pending",)
 FINDING_DIRS = findings_mod.SCAN_DIRS
 SPIKE_DIRS = spikes_mod.SCAN_DIRS
 
+
+from repo_task.context import RepoContext
 
 def _git(repo, *args):
     return subprocess.run(
@@ -46,6 +49,8 @@ def _init_repo(tmp_path):
     _git(repo, "config", "user.name", "t")
     (repo / "docs" / "pending").mkdir(parents=True)
     (repo / "docs" / "pending" / ".gitkeep").write_text("", encoding="utf-8")
+    (repo / ".repo_template").mkdir(exist_ok=True)
+    (repo / ".repo_template/entity_schema.json").write_text('{"version": 1}\n', encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -55,22 +60,32 @@ def _commit_entry(repo, rel, text="# entry\n", msg="add entry"):
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    if rel in {"docs/pending.md", "docs/findings.md"}:
+        (repo / ".repo_template/entity_schema.json").unlink(missing_ok=True)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", msg)
 
 
 def _bind(monkeypatch, repo):
-    """把 pending/findings 模块的路径常量重绑到临时仓库。"""
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(pending_mod, "PENDING_DIR", repo / "docs/pending")
-    monkeypatch.setattr(pending_mod, "SCAN_DIRS", ("docs/pending",))
-    monkeypatch.setattr(findings_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(findings_mod, "FINDINGS_DIR", repo / "docs/findings")
-    monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
-    monkeypatch.setattr(
-        spikes_mod, "TEMPLATE_PATH", repo / ".repo_template/docs/spike_report_template.md"
-    )
+    for module in (pending_mod, findings_mod, spikes_mod):
+        monkeypatch.setattr(module, "main", partial(module.main, repo=RepoContext.for_root(repo)))
+
+
+def _migrate_ledger(repo, kind, *, write=False):
+    from template_sync.migrate import _migrate_ledger as migrate
+    from template_sync.context import SyncContext, SyncError
+    from template_sync.entity_storage_migration import migrate_entity_storage
+    from md_format import MdFormatError
+    sync = SyncContext.for_consumer(repo)
+    try:
+        reports = migrate(sync, "p" if kind == "pending" else "d", write=write)
+        if write:
+            migrate_entity_storage(sync, write=True, require_clean=False)
+        else:
+            print("dry-run: " + "; ".join(reports), file=sys.stderr)
+        return reports
+    except (SyncError, IdScanError, MdFormatError) as error:
+        raise SystemExit(str(error)) from error
 
 
 # ---------- 编号扫描 ----------
@@ -249,7 +264,7 @@ def test_close_defaults_to_dry_run(tmp_path, monkeypatch):
     _bind(monkeypatch, repo)
     pending_mod.main(["new", "--slug", "demo"])
     pending_mod.main(["close", "p001", "--reason", "已核实处理结果", "--fix-ref", "t012"])
-    fm, _ = pending_mod.parse_pending_file(repo / "docs/pending/p001_demo.md")
+    fm, _ = pending_mod.parse_pending_file(repo / "docs/pending/p001_demo.md", repo=RepoContext.for_root(repo))
     assert fm["status"] == "todo"
 
 
@@ -312,7 +327,7 @@ def test_close_partial_failure_rolls_back_moved_and_content(tmp_path, monkeypatc
         pending_mod.main(["close", "p001", "p002", "--reason", "已核实处理结果", "--fix-ref", "t001", "--write"])
     assert one.exists()
     assert one.read_bytes() == orig_one
-    fm, _ = pending_mod.parse_pending_file(one)
+    fm, _ = pending_mod.parse_pending_file(one, repo=RepoContext.for_root(repo))
     assert fm["status"] == "todo"
 
 
@@ -340,7 +355,7 @@ def test_close_partial_io_failure_rolls_back_all(tmp_path, monkeypatch):
         pending_mod.main(["close", "p001", "p002", "--reason", "test io fail", "--write"])
     assert one.exists()
     assert one.read_bytes() == orig_one
-    fm, _ = pending_mod.parse_pending_file(one)
+    fm, _ = pending_mod.parse_pending_file(one, repo=RepoContext.for_root(repo))
     assert fm["status"] == "todo"
 
 
@@ -385,9 +400,9 @@ def test_close_rejects_entry_migrated_before_write_lock(tmp_path, monkeypatch):
     real_find = pending_mod.find_entry
     calls = {"n": 0}
 
-    def find_then_move(number):
+    def find_then_move(number, **kwargs):
         calls["n"] += 1
-        state, path = real_find(number)
+        state, path = real_find(number, **kwargs)
         if calls["n"] == 2:
             path.rename(moved)
             return state, moved
@@ -411,9 +426,9 @@ def test_close_rejects_entry_concurrently_modified_before_write_lock(tmp_path, m
     real_find = pending_mod.find_entry
     calls = {"n": 0}
 
-    def find_then_modify(number):
+    def find_then_modify(number, **kwargs):
         calls["n"] += 1
-        state, path = real_find(number)
+        state, path = real_find(number, **kwargs)
         if calls["n"] == 2:
             with path.open("a", encoding="utf-8") as f:
                 f.write("\n- 外部追加说明\n")
@@ -690,10 +705,10 @@ def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkey
         text="# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
     )
 
-    with pytest.raises(IdScanError, match="migrate-legacy"):
+    with pytest.raises(IdScanError, match="migrate"):
         allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
                  slug="demo", body="# pNNN demo\n")
-    with pytest.raises(SystemExit, match="migrate-legacy"):
+    with pytest.raises(SystemExit, match="migrate"):
         pending_mod.main(["new", "--slug", "demo"])
     assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
@@ -708,7 +723,7 @@ def test_migrate_legacy_findings_splits_entries(tmp_path, monkeypatch):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "legacy findings")
 
-    findings_mod.main(["migrate-legacy", "--write"])
+    _migrate_ledger(repo, "findings", write=True)
     assert not (repo / "docs/findings.md").exists()
     assert (repo / "docs/findings/d012_uv_lock.md").is_file()
     _git(repo, "add", "-A")
@@ -718,16 +733,17 @@ def test_migrate_legacy_findings_splits_entries(tmp_path, monkeypatch):
     assert (repo / "docs/findings/d013_next_fact.md").is_file()
 
 
-def test_migrate_legacy_reports_other_sources_blocking(tmp_path, monkeypatch):
-    """A11：其它分支仍有旧总账时，迁移后分配继续阻断并列出阻塞来源。"""
+def test_historical_branch_is_isolated_from_current_allocation(tmp_path, monkeypatch):
+    """旧协议来源保留作历史；不阻断当前取号，也不能作为新协议来源。"""
+    from _id_scan import branch_uses_current_schema
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     _git(repo, "checkout", "-b", "legacy")
     _commit_entry(repo, "docs/pending.md", text="# 待办\n\n### p010 旧事\n")
     _git(repo, "checkout", "main")
-
-    with pytest.raises(SystemExit, match="分支 legacy"):
-        pending_mod.main(["new", "--slug", "demo"])
+    pending_mod.main(["new", "--slug", "demo"])
+    assert (repo / "docs/pending/p001_demo.md").is_file()
+    assert not branch_uses_current_schema(repo, "legacy")
 
 
 def test_pending_migrate_legacy_splits_and_unblocks_allocation(tmp_path, monkeypatch):
@@ -738,16 +754,17 @@ def test_pending_migrate_legacy_splits_and_unblocks_allocation(tmp_path, monkeyp
         "# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
         encoding="utf-8",
     )
+    (repo / ".repo_template/entity_schema.json").unlink()
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "legacy pending")
 
-    with pytest.raises(SystemExit, match="migrate-legacy"):
+    with pytest.raises(SystemExit, match="migrate"):
         pending_mod.main(["new", "--slug", "blocked"])
 
-    pending_mod.main(["migrate-legacy", "--write"])
+    _migrate_ledger(repo, "pending", write=True)
     migrated = repo / "docs/pending/p047_cli.md"
     assert migrated.is_file()
-    fm, _ = pending_mod.parse_pending_file(migrated)
+    fm, _ = pending_mod.parse_pending_file(migrated, repo=RepoContext.for_root(repo))
     assert fm == {"pid": "p047", "slug": "cli", "status": "todo"}
     assert not (repo / "docs/pending.md").exists()
 
@@ -763,7 +780,7 @@ def test_pending_migrate_legacy_dry_run_is_read_only(tmp_path, monkeypatch, caps
     (repo / "docs/pending.md").write_text("# 待办\n\n### p001 old\n", encoding="utf-8")
     before = (repo / "docs/pending.md").read_bytes()
 
-    pending_mod.main(["migrate-legacy"])
+    _migrate_ledger(repo, "pending")
 
     assert "dry-run" in capsys.readouterr().err
     assert (repo / "docs/pending.md").read_bytes() == before
@@ -781,7 +798,7 @@ def test_migrate_legacy_rejects_same_number_occupied(tmp_path, monkeypatch):
     )
 
     with pytest.raises(SystemExit, match="已有条目文件"):
-        findings_mod.main(["migrate-legacy", "--write"])
+        _migrate_ledger(repo, "findings", write=True)
     assert not (repo / "docs/findings/d012_uv_lock.md").exists()
     assert (repo / "docs/findings.md").is_file()
 
@@ -799,9 +816,9 @@ def test_migrate_legacy_cleans_up_on_format_failure(tmp_path, monkeypatch):
     def fail_format(_path):
         raise MdFormatError("simulated format failure")
 
-    monkeypatch.setattr(findings_mod, "format_file", fail_format)
+    monkeypatch.setattr(__import__("md_format"), "format_file", fail_format)
     with pytest.raises(SystemExit, match="simulated format failure"):
-        findings_mod.main(["migrate-legacy", "--write"])
+        _migrate_ledger(repo, "findings", write=True)
     assert not (repo / "docs/findings/d012_uv_lock.md").exists()
     assert (repo / "docs/findings.md").is_file()
 
@@ -816,7 +833,7 @@ def test_migrate_legacy_keeps_all_heading_levels(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    findings_mod.main(["migrate-legacy", "--write"])
+    _migrate_ledger(repo, "findings", write=True)
     assert (repo / "docs/findings/d013_first_level.md").is_file()
     assert (repo / "docs/findings/d014_sixth_level.md").is_file()
     assert not (repo / "docs/findings.md").exists()

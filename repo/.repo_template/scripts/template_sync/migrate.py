@@ -32,6 +32,8 @@ KINDS = (
     "conventions",
     "specs-index",
     "retired-hooks",
+    "pending-ledger",
+    "findings-ledger",
     "entity-storage",
 )
 
@@ -41,6 +43,9 @@ def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None
 
     空列表表示已是当前格式。消除「plan 显示一致但 apply 阻断」的分叉。
     """
+    if kind in {"pending-ledger", "findings-ledger"}:
+        rel = "docs/pending.md" if kind == "pending-ledger" else "docs/findings.md"
+        return [f"{rel} 需显式拆分为当前条目"] if (sync.consumer / rel).exists() else []
     if kind == "entity-storage":
         return entity_storage_migration_status(sync=sync)
     if kind == "legacy-state":
@@ -219,12 +224,59 @@ def _migrate_retired_hooks(sync: ctx.SyncContext, write: bool = False) -> list[s
     )
 
 
+def _migrate_ledger(sync: ctx.SyncContext, prefix: str, *, write: bool = False) -> list[str]:
+    from .legacy_ledgers import apply_legacy_migration, plan_legacy_migration
+    from _id_scan import IdScanError
+    from md_format import format_file
+    from pending import dump_pending_front_matter, validate_pending_front_matter
+    from repo_task.documents import parse_front_matter_text
+
+    directory = "docs/pending" if prefix == "p" else "docs/findings"
+    ledger = directory + ".md"
+    if (sync.consumer / ledger).is_symlink():
+        raise ctx.SyncError(f"旧总账是软链，拒绝迁移：{ledger}")
+    if not (sync.consumer / ledger).exists():
+        return []
+    try:
+        items = plan_legacy_migration(sync.consumer, prefix=prefix, ledger_rel=ledger, target_dir=sync.consumer / directory)
+    except IdScanError as error:
+        raise ctx.SyncError(str(error)) from error
+    reports = [f"{item.entry_id} -> {sync.rel(item.target)}" for item in items]
+    if not write:
+        return reports
+
+    def render(entry_id: str, slug: str, title: str, body: str) -> str:
+        front = dump_pending_front_matter({"pid": entry_id, "slug": slug, "status": "todo"}) if prefix == "p" else ""
+        return front + f"# {entry_id} {title}\n\n{body}\n"
+
+    def action(_changed):
+        apply_legacy_migration(items, repo_root=sync.consumer, prefix=prefix, ledger_rel=ledger,
+                               render=render, formatter=format_file)
+        return reports
+
+    def verify():
+        if (sync.consumer / ledger).exists():
+            return [ledger]
+        for item in items:
+            text = item.target.read_text(encoding="utf-8")
+            if prefix == "p":
+                fm, _ = parse_front_matter_text(text, source=str(item.target))
+                validate_pending_front_matter(fm, filename=item.target.name, source=str(item.target))
+            if not text.strip():
+                return [f"迁移结果为空：{item.target}"]
+        return []
+
+    return _transactional([ledger, directory], action, verify, f"{prefix} 总账", sync=sync)
+
+
 _STEPS = {
     "legacy-state": lambda sync, write=False, require_clean=True: migrate_legacy_state(sync=sync, write=write),
     "workflow-schema": lambda sync, write=False, require_clean=True: _migrate_workflow(sync, write=write),
     "conventions": lambda sync, write=False, require_clean=True: _migrate_conventions(sync, write=write),
     "specs-index": lambda sync, write=False, require_clean=True: _migrate_specs_index(sync, write=write),
     "retired-hooks": lambda sync, write=False, require_clean=True: _migrate_retired_hooks(sync, write=write),
+    "pending-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "p", write=write),
+    "findings-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "d", write=write),
     "entity-storage": lambda sync, write=False, require_clean=True: migrate_entity_storage(
         sync=sync, write=write, require_clean=require_clean
     ),

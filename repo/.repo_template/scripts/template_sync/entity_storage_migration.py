@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from pending import (
     validate_pending_front_matter,
 )
 from repo_task.context import (
+    RepoContext,
     PROGRESS_FILE,
     TaskDataError,
 )
@@ -42,6 +44,8 @@ from repo_task.documents import (
 )
 from repo_task.file_transaction import FileTransaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
+from repo_task.store import task_record, scan_tasks
+from repo_task.entity_schema import SCHEMA_PATH, SCHEMA_VERSION, current_schema
 from repo_task.spikes import (
     ENTRY_DIR_RE as SPIKE_DIR_RE,
     validate_spike_metadata,
@@ -176,6 +180,36 @@ def _is_placeholder_only_dir(path: Path) -> bool:
     return True
 
 
+def validate_current_entities(sync: ctx.SyncContext) -> None:
+    """目标模型验收；与日常运行时共用身份/状态校验，不替历史实现签发证据。"""
+    try:
+        _reject_symlink_entities(sync.consumer, sync)
+        scan_tasks(repo=RepoContext.for_root(sync.consumer))
+        seen_pending: set[str] = set()
+        for path in sorted((sync.consumer / "docs/pending").glob("p*.md")):
+            fm, _ = parse_front_matter_text(path.read_text(encoding="utf-8"), source=sync.rel(path))
+            validate_pending_front_matter(fm, filename=path.name, source=sync.rel(path))
+            if fm["pid"] in seen_pending:
+                raise MigrationError(f"重复 pending：{fm['pid']}")
+            seen_pending.add(fm["pid"])
+        seen_spikes: set[str] = set()
+        for path in sorted((sync.consumer / "docs/spikes").glob("s*")):
+            if not path.is_dir():
+                raise MigrationError(f"非法 spike 项：{sync.rel(path)}")
+            match = SPIKE_DIR_RE.fullmatch(path.name)
+            if match is None:
+                raise MigrationError(f"非法 spike 目录：{sync.rel(path)}")
+            sid = f"s{int(match.group(1)):03d}"
+            if sid in seen_spikes:
+                raise MigrationError(f"重复 spike：{sid}")
+            seen_spikes.add(sid)
+            report = path / "report.md"
+            fm, _ = parse_front_matter_text(report.read_text(encoding="utf-8"), source=sync.rel(report))
+            _validate_spike_fm(fm, sid, path.name.split("_", 1)[1], report, sync)
+    except (OSError, TaskDataError, ValueError) as error:
+        raise MigrationError(f"目标实体 schema 非法：{error}") from error
+
+
 def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
     """检测消费仓是否仍存在旧实体存储布局，返回待迁移项描述列表。
 
@@ -185,6 +219,19 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
     """
     consumer = sync.consumer
     problems: list[str] = []
+    try:
+        if not current_schema(consumer):
+            problems.append(f"{SCHEMA_PATH} 缺失；需完成实体转换与目标验收后建立 schema 边界")
+    except TaskDataError as error:
+        problems.append(f"BLOCKED: {error}")
+    try:
+        validate_current_entities(sync)
+    except MigrationError as error:
+        problems.append(str(error))
+
+    for ledger in ("docs/pending.md", "docs/findings.md"):
+        if (consumer / ledger).exists() or (consumer / ledger).is_symlink():
+            problems.append(f"{ledger} 需先显式拆分总账")
 
     # 1. 旧 task 归档目录
     archived_tasks_dir = consumer / "docs/archive/tasks"
@@ -532,6 +579,15 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
     """预检并构建实体存储一次性迁移计划；若存在冲突或数据不符则阻断。"""
     consumer = sync.consumer
 
+    for ledger in ("docs/pending.md", "docs/findings.md"):
+        if (consumer / ledger).exists():
+            raise MigrationError(f"{ledger} 尚未拆分；先执行 migrate pending-ledger/findings-ledger")
+
+    try:
+        current_schema(consumer)
+    except TaskDataError as error:
+        raise MigrationError(str(error)) from error
+
     # 1. 检查 worktree 现场与软链实体（拒绝沿软链写/删仓外文件）
     _check_worktrees_clean(consumer)
     _reject_symlink_entities(consumer, sync)
@@ -555,14 +611,18 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
             if not m:
                 continue
             tid, slug = m.group(1), m.group(2)
+            if tid in seen_tids:
+                raise MigrationError(f"同号多处：{tid} @ {seen_tids[tid]} 与 {child}")
             seen_tids[tid] = child
             prog = child / PROGRESS_FILE
             if not prog.is_file():
                 raise MigrationError(f"{sync.rel(child)}: 缺失 {PROGRESS_FILE}")
             fm, _ = parse_front_matter_text(prog.read_text(encoding="utf-8"), source=sync.rel(prog))
-            if fm.get("tid") != tid:
-                raise MigrationError(f"{sync.rel(prog)}: tid 不匹配（{fm.get('tid')} != {tid}）")
-            t_status = fm.get("status", "unknown")
+            try:
+                task_record(fm, directory=f"docs/tasks/{child.name}", source=sync.rel(prog))
+            except TaskDataError as error:
+                raise MigrationError(str(error)) from error
+            t_status = fm["status"]
             tasks_plan.append(TaskItem(tid, slug, child, child, t_status))
 
     # 收集 docs/archive/tasks/
@@ -585,12 +645,13 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
                 raise MigrationError(f"目标占用：{sync.rel(target_dir)} 已存在")
 
             prog = child / PROGRESS_FILE
-            legacy_note = child / "note.md"
-            task_file = child / "task.md"
-            source_file = prog if prog.is_file() else (legacy_note if legacy_note.is_file() else task_file)
-            if not source_file.is_file():
-                raise MigrationError(f"{sync.rel(child)}: 缺少任务进度/过程总账文件")
-            fm, _ = parse_front_matter_text(source_file.read_text(encoding="utf-8"), source=sync.rel(source_file))
+            if not prog.is_file():
+                raise MigrationError(f"{sync.rel(child)} 缺 progress.md；先执行 migrate workflow-schema")
+            fm, _ = parse_front_matter_text(prog.read_text(encoding="utf-8"), source=sync.rel(prog))
+            try:
+                task_record(fm, directory=f"docs/tasks/{child.name}", source=sync.rel(prog))
+            except TaskDataError as error:
+                raise MigrationError(str(error)) from error
             status = fm.get("status")
             if status not in ("done", "dropped"):
                 raise MigrationError(
@@ -685,6 +746,8 @@ def build_migration_plan(sync: ctx.SyncContext) -> MigrationPlan:
                 continue
             sid = f"s{int(m.group(1)):03d}"
             slug = child.name.split("_", 1)[1]
+            if sid in seen_sids:
+                raise MigrationError(f"同号多处：{sid} @ {seen_sids[sid]} 与 {child}")
             seen_sids[sid] = child
             rep = child / "report.md"
             if not rep.is_file():
@@ -899,7 +962,7 @@ def migrate_entity_storage(
             _check_clean_working_copy(consumer)
 
         plan = build_migration_plan(sync=sync)
-        reports: list[str] = []
+        reports: list[str] = [f"目标实体 schema 验收并写入 {SCHEMA_PATH}"]
 
         # 生成拟定改动清单
         for t in plan.tasks:
@@ -949,6 +1012,7 @@ def migrate_entity_storage(
 
         # 真实写入：持久文件事务保护
         tx_paths = _collect_transaction_paths(consumer, plan)
+        tx_paths.append(SCHEMA_PATH)
         transaction = FileTransaction(consumer, ".scratch/repo_sync_rollback")
         try:
             transaction.begin(tx_paths)
@@ -1028,7 +1092,10 @@ def migrate_entity_storage(
                 if d.exists() and d.is_dir():
                     _clean_empty_dir_strictly(d, sync)
 
-            # 9. 写入后验证：再次查询必须无旧布局残留
+            # 9. 使用正式目标模型验收，之后才建立当前 schema 的分支参与边界。
+            validate_current_entities(sync)
+            atomic_write_text(consumer / SCHEMA_PATH, json.dumps({"version": SCHEMA_VERSION}) + "\n")
+            # 再查旧布局残留；完成标记不能替代目标数据验证。
             remaining = entity_storage_migration_status(sync=sync)
             if remaining:
                 raise MigrationError(

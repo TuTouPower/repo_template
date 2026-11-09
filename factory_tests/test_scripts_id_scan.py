@@ -24,12 +24,13 @@ from _id_scan import (  # noqa: E402
     allocate,
     allocate_dir,
     canonical_entry_id,
-    legacy_ledger_entries,
     parse_entry_dir_name,
     parse_entry_file_name,
     scan_max_id,
 )
 from git_repo_support import get_controlled_git_env  # noqa: E402
+
+from template_sync.legacy_ledgers import legacy_ledger_entries
 
 PENDING_DIRS = ("docs/pending",)
 SPIKE_DIRS = ("docs/spikes",)
@@ -55,6 +56,8 @@ def _init_repo(tmp_path: Path) -> Path:
     _git(repo, "config", "user.name", "t")
     (repo / "docs/pending").mkdir(parents=True)
     (repo / "docs/pending/.gitkeep").write_text("", encoding="utf-8")
+    (repo / ".repo_template").mkdir(exist_ok=True)
+    (repo / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -64,6 +67,8 @@ def _commit_entry(repo: Path, rel: str, text: str = "# entry\n") -> None:
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    if rel in {"docs/pending.md", "docs/findings.md"}:
+        (repo / ".repo_template/entity_schema.json").unlink(missing_ok=True)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", f"add {rel}")
 
@@ -218,8 +223,8 @@ def test_legacy_layout_dir_blocks_allocation_and_hints_real_command(
             repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
-    assert "entity-storage" in str(exc.value)
-    assert "repo_sync.py" in str(exc.value)
+    assert "migrate" in str(exc.value)
+    assert "显式" in str(exc.value)
 
 
 def test_legacy_layout_dir_in_other_branch_blocks_allocation(tmp_path: Path):
@@ -228,7 +233,7 @@ def test_legacy_layout_dir_in_other_branch_blocks_allocation(tmp_path: Path):
     _commit_entry(repo, "docs/pending/todo/p001_old.md")
     _git(repo, "checkout", "main")
 
-    with pytest.raises(IdScanError, match="分支 legacy"):
+    with pytest.raises(IdScanError, match="嵌套条目|legacy"):
         allocate(
             repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
@@ -244,7 +249,7 @@ def test_legacy_ledger_hints_real_pending_command(tmp_path: Path):
             repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
-    assert "python3 .repo_template/scripts/pending.py migrate-legacy" in str(exc.value)
+    assert "repo_sync.py migrate all --write" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -287,15 +292,15 @@ def test_legacy_ledger_entries_accept_all_heading_levels():
 
 def test_legacy_ledger_entries_abort_when_heading_unparsed(monkeypatch):
     """候选标题数与解析数不一致即中止，杜绝 git rm 旧总账后条目静默丢失。"""
-    import _id_scan
+    from template_sync import legacy_ledgers
 
-    original = _id_scan._LEGACY_HEADING_RE
-    monkeypatch.setattr(_id_scan, "_LEGACY_HEADING_RE", re.compile(r"^(?!x)x"))
+    original = legacy_ledgers._LEGACY_HEADING_RE
+    monkeypatch.setattr(legacy_ledgers, "_LEGACY_HEADING_RE", re.compile(r"^(?!x)x"))
     try:
         with pytest.raises(IdScanError, match="标题解析不完整"):
-            _id_scan.legacy_ledger_entries("## d012 uv lock\n\n- 现状：有效\n", "d")
+            legacy_ledgers.legacy_ledger_entries("## d012 uv lock\n\n- 现状：有效\n", "d")
     finally:
-        monkeypatch.setattr(_id_scan, "_LEGACY_HEADING_RE", original)
+        monkeypatch.setattr(legacy_ledgers, "_LEGACY_HEADING_RE", original)
 
 
 def test_canonical_padding_helpers():

@@ -107,7 +107,8 @@ def task_schedule_references(
     return references
 
 
-def _task_record(fm: dict, *, directory: str, source: str) -> dict:
+def task_record(fm: dict, *, directory: str, source: str) -> dict:
+    """校验 task front matter 与目录身份，返回统一状态记录。"""
     tid = fm.get("tid", "")
     if not ctx.TID_RE.match(tid):
         raise ctx.TaskDataError(f"{source}: front matter tid 非法（{tid!r}）")
@@ -143,7 +144,7 @@ def _scan_tasks_in_directory(
         fm, _ = parse_front_matter_text(
             note_md.read_text(encoding="utf-8"), source=str(note_md)
         )
-        tasks.append(_task_record(
+        tasks.append(task_record(
             fm,
             directory=f"docs/tasks/{directory.name}",
             source=str(note_md),
@@ -246,7 +247,7 @@ def _load_tasks_at_commit(
             raise ctx.TaskDataError(f"{display_ref}:{directory}: 缺 {ctx.PROGRESS_FILE}")
         text = raw_content.decode("utf-8", errors="replace")
         fm, body = parse_front_matter_text(text, source=f"{display_ref}:{progress_path}")
-        record = _task_record(
+        record = task_record(
             fm,
             directory=directory,
             source=f"{display_ref}:{progress_path}",
@@ -382,7 +383,7 @@ def load_owner_task_at_ref(
         fm, body = parse_front_matter_text(
             text, source=f"{ref}:{note_path}"
         )
-        record = _task_record(
+        record = task_record(
             fm, directory=directory, source=f"{ref}:{note_path}"
         )
         if commit_sha is not None:

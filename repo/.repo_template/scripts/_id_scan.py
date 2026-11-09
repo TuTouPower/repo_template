@@ -8,11 +8,9 @@ pending.py / findings.py / spikes.py 共用。条目以「一条目一文件」�
 - 所有本地分支的 git 树（`git ls-tree` 文件名）；
 - 所有登记 worktree 的工作区文件（含未提交条目）。
 
-旧格式有两类不可见编号来源，分配前必须显式迁移：
-- 单文件总账（`docs/pending.md`、`docs/findings.md` 等，编号只在正文小节标题里）；
-- 旧布局目录（`docs/archive/pending`、`docs/archive/spikes`、
-  `docs/pending/todo`、`docs/pending/parked`）。
-两类来源都阻断分配，并把提示指向真实迁移命令。
+只有声明当前 entity_schema 的分支/worktree 参与分配；历史来源显式隔离。
+旧格式转换只存在于 template_sync，运行时不识别旧目录或解析旧正文。
+合并边界验证目标 schema 与编号唯一性，禁止旧分支直接进入新协议。
 
 重复检测语义：
 - 同一来源（单个分支或单个 worktree）内同号出现在多个状态目录时报错——迁移残留需立即暴露。
@@ -32,6 +30,7 @@ pending.py / findings.py / spikes.py 共用。条目以「一条目一文件」�
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -40,33 +39,16 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Callable, NamedTuple
 
 from repo_task.locks import TASK_ID_LOCK_NAME, git_common_lock
+from repo_task.context import TaskDataError
+from repo_task.entity_schema import SCHEMA_PATH, current_schema, validate_schema
 
 LOCK_NAME = TASK_ID_LOCK_NAME
 
 # 规范 padding 的编号串：三位允许 0xx~9xx，四位及以上首位不得为 0。
 # 拒绝 p0001 这种「int 可解析但 canonical_entry_id(1) 找不到」的非法文件名。
 _CANONICAL_NUMBER = r"(?:0[0-9]{2}|[1-9][0-9]{2,})"
-
-# 旧布局目录：实体曾按状态/归档分目录存放，编号对当前扁平扫描不可见。
-LEGACY_LAYOUT_DIRS = (
-    "docs/archive/pending",
-    "docs/archive/spikes",
-    "docs/pending/todo",
-    "docs/pending/parked",
-)
-
-# 单文件总账按前缀分派到对应脚本的 migrate-legacy；旧布局目录统一走模板同步的
-# entity-storage 迁移。提示必须是可直接执行的真实命令。
-_LEDGER_MIGRATION_HINTS = {
-    "p": "python3 .repo_template/scripts/pending.py migrate-legacy",
-    "d": "python3 .repo_template/scripts/findings.py migrate-legacy",
-}
-_LAYOUT_MIGRATION_HINT = (
-    "python3 .repo_template/scripts/repo_sync.py migrate entity-storage --write"
-)
 
 _O_EXCL_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
 _O_NOFOLLOW_READ = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -268,10 +250,10 @@ def _dir_numbers_from_branch(
     """
     found: dict[int, list[str]] = {}
     for rel_dir in dirs:
-        try:
-            text = _run_git(repo_root, ["ls-tree", f"{branch}:{rel_dir}"])
-        except IdScanError:
+        parent = _run_git(repo_root, ["ls-tree", "--name-only", branch, "--", rel_dir])
+        if not parent.strip():
             continue
+        text = _run_git(repo_root, ["ls-tree", f"{branch}:{rel_dir}"])
         for line in text.splitlines():
             line = line.strip()
             if not line:
@@ -290,72 +272,6 @@ def _dir_numbers_from_branch(
                 if identity not in paths:
                     paths.append(identity)
     return found
-
-
-def _branch_legacy_kind(
-    repo_root: Path, branch: str, ledger_names: set[str]
-) -> str | None:
-    """返回分支所含旧来源类型：ledger（单文件总账）/ layout（旧布局目录）/ None。"""
-    listed = _run_git(
-        repo_root, ["ls-tree", "--name-only", branch, "--", *sorted(ledger_names)]
-    )
-    if listed.strip():
-        return "ledger"
-    listed = _run_git(
-        repo_root, ["ls-tree", "-r", "--name-only", branch, "--", *sorted(LEGACY_LAYOUT_DIRS)]
-    )
-    if listed.strip():
-        return "layout"
-    return None
-
-
-def _worktree_legacy_kinds(root: Path, ledger_names: set[str]) -> set[str]:
-    kinds: set[str] = set()
-    if any((root / name).is_file() for name in ledger_names):
-        kinds.add("ledger")
-    if any((root / d).is_dir() and any((root / d).iterdir()) for d in LEGACY_LAYOUT_DIRS):
-        kinds.add("layout")
-    return kinds
-
-
-def legacy_ledger_sources(
-    repo_root: Path, prefix: str, dirs: tuple[str, ...]
-) -> list[tuple[str, str]]:
-    """返回仍含旧编号来源的 [(类型, 来源)]，类型 ∈ {"ledger", "layout"}。
-
-    编号分配不再解析旧正文；存在旧单文件总账或旧布局目录时必须先显式迁移，
-    或把旧分支/工作区隔离出当前操作集合，避免漏号撞号。
-    """
-    ledger_names = {f"{directory}.md" for directory in dirs}
-    sources: list[tuple[str, str]] = []
-    for branch in local_branches(repo_root):
-        kind = _branch_legacy_kind(repo_root, branch, ledger_names)
-        if kind is not None:
-            sources.append((kind, f"分支 {branch}"))
-    for root in worktree_roots(repo_root):
-        for kind in _worktree_legacy_kinds(root, ledger_names):
-            sources.append((kind, f"worktree {root}"))
-    return sorted(set(sources))
-
-
-def require_no_legacy_ledgers(
-    repo_root: Path, prefix: str, dirs: tuple[str, ...], *, migration: str = ""
-) -> None:
-    sources = legacy_ledger_sources(repo_root, prefix, dirs)
-    if not sources:
-        return
-    kinds = {kind for kind, _ in sources}
-    labels = sorted({label for _, label in sources})
-    hints: list[str] = []
-    if "ledger" in kinds:
-        hints.append(migration or _LEDGER_MIGRATION_HINTS.get(prefix, _LAYOUT_MIGRATION_HINT))
-    if "layout" in kinds:
-        hints.append(_LAYOUT_MIGRATION_HINT)
-    raise IdScanError(
-        "存在旧编号来源（" + "；".join(labels) + "）；编号分配已不解析旧正文/旧布局。"
-        f"先执行显式迁移：{'；'.join(hints)}，并提交迁移结果后再分配；"
-        "或把上述来源合并/删除"
-    )
 
 
 def _numbers_from_worktree(
@@ -397,14 +313,96 @@ def scan_max_id(
     """
     maximum = 0
     for branch in local_branches(repo_root):
+        if not branch_uses_current_schema(repo_root, branch):
+            continue
+        validate_snapshot_ids(repo_root, branch)
         found = _numbers_from_branch(repo_root, branch, prefix, dirs, kind)
         _check_duplicates(f"分支 {branch}", found, prefix)
         maximum = max([maximum, *found])
     for root in worktree_roots(repo_root):
+        if not current_schema(root):
+            continue
+        validate_worktree_shape(root)
         found = _numbers_from_worktree(root, prefix, dirs, kind)
         _check_duplicates(f"worktree {root}", found, prefix)
         maximum = max([maximum, *found])
     return maximum
+
+
+def validate_worktree_shape(root: Path) -> None:
+    """按当前模型约束目录形状，不识别任何历史路径名称。"""
+    for name in ("pending", "findings"):
+        directory = root / "docs" / name
+        if directory.is_dir():
+            nested = [path for path in directory.iterdir() if path.is_dir() and not path.name.startswith(".tmp_")]
+            if nested:
+                raise IdScanError(f"当前 {name} 布局禁止嵌套目录：{nested[0]}；先显式 migrate")
+    archive = root / "docs/archive"
+    if archive.is_dir():
+        invalid = [path for path in archive.iterdir() if path.is_dir() and path.name not in {"reviews", "specs"}]
+        if invalid:
+            raise IdScanError(f"Archive 仅允许 reviews/specs 冷文稿：{invalid[0]}；先显式 migrate")
+
+
+def require_current_schema(repo_root: Path) -> None:
+    if not current_schema(repo_root):
+        raise IdScanError("未建立当前实体 schema；先执行 repo_sync.py migrate all --write 并提交切换结果")
+
+
+def branch_uses_current_schema(repo_root: Path, ref: str) -> bool:
+    listed = _run_git(repo_root, ["ls-tree", "--name-only", ref, "--", SCHEMA_PATH])
+    if not listed.strip():
+        return False
+    text = _run_git(repo_root, ["show", f"{ref}:{SCHEMA_PATH}"])
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        raise IdScanError(f"{ref}:{SCHEMA_PATH} 损坏：{error}") from error
+    try:
+        validate_schema(data, source=f"{ref}:{SCHEMA_PATH}")
+    except TaskDataError as error:
+        raise IdScanError(str(error)) from error
+    return True
+
+
+def validate_merge_sources(repo_root: Path) -> None:
+    """原生 merge 的每个来源都须属于当前协议；版本标记不能被主干静默继承。"""
+    raw = Path(_run_git(repo_root, ["rev-parse", "--git-path", "MERGE_HEAD"]).strip())
+    path = raw if raw.is_absolute() else repo_root / raw
+    try:
+        heads = path.read_text(encoding="ascii").splitlines()
+    except FileNotFoundError:
+        return
+    for head in heads:
+        if not re.fullmatch(r"[0-9a-f]{40,64}", head):
+            raise IdScanError("MERGE_HEAD 非法，停止提交")
+        if not branch_uses_current_schema(repo_root, head):
+            raise IdScanError(f"merge 来源 {head[:12]} 未完成实体协议切换；禁止直接合入")
+
+
+def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
+    """合并/提交边界校验当前布局编号唯一性，不加载历史解析器。"""
+    args = ["ls-files", "-z"] if ref is None else ["ls-tree", "-r", "--name-only", "-z", ref]
+    files = _run_git(repo_root, args).split("\0")
+    for rel in files:
+        parts = rel.split("/")
+        if len(parts) > 3 and parts[:2] == ["docs", "archive"] and parts[2] not in {"reviews", "specs"}:
+            raise IdScanError(f"Archive 仅允许 reviews/specs 冷文稿目录：{rel}；先显式 migrate")
+    for prefix, directory, kind in (("p", "docs/pending", "file"), ("d", "docs/findings", "file"), ("s", "docs/spikes", "dir")):
+        found: dict[int, list[str]] = {}
+        for rel in files:
+            if not rel.startswith(directory + "/"):
+                continue
+            tail = rel[len(directory) + 1:].split("/")
+            if kind == "file" and len(tail) != 1:
+                raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先显式 migrate")
+            number = _entry_number(prefix, tail[0], kind=kind)
+            if number is not None:
+                identity = directory + "/" + tail[0]
+                bucket = found.setdefault(number, [])
+                if identity not in bucket:
+                    bucket.append(identity)
+        _check_duplicates(ref or "index", found, prefix)
 
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
@@ -550,7 +548,6 @@ def allocate(
     slug: str,
     body: str,
     formatter=None,
-    migration: str = "",
 ) -> Path:
     """锁内完成「取号 → 生成最终内容 → 格式化 → 原子发布」，返回新文件路径。
 
@@ -560,7 +557,7 @@ def allocate(
     if not SLUG_RE.match(slug):
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     with id_lock(repo_root):
-        require_no_legacy_ledgers(repo_root, prefix, dirs, migration=migration)
+        require_current_schema(repo_root)
         number = scan_max_id(repo_root, prefix, dirs) + 1
         entry_id = canonical_entry_id(prefix, number)
         path = target_dir / f"{entry_id}_{slug}.md"
@@ -614,7 +611,6 @@ def allocate_dir(
     slug: str,
     files: dict[str, str],
     formatter=None,
-    migration: str = "",
 ) -> Path:
     """锁内分配编号、在唯一临时目录准备完整内容并格式化，随后原子发布目录条目。
 
@@ -626,7 +622,7 @@ def allocate_dir(
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     safe_files = {_safe_file_name(name): content for name, content in files.items()}
     with id_lock(repo_root):
-        require_no_legacy_ledgers(repo_root, prefix, dirs, migration=migration)
+        require_current_schema(repo_root)
         number = scan_max_id(repo_root, prefix, dirs, kind="dir") + 1
         entry_id = canonical_entry_id(prefix, number)
         path = target_dir / f"{entry_id}_{slug}"
@@ -661,258 +657,6 @@ def allocate_dir(
 # ---------------------------------------------------------------------------
 # 旧单文件总账解析（迁移用）
 # ---------------------------------------------------------------------------
-
-
-_LEGACY_HEADING_RE = re.compile(
-    r"^ {0,3}(?P<hashes>#{1,6})[ \t]+(?P<prefix>[pd])(?P<num>[0-9]{3,})(?![0-9])[ \t]*(?P<title>.*)$"
-)
-_LEGACY_CANDIDATE_RE = re.compile(r"^ {0,3}#{1,6}[ \t]+(?P<prefix>[pd])[0-9]{3,}\b")
-_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
-
-
-def _feed_fence(line: str, state: list) -> bool:
-    """围栏行返回 True（该行属代码块，不参与标题判定）；state 为 [char, len] 或 [None, 0]。"""
-    match = _FENCE_RE.match(line)
-    if match is None:
-        return state[0] is not None
-    seq = match.group("fence")
-    char, length = seq[0], len(seq)
-    if state[0] is None:
-        state[0], state[1] = char, length
-        return True
-    if char == state[0] and length >= state[1]:
-        state[0], state[1] = None, 0
-    return True
-
-
-def legacy_ledger_entries(text: str, prefix: str) -> list[tuple[int, str, str]]:
-    """解析旧单文件总账正文，返回 [(编号, 标题, 正文)]；正文不含标题行。
-
-    fence-aware：围栏内 `## pNNN` 不算条目；行首 0-3 空格缩进标题照常解析；
-    非条目同级标题不再截断当前条目，而是作为正文保留（挂到最近条目），
-     ledger 开头的前言同样并入首条目，杜绝静默丢失。返回前以 fence-aware
-    候选标题数核对解析条目数，不一致即中止，避免删源后丢失。
-    """
-    entries: list[tuple[int, str, str]] = []
-    current: tuple[int, str] | None = None  # (number, title)
-    body: list[str] = []
-    preamble: list[str] = []
-    fence: list = [None, 0]
-
-    def flush() -> None:
-        if current is not None:
-            entries.append((current[0], current[1], "\n".join(body).strip()))
-
-    for line in text.splitlines():
-        if _feed_fence(line, fence):
-            if current is not None:
-                body.append(line)
-            else:
-                preamble.append(line)
-            continue
-        match = _LEGACY_HEADING_RE.match(line)
-        if match and match.group("prefix") == prefix:
-            flush()
-            current = (int(match.group("num")), match.group("title").strip())
-            body = []
-            continue
-        if current is not None:
-            body.append(line)
-        else:
-            preamble.append(line)
-    flush()
-
-    if entries and any(part.strip() for part in preamble):
-        first_number, first_title, first_body = entries[0]
-        head = "\n".join(preamble).strip()
-        merged = (head + "\n\n" + first_body).strip() if first_body else head
-        entries[0] = (first_number, first_title, merged)
-
-    fence_check: list = [None, 0]
-    expected = 0
-    for line in text.splitlines():
-        if _feed_fence(line, fence_check):
-            continue
-        candidate = _LEGACY_CANDIDATE_RE.match(line)
-        if candidate and candidate.group("prefix") == prefix:
-            expected += 1
-    if expected != len(entries):
-        raise IdScanError(
-            f"旧总账标题解析不完整：检测到 {expected} 个 {prefix}NNN 标题，"
-            f"仅解析出 {len(entries)} 条；拒绝迁移以避免条目静默丢失"
-        )
-    return entries
-
-
-class LegacyMigrationItem(NamedTuple):
-    """旧总账一条待迁移条目：编号、规范 ID、slug、标题、正文、目标文件。"""
-
-    number: int
-    entry_id: str
-    slug: str
-    title: str
-    body: str
-    target: Path
-
-
-def plan_legacy_migration(
-    repo_root: Path, *, prefix: str, ledger_rel: str, target_dir: Path
-) -> list[LegacyMigrationItem]:
-    """解析旧单文件总账，返回待迁移条目；完整性校验与重复编号在此统一完成。"""
-    legacy_path = repo_root / ledger_rel
-    if not legacy_path.is_file():
-        raise IdScanError(f"未找到旧单文件总账：{ledger_rel}")
-    try:
-        text = legacy_path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise IdScanError(f"读取旧总账失败（{ledger_rel}）：{error}") from error
-    entries = legacy_ledger_entries(text, prefix)
-    if not entries:
-        raise IdScanError(f"{ledger_rel} 未解析出任何 {prefix}NNN 条目")
-    items: list[LegacyMigrationItem] = []
-    seen: set[int] = set()
-    for number, title, body in entries:
-        if number in seen:
-            raise IdScanError(f"{ledger_rel} 存在重复编号 {prefix}{number:03d}；迁移中止")
-        seen.add(number)
-        entry_id = canonical_entry_id(prefix, number)
-        slug = slug_from_title(title)
-        items.append(
-            LegacyMigrationItem(
-                number, entry_id, slug, title, body,
-                target_dir / f"{entry_id}_{slug}.md",
-            )
-        )
-    return items
-
-
-def _try_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(
-            ["git", "-C", str(repo_root), *args],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=30,
-            env=_controlled_git_env(),
-        )
-    except subprocess.TimeoutExpired as error:
-        raise IdScanError(f"git {' '.join(args)} 超时（30s）") from error
-    except FileNotFoundError as error:
-        raise IdScanError("git 不可用") from error
-    except OSError as error:
-        raise IdScanError(f"git 执行失败（{' '.join(args)}）：{error}") from error
-
-
-def _remove_legacy_ledger(repo_root: Path, ledger_rel: str) -> None:
-    """已入库用 git rm 保留删除记录，未跟踪直接 unlink；失败统一包装 IdScanError。"""
-    ledger_path = repo_root / ledger_rel
-    if ledger_path.is_symlink():
-        raise IdScanError(f"拒绝删除软链旧总账：{ledger_rel}")
-    tracked = _try_git(repo_root, ["ls-files", "--error-unmatch", "--", ledger_rel]).returncode == 0
-    if not tracked:
-        try:
-            ledger_path.unlink()
-        except FileNotFoundError as error:
-            raise IdScanError(f"旧总账已消失：{ledger_rel}") from error
-        _fsync_dir(ledger_path.parent)
-        return
-    result = _try_git(repo_root, ["rm", "-f", "--", ledger_rel])
-    if result.returncode != 0:
-        raise IdScanError(f"git rm 旧总账失败：{result.stderr.strip()}")
-
-
-def apply_legacy_migration(
-    items: list[LegacyMigrationItem],
-    *,
-    repo_root: Path,
-    prefix: str,
-    ledger_rel: str,
-    render: Callable[[str, str, str, str], str],
-    formatter: Callable[[Path], None] | None = None,
-) -> list[Path]:
-    """锁内重验旧总账、预扫描、逐条 O_EXCL 原子发布，最后删除旧总账。
-
-    预扫描、稳定性校验、发布、删源全部在 id_lock 内，杜绝锁外 TOCTOU 覆盖；
-    发布经 staging + O_EXCL + fsync，目标已存在即中止不覆盖；总账已被并发
-    迁移（源消失但目标齐全）时幂等返回，不回滚删除他人条目。
-    """
-    if not items:
-        raise IdScanError("无可迁移条目")
-    target_dir = items[0].target.parent
-    created: list[Path] = []
-    stagings: list[Path] = []
-    try:
-        with id_lock(repo_root):
-            _assert_no_symlink(repo_root, target_dir)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            _fsync_dir(target_dir.parent if target_dir.parent.exists() else repo_root)
-            _assert_no_symlink(repo_root, target_dir)
-            for item in items:
-                _assert_no_symlink(repo_root, item.target)
-            reclaim_staging(target_dir)
-            ledger_path = repo_root / ledger_rel
-            if ledger_path.is_symlink():
-                raise IdScanError(f"拒绝迁移软链旧总账：{ledger_rel}")
-            if not ledger_path.is_file():
-                missing = [item.target for item in items if not item.target.is_file()]
-                if not missing:
-                    return [item.target for item in items]
-                raise IdScanError(
-                    f"旧总账已消失但仍缺 {len(missing)} 个目标（{missing[0].name}…）；"
-                    "拒绝回滚删除已发布条目，请人工核对后重试"
-                )
-            try:
-                fresh_text = ledger_path.read_text(encoding="utf-8")
-            except OSError as error:
-                raise IdScanError(f"读取旧总账失败（{ledger_rel}）：{error}") from error
-            fresh = legacy_ledger_entries(fresh_text, prefix)
-            if [(n, t, b) for n, t, b in fresh] != [
-                (item.number, item.title, item.body) for item in items
-            ]:
-                raise IdScanError("旧总账在加锁前已被并发修改；迁移中止，请重新执行 migrate-legacy")
-            for item in items:
-                occupied = sorted(
-                    path
-                    for path in target_dir.glob("*.md")
-                    if not path.is_symlink()
-                    and (parsed := parse_entry_file_name(prefix, path.name))
-                    and parsed[0] == item.number
-                )
-                if occupied:
-                    raise IdScanError(
-                        f"{item.entry_id} 已有条目文件："
-                        f"{', '.join(path.as_posix() for path in occupied)}；迁移中止"
-                    )
-                if item.target.is_symlink() or item.target.exists():
-                    raise IdScanError(f"{item.target} 已存在；迁移中止")
-            for item in items:
-                staging = _stage_file(
-                    target_dir,
-                    f"{item.entry_id}_{item.slug}",
-                    render(item.entry_id, item.slug, item.title, item.body).encode("utf-8"),
-                )
-                stagings.append(staging)
-                try:
-                    if formatter is not None:
-                        formatter(staging)
-                    _publish_staged_file(staging, item.target)
-                    stagings.remove(staging)
-                except BaseException:
-                    _cleanup_staging(staging)
-                    if staging in stagings:
-                        stagings.remove(staging)
-                    raise
-                created.append(item.target)
-            _remove_legacy_ledger(repo_root, ledger_rel)
-    except BaseException as error:
-        for staging in list(stagings):
-            _cleanup_staging(staging)
-        for path in created:
-            # 仅删除本轮 O_EXCL 新建的目标；幂等路径（created 为空）不删他人条目。
-            path.unlink(missing_ok=True)
-        if isinstance(error, OSError) and not isinstance(error, IdScanError):
-            raise IdScanError(f"旧总账迁移 I/O 失败：{error}") from error
-        raise
-    return created
 
 
 def slug_from_title(title: str) -> str:

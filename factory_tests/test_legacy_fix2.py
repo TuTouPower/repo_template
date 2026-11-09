@@ -21,6 +21,8 @@ sys.path.insert(0, str(FACTORY_DIR))
 from git_repo_support import get_controlled_git_env  # noqa: E402
 
 
+from repo_task.context import RepoContext
+
 def _git(repo: Path, *args: str, check: bool = True):
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -37,6 +39,8 @@ def _init_repo(tmp_path: Path) -> Path:
     _git(repo, "config", "user.name", "t")
     (repo / "docs/pending").mkdir(parents=True)
     (repo / "docs/pending/.gitkeep").write_text("", encoding="utf-8")
+    (repo / ".repo_template").mkdir(exist_ok=True)
+    (repo / ".repo_template/entity_schema.json").write_text('{"version": 1}\n', encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -45,7 +49,7 @@ def _init_repo(tmp_path: Path) -> Path:
 # ---------- P1-4 ----------
 
 def test_legacy_sibling_heading_retained():
-    from _id_scan import legacy_ledger_entries
+    from template_sync.legacy_ledgers import legacy_ledger_entries
     text = "## p001 first\n\nbody1\n\n## Related links\n\nkeep me\n\n## p002 second\n\nbody2\n"
     entries = legacy_ledger_entries(text, "p")
     assert len(entries) == 2
@@ -53,7 +57,7 @@ def test_legacy_sibling_heading_retained():
 
 
 def test_legacy_indented_heading_parsed():
-    from _id_scan import legacy_ledger_entries
+    from template_sync.legacy_ledgers import legacy_ledger_entries
     text = "## p001 a\n\nx\n\n   ## p002 indented\n\ny\n"
     entries = legacy_ledger_entries(text, "p")
     assert [n for n, _, _ in entries] == [1, 2]
@@ -61,14 +65,14 @@ def test_legacy_indented_heading_parsed():
 
 
 def test_legacy_fence_headings_ignored():
-    from _id_scan import legacy_ledger_entries
+    from template_sync.legacy_ledgers import legacy_ledger_entries
     text = "## p001 real\n\nbody\n\n```\n## p999 fake\n```\n\n## p002 real2\n\nb2\n"
     entries = legacy_ledger_entries(text, "p")
     assert [n for n, _, _ in entries] == [1, 2]
 
 
 def test_legacy_preamble_retained_not_lost():
-    from _id_scan import legacy_ledger_entries
+    from template_sync.legacy_ledgers import legacy_ledger_entries
     text = "# ledger intro\n\nintro text\n\n## p001 a\n\nx\n"
     entries = legacy_ledger_entries(text, "p")
     assert len(entries) == 1
@@ -78,7 +82,8 @@ def test_legacy_preamble_retained_not_lost():
 # ---------- P1-5 ----------
 
 def test_migrate_no_overwrite_when_target_exists(tmp_path):
-    from _id_scan import IdScanError, plan_legacy_migration, apply_legacy_migration
+    from template_sync.legacy_ledgers import plan_legacy_migration, apply_legacy_migration
+    from _id_scan import IdScanError
     repo = _init_repo(tmp_path)
     (repo / "docs/findings").mkdir()
     (repo / "docs/findings/d012_other.md").write_text("# d012 existing\n", encoding="utf-8")
@@ -95,7 +100,7 @@ def test_migrate_no_overwrite_when_target_exists(tmp_path):
 
 
 def test_migrate_idempotent_when_ledger_already_gone(tmp_path):
-    from _id_scan import plan_legacy_migration, apply_legacy_migration
+    from template_sync.legacy_ledgers import plan_legacy_migration, apply_legacy_migration
     repo = _init_repo(tmp_path)
     (repo / "docs/findings.md").write_text("# 发现\n\n## d012 uv lock\n\n- 现状：有效\n",
                                            encoding="utf-8")
@@ -113,7 +118,8 @@ def test_migrate_idempotent_when_ledger_already_gone(tmp_path):
 
 
 def test_migrate_rejects_symlinked_target_dir(tmp_path):
-    from _id_scan import IdScanError, plan_legacy_migration, apply_legacy_migration
+    from template_sync.legacy_ledgers import plan_legacy_migration, apply_legacy_migration
+    from _id_scan import IdScanError
     repo = _init_repo(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -134,7 +140,7 @@ def test_migrate_rejects_symlinked_target_dir(tmp_path):
 
 
 def test_stale_second_migrate_does_not_delete_first(tmp_path):
-    from _id_scan import plan_legacy_migration, apply_legacy_migration
+    from template_sync.legacy_ledgers import plan_legacy_migration, apply_legacy_migration
     repo = _init_repo(tmp_path)
     (repo / "docs/findings.md").write_text("# 发现\n\n## d012 uv lock\n\n- 现状：有效\n",
                                            encoding="utf-8")
@@ -158,34 +164,32 @@ def test_stale_second_migrate_does_not_delete_first(tmp_path):
 
 def test_md_format_blacklist_case_insensitive():
     import md_format as mdf
-    assert mdf._is_blacklisted("Docs/Archive/keep.md")
-    assert mdf._is_blacklisted("DOCS/ARCHIVE/keep.md")
-    assert mdf._is_blacklisted(".SCRATCH/x.md")
+    assert mdf._is_blacklisted("Docs/Archive/keep.md", repo=RepoContext.for_root(Path.cwd()))
+    assert mdf._is_blacklisted("DOCS/ARCHIVE/keep.md", repo=RepoContext.for_root(Path.cwd()))
+    assert mdf._is_blacklisted(".SCRATCH/x.md", repo=RepoContext.for_root(Path.cwd()))
 
 
 def test_md_format_excludes_staging_tmp(tmp_path, monkeypatch):
     import md_format as mdf
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(mdf, "REPO_ROOT", repo)
     (repo / "docs/pending/p001_x.md").write_text("x\n", encoding="utf-8")
     (repo / "docs/pending/.tmp_p001_x_abc.md").write_text("x\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init2")
-    assert ".tmp_p001_x_abc.md" not in " ".join(mdf.collect_changed())
-    assert all(not p.endswith(".tmp_x.md") for p in mdf.collect_all())
+    assert ".tmp_p001_x_abc.md" not in " ".join(mdf.collect_changed(repo=RepoContext.for_root(repo)))
+    assert all(not p.endswith(".tmp_x.md") for p in mdf.collect_all(repo=RepoContext.for_root(repo)))
 
 
 def test_md_format_git_timeout_wrapped(tmp_path, monkeypatch):
     import md_format as mdf
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(mdf, "REPO_ROOT", repo)
 
     def boom(*a, **k):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=30)
 
     monkeypatch.setattr(mdf.subprocess, "run", boom)
     with pytest.raises(mdf.MdFormatError, match="超时"):
-        mdf.collect_all()
+        mdf.collect_all(repo=RepoContext.for_root(repo))
 
 
 # ---------- P2 spikes sid ----------
@@ -206,14 +210,12 @@ def test_spike_sid_s0001_rejected_and_not_matched(tmp_path):
 def test_spikes_list_validates_status(tmp_path, monkeypatch, capsys):
     import spikes as spikes_mod
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(spikes_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(spikes_mod, "SPIKES_DIR", repo / "docs/spikes")
     d = repo / "docs/spikes/s001_broken"
     d.mkdir(parents=True)
     (d / "report.md").write_text(
         '---\nsid: "s001"\nslug: "broken"\nstatus: "weird"\n---\n# Spike\n',
         encoding="utf-8")
-    spikes_mod.main(["list", "--state", "all"])
+    spikes_mod.main(["list", "--state", "all"], repo=RepoContext.for_root(repo))
     captured = capsys.readouterr()
     assert "s001_broken" in captured.out
     assert "unknown" in captured.out
@@ -225,21 +227,17 @@ def test_spikes_list_validates_status(tmp_path, monkeypatch, capsys):
 def test_pending_find_entry_reports_malformed(tmp_path, monkeypatch):
     import pending as pending_mod
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(pending_mod, "PENDING_DIR", repo / "docs/pending")
     (repo / "docs/pending/p0001_bad.md").write_text("x\n", encoding="utf-8")
     with pytest.raises(Exception, match="不规范|未找到"):
-        pending_mod.find_entry(1)
+        pending_mod.find_entry(1, repo=RepoContext.for_root(repo))
 
 
 def test_pending_list_warns_malformed(tmp_path, monkeypatch, capsys):
     import pending as pending_mod
     from argparse import Namespace
     repo = _init_repo(tmp_path)
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(pending_mod, "PENDING_DIR", repo / "docs/pending")
     (repo / "docs/pending/p0001_bad.md").write_text("x\n", encoding="utf-8")
-    pending_mod.cmd_list(Namespace(state="all"))
+    pending_mod.cmd_list(Namespace(state="all", repo=RepoContext.for_root(repo)))
     assert "警告" in capsys.readouterr().err or "不规范" in capsys.readouterr().err
 
 
@@ -252,10 +250,8 @@ def test_pending_symlink_parent_rejected(tmp_path, monkeypatch):
     import shutil
     shutil.rmtree(repo / "docs/pending")
     (repo / "docs/pending").symlink_to(outside, target_is_directory=True)
-    monkeypatch.setattr(pending_mod, "REPO_ROOT", repo)
-    monkeypatch.setattr(pending_mod, "PENDING_DIR", repo / "docs/pending")
     with pytest.raises(IdScanError, match="软链"):
-        pending_mod.find_entry(1)
+        pending_mod.find_entry(1, repo=RepoContext.for_root(repo))
 
 
 # ---------- P2 staging / fsync ----------

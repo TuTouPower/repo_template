@@ -109,11 +109,11 @@ def _build_workflow_tasks_seed(seed_dir: Path, tasks: list[tuple[str, str]]) -> 
 
     try:
         tasks_dir = seed_dir / "docs" / "tasks"
-        archive_dir = seed_dir / "docs" / "archive" / "tasks"
         scripts_dir = seed_dir / ".repo_template" / "scripts"
         tasks_dir.mkdir(parents=True)
-        archive_dir.mkdir(parents=True)
         scripts_dir.mkdir(parents=True)
+        (scripts_dir.parent / "entity_schema.json").write_text('{"version": 1}\n')
+        shutil.copy2(SCRIPTS_DIR / "_id_scan.py", scripts_dir / "_id_scan.py")
 
         shutil.copy2(SCRIPTS_DIR / "task.py", scripts_dir / "task.py")
         shutil.copy2(SCRIPTS_DIR / "md_format.py", scripts_dir / "md_format.py")
@@ -202,6 +202,7 @@ def build_sync_source_seed(seed_dir: Path) -> Path:
 
         toolkit = seed_dir / ".repo_template"
         (toolkit / "scripts").mkdir(parents=True)
+        (toolkit / "entity_schema.json").write_text('{"version": 1}\n')
         (toolkit / "scripts/task.py").write_text("print('task')\n", encoding="utf-8")
         (toolkit / "tests").mkdir(parents=True)
         (toolkit / "tests/test_x.py").write_text("def test_x():\n    pass\n", encoding="utf-8")

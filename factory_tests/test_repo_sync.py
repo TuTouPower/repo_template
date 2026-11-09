@@ -117,6 +117,7 @@ def env(tmp_path: Path, sync_source_seed: Path) -> dict:
         "user_prompts": [],
     }, indent=2))
 
+    (consumer / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
     sync = ctx.SyncContext.for_consumer(consumer)
     return {"src": src, "consumer": consumer, "head": head, "state_file": state_file, "sync": sync}
 
