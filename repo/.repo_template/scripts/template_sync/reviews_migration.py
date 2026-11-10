@@ -70,18 +70,21 @@ def _untracked_paths(root: Path, rel: str) -> list[str]:
     return sorted(paths)
 
 
+def _meta_report(root: Path, path: Path) -> list[str]:
+    """返回待删除的 _meta 过程目录报告（目录存在才有报告）。"""
+    rel = path.relative_to(root).as_posix()
+    return [f"删除 _meta 过程文件：{rel}/_meta"] if (path / "_meta").is_dir() else []
+
+
 def _deletion_content(root: Path, path: Path) -> tuple[list[str], list[str]]:
     """返回 (将删除的 _meta 报告, 非 _meta 未跟踪文件)；后者写入时阻断。"""
     rel = path.relative_to(root).as_posix()
     meta_rel = f"{rel}/_meta"
-    meta_reports = (
-        [f"删除 _meta 过程文件：{meta_rel}"] if (path / "_meta").is_dir() else []
-    )
     untracked = [
         item for item in _untracked_paths(root, rel)
         if not item.startswith(meta_rel + "/")
     ]
-    return meta_reports, untracked
+    return _meta_report(root, path), untracked
 
 
 def reviews_migration_status(sync: ctx.SyncContext) -> list[str]:
@@ -111,16 +114,22 @@ def migrate_reviews(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
             raise ctx.SyncError(f"review 同名冲突，停止迁移：{path} -> {target}")
         moves.append((path, target))
 
+    archive_dir = sync.consumer / ARCHIVE
     deletions: list[tuple[Path, bool, list[str], list[str], str]] = []
     untracked_blockers: list[str] = []
     for path in ordered[5:]:
         rel = path.relative_to(sync.consumer).as_posix()
         refs = _referenced(sync.consumer, rel)
+        # archive 内被保留（引用/未跟踪）的 review 仍可能带 _meta 过程目录；
+        # 归档区不再承载过程文件，写入时清掉并在 dry-run 报告，避免成为未跟踪噪音。
+        retained_meta = _meta_report(sync.consumer, path) if path.parent == archive_dir else []
         if refs:
-            deletions.append((path, False, [], [], f"保留被引用 review：{rel}（{', '.join(refs)}）"))
+            deletions.append(
+                (path, False, retained_meta, [], f"保留被引用 review：{rel}（{', '.join(refs)}）")
+            )
             continue
         if not _tracked(sync.consumer, rel):
-            deletions.append((path, False, [], [], f"跳过未跟踪 review：{rel}"))
+            deletions.append((path, False, retained_meta, [], f"跳过未跟踪 review：{rel}"))
             continue
         meta_reports, untracked = _deletion_content(sync.consumer, path)
         untracked_blockers.extend(untracked)
@@ -147,6 +156,8 @@ def migrate_reviews(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
         for path, remove, _meta_reports, _untracked, _label in deletions:
             if remove:
                 shutil.rmtree(path)
+            elif _meta_reports and (path / "_meta").is_dir():
+                shutil.rmtree(path / "_meta")
         archive = sync.consumer / ARCHIVE
         if archive.is_dir() and not any(archive.iterdir()):
             archive.rmdir()
