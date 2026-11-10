@@ -156,3 +156,31 @@ def test_preface_report_says_content_is_removed_after_migration(consumer):
     assert "迁移后从仓库移除" in text
     assert "安全保留" not in text
     assert "迁移前言内容。" in text
+
+
+def test_duplicate_nnn_status_reports_and_migrate_fails_without_writes(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n\n"
+        "## 001 重复编号（2026-01-03）\n\n- 结论：B\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert any("编号 001 重复（第 3、7 行）" in item for item in status), status
+    assert any("拒绝迁移，请先改号" in item for item in status)
+    with pytest.raises(ctx.SyncError, match="编号 001 重复"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_duplicate_nnn_dry_run_reports_and_writes_nothing(consumer):
+    text = (
+        "# ADR\n\n## 044 方案甲（2026-01-02）\n\n- 结论：A\n\n"
+        "## 053 方案乙（2026-01-03）\n\n- 结论：B\n\n"
+        "## 044 方案丙（2026-01-04）\n\n- 结论：C\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="编号 044 重复（第 3、11 行）"):
+        migrate_adr(sync, write=False)
+    _assert_stopped_before_write(consumer, source, text)

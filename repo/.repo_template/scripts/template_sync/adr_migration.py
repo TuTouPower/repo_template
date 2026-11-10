@@ -25,6 +25,8 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
     entries: list[dict] = []
     current = None
     preface: list[str] = []
+    first_seen: dict[str, int] = {}
+    duplicate: tuple[str, int, int] | None = None
     for lineno, line in enumerate(lines, 1):
         if fence.feed(line):
             if current:
@@ -34,9 +36,15 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
             continue
         match = ENTRY_RE.match(line)
         if match:
+            nnn = match.group(1)
+            if duplicate is None:
+                if nnn in first_seen:
+                    duplicate = (nnn, first_seen[nnn], lineno)
+                else:
+                    first_seen[nnn] = lineno
             if current:
                 entries.append(current)
-            current = {"nnn": match.group(1), "title": match.group(2), "lines": [line]}
+            current = {"nnn": nnn, "title": match.group(2), "lines": [line]}
             continue
         if H2_RE.match(line):
             raise ctx.SyncError(
@@ -49,6 +57,11 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
             preface.append(line)
     if current:
         entries.append(current)
+    if duplicate is not None:
+        nnn, first, second = duplicate
+        raise ctx.SyncError(
+            f"decisions.md 编号 {nnn} 重复（第 {first}、{second} 行）；拒绝迁移，请先改号"
+        )
     if not entries:
         raise ctx.SyncError(f"{SOURCE} 未找到任何 ## NNN 条目")
     return entries, preface
