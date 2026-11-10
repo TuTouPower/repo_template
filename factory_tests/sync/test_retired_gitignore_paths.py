@@ -2,9 +2,8 @@
 
 覆盖两条规则：
 - ``docs/archive/tasks_index.json``：entity-storage 迁移显式删除并报告；
-- ``docs/archive/reviews/review_*/_meta/``：reviews 迁移只清理被引用且引用未落入
-  ``_meta`` 的 archive review 过程目录；未跟踪 review 整体跳过，不删除任何内容；
-  引用落入 ``_meta`` 时停止并报告。
+- ``docs/archive/reviews/review_*/_meta/``：reviews 迁移保留被引用或未跟踪的
+  review 及其 ``_meta/``；被删除的旧 review 整目录删除。
 """
 
 from __future__ import annotations
@@ -98,7 +97,7 @@ def test_entity_storage_migration_removes_both_stale_derived_indexes(tmp_path: P
     assert entity_storage_migration_status(sync=sync) == []
 
 
-def test_reviews_migration_cleans_meta_on_referenced_archive_review(tmp_path: Path) -> None:
+def test_reviews_migration_keeps_meta_on_referenced_archive_review(tmp_path: Path) -> None:
     root = _init_consumer(tmp_path)
     for index in range(1, 7):
         _write_review(root, f"review_2026010{index}_120000", with_meta=False)
@@ -114,14 +113,13 @@ def test_reviews_migration_cleans_meta_on_referenced_archive_review(tmp_path: Pa
     reports = migrate_reviews(sync, write=False)
     joined = "\n".join(reports)
     assert "保留被引用 review" in joined
-    assert "review_20260101_120000/_meta" in joined
+    assert "review_20260101_120000/_meta" not in joined
 
     migrate_reviews(sync, write=True)
 
     assert referenced.is_dir()
     assert (referenced / "review_general.md").is_file()
-    assert not (referenced / "_meta").exists()
-    assert _untracked_meta(root) == []
+    assert (referenced / "_meta/run.log").is_file()
 
 
 def test_reviews_migration_keeps_meta_on_untracked_archive_review(tmp_path: Path) -> None:
@@ -143,26 +141,3 @@ def test_reviews_migration_keeps_meta_on_untracked_archive_review(tmp_path: Path
     assert (untracked / "review_general.md").is_file()
     assert (untracked / "_meta").is_dir()
     assert (untracked / "_meta/run.log").is_file()
-
-
-def test_reviews_migration_stops_when_reference_points_inside_meta(tmp_path: Path) -> None:
-    root = _init_consumer(tmp_path)
-    for index in range(1, 7):
-        _write_review(root, f"review_2026010{index}_120000", with_meta=False)
-    referenced = root / "docs/archive/reviews/review_20260101_120000"
-    (referenced / "_meta").mkdir()
-    (referenced / "_meta/run.log").write_text("process\n", encoding="utf-8")
-    (root / "docs/handoff.md").write_text(
-        f"- 过程记录见 {referenced.relative_to(root).as_posix()}/_meta/run.log\n",
-        encoding="utf-8",
-    )
-    _commit(root, "chore: archive reviews with meta reference")
-    sync = ctx.SyncContext.for_consumer(root)
-
-    with pytest.raises(ctx.SyncError, match="_meta|引用"):
-        migrate_reviews(sync, write=False)
-    with pytest.raises(ctx.SyncError, match="_meta|引用"):
-        migrate_reviews(sync, write=True)
-
-    assert referenced.is_dir()
-    assert (referenced / "_meta/run.log").is_file()

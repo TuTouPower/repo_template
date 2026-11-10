@@ -759,9 +759,10 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 ## 13. 实施记录
 
 - 2026-11-10 首批工厂改造（WP1–WP5 与 WP6 部分）完成；当时记录的“WP1–WP6 工厂侧完成”不准确：WP6 尚缺测试命名收敛、超大测试拆分、工厂笔记归档与目录改名、usage 数据迁移搬迁、退役 gitignore 规则处理、产物文档变更史措辞清理和体积测量。
-- WP6 收口完成：测试按被测模块命名并拆分 `test_repo_sync.py` / `test_task_start_flow.py`，新增 `factory_tests/integration/`；`docs_repo/` 改名 `factory_docs/`；两份已实施方案移入 `factory_docs/archive/`；`usage.md` 数据迁移章节迁入 `sync.md`；删除两条退役 gitignore 规则并由迁移清理/报告 archive 残留；产物文档去除“本轮/不再/退役”等变更史措辞。
+- WP6 收口完成：测试按被测模块命名并拆分 `test_repo_sync.py` / `test_task_start_flow.py`，新增 `factory_tests/integration/`；`docs_repo/` 改名 `factory_docs/`；两份已实施方案移入 `factory_docs/archive/`；`usage.md` 数据迁移章节迁入 `sync.md`；删除 `docs/archive/tasks_index.json` 退役规则；`docs/archive/reviews/review_*/_meta/` 按计划保留，保留 review 的 `_meta` 原样不动；产物文档去除“本轮/不再/退役”等变更史措辞。
 - 2026-11-10：实施审阅项 A1–A4、B1–B5、C1–C4、C5a 已实施；B6 关闭为“工厂只保证 migrate all → apply 路径正确，不规定消费仓铺开流程”；C5b 维持拒绝。
 - 消费仓迁移不在本文范围；由用户需要时自行执行，模板不规定铺开流程。
 - WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。
-- `f78b281` / `57f972e`：修复 reviews 迁移 `_meta` 清理边界（未跟踪 review 保留内容；引用落入 `_meta` 时 fail-closed）。
+- WP6 第 5 项曾删除 `docs/archive/reviews/review_*/_meta/` 规则并让迁移清理保留 review 的 `_meta`；该做法与计划 WP3「`_meta` 跟随 review 生命周期」和第 393 行继续保留规则冲突。现已恢复该 ignore 规则，撤销 5d7bd8b/f78b281 的保留 review `_meta` 清理与引用 fail-closed 逻辑：保留 review 不动，删除 review 整目录删除并在 dry-run 列出 `_meta`。
+- `f78b281` / `57f972e` 仅保留其未跟踪 review 不得删除的边界结论；迁移实现已按上述生命周期规则收敛。
 - 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1572 passed, 1 skipped`。
