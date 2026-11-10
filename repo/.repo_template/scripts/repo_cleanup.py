@@ -311,7 +311,12 @@ def _scratch_policy(
             label = "同步" if directory == SYNC_TRANSACTION_DIR else "图"
             state = "记录损坏" if status == "corrupt" else status
             parts.append(f"{label}事务 {state}（{directory}）")
-            if directory == SYNC_TRANSACTION_DIR:
+            if status == "corrupt":
+                hints.append(
+                    f"{directory} 记录损坏或缺失；先人工核对备份与 journal，"
+                    "不要直接 accept/rollback 或重新开始迁移"
+                )
+            elif directory == SYNC_TRANSACTION_DIR:
                 hints.append("先 `repo_sync.py transaction accept` 或 `transaction rollback`")
             elif directory == GRAPH_TRANSACTION_DIR:
                 hints.append("先 `task.py graph-transaction status` / `rollback`")

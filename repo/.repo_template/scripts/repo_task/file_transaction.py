@@ -109,6 +109,15 @@ class FileTransaction:
         if old and old["status"] in OPEN_STATUSES:
             raise ValueError("存在未结束文件事务；先 transaction status，再 rollback 或 accept")
         if self.backup.exists():
+            if not self.journal.exists():
+                try:
+                    non_empty = any(self.backup.iterdir())
+                except OSError:
+                    non_empty = True
+                if non_empty:
+                    raise ValueError(
+                        "事务目录缺少 journal 但存在残留备份；拒绝开始新事务，先人工核对"
+                    )
             shutil.rmtree(self.backup)
         data = {"version": 1, "status": "preparing", "paths": {}, "absent_parents": []}
         self.save(data)

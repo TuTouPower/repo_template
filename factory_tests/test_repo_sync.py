@@ -1240,6 +1240,22 @@ def test_migrate_legacy_state_success_readback_matches_merged_state(env):
     assert (transaction.backup / ".agents/skills/repo-template-sync/sync_state.json").is_file()
 
 
+def test_file_transaction_refuses_orphan_backup_without_journal(env):
+    """缺少 journal 的非空事务目录不得被下一次 begin 直接删除。"""
+    consumer = env["consumer"]
+    from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+
+    transaction = FileTransaction(consumer, SYNC_TRANSACTION_DIR)
+    transaction.backup.mkdir(parents=True, exist_ok=True)
+    leftover = transaction.backup / "leftover.txt"
+    leftover.write_text("backup\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="缺少 journal"):
+        transaction.begin(["README.md"])
+
+    assert leftover.is_file()
+
+
 def test_resolve_src_rejects_invalid(env):
     state = read_state(env["sync"])
     state["template_source"]["value"] = "/nonexistent/not_a_template"

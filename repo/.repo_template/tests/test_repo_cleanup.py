@@ -449,7 +449,8 @@ def test_transaction_dir_without_journal_is_corrupt_and_keeps_backup(tmp_path):
 
     result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
     assert result.scratch_note and "记录损坏" in result.scratch_note
-    assert "transaction accept" in result.scratch_note
+    assert "人工核对" in result.scratch_note
+    assert "transaction accept" not in result.scratch_note
     assert not any(h["path"].startswith(".scratch/") for h in result.hits)
     assert "scripts/debug.log" in {h["path"] for h in result.hits}
 
