@@ -122,22 +122,24 @@ def export_template(source: Path, target: Path, ref: str = "HEAD") -> None:
             shutil.rmtree(staging)
 
 
-def _hooks_installed(target: Path) -> bool:
-    result = subprocess.run(
-        ["git", "-C", str(target), "config", "--get", "core.hooksPath"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    return result.returncode == 0 and result.stdout.strip() == ".repo_template/hooks"
-
-
 def bootstrap(source: Path, target: Path, ref: str) -> bool:
     export_template(source, target, ref)
     try:
         if not (target / ".git").exists():
             subprocess.run(["git", "-C", str(target), "init", "-b", "main"], check=True)
         script = target / ".repo_template/scripts/repo_sync.py"
-        subprocess.run([sys.executable, str(script), "install-hooks"], cwd=target, check=True)
-        hooks_installed = _hooks_installed(target)
+        # install-hooks 的退出码即安装结果的唯一判据：0 已装、2 未安装需人工
+        # 接入（记未完成并继续 init）、其它一律抛错停止。
+        result = subprocess.run([sys.executable, str(script), "install-hooks"], cwd=target)
+        if result.returncode == 0:
+            hooks_installed = True
+        elif result.returncode == 2:
+            hooks_installed = False
+        else:
+            raise ValueError(
+                f"install-hooks 失败（退出码 {result.returncode}）；已完成导出/初始化部分，"
+                "请检查现场后人工完成剩余步骤，或删除目标目录重来"
+            )
         subprocess.run(
             [sys.executable, str(script), "init", "--source", str(source.resolve())],
             cwd=target, check=True,

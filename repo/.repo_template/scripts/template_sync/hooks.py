@@ -163,6 +163,10 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
     git 对相对路径按仓库顶层解析。消费仓 hooks 在 `.repo_template/hooks`；
     工厂仓产物在 `repo/` 下时须写成 `repo/.repo_template/hooks`。已有其它
     hooksPath 时拒绝，须 --force。
+
+    退出码契约：0 已安装（含已指向目标的幂等 no-op）；1 错误（缺 hook 脚本、
+    不可执行、无法解析仓库顶层、设置失败等）；2 未安装需人工接入（已有其它
+    hooksPath 且未 --force，只输出 husky/lefthook 接入片段，不覆盖）。
     """
     sync: ctx.SyncContext = args.sync
     hooks_dir = sync.consumer / ".repo_template" / "hooks"
@@ -208,7 +212,7 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
             "          run: python3 .repo_template/hooks/commit-msg {1}",
             file=sys.stderr,
         )
-        return 0
+        return 2
     result = _git(sync.consumer, "config", "core.hooksPath", hooks_rel)
     if result.returncode != 0:
         print(f"错误: 设置 core.hooksPath 失败：{result.stderr.strip()}", file=sys.stderr)
