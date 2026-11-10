@@ -7,9 +7,23 @@ import subprocess
 from functools import wraps
 from pathlib import Path
 
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, FileTransaction, state_transaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 
 from . import context as ctx
+
+
+def migration_transaction(sync: ctx.SyncContext) -> FileTransaction:
+    """迁移期文件事务：state-root 未迁移时沿用旧 ``.scratch`` 事务目录。
+
+    entity-storage 等步骤先于 state-root 执行。若此时直接写 common dir 的
+    ``sync_transaction``，state-root 搬 ``.scratch/repo_sync_rollback`` 时会与
+    已有目录冲突；旧目录存在时沿用它，由 state-root 统一迁入 common dir。
+    """
+    legacy = sync.consumer / ".scratch" / "repo_sync_rollback"
+    if legacy.exists():
+        return FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
+    return state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
 
 
 def consumer_locked(function):

@@ -42,7 +42,6 @@ from repo_task.documents import (
     dump_front_matter,
     parse_front_matter_text,
 )
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.store import task_record, scan_tasks
 from repo_task.entity_schema import SCHEMA_PATH, SCHEMA_VERSION, current_schema
@@ -52,7 +51,7 @@ from repo_task.spikes import (
 )
 
 from . import context as ctx
-from .common import _git
+from .common import _git, migration_transaction
 
 _IGNORED_NAMES = frozenset({".DS_Store", ".gitkeep", ".git"})
 _CLEANABLE_NAMES = frozenset({".DS_Store", ".gitkeep"})
@@ -1013,7 +1012,7 @@ def migrate_entity_storage(
         # 真实写入：持久文件事务保护
         tx_paths = _collect_transaction_paths(consumer, plan)
         tx_paths.append(SCHEMA_PATH)
-        transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
+        transaction = migration_transaction(sync)
         try:
             transaction.begin(tx_paths)
         except ValueError as err:
@@ -1110,7 +1109,7 @@ def migrate_entity_storage(
             except Exception as rb_err:
                 raise MigrationError(
                     f"实体存储迁移失败（{error}）；自动回滚失败：{rb_err}；"
-                    f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工恢复"
+                    f"备份保留在 {sync.rel(transaction.backup)}，请人工恢复"
                 ) from error
             raise MigrationError(f"实体存储迁移失败，已自动回滚：{error}") from error
 
