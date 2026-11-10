@@ -122,13 +122,22 @@ def export_template(source: Path, target: Path, ref: str = "HEAD") -> None:
             shutil.rmtree(staging)
 
 
-def bootstrap(source: Path, target: Path, ref: str) -> None:
+def _hooks_installed(target: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(target), "config", "--get", "core.hooksPath"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    return result.returncode == 0 and result.stdout.strip() == ".repo_template/hooks"
+
+
+def bootstrap(source: Path, target: Path, ref: str) -> bool:
     export_template(source, target, ref)
     try:
         if not (target / ".git").exists():
             subprocess.run(["git", "-C", str(target), "init", "-b", "main"], check=True)
         script = target / ".repo_template/scripts/repo_sync.py"
         subprocess.run([sys.executable, str(script), "install-hooks"], cwd=target, check=True)
+        hooks_installed = _hooks_installed(target)
         subprocess.run(
             [sys.executable, str(script), "init", "--source", str(source.resolve())],
             cwd=target, check=True,
@@ -138,6 +147,7 @@ def bootstrap(source: Path, target: Path, ref: str) -> None:
             f"bootstrap 在步骤中失败（{error}）；已完成导出/初始化部分，"
             "请检查现场后人工完成剩余步骤，或删除目标目录重来"
         ) from error
+    return hooks_installed
 
 
 def main():
@@ -147,16 +157,24 @@ def main():
     parser.add_argument("--ref", default="HEAD")
     parser.add_argument("--bootstrap", action="store_true", help="导出后 git init、安装 hooks、登记来源")
     args = parser.parse_args()
+    hooks_installed = True
     try:
         if args.bootstrap:
-            bootstrap(args.source, args.target, args.ref)
+            hooks_installed = bootstrap(args.source, args.target, args.ref)
         else:
             export_template(args.source, args.target, args.ref)
     except (OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f"导出失败：{error}\n")
     print(f"已从 Git commit 导出：{args.target}")
     if args.bootstrap:
-        print("bootstrap 完成；下一步填写 docs/blueprint/testing.md 并运行 repo_sync.py healthcheck")
+        if hooks_installed:
+            print("bootstrap 完成；下一步填写 docs/blueprint/testing.md 并运行 repo_sync.py healthcheck")
+        else:
+            print(
+                "bootstrap 未完成：hooks 未接入（已导出、git init 并登记来源）；"
+                "请按上方片段人工接入 hooks，再填写 docs/blueprint/testing.md "
+                "并运行 repo_sync.py healthcheck"
+            )
 
 
 if __name__ == "__main__":
