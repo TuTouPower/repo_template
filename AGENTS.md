@@ -1,4 +1,4 @@
-这是模板工厂仓。产物是 `repo/`。本仓笔记在 `docs_repo/`。
+这是模板工厂仓。产物是 `repo/`。本仓笔记在 `factory_docs/`。
 
 默认工作：改 `repo/.repo_template/`、跑工厂全量测试、改同步脚本。
 
@@ -6,7 +6,7 @@
 - 要验消费体验：把工作区切到 `repo/`，或把 `repo/` 复制成独立消费仓。
 - 消费仓项目骨架与状态机只在 `repo/AGENTS.md`。不要把那份链到工厂根。
 - 消费仓用法、工具链写权与 skill 调用只在 `repo/.repo_template/docs/usage.md`。
-- 工厂根不放业务骨架。`docs_repo/` 不进产物。
+- 工厂根不放业务骨架。`factory_docs/` 不进产物。
 - 契约测试在 `repo/.repo_template/tests/`，随产物分发；其余集成测试在工厂根 `factory_tests/`，不进产物。
 - 全量测试 `--basetemp` 用系统临时目录（`"$(mktemp -d)"`），不用仓内 `.scratch/`。
 

@@ -4,7 +4,7 @@
 >
 > 文档性质：已实施的工厂改造方案。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态见 [decision_log.md](../decision_log.md)。本文只记录工厂实施与验证；消费仓由用户需要时自行迁移，模板不规定铺开流程。
 >
-> 适用范围：工厂仓 `repo/` 产物、`factory_tests/`、`docs_repo/` 工厂笔记，以及迁移脚本对通用旧布局的处理。模板工具链本身仍留在产物内，不做外置。
+> 适用范围：工厂仓 `repo/` 产物、`factory_tests/`、`factory_docs/` 工厂笔记，以及迁移脚本对通用旧布局的处理。模板工具链本身仍留在产物内，不做外置。
 >
 > 不在范围：S1 保证等级与预算、S2 tag 发布边界、S3 分发模型、S4 第 5 点权威收敛、S5 第 1 点 `project.json`、S6 第 1–2 点路径单点化与根迁移、S6 第 6 点的 `handoff.json` 改名、S9 第 4 点工厂自用。
 
@@ -34,7 +34,7 @@
 |S4 第 5 点|integrate 继续以 ledger 的 terminal/report 为前提；`ledger import` 保留。|
 |S5 第 1 点|门禁命令继续由 `docs/blueprint/testing.md` 承载；本方案不新增 `project.json`，不改变现有校验。|
 |S6 第 1–2 点|不做路径单点化重构，不引入 `work/` 根。`tasks/pending/spikes/reviews` 继续留在 `docs/`。|
-|S6 第 6 点其余|`handoff.json` 不改名 `receipt.json`；`docs_repo/` 不改名 `factory_docs/`。|
+|S6 第 6 点其余|`handoff.json` 不改名 `receipt.json`；`docs_repo/` 名称不属于本方案范围，后由用户 2026-11-10 裁决改名 `factory_docs/`。|
 |S9 第 4 点|工厂不切换到已安装版工具自管；该目标依赖 S3 阶段二。|
 
 ### 1.3 关键取舍
@@ -481,7 +481,7 @@ tasks: [t001, t002]
 
 - `dispatch_ledger.jsonl` -> `ledger.jsonl`：由 WP1 状态迁移原子改名；所有读写点、测试、文档同步。
 - `handoff.json` 保持原名；不创建 `receipt.json` 旧名兼容文件。
-- `docs_repo/` 保持原名；不改工厂笔记路径。
+- `docs_repo/` 按用户 2026-11-10 裁决改名 `factory_docs/`；工厂笔记路径随之更新。
 
 **验收**：
 
@@ -625,12 +625,12 @@ tasks: [t001, t002]
     - “原位流转”只在 `architecture.md`「固定路径契约」定义一次，其余链接；
     - `usage.md`「数据迁移」移入 `sync.md` 或发布说明；
     - “本轮只做静态核对”“本轮未运行迁移演练”改为明确日期与验证范围；
-    - 删除 `repo/docs/blueprint/decisions.md` 对 `docs_repo/` 的悬空引用；
+    - 删除 `repo/docs/blueprint/decisions.md` 对 `factory_docs/` 的悬空引用；
     - 改写后重新测量 `usage.md`、`architecture.md` 体积。
 2. 工厂笔记：
     - `decision_log.md` 每行只写议题、裁决、落点、状态；实施细节与用例数留在方案和 Git 历史；
     - 更新 L60–L63、L65、L66 的过期状态；
-    - 修正 `docs_repo/README.md` 的 `reviews/2026-07/` 路径；
+    - 修正 `factory_docs/README.md` 的 `reviews/2026-07/` 路径；
     - 把 `plans/plan_test_suite_performance.md`、`plans/plan_entity_storage_and_archive.md` 移入 `archive/`；
     - 本方案完成后，把本文与宏观审阅处置状态同步记录。
 3. 工厂测试：
@@ -643,9 +643,9 @@ tasks: [t001, t002]
 **验收**：
 
 - 产物文档 grep “本轮” 无命中，review prompt 的轮次字段除外。
-- `repo/docs/blueprint` 无 `docs_repo/` 引用。
+- `repo/docs/blueprint` 无 `factory_docs/` 引用。
 - `factory_tests/` 无以审阅日期或 finding 编号命名的文件；测试仍可全量运行。
-- `docs_repo/README.md` 路径与 `plans/` 归档状态正确。
+- `factory_docs/README.md` 路径与 `plans/` 归档状态正确。
 - decisions 目录、specs 目录、测试目录的现行引用全部更新。
 
 ## 7. 测试策略

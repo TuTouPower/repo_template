@@ -62,7 +62,7 @@
 | L44 | 阻塞传播到无关队列成员 | 宏观方案 D-05，用户批准 E1/E2 | 按依赖与冲突关系分链，无关成员从主干起步；阻塞只停止所在链，无可继续成员才判 STOPPED | `repo_task/{plan,goal}.py`、`task-run` | 已落地 |
 | L45 | 消费仓携带工厂集成测试 | 宏观方案 D-06，用户批准 | 集成测试移到 factory_tests，不随 repo 分发；消费默认仅运行 contract | `factory_tests/`、`testing.md` | 已落地 |
 | L46 | 默认状态栏 hook 缺少渲染端 | 宏观方案 D-07，用户批准；修订 L36 | 默认不启用、不分发 settings.json，状态行改由 run-begin 写入会话工作目录；保留消费仓自有设置 | `template_sync/hooks.py`、`usage.md` | 已落地 |
-| L47 | 看板 mock demo 与现行实现重复 | 宏观方案 D-08，用户批准 | 删除 demo 源码与 zip，保留 Git 历史；设计计划移入 archive 并注明现行实现 | `docs_repo/archive/plan_board_v2_chain_panel_demo.md` | 已落地 |
+| L47 | 看板 mock demo 与现行实现重复 | 宏观方案 D-08，用户批准 | 删除 demo 源码与 zip，保留 Git 历史；设计计划移入 archive 并注明现行实现 | `factory_docs/archive/plan_board_v2_chain_panel_demo.md` | 已落地 |
 | L48 | 工厂历史 basetemp 占用工作区 | 宏观方案 D-09，用户批准 | 历史测试残留清理；全量 basetemp 使用系统临时目录，缓存与运行产物不提交 | 工厂 `AGENTS.md` | 已落地；当前开发环境仍可使用忽略的 .scratch |
 | L50 | note.md 文件名与状态、进展职责不符 | 宏观方案 D-12，用户批准 | 当前过程文件统一 progress.md，标题为 Task 进展；同步事务一次迁移活跃与归档旧布局，两名并存拒绝，失败回滚 | `repo_task/context.py`、`template_sync/workflow_migration.py` | 已落地 |
 | L51 | AC 打勾未进入独立 review 机器门禁 | 宏观方案 D-13，用户批准 | reviewer 用 TICK-VALID / TICK-VOID 逐条复验；FAIL 后需改交付内容时实施方撤回全部打勾，修复重验后重新勾选 | review prompts、`repo_task/review.py`、task 模板 | 已落地 |
@@ -132,6 +132,7 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
 | L75 | task 实施与 spec 脱节，finish 重复测试 | 2026-11-10 实施计划、用户批准 S7 | task 模板与 preflight 增加关联 spec；review prompt 注入路径/摘要；finish 不执行 test_cmd，不新增验证状态 | task 模板、`repo_task/{documents,specs,finalization}.py`、render_review_prompts.py | 已落地 |
 | L76 | done 未合并 task 无公开入口，初始化步骤多 | 2026-11-10 实施计划、用户批准 S8 | task-integrate 公开；task-merge 改名 task-combine；export/bootstrap、healthcheck、husky/lefthook 片段 | registry、skills、`template_sync/{hooks,healthcheck}.py`、export_template.py | 已落地 |
 | L77 | 产物文档依赖审阅史，工厂测试难发现 | 2026-11-10 实施计划、用户批准 S9 | 文档只描述现状；工厂测试按 state/sync/workflow/review/docs/support 分目录；测试按模块改名 | `repo/.repo_template/docs/`、`factory_tests/` | 已落地 |
+| L78 | 工厂笔记目录命名 | 用户 2026-11-10 裁决 | `docs_repo/` 改名 `factory_docs/` | 工厂根文档、`factory_docs/`、引用脚本/测试 | 已落地 |
 
 归档备注契约补充验证：工厂全量 562 passed，无跳过；覆盖无引用、main/commit/PR 引用、所有 resolution 的空备注拒绝，以及缺少备注时零迁移。
 

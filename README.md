@@ -1,6 +1,6 @@
 # repo_template
 
-Agent 友好的通用仓库模板工厂。产物在 [`repo/`](repo/)，本仓设计笔记在 [`docs_repo/`](docs_repo/)。
+Agent 友好的通用仓库模板工厂。产物在 [`repo/`](repo/)，本仓设计笔记在 [`factory_docs/`](factory_docs/)。
 
 消费仓不要打开本仓库根当项目用。复制 `repo/` 作为新项目起点。
 
