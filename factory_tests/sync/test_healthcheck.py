@@ -68,6 +68,9 @@ def test_healthcheck_passes_and_install_hooks_does_not_overwrite(consumer, tmp_p
     (consumer / ".husky/pre-commit").write_text(
         "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
     )
+    (consumer / ".husky/commit-msg").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/commit-msg \"$1\"\n", encoding="utf-8"
+    )
     assert run_healthcheck(sync) == []
 
 
@@ -101,3 +104,16 @@ def test_install_hooks_foreign_path_reports_not_installed_and_lefthook_commit_ms
     assert "未安装，需人工接入" in err
     assert "run: python3 .repo_template/hooks/commit-msg {1}" in err
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() == ".git/hooks"
+
+
+def test_healthcheck_requires_commit_msg_hook(consumer, tmp_path, monkeypatch):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    _git(consumer, "config", "core.hooksPath", ".husky/_")
+    (consumer / ".husky").mkdir()
+    (consumer / ".husky/pre-commit").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
+    )
+    issues = run_healthcheck(sync)
+    assert any("commit-msg" in issue for issue in issues)

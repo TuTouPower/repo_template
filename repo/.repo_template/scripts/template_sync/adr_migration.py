@@ -58,7 +58,7 @@ def _preface_report(preface: list[str]) -> list[str]:
     text = "\n".join(preface).strip()
     if not text:
         return []
-    return [f"{SOURCE} 前言（不生成 ADR，内容随本报告安全保留）：\n{text}"]
+    return [f"{SOURCE} 前言（不生成 ADR，迁移后从仓库移除，请据本报告复核）：\n{text}"]
 
 
 def _date_from_git(root: Path, nnn: str) -> str:

@@ -199,3 +199,21 @@ def test_reviews_migration_rolls_back_on_delete_failure(consumer, monkeypatch):
     with pytest.raises(ctx.SyncError, match="review 保留"):
         migrate_mod.cmd_migrate(Namespace(sync=ctx.SyncContext.for_consumer(consumer), kind="reviews", write=True))
     assert len(list(reviews.glob("review_*"))) == 6
+
+
+def test_specs_layout_dry_run_rejects_invalid_kebab_slug(consumer):
+    (consumer / "docs/specs").mkdir(parents=True)
+    (consumer / "docs/archive/specs").mkdir(parents=True)
+    (consumer / "docs/specs/feature.md").write_text("# Feature\n", encoding="utf-8")
+    (consumer / "docs/specs/ai-cli-token-stats.md").write_text("# Bad slug\n", encoding="utf-8")
+    (consumer / "docs/archive/specs/old.md").write_text("# Old\n", encoding="utf-8")
+    (consumer / "docs/specs_index.md").write_text(
+        "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
+        "|feature|t001|2026-01-01|\n|old|t002|2025-01-01|\n",
+        encoding="utf-8",
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="slug 非法"):
+        migrate_specs_layout(sync, write=False)
+    assert (consumer / "docs/specs/feature.md").read_text(encoding="utf-8") == "# Feature\n"
+    assert (consumer / "docs/specs_index.md").is_file()

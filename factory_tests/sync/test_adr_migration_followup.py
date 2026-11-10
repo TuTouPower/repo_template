@@ -140,3 +140,19 @@ def test_invalid_supersedes_stops_before_writing(consumer):
     with pytest.raises(ctx.SyncError, match="替代 999"):
         migrate_adr(sync, write=True)
     _assert_stopped_before_write(consumer, source, text)
+
+
+def test_preface_report_says_content_is_removed_after_migration(consumer):
+    path = consumer / "docs/blueprint/decisions.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# 决策记录\n\n迁移前言内容。\n\n## 001 选择方案（2026-01-02）\n\n- 结论：A\n",
+        encoding="utf-8",
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=False)
+    text = "\n".join(reports)
+    assert "不生成 ADR" in text
+    assert "迁移后从仓库移除" in text
+    assert "安全保留" not in text
+    assert "迁移前言内容。" in text
