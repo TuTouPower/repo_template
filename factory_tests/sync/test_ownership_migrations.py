@@ -57,6 +57,33 @@ def _source(tmp_path: Path) -> Path:
 
 
 def test_agents_zone_migration_keeps_project_rows(consumer, tmp_path):
+    src = _source(tmp_path)
+    old = (
+        "模板项目\n\n## 目录与读写规则\n\n"
+        "|路径|用途|写权归属|\n|---|---|---|\n"
+        "|`docs/specs/`|spec|模板|\n"
+        "|`src/`|源码|模板|\n\n"
+        "## 开发原则\n旧原则\n"
+    )
+    current = (
+        "模板项目\n\n<!-- repo-template:begin -->\n"
+        "## 目录与读写规则\n\n"
+        "|路径|用途|写权归属|\n|---|---|---|\n"
+        "|`docs/specs/`|spec|模板|\n"
+        "|`src/`|源码|模板|\n\n"
+        "## 开发原则\n模板原则\n<!-- repo-template:end -->\n"
+    )
+    (src / "AGENTS.md").write_text(old, encoding="utf-8")
+    _git(src, "init", "-b", "main")
+    _git(src, "config", "user.email", "test@example.com")
+    _git(src, "config", "user.name", "test")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-m", "historical")
+    commit = _git(src, "rev-parse", "HEAD").stdout.strip()
+    (src / "AGENTS.md").write_text(current, encoding="utf-8")
+    (consumer / ".repo_template/sync_manifest.json").write_text(
+        '{"version": 1, "resolved_commit": "' + commit + '"}\n', encoding="utf-8"
+    )
     (consumer / "AGENTS.md").write_text(
         "项目介绍\n\n## 目录与读写规则\n"
         "|路径|用途|写权归属|\n|---|---|---|\n"
@@ -64,7 +91,7 @@ def test_agents_zone_migration_keeps_project_rows(consumer, tmp_path):
         "## 开发原则\n旧原则\n",
         encoding="utf-8",
     )
-    reports = migrate_agents_zones(ctx.SyncContext.for_consumer(consumer), _source(tmp_path), write=True)
+    reports = migrate_agents_zones(ctx.SyncContext.for_consumer(consumer), src, write=True)
     text = (consumer / "AGENTS.md").read_text(encoding="utf-8")
     assert "## 项目目录与读写规则" in text
     assert "`src/`" in text
