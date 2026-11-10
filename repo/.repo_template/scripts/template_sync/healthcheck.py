@@ -11,13 +11,13 @@ from . import context as ctx
 from .state import read_state
 
 
-def _check_hook_snippet(sync: ctx.SyncContext) -> str:
+def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
     husky = sync.consumer / ".husky/pre-commit"
     if husky.is_file() and ".repo_template/hooks/pre-commit" in husky.read_text(encoding="utf-8"):
-        return ""
+        return None
     lefthook = sync.consumer / "lefthook.yml"
     if lefthook.is_file() and ".repo_template/hooks/pre-commit" in lefthook.read_text(encoding="utf-8"):
-        return ""
+        return None
     return "hooks 未接入：在 .husky/pre-commit 或 lefthook.yml 调用 python3 .repo_template/hooks/pre-commit"
 
 
@@ -43,7 +43,7 @@ def run_healthcheck(sync: ctx.SyncContext) -> list[str]:
                 if missing:
                     issues.append(missing)
         else:
-            issues.append(_check_hook_snippet(sync))
+            issues.append("未设置 core.hooksPath；运行 repo_sync.py install-hooks 启用模板 hooks")
     state = read_state(sync)
     if not state:
         issues.append("未初始化：缺 sync_state.json；运行 repo_sync.py init --source <path|url>")

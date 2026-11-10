@@ -63,8 +63,41 @@ def test_healthcheck_passes_and_install_hooks_does_not_overwrite(consumer, tmp_p
     _git(consumer, "config", "core.hooksPath", ".husky/_")
     (consumer / ".husky").mkdir()
     (consumer / ".husky/pre-commit").write_text("#!/bin/sh\n", encoding="utf-8")
-    assert run_healthcheck(sync)
+    issues = run_healthcheck(sync)
+    assert any("hooks 未接入" in issue for issue in issues)
     (consumer / ".husky/pre-commit").write_text(
         "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
     )
     assert run_healthcheck(sync) == []
+
+
+def test_healthcheck_without_hookspath_prompts_install_hooks(consumer, tmp_path, monkeypatch):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    (consumer / ".husky").mkdir()
+    (consumer / ".husky/pre-commit").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
+    )
+    issues = run_healthcheck(ctx.SyncContext.for_consumer(consumer))
+    assert any("install-hooks" in issue for issue in issues)
+    assert all(issue.strip() for issue in issues)
+
+
+def test_install_hooks_foreign_path_reports_not_installed_and_lefthook_commit_msg(
+    tmp_path, capsys
+):
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    _git(consumer, "init", "-b", "main")
+    _git(consumer, "config", "core.hooksPath", ".git/hooks")
+    hook = consumer / ".repo_template/hooks/pre-commit"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    assert cmd_install_hooks(Namespace(sync=sync)) == 0
+    err = capsys.readouterr().err
+    assert "未安装，需人工接入" in err
+    assert "run: python3 .repo_template/hooks/commit-msg {1}" in err
+    assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() == ".git/hooks"
