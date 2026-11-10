@@ -4,6 +4,7 @@
 - 代码基线：`7dcb9193e59197a3c6b27139b483e1349920f8b3`，审阅期间工作区干净。文件阅读主要发生在 `1081146`；其后 6 个 commit 经 diff 核对不影响下文结论，量化数据均按基线重测。
 - 审阅方：Claude（Fable 5）。应用户要求从宏观设计角度审阅，不评估代码细节。
 - 本文状态：审阅意见与改进提议。第 4–6 节的全部提议**未裁决、未实施**。裁决后在 [decision_log.md](../decision_log.md) 加行，本文不承载裁决状态。
+- 复核修订：2026-11-10T09:02:32+08:00。依据独立复核补充 S1 现状/目标口径与预算拆分、S3 阶段一耦合、S4 状态迁移、S6 两阶段拆分、S7 门禁配置保护；按现场校正在途 worktree 数量。修订不改变原文的总体判断。
 - 文档边界：现行契约仍以 `repo/AGENTS.md`、`repo/.repo_template/docs/`、`repo/docs/blueprint/` 为准。
 - 证据边界：
     - 本次审阅未运行测试。全量结果引自 [四线合并审阅处置](review_20261110/adoption.md)：`1610 passed, 1 skipped`。
@@ -36,7 +37,7 @@
 |工厂测试|59 个测试文件，21,481 行；全量 `1610 passed, 1 skipped`（宏观方案记录 691）|`wc -l`；结果引自 adoption.md|
 |消费仓版本|12 个，全部 `988fd06`，落后 173 个 commit，均无 `entity_schema.json`|读取各仓 `sync_manifest.json` 或 `sync_state.json`|
 |消费仓规模|`docs/archive/tasks/` 最多 594 个目录（omni_panel），其次 470（great_websites）；spec 最多 93 份；findings 最多 109 条|目录清点|
-|在途工作|omni_panel 有 1 个、CBrowser 有 2 个已登记的 task worktree|`git worktree list`|
+|在途工作|omni_panel 1 个、CBrowser 1 个已登记的 task worktree（复核时现场：`omni_panel_t600`、`CBrowser_t049`）|`git worktree list`|
 |路径字面量|脚本中 `docs/tasks` 等实体路径约 230 处，测试中约 850 处|`grep -F` 计数|
 
 ## 3. 问题清单
@@ -143,7 +144,7 @@
 #### M12 task worktree 位于仓外同级目录（低）
 
 - `../{repo}_{tid}` 与真实项目并列，按父目录通配的工具会把 worktree 当成项目；写域越出仓根。
-- 本机父目录下还存在未登记为 worktree 的 `omni_panel_t599` 目录，成因未核实。
+- 本机父目录下的两个 task worktree 均已登记；复核时未见未登记目录。原记录中的 `omni_panel_t599` 已不在现场。
 
 ### 3.4 工厂治理
 
@@ -193,22 +194,24 @@
         |类别|承诺|示例|
         |---|---|---|
         |A 不可逆损失|机械阻断，必须有测试|删除含未提交改动的 worktree、覆盖用户文件、purge|
-        |B 交付完整性|finish 与 integrate 机械校验|合入内容等于已评审、已验证的内容|
+        |B 交付完整性|当前机械校验“合入内容等于已评审内容”；S7 落地后才承诺“已验证内容”|合入内容等于已评审内容；S7 后要求验证记录指纹一致|
         |C 崩溃一致性|检测并停止，给出可读诊断；单次中断可回滚|不承诺回滚过程再次中断后的自动续滚；不防介质损坏|
         |D 流程约束|只记录，不证明|用户批准调高轮次上限、merge 授权|
         |E 隐私扫描|以 `conventions.md`「路径隐私」声明的范围为准，范围外尽力而为|不再为罕见编码扩展范围|
 
+    - B 的现状与目标必须分开。`testing.md` 明确状态机不代为运行命令，`finish` 只校验收尾报告文字摘要，因此 S1 不能把 B 写成已成立的完整保证；S7 是 B 从“内容一致”升级到“执行已验证”的前置条件。
     - finding 准入：属于 A 或 B，且可由“出错的 agent”或“单次崩溃”触发的，采纳。需要恶意者或双重故障才能触发的，默认拒绝并引用本模型。文档与实现矛盾的，照常修正。
 2. 复杂度预算：
-    - 以基线数值为上限冻结：脚本 22,182 行、`task.py` 32 个子命令、16 个 skill、`AGENTS.md` 加 `usage.md` 共 32.4KB。
-    - 新增机制须同时删除等量内容，或在 decision_log 记录调高预算的裁决。
-    - 预算数值存于单一文件，由一个工厂测试断言。
-    - S3–S6 落地后按实测下调。
+    - 分三个指标冻结：产物携带脚本行数（当前 22,182 行，S3 阶段一后应减少约 4,954 行）、工厂专属脚本行数、常驻文档字节数（`AGENTS.md` 加 `usage.md` 当前 32.4KB）；`task.py` 子命令与 skill 数单独记录。
+    - 新增机制须在对应指标内删除等量内容，或在 decision_log 记录调高预算的裁决；缺陷修复不计入。
+    - 预算数值存于单一文件，由一个工厂测试断言超限失败。
+    - S3–S6 落地后按实测重设基线，不把“移出产物”误记为工具链瘦身。
 
 **验收**：
 
 - 模型文档经用户确认。
-- 预算测试在基线通过，人为超限时失败。
+- B 的当前/目标口径写入模型文档；S7 前明确 B 不覆盖项目门禁执行。
+- 预算测试在基线通过，人为超限时失败；三个指标分别可测。
 - 下一轮审阅的处置文档逐项引用保证等级。
 
 ### S2 发布边界（对应 M13）
@@ -218,13 +221,14 @@
 **做法**：
 
 1. 发布等于带注释的 tag。打 tag 的前提是该 commit 工厂全量通过，且导出产物的契约测试通过。打 tag 由一个工厂脚本完成，条件不满足时不打。
-2. `repo-template-sync` 的正式同步只接受 tag 对应的 commit。其它 commit 归入 `sync.md` 已有的“开发验证”类别，不推进版本基线。
+2. `repo-template-sync` 的正式同步只接受 tag 对应的 commit。其它 commit 归入 `sync.md` 已有的“开发验证”类别，不推进版本基线。URL 来源缓存在同步前显式 `git fetch --tags`；本地来源用 `git describe --exact-match` 核对 top commit 是 tag，而不是只看 SHA。
 3. 每个 tag 附面向消费仓的发布说明：变更摘要、是否需要迁移、是否要求静默窗口、人工步骤。
 4. 恢复 CI 不是前提，是否恢复另行决定。
 
 **验收**：
 
 - 对非 tag commit 执行正式同步被拒绝。
+- 新 tag 在 URL 缓存拉取后可见，并按 tag 解析。
 - 发布脚本在测试失败时不打 tag。
 
 ### S3 分发模型（对应 M01）
@@ -238,7 +242,12 @@
     1. `template_sync/`、`repo_sync.py`、`export_template.py` 迁到工厂根，不再进入产物。
     2. 来源只保留工厂仓（配合 S2 的 tag），不再支持以产物根作为来源。
     3. 迁移模块设退役规则：全部已知消费仓越过某个 schema 后，下一次发布删除对应迁移。
-- 效果：产物脚本最多减少 4,954 行；消费仓内不再有用不到的迁移代码。
+- 复核补充，阶段一不是纯移动：
+    - `template_sync` 大量 import `repo_task`（`transaction.py`、`entity_storage_migration.py`、`specs_index_migration.py` 等）。移动后来源脚本必须从 `<product>/.repo_template/scripts` 显式加载 `repo_task`，不能依赖同目录 import。
+    - `repo/.repo_template/tests/test_contract_suite.py` 直接 import `template_sync`；该测试须随同步引擎迁入 `factory_tests/`，否则产物契约测试会在移除后失效。
+    - 12 个消费仓中 6 个的 `sync_state.template_source` 指向产物根。阶段一后该路径不再有 `repo_sync.py`，必须迁移 state 或让 launcher 从产物根回退到工厂根。
+    - `repo/README.md` 的 `init` 与 `install-hooks` 仍调用消费仓本地 `repo_sync.py`，随入口迁移改写为来源脚本。
+- 效果：产物携带脚本最多减少 4,954 行；消费仓内不再有用不到的迁移代码。工具链总行数不会因此下降。
 
 **阶段二：工具链外置（需裁决，先做 spike）**
 
@@ -257,6 +266,8 @@
 
 - 导出产物不含 `template_sync/`。
 - 从工厂 tag 对一个旧版消费仓副本执行 status、plan、apply 全流程通过。
+- 对一个来源仍指向产物根的旧版消费仓副本执行同步通过（state 迁移或 launcher 回退有测试）。
+- `template_sync` 契约测试迁入 `factory_tests/` 后通过。
 - 产物契约测试通过。
 
 ### S4 本机状态根（对应 M03）
@@ -274,6 +285,9 @@
     - worktree 链接对 `docs/runtime/` 的排除。
     - cleanup 对未结束事务的识别，以及为此持有的控制面锁。
 5. 权威收敛（需设计核对）：task 完成与合入的事实只认已提交证据（分支 tip 的回执、单一实现 commit、review 指纹）和 Git 状态。ledger 只承担运行期互斥（claim）与 blocked、failed 审计。integrate 不再以 ledger 的 terminal、report 事件为前提，`ledger import` 与对应的 recovery 阶段可以删除。
+    - 复核补充：`cmd_integrate` 目前从 ledger 解析 identity，`_preflight_chain` 逐成员读取 current attempt，`cleanup-worktree` 也依赖 terminal 事件。设计须明确 identity 改从 `handoff.json` 解析、保留 active claim 检查，并以“无登记 worktree、分支 tip 未变化”作为可合并前提；在替代校验完成前不得删除 `ledger import`。
+
+**状态迁移（复核补充）**：迁移窗口内须把 `docs/runtime/` 的 ledger、审计日志、goal 队列，worktree 的 `execution_context.json`，`.scratch/` 的图事务、同步事务及其备份，以及 `.repo_template/sync_state.json` 的来源身份迁入新根。`sync_state` 含来源身份，不能靠重新 init 隐式恢复；审计日志与事务备份须保留原字节。迁移前按 `sync.md` 备份 Git common dir 与原状态目录，并在副本核对。
 
 **理由**：Git common dir 被所有 worktree 共享，不入库、不随导出、不被 cleanup 触及，迁机时备份一处即可。现有的两把锁已经放在这里。
 
@@ -282,11 +296,12 @@
 - 主仓 `git status --ignored` 不再出现 `docs/runtime/`。
 - 同步事务未结束时用 `repo-cleanup` 清理 `.scratch/`，事务仍可恢复。
 - 删除本机 ledger 后，一个 done 且未合并的分支仍能通过 integrate 的全部校验（对应第 5 点）。
+- 状态迁移后 ledger、goal 队列、审计日志、sync state 与迁移前逐项一致；事务备份可恢复。
 
 **风险**：
 
 - `git worktree remove` 会连带删除 worktree 私有目录中的状态，`run-close` 的清理顺序需要确认。
-- 第 5 点触及 integrate 的门禁语义。本次审阅没有逐行核对 `integration.py`，须先做设计核对再裁决。
+- 第 5 点触及 integrate 的门禁语义。复核已核对 `integration.py` 的 identity、chain preflight 与 cleanup 调用点，仍建议单独立设计后再裁决，不与第 1–4 点同批。
 
 ### S5 文件级所有权与结构化配置（对应 M04）
 
@@ -299,6 +314,7 @@
     - 字段为 `verification_policy`、`verification_notes`、`doctor_cmd`、`test_cmd`、`blackbox_verify`。每个门禁是一条命令或空值，多步逻辑由项目自己的脚本承载。
     - `testing.md` 退回为纯说明文档；模板的“门禁类别清单”移入模板文档。
     - 围栏解析器、单块规则、占位符回显检测随之删除。
+    - `project.json` 必须加入同步 `PROTECT_NAMES`，从模板硬同步中排除；其门禁字段变更须进入 review scope。`.repo_template/` 根由模板管理，消费仓自有文件需要显式所有权标记，不能靠目录名推定。
 2. `AGENTS.md` 改为两区。
     - 项目区：项目介绍与项目自有目录规则，归消费仓。
     - 模板区：模板工作流目录规则与开发原则，同步时强制替换。
@@ -311,6 +327,7 @@
 
 - 改动模板区一条规则后，同步一个消费仓副本不需要任何人工或 agent 合并。
 - `project.json` 缺字段或类型错误时，start 与 finish 拒绝并给出字段名。
+- `project.json` 被修改但未进入 review scope 时，finish 拒绝；`pending-fix` 不得静默弱化门禁字段。
 - 消费仓任意改写 `testing.md` 不影响门禁。
 
 **影响**：
@@ -320,7 +337,9 @@
 
 ### S6 目录布局与命名（对应 M07 的索引部分、M10、M11）
 
-**目标布局（消费仓）**：
+**复核结论：拆为两阶段。** S6a 只做 task/pending/spike 根迁移与路径单点化，保留 `docs/reviews`、`docs/archive`、`specs_index.md` 与 ADR 单文件；S6b 再做 review 目录移动、取消归档、spec front matter、派生索引和 ADR 拆分。S6a 先在 1–2 个仓副本 pilot，再铺开；S6b 等 S6a 稳定后再做。理由：取消归档与移动 reviews 会同时改变隐私扫描、Markdown 格式化、review scope 排除和外部评审工具输出，影响面远超路径改名。
+
+**目标布局（消费仓，S6b 完成后）**：
 
 ```text
 docs/              长期知识：blueprint/、specs/、guides/、findings/
@@ -329,35 +348,50 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 .scratch/          草稿与缓存
 ```
 
+S6a 只把 `tasks/`、`pending/`、`spikes/` 与 `handoff.md` 从 `docs/` 移到 `work/`；`docs/reviews/`、`docs/archive/`、`specs_index.md` 与 `decisions.md` 暂留，形态不变。
+
 **做法**：
 
 1. 先把实体路径收敛为单一定义。脚本与测试都从一处取路径，之后再改值。路径字面量在脚本中约 230 处、测试中约 850 处，直接替换风险高。
-2. 按性质分根。流程实体迁到 `work/`（目录名由用户定），`docs/` 只留长期知识，`docs/runtime/` 按 S4 移走。实体仍然终生原位，L59 的路径稳定性不变，只是根不同。
-3. 取消归档目录。
+2. 按性质分根。流程实体迁到 `work/`（目录名由用户定，避免与消费项目已有目录冲突），`docs/` 只留长期知识，`docs/runtime/` 按 S4 移走。实体仍然终生原位，L59 的路径稳定性不变，只是根不同。
+3. 取消归档目录（S6b）。
     - spec 增加 front matter（`slug`、`tasks`、`updated`、`status`），废弃时原位标 `retired`。
     - review 会话产物原位保留。
     - `docs/archive/`、`repo-hygiene` skill 与 `repo_hygiene.py` 删除。
     - 这一点修订 L59 中“archive 保留 reviews 与 specs”的边界。
-4. 索引改为派生。删除 `specs_index.md`，由 spec front matter 派生清单。finish 的登记检查改为“当前 tid 出现在某份 spec 的 `tasks` 中，或 `progress.md` 声明不适用”，语义不变。
-5. ADR 一条一文件：`docs/blueprint/decisions/<日期>_<slug>.md`，以文件名互相引用，不需要取号。
+4. 索引改为派生（S6b）。删除 `specs_index.md`，由 spec front matter 派生清单。finish 的登记检查改为“当前 tid 出现在某份 spec 的 `tasks` 中，或 `progress.md` 声明不适用”，语义不变。
+5. ADR 一条一文件（S6b）：`docs/blueprint/decisions/<日期>_<slug>.md`，以文件名互相引用，不需要取号。
 6. 命名：
     - `dispatch_ledger.jsonl` 随 S4 改为 `ledger.jsonl`。
     - `handoff.json` 改为 `receipt.json`。文件在第 2 点中本来就要移动，改名不增加迁移次数。
     - `docs_repo/` 可改为 `factory_docs/`，与 `factory_tests/` 对称。仅涉及工厂，可选。
 
+**复核补充，S6b 的跨模块影响**：取消归档不是删除一个目录，至少同时触及：
+
+- `repo_task/privacy.py` 的 `PRIVACY_EXCLUDE_PREFIXES`：历史 review/spec 将进入显式审计范围。
+- `md_format.py` 的 `docs/archive/` 黑名单：历史文稿会被格式化。
+- `monitoring.py` 的 `SCOPE_FINGERPRINT_EXCLUDES`：review scope 的排除边界。
+- `_id_scan.py` 的 archive 布局校验。
+- `repo_cleanup.py` 对 `docs/runtime` 与旧 archive 审计日志的硬保护。
+- `.gitignore` 的 `_meta/` 规则、`export_template.py` 的不可分发路径、外部评审工具默认写入 `docs/reviews/` 的路径。
+
+上述任一项未同步修改，S6b 都会产生静默行为变化。S6b 的验收必须包含行为测试，不能只 grep 路径。
+
 **规模策略**：分根之后，历史 task 仍与在途 task 同目录。不建议再引入冷热搬迁，那会带回 L59 消除的多位置推断。建议改为验证规模下的可用性：在一个约 600 个 task 的仓副本上测量 `view`、`plan`、`effective-status` 与取号的耗时，写入发布说明。超出可接受范围时，再考虑创建时即确定的编号分桶路径。L71 否决的是备份恢复演练；这里是性能测量与 dry-run 核对，是否在真实仓副本上执行由用户定。
 
 **验收**：
 
-- 迁移 dry-run 在全部 12 个消费仓输出完整映射，零冲突。
-- 迁移后 `task.py list`、`view`、`recovery` 在副本上的结果与迁移前一致。
-- 并行两条链各自更新不同 spec 并新增 ADR，integrate 无冲突。
-- 产物内 grep `docs/archive`、`specs_index` 无现行引用。
+- S6a：迁移 dry-run 在全部 12 个消费仓输出完整映射，零冲突；先在一个仓副本完成实际迁移与回滚演练。
+- S6a：迁移后 `task.py list`、`view`、`recovery` 在副本上的结果与迁移前一致。
+- S6b：`privacy-audit`、`md_format`、review scope、`_id_scan` 在取消归档后按新边界工作；历史泄漏不会无提示改变门禁结论。
+- S6b：并行两条链各自更新不同 spec 并新增 ADR，integrate 无冲突。
+- 产物内 grep `docs/archive`、`specs_index` 无现行引用，作为辅助检查而非唯一验收。
 
 **影响**：
 
-- 这是破坏性布局变更，取代尚未铺开的 entity-storage 迁移目标，见第 5 节。
-- `repo/AGENTS.md` 提到的外部评审工具写入 `docs/reviews/`，其输出路径需要同步调整。
+- 这是破坏性布局变更，取代尚未铺开的 entity-storage 迁移目标，见第 5 节。S6a 与 S6b 可以在同一次迁移窗口内连续执行；拆分是为了分离设计与验收，不是承诺两次窗口。若 S6b 未准备好，可先铺开 S6a，之后再对 spec/review 做一次范围更小的冷文稿迁移。
+- `repo/AGENTS.md` 提到的外部评审工具写入 `docs/reviews/`，其输出路径需要同步调整；不能把工具默认路径变化留到运行时发现。
+- 现有 `decisions.md` 内容拆成一条一文件、spec 增加 front matter 属于内容迁移，不是机械改名；需要独立迁移脚本与逐项核对。
 
 ### S7 门禁执行与 spec 读取（对应 M05、M07 的读取部分）
 
@@ -376,12 +410,15 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 
 **依据与边界**：`testing.md` 现行表述是“状态机只校验格式，不代为运行命令”。本方案改变这一契约，需要裁决。L55 的裁决范围是同步不执行项目门禁，不涉及 finish。
 
-**代价**：门禁命令必须是确定的、能在 worktree 内完整执行的命令。套件很慢的项目需要自行定义较快的 `test_cmd`。
+**门禁配置保护（复核补充）**：`project.json` 归消费仓所有，实施 agent 也可能修改。必须把它纳入 review scope 或受保护核心资产，`pending-fix` 不得静默改 `verification_policy`、`test_cmd`、`blackbox_verify`；否则 B 级保证可被“把 test_cmd 改成 true”绕过。验证记录与交付指纹绑定后，`project.json` 的变化同样应使旧记录失效。
+
+**代价**：门禁命令必须是确定的、能在 worktree 内完整执行的命令。套件很慢的项目需要自行定义较快的 `test_cmd`。integrate 的合并后验证会重复执行项目测试，慢套件需要在策略中定义合并后验证范围或明确的替代证据；不能默认无限等待。
 
 **验收**：
 
 - 测试失败时 finish 拒绝。
 - 验证通过后修改任一交付文件，finish 拒绝并要求重跑。
+- 验证通过后修改 `project.json` 门禁字段，旧验证记录失效。
 - 回执中的验证字段可由 integrate 复核。
 
 ### S8 入口、hooks 与初始化（对应 M06、M08、M09）
@@ -396,6 +433,7 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
     - 按 S1 的等级，完整性由 finish 与 integrate 保证，hook 定位为提前反馈。
 4. 初始化：
     - 合并为一条命令：导出、`git init`、安装 hooks、登记来源一次完成，并输出剩余的人工步骤。
+    - 初始化命令须对非空目标、已有 `sync_state` 与已有 `core.hooksPath` 做幂等检查；不默认 `--force`，不覆盖未确认内容。
     - 另提供只读的初始化检查命令，覆盖软链有效性、hooks、来源登记、md_kx、验证策略、占位符残留。
     - `repo/README.md`「初始化」缩减为调用这两条命令加人工步骤。
 
@@ -404,6 +442,7 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 - 新会话中对一个 done 未合并的 task 执行 `/task-integrate`，可以完成合并。
 - 在装有 husky 的示例仓中，模板检查与项目 hook 同时生效。
 - 从空目录执行初始化命令后，检查命令除人工步骤外全部通过。
+- 对非空目录、已有 state 或已有 hooksPath 重跑初始化时不覆盖现场，给出明确下一步。
 
 ### S9 文档与工厂卫生（对应 M14–M16）
 
@@ -433,14 +472,16 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 
 |阶段|内容|产出|
 |---|---|---|
-|0 治理|S1、S2|模型文档、预算测试、首个 tag|
-|1 裁决与 spike|第 6 节各项裁决；S3 阶段二 spike；S4 第 5 点设计核对|裁决记录|
-|2 工厂实现|S3 阶段一、S4、S5、S6、S7、S8；每项独立提交并跑全量|main 上的目标布局|
-|3 合并迁移|一次迁移直达目标布局，发布 tag|发布说明|
-|4 铺开|各消费仓在静默窗口同步|12 仓版本一致|
-|5 收尾|S9；删除已无消费方的迁移模块|预算下调|
+|0 治理|S1 修正版、S2|模型文档、预算测试、首个 tag|
+|1 裁决与 spike|第 6 节各项裁决；S3 阶段二 spike；S4 第 5 点设计|裁决记录|
+|2 工厂实现|S3 阶段一、S4 第 1–4 点、S5；每项独立提交并跑全量|main 上的同步与状态瘦身|
+|3 布局 pilot|S6a 在一个仓副本实际迁移、回滚与规模测量|pilot 报告|
+|4 合并迁移|S6a 全量迁移；S6b 就绪则同窗口连续执行，发布 tag|发布说明|
+|5 铺开与收尾|12 仓同步；S7、S8；S9；删除无消费方的迁移模块|版本一致、预算下调|
 
-**一次迁移直达**：12 个消费仓都还在 entity-storage 之前的布局。阶段 3 的迁移应当从该布局直接迁到目标布局，例如 `docs/archive/tasks/` 直接到 `work/tasks/`，而不是先到 `docs/tasks/` 再迁一次。现有 `entity_storage_migration.py` 的源布局识别与校验可以复用，目标路径改变。前提是本机 12 个仓就是全部消费方，这一点需要用户确认。
+**一次迁移直达**：12 个消费仓都还在 entity-storage 之前的布局。阶段 4 的迁移应当从该布局直接迁到目标布局，例如 `docs/archive/tasks/` 直接到 `work/tasks/`，而不是先到 `docs/tasks/` 再迁一次。现有 `entity_storage_migration.py` 的源布局识别与校验可以复用，目标路径改变。复核已确认本机 12 个仓就是当前全部消费方；铺开前仍应以只读清点复核一次。
+
+**S6b 不阻塞 S6a**：若取消归档、spec front matter、ADR 拆分尚未完成设计与验收，阶段 4 先交付 S6a，S6b 另做一次只涉及 spec/review 的小迁移。不要为了“一次迁移”把未设计完的 S6b 硬塞进同一窗口。
 
 **铺开前置条件**：沿用 `sync.md`「迁移维护窗口与规程」。停止所有会话，无已登记 worktree，无 done 未合并分支，工作区干净并完成备份。omni_panel、CBrowser 当前有在途 worktree，须先收尾。
 
@@ -450,24 +491,24 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 
 |编号|议题|推荐|涉及的既有裁决|
 |---|---|---|---|
-|Q-01|保证等级模型与复杂度预算（S1）|采纳，内容由用户修订|无|
+|Q-01|保证等级模型与复杂度预算（S1）|采纳；先修正 B 的现状/目标口径与预算拆分|无|
 |Q-02|正式同步只接受 tag（S2）|采纳|无|
-|Q-03|同步引擎与迁移移出产物；来源只保留工厂仓（S3 阶段一）|采纳|L39 的来源形式|
+|Q-03|同步引擎与迁移移出产物；来源只保留工厂仓（S3 阶段一）|采纳；补 state 迁移、loader 与契约测试搬迁|L39 的来源形式|
 |Q-04|工具链外置（S3 阶段二）|先 spike，再裁决|L39、L45|
-|Q-05|本机状态迁入 Git common dir（S4 第 1–4 点）|采纳|L68 的事务避让|
-|Q-06|完成与合入事实只认已提交证据（S4 第 5 点）|设计核对后裁决|L39 的 ledger import|
-|Q-07|门禁配置迁出 Markdown；AGENTS 两区；conventions 拆分（S5）|采纳|L55 的单块规则；AGENTS 三分区协议|
-|Q-08|流程实体迁到 `work/`（S6 第 2 点）|采纳，目录名由用户定|L59 的路径，原则不变|
-|Q-09|取消归档目录与 `repo-hygiene`（S6 第 3 点）|采纳|L59 的 archive 边界|
-|Q-10|spec front matter、派生索引、ADR 一条一文件（S6 第 4–5 点）|采纳|#85 的 specs_index 严格 schema|
+|Q-05|本机状态迁入 Git common dir（S4 第 1–4 点）|采纳；补状态迁移与备份|L68 的事务避让|
+|Q-06|完成与合入事实只认已提交证据（S4 第 5 点）|暂缓，单独立设计|L39 的 ledger import|
+|Q-07|门禁配置迁出 Markdown；AGENTS 两区；conventions 拆分（S5）|采纳；`project.json` 纳入保护|L55 的单块规则；AGENTS 三分区协议|
+|Q-08|流程实体迁到 `work/`（S6a）|采纳，目录名由用户定|L59 的路径，原则不变|
+|Q-09|取消归档目录与 `repo-hygiene`（S6b）|暂缓，先完成跨模块影响设计与行为测试|L59 的 archive 边界|
+|Q-10|spec front matter、派生索引、ADR 一条一文件（S6b）|采纳，但并入 S6b，先写内容迁移设计|#85 的 specs_index 严格 schema|
 |Q-11|`handoff.json` 改名 `receipt.json`（S6 第 6 点）|仅在 Q-08 采纳时顺带|宏观方案 F4|
-|Q-12|finish 与 integrate 执行门禁命令（S7 第 1–3 点）|采纳|`testing.md` 的“不代为运行命令”|
+|Q-12|finish 与 integrate 执行门禁命令（S7 第 1–3 点）|采纳；先补门禁配置保护与慢套件策略|`testing.md` 的“不代为运行命令”|
 |Q-13|spec 读取闭环（S7 第 4 点）|采纳|无|
 |Q-14|`task-integrate` 公开；`task-merge` 改名（S8 第 1–2 点）|采纳|宏观方案第 6 节的“不改名”|
 |Q-15|hooks 接入现有管理器（S8 第 3 点）|采纳|无|
-|Q-16|初始化命令与检查命令（S8 第 4 点）|采纳|无|
+|Q-16|初始化命令与检查命令（S8 第 4 点）|采纳；补非空目标与幂等检查|无|
 |Q-17|文档与工厂卫生（S9）|采纳|无|
-|Q-18|阶段 3 用一次迁移取代 entity-storage 迁移|采纳，前提是 12 仓为全部消费方|L59、L62 的迁移路径|
+|Q-18|阶段 3 用一次迁移取代 entity-storage 迁移|采纳；先 pilot，12 仓已核实为全部消费方|L59、L62 的迁移路径|
 
 ## 7. 不建议改动
 
@@ -481,3 +522,19 @@ work/              流程实体与过程记录：tasks/、pending/、spikes/、r
 |task worktree 位于仓外同级（M12）|放进仓内会让文件监听、测试收集和构建上下文误入嵌套 worktree；同级目录的代价主要是父目录观感。若要治理，可统一放入父目录下的单一容器目录|
 |`repo/` 目录名|旧消费仓的 skill 文本与导出脚本依赖它定位产物根|
 |备份恢复的真实仓演练（L71）|已否决，本文不重提|
+
+## 8. 复核修订记录
+
+- 时间：2026-11-10T09:02:32+08:00。
+- 范围：核对证据数据、关键调用点与消费仓现场，未运行全量测试。修订不改变 M01–M04 的根因判断，也不改变“S1/S2/S3 阶段一/S4 第 1–4 点/S5 优先”的总体结论。
+- 数据校正：在途 task worktree 现场为 2 个（`omni_panel_t600`、`CBrowser_t049`），不是原文的 3 个；未发现未登记的 `omni_panel_t599`。
+- 口径修订：
+    1. S1 的 B 级区分现状与目标，S7 是“执行已验证”的前置条件；复杂度预算拆为产物携带行数、工厂专属脚本行数、常驻文档字节数，缺陷修复不计入。
+    2. S2 补 URL 缓存的 tag 拉取与本地 tag 精确核对。
+    3. S3 阶段一补 `template_sync` 对 `repo_task` 的 import、契约测试搬迁、6 个产物根来源 state 迁移、初始化文档改写。
+    4. S4 补状态迁移步骤；第 5 点明确 identity 解析、active claim 与 worktree 前提，暂不删除 `ledger import`。
+    5. S5 补 `project.json` 的同步保护与 review scope 约束。
+    6. S6 拆为 S6a（根迁移）与 S6b（取消归档、spec front matter、ADR 拆分）；补隐私、格式化、review scope、编号扫描、cleanup、外部评审工具的影响面。
+    7. S7 补门禁配置防自弱化与 integrate 重复验证成本。
+    8. S8 补初始化命令的非空目标与幂等检查。
+- 裁决建议修订：Q-06、Q-09、Q-10 暂缓或并入后续阶段；Q-18 先 pilot。详见第 5、6 节。
