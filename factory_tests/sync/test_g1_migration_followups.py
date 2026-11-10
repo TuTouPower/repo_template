@@ -1,4 +1,4 @@
-"""G1 迁移跟进：B2 旧 .scratch 事务预检。"""
+"""G1 迁移跟进：B2 旧 .scratch 事务预检；C1 review 删除内容预检。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from template_sync import context as ctx
 from template_sync.common import migration_transaction
 from template_sync.entity_storage_migration import MigrationError, migrate_entity_storage
 from template_sync.migrate import cmd_migrate
+from template_sync.reviews_migration import migrate_reviews
 from template_sync.transaction import cmd_transaction
 
 LEGACY_TRANSACTION = ".scratch/repo_sync_rollback"
@@ -139,3 +140,77 @@ def test_transaction_status_reports_open_legacy_transaction(consumer: Path, caps
     assert "restore_failed" in captured.err
     assert "看不到" in captured.err
 
+
+
+def test_reviews_dry_run_lists_meta_and_untracked_files(consumer: Path) -> None:
+    reviews = _make_reviews(consumer, 6)
+    oldest = reviews / "review_20260101_120000"
+    (oldest / "_meta").mkdir()
+    (oldest / "_meta/run.log").write_text("process\n", encoding="utf-8")
+    (oldest / "notes.md").write_text("user notes\n", encoding="utf-8")
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    reports = migrate_reviews(sync, write=False)
+    joined = "\n".join(reports)
+
+    assert f"删除旧 review：docs/reviews/{oldest.name}" in joined
+    assert f"docs/reviews/{oldest.name}/_meta" in joined
+    assert f"docs/reviews/{oldest.name}/notes.md" in joined
+    assert oldest.is_dir()
+    assert (oldest / "notes.md").is_file()
+
+
+def test_reviews_write_stops_on_untracked_non_meta_file(consumer: Path) -> None:
+    reviews = _make_reviews(consumer, 6)
+    oldest = reviews / "review_20260101_120000"
+    (oldest / "_meta").mkdir()
+    (oldest / "_meta/run.log").write_text("process\n", encoding="utf-8")
+    (oldest / "notes.md").write_text("user notes\n", encoding="utf-8")
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    with pytest.raises(ctx.SyncError, match="未跟踪文件") as error:
+        migrate_reviews(sync, write=True)
+
+    assert "notes.md" in str(error.value)
+    assert len(list(reviews.glob("review_*"))) == 6
+    assert (oldest / "notes.md").read_text(encoding="utf-8") == "user notes\n"
+    assert (oldest / "_meta/run.log").is_file()
+
+
+def test_reviews_write_deletes_meta_only_untracked_content(consumer: Path) -> None:
+    reviews = _make_reviews(consumer, 6)
+    oldest = reviews / "review_20260101_120000"
+    (oldest / "_meta").mkdir()
+    (oldest / "_meta/run.log").write_text("process\n", encoding="utf-8")
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    reports = migrate_reviews(sync, write=True)
+
+    assert any("_meta" in report for report in reports)
+    assert not oldest.exists()
+    assert sorted(path.name for path in reviews.glob("review_*")) == [
+        f"review_2026010{index}_120000" for index in range(2, 7)
+    ]
+
+
+def test_reviews_lists_all_undated_directories_at_once(consumer: Path) -> None:
+    reviews = consumer / "docs/reviews"
+    archived = consumer / "docs/archive/reviews"
+    for base, name in (
+        (reviews, "review_alpha"),
+        (reviews, "review_beta"),
+        (archived, "review_gamma"),
+    ):
+        (base / name).mkdir(parents=True)
+        (base / name / "review_general.md").write_text("PASS\n", encoding="utf-8")
+    (reviews / "review_20260101_120000").mkdir()
+    (reviews / "review_20260101_120000/review_general.md").write_text("PASS\n", encoding="utf-8")
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    with pytest.raises(ctx.SyncError, match="YYYYMMDD") as error:
+        migrate_reviews(sync, write=False)
+
+    message = str(error.value)
+    assert "review_alpha" in message
+    assert "review_beta" in message
+    assert "review_gamma" in message
