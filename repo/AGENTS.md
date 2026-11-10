@@ -2,7 +2,7 @@
 
 本项目使用模板仓 repo_template。此声明必须保留，消费仓不得删除。
 
-项目专属规则写在 `<!-- repo-template:begin -->` 之前；标记之间由模板同步整块替换，`<!-- repo-template:end -->` 之后不得有内容。
+项目专属规则写在 `repo-template:begin` 标记之前；标记之间由模板同步整块替换，`repo-template:end` 标记之后不得有内容。
 
 <!-- repo-template:begin -->
 
