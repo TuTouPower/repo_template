@@ -505,6 +505,7 @@ def test_transaction_judge_rejects_external_head_advance(git_repo):
         "tid": "t001", "attempt": 1, "execution_id": "x", "branch": "t001_alpha",
         "diff_anchor": parent, "review_scope": "x", "task_rel": "docs/tasks/t001_alpha",
         "message_file": str(message), "original_head": parent,
+        "original_index_tree": "",
         "index_existed": True, "files": {}, "phase": "committing",
         "expected_tree": "", "expected_files": {}, "pending_files": {}, "pending_tree": "",
     }
@@ -791,6 +792,7 @@ def _committed_journal(worktree, anchor, message, execution_id=None):
         "execution_id": execution_id, "branch": "t001_alpha", "diff_anchor": anchor,
         "review_scope": scope, "task_rel": "docs/tasks/t001_alpha",
         "message_file": str(message), "original_head": anchor,
+        "original_index_tree": "",
         "index_existed": True, "files": {}, "phase": "committed",
         "expected_tree": expected_tree, "expected_files": {}, "pending_files": {}, "pending_tree": "",
     }

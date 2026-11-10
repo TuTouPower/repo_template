@@ -115,6 +115,7 @@ def test_load_rejects_nonregular_journal(txn_repo, controlled_env, tmp_path, cor
             "version": commit_txn.JOURNAL_VERSION, "tid": TID, "attempt": 1, "execution_id": "e" * 32,
             "branch": "t001_alpha", "diff_anchor": "a", "review_scope": "s",
             "task_rel": TASK_REL, "message_file": "/tmp/m", "original_head": "h",
+            "original_index_tree": "",
             "index_existed": False, "files": {}, "phase": "prepared",
             "expected_tree": "", "expected_files": {}, "pending_files": {}, "pending_tree": "",
         }), encoding="utf-8")

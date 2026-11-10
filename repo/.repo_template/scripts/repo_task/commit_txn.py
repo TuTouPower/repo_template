@@ -36,7 +36,7 @@ JOURNAL = "journal.json"
 INDEX_BACKUP = "index.backup"
 FILES_DIR = "files"
 LOCK_FILES = ("index.lock", "HEAD.lock", "shallow.lock", "MERGE_HEAD")
-JOURNAL_VERSION = 2
+JOURNAL_VERSION = 3
 
 # task_rel 必须是 docs/tasks/<tid>_<slug> 单层目录（DS L208）。
 TASK_DIR_RE = re.compile(r"docs/tasks/(t[0-9]+)_[^/]+")
@@ -56,6 +56,7 @@ _REQUIRED_KEYS: dict[str, type] = {
     "task_rel": str,
     "message_file": str,
     "original_head": str,
+    "original_index_tree": str,
     "index_existed": bool,
     "files": dict,
     "phase": str,
@@ -226,6 +227,7 @@ def begin(
     git_dir = _git_dir(worktree)
     index_path = git_dir / "index"
     index_existed = index_path.is_file()
+    original_index_tree = _write_tree_with_index(worktree, None) if index_existed else ""
     head = _git(["rev-parse", "HEAD"], root=worktree)
     if head.returncode != 0 or not head.stdout.strip():
         raise ctx.TaskDataError("无法读取事务前 HEAD，拒绝建立提交事务")
@@ -242,6 +244,7 @@ def begin(
         "task_rel": task_rel,
         "message_file": str(message_file),
         "original_head": head.stdout.strip(),
+        "original_index_tree": original_index_tree,
         "index_existed": index_existed,
         "files": {},
         "phase": "prepared",
@@ -356,18 +359,15 @@ def _write_tree_with_index(worktree: Path, index_file: Path | None) -> str:
 
 
 def _backup_tree_matches(worktree: Path, data: dict) -> bool:
-    """prepared/writing 阶段：当前暂存区 tree 是否与事务开始时的 INDEX_BACKUP 一致。"""
+    """prepared/writing 阶段：当前暂存区 tree 是否与 journal 原始 tree 一致。"""
     git_dir = _git_dir(worktree)
-    backup = txn_dir(worktree) / INDEX_BACKUP
     if not data.get("index_existed"):
         return not (git_dir / "index").exists()
-    if not backup.is_file():
-        raise ctx.TaskDataError("提交事务 index 快照缺失，无法比对暂存区")
     try:
         current_tree = _write_tree_with_index(worktree, None)
     except ctx.TaskDataError:
         return False
-    return current_tree == _write_tree_with_index(worktree, backup)
+    return current_tree == data["original_index_tree"]
 
 
 def _head(worktree: Path) -> str | None:
@@ -463,11 +463,18 @@ def verify_committed_tree(worktree: Path, data: dict) -> None:
 def _restore_problems(worktree: Path, data: dict) -> list[str]:
     """回滚后复验：task 哈希集合与 index tree 都必须等于 journal 原始值。"""
     problems: list[str] = []
-    try:
-        if not _backup_tree_matches(worktree, data):
-            problems.append("暂存区 tree 与事务前 index 快照不一致")
-    except ctx.TaskDataError as error:
-        problems.append(f"暂存区 tree 校验失败（{error}）")
+    git_dir = _git_dir(worktree)
+    if not data.get("index_existed"):
+        if (git_dir / "index").exists():
+            problems.append("暂存区 index 应不存在但恢复后仍存在")
+    elif not (git_dir / "index").is_file():
+        problems.append("暂存区 index 恢复后缺失")
+    else:
+        try:
+            if _write_tree_with_index(worktree, None) != data["original_index_tree"]:
+                problems.append("暂存区 tree 与 journal 原始值不一致")
+        except ctx.TaskDataError as error:
+            problems.append(f"暂存区 tree 校验失败（{error}）")
     original = data["files"]
     current = _snapshot_hashes(worktree / data["task_rel"])
     if current != original:
@@ -507,6 +514,20 @@ def rollback(worktree: Path, data: dict) -> list[str]:
             + "；".join(snapshot_problems)
             + "；保留 journal 与现场，人工核查"
         )
+    if data.get("index_existed"):
+        backup = directory / INDEX_BACKUP
+        if not backup.is_file():
+            raise ctx.TaskDataError("提交事务 index 快照缺失，拒绝回滚；保留 journal 交人工处理")
+        try:
+            backup_tree = _write_tree_with_index(worktree, backup)
+        except ctx.TaskDataError as error:
+            raise ctx.TaskDataError(
+                f"提交事务 index 快照损坏（{error}）；拒绝回滚，保留 journal 交人工处理"
+            ) from error
+        if backup_tree != data["original_index_tree"]:
+            raise ctx.TaskDataError(
+                "提交事务 index 快照 tree 与 journal 原始值不一致；拒绝回滚，保留 journal 交人工处理"
+            )
     mark_phase(worktree, data, "rolling_back")
     problems: list[str] = []
     git_dir = _git_dir(worktree)

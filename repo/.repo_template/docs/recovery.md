@@ -55,7 +55,7 @@ ledger 丢失但 done 分支和已入库的执行回执完整时，运行 `task.
 
 ## finish 文件事务恢复
 
-journal v2 记录每一步原子业务写入的前后指纹；写 index 前先在私有 index 计算目标 tree。HEAD 未前进且文件/index 匹配已记录中间状态时，重跑 finish 可精确回滚自身写入，再重新检查。未记录的外部修改一律保留现场，不自动覆盖。
+journal v3 记录每一步原子业务写入的前后指纹；写 index 前先在私有 index 计算目标 tree。HEAD 未前进且文件/index 匹配已记录中间状态时，重跑 finish 可精确回滚自身写入，再重新检查。未记录的外部修改一律保留现场，不自动覆盖。
 
 prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committing/committed 阶段还须核对唯一父提交与 handoff 执行身份；清理快照之前必须验证实际 tree、review scope 与隐私。hook 改写导致 tree 不匹配时保留 journal；recovery 按 finish_tree_mismatch 诊断，满足原 finish-unwind 写权、running、无 done report、无后继约束后才可撤销重做。成功 unwind 后清理已认领事务，避免新 finish 被旧 journal 锁死。
 

@@ -222,7 +222,7 @@ def test_rollback_keeps_journal_when_index_tree_mismatch(git_repo, monkeypatch):
 
     monkeypatch.setattr(commit_txn.os, "replace", skip_index_replace)
     problems = commit_txn.rollback(worktree, txn)
-    assert any("暂存区 tree 与事务前 index 快照不一致" in item for item in problems)
+    assert any("暂存区 tree 与 journal 原始值不一致" in item for item in problems)
     assert commit_txn.load(worktree)["phase"] == "rolling_back"
 
     monkeypatch.setattr(commit_txn.os, "replace", real_replace)
@@ -299,3 +299,23 @@ def test_timeout_before_commit_judges_rollback_safe(git_repo, monkeypatch):
     assert _git(worktree, "rev-parse", "HEAD").stdout.strip() == anchor
     assert commit_txn.load(worktree) is None
     assert _snapshot(git_repo, worktree) == before
+
+
+def test_journal_records_original_index_tree(txn_repo, controlled_env):
+    message = txn_repo / "message.txt"
+    message.write_text("finish\n", encoding="utf-8")
+    txn, _before_hashes, before_tree = _seed_leftover_finish_txn(txn_repo, message)
+    assert txn["original_index_tree"] == before_tree
+
+
+def test_rollback_refuses_corrupt_index_backup(txn_repo, controlled_env):
+    message = txn_repo / "message.txt"
+    message.write_text("finish\n", encoding="utf-8")
+    txn, _before_hashes, _before_tree = _seed_leftover_finish_txn(txn_repo, message)
+    backup = commit_txn.txn_dir(txn_repo) / commit_txn.INDEX_BACKUP
+    backup.write_bytes(b"corrupt-index")
+
+    with pytest.raises(ctx.TaskDataError, match="index 快照"):
+        commit_txn.rollback(txn_repo, txn)
+
+    assert (commit_txn.txn_dir(txn_repo) / commit_txn.JOURNAL).is_file()

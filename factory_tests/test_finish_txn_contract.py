@@ -41,6 +41,7 @@ def _valid_journal() -> dict:
         "task_rel": TASK_REL,
         "message_file": "/tmp/message.txt",
         "original_head": "head",
+        "original_index_tree": "",
         "index_existed": False,
         "files": {},
         "phase": "prepared",
