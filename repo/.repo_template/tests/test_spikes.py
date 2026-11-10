@@ -34,11 +34,6 @@ pytestmark = pytest.mark.contract
 def _init_repo(tmp_path: Path) -> Path:
     repo = init_repo(tmp_path / "repo")
 
-    # 准备 specs_index
-    specs_index = repo / "docs/specs_index.md"
-    specs_index.parent.mkdir(parents=True, exist_ok=True)
-    specs_index.write_text("|slug|task 清单|最后更新时间|\n|---|---|---|\n", encoding="utf-8")
-
     # 准备模板文件
     template = repo / ".repo_template/docs/spike_report_template.md"
     template.parent.mkdir(parents=True, exist_ok=True)
