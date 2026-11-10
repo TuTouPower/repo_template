@@ -1,7 +1,8 @@
 """F03：commit-msg hook 扫描最终提交消息的隐私泄漏。
 
-普通提交与 merge 提交都读取 ``argv[1]`` 消息文件；``git commit -v`` 的 diff
-（scissors 行之后）与按 ``core.commentChar`` 识别的注释行不属于提交内容。
+普通提交与 merge 提交都读取 ``argv[1]`` 消息文件；``-m`` / ``-F`` 的注释样式
+正文属于提交内容，全部扫描；只有 scissors 行后确认为 ``git commit -v`` 的
+diff 时才截断。
 """
 
 import importlib.util
@@ -83,20 +84,48 @@ def test_verbose_diff_leak_after_scissors_not_blocked(git_repo, tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_configured_comment_char_lines_not_scanned(git_repo, tmp_path):
+def test_comment_like_lines_are_scanned(git_repo, tmp_path):
     _git(git_repo, "config", "core.commentChar", ";")
     leak = _leak("Users", "devuser", "commented")
     message = _write_message(
         tmp_path,
         "feat: clean message\n\n"
-        f"; legacy note {leak}\n"
-        "; ------------------------ >8 ------------------------\n"
-        f"+diff leak {leak}\n",
+        f"; legacy note {leak}\n",
     )
 
     result = _run_hook(git_repo, message)
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
+    assert "开发者家目录绝对路径" in result.stderr
+
+
+def test_hash_prefixed_dash_m_message_blocked(git_repo):
+    leak = _leak("Users", "devuser", "heading")
+    _git(git_repo, "config", "core.hooksPath", str(HOOK_PATH.parent))
+    (git_repo / "heading.txt").write_text("x\n", encoding="utf-8")
+    _git(git_repo, "add", "heading.txt")
+    result = subprocess.run(
+        ["git", "-C", str(git_repo), "commit", "-m", f"# {leak}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=get_controlled_git_env(), timeout=60,
+    )
+    assert result.returncode != 0
+    assert "开发者家目录绝对路径" in result.stderr
+
+
+def test_scissors_marker_without_diff_is_scanned(git_repo, tmp_path):
+    leak = _leak("Users", "devuser", "after-scissors")
+    message = _write_message(
+        tmp_path,
+        "feat: clean message\n\n"
+        "# ------------------------ >8 ------------------------\n"
+        f"{leak}\n",
+    )
+
+    result = _run_hook(git_repo, message)
+
+    assert result.returncode == 1
+    assert "开发者家目录绝对路径" in result.stderr
 
 
 def test_missing_message_file_reports_readable_error(git_repo, tmp_path):

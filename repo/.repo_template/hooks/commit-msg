@@ -3,9 +3,9 @@
 
 git merge 的自动提交不运行 pre-commit，且 pre-merge-commit 阶段 MERGE_HEAD
 已被移除；MERGE_HEAD 仅在 prepare-commit-msg / commit-msg 阶段可用，因此来源
-校验放在本 hook。普通提交与 merge 提交一视同仁：读取最终消息文件，截掉
-``git commit -v`` 附带的 diff（scissors 行之后）并按 ``core.commentChar`` 剔除
-注释行后，交给 privacy 单一文本入口扫描。
+校验放在本 hook。普通提交与 merge 提交一视同仁：读取最终消息文件，扫描
+全部内容；只有 scissors 行后确实是 ``git commit -v`` 附带的 diff 时才截断。
+``-m`` / ``-F`` 消息里的 ``#`` 行属于提交内容，不做注释剔除。
 """
 
 from __future__ import annotations
@@ -44,15 +44,21 @@ def _comment_prefix(root: Path, message: str) -> str:
 
 
 def _message_payload(message: str, prefix: str) -> str:
-    """截掉 scissors 行及其后 diff，剔除注释行，只保留实际提交内容。"""
-    kept: list[str] = []
-    for line in message.splitlines():
-        if line.startswith(prefix):
-            if _SCISSORS_BODY.fullmatch(line[len(prefix):].strip()):
-                break
+    """仅截掉确认为 ``git commit -v`` 的 scissors 后 diff；其余行全部扫描。
+
+    注释行不剔除：``git commit -m`` / ``-F`` 不会清掉 ``#`` 开头的正文，
+    无条件跳过会造成隐私绕过。scissors 后必须出现 ``diff --git`` 才视为
+    verbose diff；``-F`` 正文中的同名标记仍按提交内容扫描。
+    """
+    lines = message.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(prefix):
             continue
-        kept.append(line)
-    return "\n".join(kept)
+        if not _SCISSORS_BODY.fullmatch(line[len(prefix):].strip()):
+            continue
+        if any(item.startswith("diff --git ") for item in lines[index + 1:]):
+            return "\n".join(lines[:index])
+    return "\n".join(lines)
 
 
 def _scan_message(root: Path, message_path: Path) -> int:
