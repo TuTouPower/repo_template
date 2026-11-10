@@ -28,49 +28,61 @@ def _blocked(rule: str, substrings: list[str]) -> bool:
     return any(sub in rule for sub in substrings)
 
 
+def _gitignore_blocks(lines: list[str], marker: str) -> tuple[list[str], list[str], list[str]]:
+    begin = f"# repo-template:{marker}:begin" if marker == "prettier" else "# repo-template:begin"
+    end = f"# repo-template:{marker}:end" if marker == "prettier" else "# repo-template:end"
+    try:
+        start = lines.index(begin)
+        stop = lines.index(end)
+    except ValueError:
+        return lines, [], []
+    if start > stop:
+        raise ctx.SyncError(".gitignore 托管块标记顺序错误")
+    return lines[:start], lines[start + 1:stop], lines[stop + 1:]
+
+
 def merge_gitignore(src: Path, blocked: list[str], changed: set[Path], sync: ctx.SyncContext) -> dict:
-    """追加模板独有规则（去重、遵从 prompt 拦截）；删除消费侧 prompt 禁止的 ignore 行。"""
+    """替换 .gitignore 托管块；块外规则永不被同步删除。"""
     dst = sync.consumer / ".gitignore"
     src_lines = (src / ".gitignore").read_text(encoding="utf-8").splitlines()
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
-    dst_set = {ln.strip() for ln in dst_lines}
-    added: list[str] = []
-    removed: list[str] = []
-    for ln in src_lines:
-        stripped = ln.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped in dst_set:
-            continue
-        if not stripped.startswith("!") and _blocked(stripped, blocked):
-            continue
-        added.append(stripped)
-    if blocked:
-        new_dst: list[str] = []
-        for ln in dst_lines:
-            stripped = ln.strip()
-            if (
-                stripped
-                and not stripped.startswith("#")
-                and not stripped.startswith("!")
-                and _blocked(stripped, blocked)
-            ):
-                removed.append(stripped)
-                continue
-            new_dst.append(ln)
-        dst_lines = new_dst
-    if added or removed:
-        if added:
-            dst_lines.append("")
-            dst_lines.append("# 同步自模板（repo-template-sync）")
-            dst_lines.extend(added)
-        text = "\n".join(dst_lines)
-        if not text.endswith("\n"):
-            text += "\n"
+    before, source_block, source_after = _gitignore_blocks(src_lines, "gitignore")
+    if not source_block:
+        raise ctx.SyncError("模板 .gitignore 缺 # repo-template:begin/end 托管块")
+    kept_source = [
+        line for line in source_block
+        if not (
+            line.strip()
+            and not line.strip().startswith(("#", "!"))
+            and _blocked(line.strip(), blocked)
+        )
+    ]
+    removed = [
+        line for line in source_block
+        if line.strip() and not line.strip().startswith(("#", "!"))
+        and _blocked(line.strip(), blocked)
+    ]
+    before_dst, dst_block, after_dst = _gitignore_blocks(dst_lines, "gitignore")
+    if not dst_block:
+        before_dst, after_dst = dst_lines, []
+    duplicates = [
+        line for line in before_dst + after_dst
+        if line.strip() and not line.strip().startswith("#") and line.strip() in {x.strip() for x in kept_source}
+    ]
+    result = [*before_dst, "# repo-template:begin", *kept_source, "# repo-template:end", *after_dst]
+    text = "\n".join(result)
+    if not text.endswith("\n"):
+        text += "\n"
+    if text != (dst.read_text(encoding="utf-8") if dst.exists() else ""):
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(text.encode("utf-8"))
+        dst.write_text(text, encoding="utf-8")
         changed.add(dst)
-    return {"added": added, "removed": removed, "dst": sync.rel(dst)}
+    return {
+        "added": kept_source,
+        "removed": removed,
+        "outside_duplicates": duplicates,
+        "dst": sync.rel(dst),
+    }
 
 
 _PRETTIERIGNORE_OLD_HEADER = "# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束"

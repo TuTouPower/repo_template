@@ -10,7 +10,7 @@ from .git_ops import require_primary_worktree
 from .locks import CONTROL_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle, compute_schedule
 from .store import load_task, scan_tasks, task_effective_state
-from .file_transaction import FileTransaction, GRAPH_TRANSACTION_DIR
+from .file_transaction import GRAPH_TRANSACTION_DIR, state_transaction
 
 
 def cmd_merge_backlog(args):
@@ -62,7 +62,7 @@ def cmd_merge_backlog(args):
             _, path, fm, body = load_task(tid, repo=repo)
             fm.update(depends_on=deps, conflicts_with=peers)
             updates.append((path, fm, body))
-        transaction = FileTransaction(repo.root, GRAPH_TRANSACTION_DIR)
+        transaction = state_transaction(repo.root, GRAPH_TRANSACTION_DIR)
         retired = sorted(group - {args.tid})
         retired_paths = [f"{main_tasks[tid]['dir']}/{ctx.PROGRESS_FILE}" for tid in retired]
         update_paths = [str(path.relative_to(repo.root)) for path, _, _ in updates]
@@ -108,7 +108,7 @@ def cmd_graph_transaction(args):
     repo = args.repo
     require_primary_worktree(repo=repo)
     with git_common_lock(repo.root, CONTROL_LOCK_NAME):
-        transaction = FileTransaction(repo.root, GRAPH_TRANSACTION_DIR)
+        transaction = state_transaction(repo.root, GRAPH_TRANSACTION_DIR)
         if args.action == "status":
             import json
             print(json.dumps(transaction.read(), ensure_ascii=False, indent=2))

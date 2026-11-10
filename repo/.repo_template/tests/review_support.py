@@ -23,6 +23,7 @@ _SPEC_REPLACEMENTS = {
     "- 回退：{失败后如何恢复}": "- 回退：无",
     "- {前置依赖、平台、安全或兼容性约束；无则写「无」。}": "- 无",
     "- `{文件路径}`：{具体条目；无则写「无」}": "- 无",
+    "- 关联 spec：{spec 路径；无关联写“无”}": "- 关联 spec：无",
     "- 来源：{pNNN / finding_id / 原 tid}（核实日期与结论；无外部来源写「无」）": "- 来源：无",
 }
 
@@ -78,7 +79,5 @@ def configure_project_verification(repo):
     path.write_text('## verification_policy\n\nproject_configured\n\n'
                     '## verification_notes\n\n隔离 Git 契约场景，业务门禁不适用；断言由外层 pytest 执行。\n\n'
                     '## doctor_cmd\n\n无\n\n## test_cmd\n\n无\n\n## blackbox_verify\n\n无\n', encoding='utf-8')
-    index = repo / 'docs/specs_index.md'
-    index.write_text('# 当前生效 spec 清单\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n', encoding='utf-8')
     for task in (repo / 'docs/tasks').glob('t*/progress.md'):
         task.write_text(task.read_text(encoding='utf-8') + '\n- specs_index: not_applicable: 隔离工作流测试不修改长期需求规格。\n', encoding='utf-8')

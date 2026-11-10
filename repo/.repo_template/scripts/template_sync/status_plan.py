@@ -13,7 +13,6 @@ from .migrate import KINDS, migrate_command, migration_findings
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
 from .source import assert_not_self, require_template_source, resolve_src, src_dirty
-from .specs_index_migration import specs_index_migration_status, specs_index_report
 from .state import active_prompts, prompt_substrings, read_state, require_no_legacy_state
 from .workflow_migration import workflow_migration_status
 
@@ -132,15 +131,6 @@ def cmd_status(args: argparse.Namespace) -> int:
                 print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
     for warning in retired_template_warnings(sync=sync):
         print(f"  STALE: {warning}")
-    print("\nspecs_index 契约:")
-    si_migrations = specs_index_migration_status(sync=sync)
-    si_problems = specs_index_report(sync=sync)
-    for path in si_migrations:
-        print(f"  migrate {path}")
-    for problem in si_problems:
-        print(f"  BLOCKED（不可机械迁移，阻断同步）: {problem}")
-    if not si_migrations and not si_problems:
-        print("  一致")
     print("\n迁移待办（与 apply / migrate 同一可处理集合）:")
     backlog = _migration_backlog(sync, src)
     if not backlog:
@@ -217,22 +207,15 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print("apply 不支持软链 AGENTS.md，先替换为真实文件")
     section_status = agents_section_status(src, sync=sync)
     if section_status is None:
-        print("未识别到完整标题协议：需要 ## 目录与读写规则、## 开发原则")
+        print("未识别到完整两区标记，先运行 `repo_sync.py migrate agents-zones --write`")
         for issue in agents_section_diagnosis(src, sync=sync):
             print(f"- {issue}")
     else:
         rows = [
-            ["项目介绍", section_status["intro"], "绝不更新，保留消费仓内容"],
-            ["目录与读写规则", section_status["merge"], "agent 语义合并，脚本不覆盖"],
-            ["开发原则", section_status["force"], "每轮强制从模板更新"],
+            ["项目区", section_status["project"], "消费仓所有，原样保留"],
+            ["模板区", section_status["template"], "模板所有，整块替换"],
         ]
-        extra = section_status.get("extra", [])
-        for heading in extra:
-            rows.append([f"额外标题: {heading}", "forbidden", "协议禁止；须移至 ## 目录与读写规则 之前（项目介绍区）"])
         print(_md_table(["区段", "状态", "处置"], rows))
-        if extra:
-            for issue in agents_section_diagnosis(src, sync=sync):
-                print(f"警告: {issue}")
 
     print("\n### 软链")
     rows = []
@@ -297,15 +280,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print(f"SRC dirty，apply 可写盘但**不**推进 last_synced_commit")
     else:
         print(f"apply 通过后推进 last_synced_commit -> {head}")
-    print("\n### specs_index 契约")
-    si_migrations = specs_index_migration_status(sync=sync)
-    si_problems = specs_index_report(sync=sync)
-    for path in si_migrations:
-        print(f"- migrate {path}")
-    for problem in si_problems:
-        print(f"- BLOCKED（不可机械迁移，阻断同步）: {problem}")
-    if not si_migrations and not si_problems:
-        print("一致")
     print("\n### 迁移待办（与 apply / migrate 同一可处理集合）")
     backlog = _migration_backlog(sync, src)
     if not backlog:

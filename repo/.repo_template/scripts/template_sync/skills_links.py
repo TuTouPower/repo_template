@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 
 from . import context as ctx
 from .assets import _dir_has_diff
@@ -345,7 +345,7 @@ def cmd_link_skills(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
     require_no_legacy_state(sync)
     changed: set[Path] = set()
-    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
+    transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
     paths = [".claude/skills", ".agents/skills", ".opencode/commands"]
     try:
         transaction.begin(paths)

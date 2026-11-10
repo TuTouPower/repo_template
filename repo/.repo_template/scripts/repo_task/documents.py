@@ -592,6 +592,31 @@ def validate_task_documents(
                 + "、".join(sorted(set(placeholders))[:3])
             )
 
+    if creation:
+        from .specs import SpecError, load_spec
+
+        linked = None
+        for line in _visible_markdown_lines(spec_text):
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                stripped = stripped[2:]
+            if stripped.startswith("关联 spec："):
+                linked = stripped.split("：", 1)[1].strip()
+                break
+        if linked is None:
+            problems.append("task.md 缺“关联 spec：”行；无关联写“无”")
+        elif linked != "无":
+            candidate = Path(linked)
+            if candidate.is_absolute() or ".." in candidate.parts or candidate.parts[:2] != ("docs", "specs"):
+                problems.append(f"关联 spec 路径必须在 docs/specs/ 下：{linked!r}")
+            elif not (repo.root / candidate).is_file():
+                problems.append(f"关联 spec 不存在：{linked}")
+            else:
+                try:
+                    load_spec(repo.root / candidate, root=repo.root)
+                except SpecError as error:
+                    problems.append(f"关联 spec 非法：{error}")
+
     contract_problems, contract_warnings = unverified_contract_gate(
         spec_text,
         require_verified=require_verified,

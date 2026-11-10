@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 import json
+from pathlib import Path
 
 import repo_task.context as ctx
 
@@ -185,8 +186,12 @@ def require_exact_terminal(
     return record
 
 
+def execution_context_path(worktree):
+    return ctx.git_private_dir(Path(worktree)) / "repo-task-execution.json"
+
+
 def validate_execution_context(worktree, tid, current):
-    path = worktree / "docs/runtime/execution_context.json"
+    path = execution_context_path(worktree)
     if not path.exists():
         return
     try:
@@ -209,14 +214,14 @@ def resolve_identity(
     """Resolve the exact ``(attempt, execution_id)`` of ``tid``.
 
     主仓从 ledger 的当前 attempt 解析；task worktree 从
-    ``docs/runtime/execution_context.json`` 解析，并与主仓 ledger 当前 identity 交叉核对。
+    worktree 私有 Git 目录的 ``repo-task-execution.json`` 解析，并与主仓 ledger 当前 identity 交叉核对。
     显式提供的值（recovery 指定 exact identity）必须与解析结果一致。
     """
     if (attempt is None) != (execution_id is None):
         raise ctx.TaskDataError(
             "--attempt 与 --execution-id 须同时提供（recovery 指定 exact identity）或同时省略"
         )
-    from .git_ops import in_primary_worktree, primary_worktree_path
+    from .git_ops import in_primary_worktree
     from .ledger import ledger_read
 
     if in_primary_worktree(repo=repo):
@@ -227,8 +232,7 @@ def resolve_identity(
             )
     else:
         resolved = _execution_context_identity(repo.root, tid, repo=repo)
-        ledger_path = primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl"
-        current = current_identity(tid, ledger_read(ledger_path, tid=tid, repo=repo))
+        current = current_identity(tid, ledger_read(tid=tid, repo=repo))
         if current != resolved:
             raise ctx.TaskDataError(
                 f"execution_context identity={resolved!r} 与主仓 ledger 当前 identity={current!r} 不一致；"
@@ -245,7 +249,7 @@ def resolve_identity(
 def _execution_context_identity(
     worktree, tid: str, *, repo: "ctx.RepoContext",
 ) -> tuple[int, str]:
-    path = worktree / "docs/runtime/execution_context.json"
+    path = execution_context_path(worktree)
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -341,7 +345,7 @@ def reserve_attempt(
     event = ledger_allocate_attempt(tid, build, repo=repo)
     if worktree is not None:
         from .documents import atomic_write_text
-        atomic_write_text(worktree / "docs/runtime/execution_context.json",
+        atomic_write_text(execution_context_path(worktree),
                           json.dumps(event, ensure_ascii=False, indent=2) + "\n")
     return event
 

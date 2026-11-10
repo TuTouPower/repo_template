@@ -2,12 +2,11 @@
 
 - git_env_support：宿主 GIT_* 透传、注入式全局配置（gpgsign/hooksPath）必须被隔离；
 - render_review_prompts.resolve_out_dir：仓库外拒绝，docs/tasks/ 下拒绝并引导 .scratch；
-- repo_hygiene archive-review：_meta/ 过程文件永不进入 index，不依赖消费仓 .gitignore。
+
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -20,7 +19,6 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import git_env_support
 import render_review_prompts as rrp
-import repo_hygiene as rh
 from git_env_support import get_controlled_git_env, git_run, init_repo
 
 pytestmark = pytest.mark.contract
@@ -117,64 +115,6 @@ def test_out_dir_scratch_and_stdout_default_allowed(fake_root):
     assert rrp.resolve_out_dir("docs/archive/reviews") == (
         fake_root / "docs" / "archive" / "reviews"
     ).resolve()
-
-
-# --- DS L261：缺 .gitignore 规则时 _meta 不被 stage ---
-
-def _isolate_hygiene_git(monkeypatch):
-    """SUT 内部 git 继承进程 env：测试内同样隔离宿主 GIT_*。"""
-    for key in [k for k in os.environ if k.startswith("GIT_")]:
-        monkeypatch.delenv(key, raising=False)
-    for key, value in get_controlled_git_env().items():
-        if key.startswith("GIT_"):
-            monkeypatch.setenv(key, value)
-
-
-def test_archive_review_never_stages_meta_without_gitignore(tmp_path, monkeypatch):
-    root = init_repo(tmp_path / "repo")
-    for name, value in {
-        "REPO_ROOT": root,
-        "REVIEWS_DIR": root / "docs/reviews",
-        "ARCHIVE_REVIEWS": root / "docs/archive/reviews",
-    }.items():
-        monkeypatch.setattr(rh, name, value)
-    _isolate_hygiene_git(monkeypatch)
-
-    src = root / "docs/reviews/review_probe"
-    (src / "_meta").mkdir(parents=True)
-    (src / "review_general.md").write_text("PASS\n", encoding="utf-8")
-    (src / "_meta" / "notes.json").write_text('{"x": 1}\n', encoding="utf-8")
-    # 旧消费仓缺 _meta 忽略规则：首个 add 即把过程文件纳入跟踪（前置条件）。
-    git_run(root, "add", "-A")
-    git_run(root, "commit", "-m", "add review")
-    assert "/_meta/" in git_run(root, "ls-files").stdout
-
-    rh.cmd_archive_review(argparse.Namespace(dir="review_probe", write=True))
-
-    dst = root / "docs/archive/reviews/review_probe"
-    assert (dst / "review_general.md").is_file()
-    assert (dst / "_meta" / "notes.json").is_file()
-    assert not src.exists()
-
-    staged = git_run(root, "diff", "--cached", "--name-status").stdout
-    assert "docs/archive/reviews/review_probe/review_general.md" in staged
-    assert not any(
-        line.startswith("A") and "/_meta/" in line for line in staged.splitlines()
-    ), f"_meta 被 stage：\n{staged}"
-    assert "/_meta/" not in git_run(root, "ls-files").stdout
-
-
-def test_delivery_files_skips_meta_and_lists_symlink_itself(tmp_path):
-    review = tmp_path / "review_x"
-    (review / "_meta").mkdir(parents=True)
-    (review / "_meta" / "n.json").write_text("{}", encoding="utf-8")
-    (review / "review_general.md").write_text("PASS\n", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("secret\n", encoding="utf-8")
-    (review / "ext_link").symlink_to(outside)
-
-    names = sorted(p.name for p in rh._delivery_files(review))
-    assert names == ["ext_link", "review_general.md"]
 
 
 def test_git_env_support_module_is_single_source():

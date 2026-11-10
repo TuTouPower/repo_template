@@ -3,7 +3,7 @@
 
 把 repo-template-sync skill 中可机械化对齐的部分下沉到脚本执行：硬同步清单
 树对树覆盖、skill 整目录覆盖、软链建修、.gitignore / .prettierignore / MCP 机械合并、
-sync_state.json 字段级原子更新、差异评估与修改路径清单输出。
+Git common dir 状态字段级原子更新、差异评估与修改路径清单输出。
 
 非机械化裁定（AGENTS.md 等共享文稿的语义合并）由脚本给出
 分类与差异摘要，agent 审查后通过 `--decision UNIT:DISPOSITION` 决策，apply
@@ -18,8 +18,9 @@ sync_state.json 字段级原子更新、差异评估与修改路径清单输出�
   python3 .repo_template/scripts/repo_sync.py prompt add --text "..." [--tags a,b]
   python3 .repo_template/scripts/repo_sync.py prompt revoke --id N
   python3 .repo_template/scripts/repo_sync.py link-skills
-  python3 .repo_template/scripts/repo_sync.py install-hooks [--force]
-  python3 .repo_template/scripts/repo_sync.py migrate <legacy-state|workflow-schema|conventions|specs-index|retired-hooks|entity-storage|all> [--write]
+  python3 .repo_template/scripts/repo_sync.py install-hooks
+  python3 .repo_template/scripts/repo_sync.py healthcheck
+  python3 .repo_template/scripts/repo_sync.py migrate <kind|all> [--write]
 
 本脚本处理模板工具链与模板侧资产。日常 apply 只接受当前 schema；检测到旧布局时
 阻断并指向显式 migrate。每项单项迁移在其持久文件事务内执行，失败回滚本项；

@@ -13,11 +13,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_template import export_template, is_non_distributable
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 from repo_task.validation import load_policy
 
 from . import context as ctx
-from .agents_merge import _agents_parts, _replace_agents_force
 from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked
 from .gates import _run_tests
@@ -26,7 +25,7 @@ from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import prompt_substrings, read_state, require_no_legacy_state, write_state
-from .specs_index_migration import specs_index_report
+from repo_task.specs import validate_specs
 
 
 def _assert_distributable_tree(src: Path) -> None:
@@ -159,17 +158,18 @@ def cmd_apply(args: argparse.Namespace) -> int:
     expected = getattr(args, "expected_commit", None)
     if expected and source_commit != expected:
         raise ctx.SyncError(f"来源版本已变化：预期 {expected}，实际 {source_commit}；重新 plan")
+    if (sync.consumer / "AGENTS.md").is_symlink():
+        raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     changed: set[Path] = set()
     try:
         _require_current_schema(src, sync=sync)
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
-    if (sync.consumer / "AGENTS.md").is_symlink():
-        raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
-    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
+    state_before = sync.state_path.read_bytes() if sync.state_path.exists() else None
+    transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
     # 事务范围收敛为 apply 实际写入集合：硬同步树、软链宿主、命令薄层、
-    # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs_index、
+    # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs、
     # settings/hooks 等迁移专属或消费自有路径，避免用户 task 改动阻塞 accept、
     # 回滚误删用户文档，以及每轮整树快照 docs/tasks。
     paths = [".repo_template", ".agents/skills", ".claude/skills",
@@ -190,6 +190,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 src, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state), sync=sync
             )
         else:
+            (sync.consumer / ".scratch").mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="repo_sync_source_", dir=sync.consumer / ".scratch") as directory:
                 snapshot = Path(directory)
                 export_template(src, snapshot, source_commit)
@@ -200,38 +201,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
                     snapshot, getattr(args, "decisions", None) or {}, changed,
                     prompt_substrings(state), sync=sync,
                 )
-        agents_file = getattr(args, "agents_file", None)
-        if agents_file:
-            candidate = Path(agents_file).read_text(encoding="utf-8")
-            current = (sync.consumer / "AGENTS.md").read_text(encoding="utf-8")
-            try:
-                current_parts = _agents_parts(current)
-            except ctx.SyncError as error:
-                msg = str(error)
-                if not msg.startswith("消费仓 "):
-                    msg = f"消费仓 {msg}"
-                raise ctx.SyncError(msg) from error
-            try:
-                candidate_parts = _agents_parts(candidate)
-            except ctx.SyncError as error:
-                msg = str(error)
-                if not msg.startswith("候选 "):
-                    msg = f"候选 {msg}"
-                raise ctx.SyncError(msg) from error
-            if candidate_parts["intro"][2] != current_parts["intro"][2]:
-                raise ctx.SyncError("AGENTS 语义合并不得修改项目介绍")
-            if template_agents is None:
-                raise ctx.SyncError("模板快照缺 AGENTS.md，不能应用语义合并")
-            result, *_ = _replace_agents_force(template_agents, candidate)
-            (sync.consumer / "AGENTS.md").write_text(result, encoding="utf-8")
-            changed.add(sync.consumer / "AGENTS.md")
         load_policy(sync.consumer)
-        specs_problems = specs_index_report(sync=sync)
+        specs_problems = validate_specs(sync.consumer)
         if specs_problems:
             for problem in specs_problems:
-                print(f"specs_index 契约违规: {problem}")
+                print(f"spec front matter 契约违规: {problem}")
             raise ctx.SyncError(
-                "docs/specs_index.md 契约违规（同步中止）：" + "；".join(specs_problems)
+                "docs/specs front matter 契约违规（同步中止）：" + "；".join(specs_problems)
             )
         if not args.skip_tests:
             if not _run_tests(sync.consumer):
@@ -268,6 +244,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
         rollback_ok = False
         try:
             transaction.rollback(automatic=True)
+            if state_before is None:
+                sync.state_path.unlink(missing_ok=True)
+            else:
+                sync.state_path.parent.mkdir(parents=True, exist_ok=True)
+                sync.state_path.write_bytes(state_before)
             rollback_ok = True
         except Exception as rb_err:
             print(f"WARNING: 事务自动回滚失败（{rb_err}），现场可能残留未恢复文件", file=sys.stderr)

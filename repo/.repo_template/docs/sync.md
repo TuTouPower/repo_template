@@ -4,17 +4,7 @@
 
 ## AGENTS.md 同步分区协议
 
-消费仓根 `AGENTS.md` 按固定标题分为三类内容：
-
-|区段|同步行为|消费仓可定制范围|
-|---|---|---|
-|项目介绍（`## 目录与读写规则` 之前）|绝不更新，始终保留消费仓内容|允许补充项目介绍和项目专属规则（如门牌、硬约束、下载约定等）|
-|`## 目录与读写规则`|脚本只报告差异，不覆盖；由 Agent 对照模板智能语义合并|允许增删项目目录、写权和项目专属约定|
-|`## 开发原则`|每次同步从模板强制更新至文件末尾|不允许消费仓改写；禁止在此之后追加额外标题|
-
-`repo_sync.py plan` 会分别展示三部分状态。`apply` 只自动替换 `## 开发原则`；项目介绍和 `## 目录与读写规则` 均不由脚本覆盖。Agent 必须在同步时读取模板与消费仓差异，完成目录与读写规则的语义合并，并确认项目介绍未被改动。缺少这两个标题时分两侧处理：模板源缺标题，脚本对该旧版来源继续使用旧的整文件裁定逻辑；消费仓缺标题时 `apply` 拒绝并提示「按模板补齐 `## 目录与读写规则`、`## 开发原则` 后重跑」（`--agents-file` 语义合并同样要求消费仓标题完整）。`apply` 不支持软链 `AGENTS.md`，先替换为真实文件。
-
-消费仓允许修改的 AGENTS.md 范围只有项目介绍和 `## 目录与读写规则`；`## 开发原则` 及其后的模板规则不应由消费仓自行改写。禁止在 `## 开发原则` 之后或 `## 目录与读写规则` 与 `## 开发原则` 之间放置额外 `##` 标题；消费仓项目专属规则（如门牌、硬约束、特有约定等）必须置于 `## 目录与读写规则` 之前的项目介绍区。若存在协议外额外标题，`plan` 将在分区表中将该标题标记为 `forbidden` 并打印告警与迁移指引，`apply` 与 `--agents-file` 候选校验将抛出 `SyncError` 拒绝同步。
+`AGENTS.md` 用 `<!-- repo-template:begin -->` / `<!-- repo-template:end -->` 分两区：项目区（介绍与项目目录规则）原样保留，模板区整块替换。缺少标记时 `status`/`plan`/`apply` 均拒绝并提示 `repo_sync.py migrate agents-zones --write`；`apply` 不支持软链 `AGENTS.md`。消费仓项目专属规则写入项目区，不放模板区。
 
 ## entity-storage 一次性实体存储迁移
 
@@ -25,7 +15,7 @@
 - `docs/pending/parked/pNNN.md` -> `docs/pending/pNNN.md`（status: parked，保留 reason）；
 - `docs/archive/pending/pNNN.md` -> `docs/pending/pNNN.md`（status: closed，保留 resolution 与 reason）；
 - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（status: completed，校验报告与 findings 闭环证据）；
-- `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（无损保持原始字节）；
+- `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（无损保持原始字节，state-root 再迁入 Git common dir）；
 - `docs/archive/handoff.md` -> 确认内容已完整入库 Git 历史后退役移除；
 - 删除已废弃派生索引 `docs/tasks_index.json` / `docs/archive/tasks_index.json`（旧仓已跟踪文件不受 `.gitignore` 影响）；
 - 清理遗留空旧目录（含仅剩 `.gitkeep` / `.DS_Store` 占位文件的旧目录亦列为待清理并移除占位文件），并更新维护文档中的确定引用。
@@ -33,24 +23,24 @@
 ### 迁移维护窗口与规程
 
 1. **准备与清点**：
-   - 停止所有执行会话、hygiene、同步与集成；
-   - 清点所有登记 worktree、本地分支、未完成 attempt、pending merge；先在旧工具链下完成或清理；
-   - 确保主工作区与暂存区干净；备份 Git 对象、refs、`docs/runtime/` 及未跟踪附件。
+    - 停止所有执行会话、hygiene、同步与集成；
+    - 清点所有登记 worktree、本地分支、未完成 attempt、pending merge；先在旧工具链下完成或清理；
+    - 确保主工作区与暂存区干净；备份 Git 对象、refs、Git common dir 状态及未跟踪附件。
 2. **拟定计划（dry-run）**：
-   - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage`；
-   - 检查打印的实体映射清单与校验状态，确认无异常。
+    - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage`；
+    - 检查打印的实体映射清单与校验状态，确认无异常。
 3. **正式执行落盘**：
-   - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`；
+    - 执行 `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`；
     - 迁移器在排他锁与持久文件事务 `FileTransaction` 内原子执行；单次迁移内任一步骤校验失败，整体回滚原状态（作用域限单次迁移内部；`migrate all` 按类型逐项提交，已完成步骤保留）。
 4. **提交与恢复正常工作**：
-   - 检查 `git status` 与 diff，提交迁移 commit；
-   - 随后可正常执行 `repo_sync.py apply` 或日常开发流程。
+    - 检查 `git status` 与 diff，提交迁移 commit；
+    - 随后可正常执行 `repo_sync.py apply` 或日常开发流程。
 
 ## workflow schema 强制迁移
 
-日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、退役 hook 残留、旧实体存储布局时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。旧布局 state（`legacy-state`）由 `status`/`plan`/`apply`/`link-skills` 入口直接阻断，不在「迁移待办」中展示。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（workflow-schema、conventions、specs-index、retired-hooks、entity-storage 共 5 类），并给出带 `--consumer`/`--source`/`--checkout` 固定 pin 的可直接执行迁移命令，避免 plan 显示一致但 apply 阻断。
+日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、AGENTS 无两区标记、退役 hook 残留、旧实体存储布局时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。旧布局 state（`legacy-state`）由 `status`/`plan`/`apply`/`link-skills` 入口直接阻断，不在「迁移待办」中展示。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（workflow-schema、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks、entity-storage、state-root 等），并给出带 `--consumer`/`--source`/`--checkout` 固定 pin 的可直接执行迁移命令，避免 plan 显示一致但 apply 阻断。
 
-显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：单次单项迁移内失败回滚本项（作用域限单次迁移内部；`migrate all` 按 `workflow-schema → conventions → specs-index → retired-hooks → entity-storage` 固定顺序逐项提交，已完成步骤保留），成功后校验目标 schema，不可机械转换的数据列出并中止。`apply` 门禁优先报告 `entity-storage` 旧布局；`migrate all` 中 `workflow-schema` 先行、`entity-storage` 最后，若两类旧布局并存按此顺序依次收敛。
+显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：单次单项迁移内失败回滚本项（作用域限单次迁移内部；`migrate all` 按 `workflow-schema → pending/findings → entity-storage → state-root → conventions → agents-zones → specs-layout → reviews → adr → retired-hooks` 等固定顺序逐项提交，已完成步骤保留），成功后校验目标 schema，不可机械转换的数据列出并中止。`apply` 门禁优先报告 `entity-storage` 旧布局；`migrate all` 中 `workflow-schema` 先行，`entity-storage` 后于 task/pending/finding 拆分，`state-root` 紧随其后；两类旧布局并存时按此顺序收敛。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
@@ -76,7 +66,7 @@
 
 同步版本的可移植基线为 `.repo_template/sync_manifest.json`（随同步 commit 入库），只保存 resolved commit 和可共享 URL；共享保护决策通过 `prompt add --scope shared` 写入可入库的 `.repo_template/sync_policy.json`；本机来源路径、缓存与私人 user_prompts 留在忽略的 sync_state 中，迁机须备份。新 clone 无 state 时读取 manifest，路径源用 `init --source <新机器路径>` 重新接入，保留版本基线；私人保护策略从备份恢复后再同步。不要把含凭据 URL 或本机路径写进 manifest。
 
-旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` / `apply` / `status` / `plan` / `link-skills` 均明确拒绝并指向来源 product 的 `repo_sync.py migrate legacy-state --write`（带 `--consumer`/`--source`/`--checkout` 固定 pin；旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读当前 `.repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 单文件总账同理：运行期 fail-closed 不解析正文编号，须先用完整命令显式拆分（来源仓脚本，默认 dry-run、`--write` 落盘）：`repo_sync.py migrate pending-ledger --write` 与 `repo_sync.py migrate findings-ledger --write`。执行前备份，执行后核对拆分条目编号与正文、提交迁移 commit；目标实体验收通过后写入 `.repo_template/entity_schema.json`，只有当前协议来源参与取号。历史来源保留但不参与分配；合并入口拒绝未完成协议切换的执行分支，并检查最终编号唯一性；安装模板 hooks 后，原生 merge 的自动提交与手工继续提交也会核对 MERGE_HEAD 来源。标记不能替代迁移或数据校验。
+旧布局 state（`.agents/skills/repo-template-sync/sync_state.json`）不参与运行期回退：只有旧文件时 `init` / `apply` / `status` / `plan` / `link-skills` 均明确拒绝并指向来源 product 的 `repo_sync.py migrate legacy-state --write`（带 `--consumer`/`--source`/`--checkout` 固定 pin；旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）。该显式迁移保留来源、同步记录与 user_prompts，完成后删除旧文件；日常命令只读 `$GIT_COMMON_DIR/repo_template/sync_state.json`。旧格式 `docs/pending.md` / `docs/findings.md` 单文件总账同理：运行期 fail-closed 不解析正文编号，须先用完整命令显式拆分（来源仓脚本，默认 dry-run、`--write` 落盘）：`repo_sync.py migrate pending-ledger --write` 与 `repo_sync.py migrate findings-ledger --write`。执行前备份，执行后核对拆分条目编号与正文、提交迁移 commit；目标实体验收通过后写入 `.repo_template/entity_schema.json`，只有当前协议来源参与取号。历史来源保留但不参与分配；合并入口拒绝未完成协议切换的执行分支，并检查最终编号唯一性；安装模板 hooks 后，原生 merge 的自动提交与手工继续提交也会核对 MERGE_HEAD 来源。标记不能替代迁移或数据校验。
 
 ## 正式同步
 
@@ -106,7 +96,7 @@ apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务�
 
 ## 实体协议切换验收
 
-`migrate all` 依次处理旧 state、workflow、conventions、specs-index、retired-hooks、pending-ledger、findings-ledger、entity-storage。每项拥有独立文件事务；失败保留之前已完成步骤，只恢复当前项，不宣称全流程原子性。单文件总账转换不再修改 Git index。
+`migrate all` 依次处理旧 state、workflow、pending/findings、entity-storage、state-root、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks。每项拥有独立文件事务；失败保留之前已完成步骤，只恢复当前项，不宣称全流程原子性。单文件总账转换不再修改 Git index。
 
 entity-storage 先验证源身份与冲突，再转换实体，使用正常运行时模型验证全部目标数据，最后写 schema 标记并接受事务。迁移不复验历史实现血缘；handoff 字节保留，历史 done 被用作依赖时才查证实现来源。缺 progress.md 应先转换 workflow，不接受“搬完旧目录即成功”。
 

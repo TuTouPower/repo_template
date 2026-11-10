@@ -21,10 +21,13 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+import repo_task.context as ctx
 
 LOGGER = logging.getLogger(__name__)
 
-STATUSLINE_FILE = os.path.join(".scratch", "statusline_workdir.jsonl")
+STATUSLINE_FILE = "statusline_workdir.jsonl"
 # 终态事件关闭窗口；仅以该 tid 的「最新事件」作为门禁（见 resolve_worktree）。
 TERMINAL_EVENTS = {"report", "integrated", "attempt_terminal"}
 # 账本只做尾部读取：绑定去重与窗口判定都只需要尾部若干行。
@@ -117,7 +120,7 @@ def resolve_worktree(project: str, tid: str) -> str:
     账本 worktree 值不受信：必须恰等于派生路径（``../{repo}_{tid}``），否则
     视为伪造返回空；防止伪造 worktree:"/" 等把状态行指向任意目录。
     """
-    ledger = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
+    ledger = str(ctx.RepoContext.for_root(Path(project)).ledger_path)
     if not os.path.isfile(ledger):
         return ""
     expected_rel = _expected_worktree_rel(project, tid)
@@ -154,7 +157,7 @@ def _current_open_identity(project: str, tid: str):
     最新事件为终态、或找不到合法 attempt_reserved 时返回 None。owner 取该
     identity 最新 execution_claimed 的 owner_id，无 claim 时为空字符串。
     """
-    ledger = os.path.join(project, "docs", "runtime", "dispatch_ledger.jsonl")
+    ledger = str(ctx.RepoContext.for_root(Path(project)).ledger_path)
     if not os.path.isfile(ledger):
         return None
     latest_event = None
@@ -237,7 +240,7 @@ def append_record(path: str, record: dict) -> bool:
 
 
 def _statusline_path(project: str) -> str:
-    return os.path.join(project, STATUSLINE_FILE)
+    return str(ctx.RepoContext.for_root(Path(project)).statusline_path)
 
 
 def bind(project: str, session: str, tid: str, attempt: int | None = None,
@@ -253,7 +256,7 @@ def bind(project: str, session: str, tid: str, attempt: int | None = None,
     if not worktree:
         LOGGER.warning(
             "track_worktree: 绑定失败，%r 无打开的 worktree 窗口："
-            "project=%s session=%r tid=%r；核对 dispatch_ledger 最新事件与 start 记录",
+            "project=%s session=%r tid=%r；核对 ledger 最新事件与 start 记录",
             tid, project, session, tid,
         )
         return False

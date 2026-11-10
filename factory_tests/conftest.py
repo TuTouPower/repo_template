@@ -13,7 +13,17 @@ import pytest
 FACTORY_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = FACTORY_DIR.parent / "repo" / ".repo_template"
 
-for _path in (FACTORY_DIR, TEMPLATE_DIR / "scripts", TEMPLATE_DIR / "tests"):
+for _path in (
+    FACTORY_DIR,
+    FACTORY_DIR / "support",
+    FACTORY_DIR / "state",
+    FACTORY_DIR / "sync",
+    FACTORY_DIR / "workflow",
+    FACTORY_DIR / "review",
+    FACTORY_DIR / "docs",
+    TEMPLATE_DIR / "scripts",
+    TEMPLATE_DIR / "tests",
+):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 

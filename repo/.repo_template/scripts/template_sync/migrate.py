@@ -10,31 +10,39 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 
 from . import context as ctx
 from .common import consumer_locked
 from .conventions_migration import conventions_migration_status, migrate_conventions
+from .adr_migration import adr_migration_status, migrate_adr
+from .agents_zone_migration import agents_zone_migration_status, migrate_agents_zones
 from .entity_storage_migration import (
     _check_clean_working_copy,
     entity_storage_migration_status,
     migrate_entity_storage,
 )
 from .hooks import migrate_retired_hooks, retired_hooks_status
-from .specs_index_migration import specs_index_migration_status, specs_index_report, migrate_specs_index
 from .source import assert_not_self, resolve_src
+from .reviews_migration import migrate_reviews, reviews_migration_status
+from .specs_migration import migrate_specs_layout, specs_migration_status
+from .state_root_migration import migrate_state_root, state_root_migration_status
 from .state import migrate_legacy_state, read_state
 from .workflow_migration import force_migrate_workflow_tasks, workflow_migration_status
 
 KINDS = (
     "legacy-state",
     "workflow-schema",
-    "conventions",
-    "specs-index",
-    "retired-hooks",
     "pending-ledger",
     "findings-ledger",
     "entity-storage",
+    "state-root",
+    "conventions",
+    "agents-zones",
+    "specs-layout",
+    "reviews",
+    "adr",
+    "retired-hooks",
 )
 
 
@@ -48,6 +56,8 @@ def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None
         return [f"{rel} 需显式拆分为当前条目"] if (sync.consumer / rel).exists() else []
     if kind == "entity-storage":
         return entity_storage_migration_status(sync=sync)
+    if kind == "state-root":
+        return state_root_migration_status(sync=sync)
     if kind == "legacy-state":
         legacy = sync.legacy_state_path()
         return [f"旧布局 state {sync.rel(legacy)} 待迁移"] if legacy.exists() else []
@@ -61,8 +71,14 @@ def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None
         return findings
     if kind == "conventions":
         return conventions_migration_status(sync=sync)
-    if kind == "specs-index":
-        return specs_index_migration_status(sync=sync)
+    if kind == "agents-zones":
+        return agents_zone_migration_status(sync=sync)
+    if kind == "specs-layout":
+        return specs_migration_status(sync=sync)
+    if kind == "reviews":
+        return reviews_migration_status(sync=sync)
+    if kind == "adr":
+        return adr_migration_status(sync=sync)
     if kind == "retired-hooks":
         return retired_hooks_status(sync=sync)
     raise ctx.SyncError(f"未知迁移目标：{kind}")
@@ -101,7 +117,7 @@ def migrate_command(src: Path, sync: ctx.SyncContext, kind: str = "all") -> str:
 
 
 def _transactional(paths: list[str], action, verify, label: str, *, sync: ctx.SyncContext) -> list[str]:
-    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
+    transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
     try:
         transaction.begin(paths)
     except ValueError as error:
@@ -189,22 +205,14 @@ def _migrate_conventions(sync: ctx.SyncContext, write: bool = False) -> list[str
     )
 
 
-def _migrate_specs_index(sync: ctx.SyncContext, write: bool = False) -> list[str]:
-    status = specs_index_migration_status(sync=sync)
+def _migrate_agents_zones(sync: ctx.SyncContext, write: bool = False) -> list[str]:
+    status = agents_zone_migration_status(sync=sync)
     if not status:
         return []
+    src = _resolve_source(sync)
     if not write:
-        return [
-            f"{path} 拟迁移 specs_index 旧说明句/无数据 supersedes 列（保留其余内容）"
-            for path in status
-        ]
-    return _transactional(
-        ["docs/specs_index.md"],
-        lambda changed: migrate_specs_index(changed, sync=sync),
-        lambda: specs_index_migration_status(sync=sync) + specs_index_report(sync=sync),
-        "specs_index schema",
-        sync=sync,
-    )
+        return [f"{path} 拟拆为项目区 + 模板区" for path in status]
+    return migrate_agents_zones(sync, src, write=True)
 
 
 def _migrate_retired_hooks(sync: ctx.SyncContext, write: bool = False) -> list[str]:
@@ -273,12 +281,18 @@ _STEPS = {
     "legacy-state": lambda sync, write=False, require_clean=True: migrate_legacy_state(sync=sync, write=write),
     "workflow-schema": lambda sync, write=False, require_clean=True: _migrate_workflow(sync, write=write),
     "conventions": lambda sync, write=False, require_clean=True: _migrate_conventions(sync, write=write),
-    "specs-index": lambda sync, write=False, require_clean=True: _migrate_specs_index(sync, write=write),
+    "agents-zones": lambda sync, write=False, require_clean=True: _migrate_agents_zones(sync, write=write),
+    "specs-layout": lambda sync, write=False, require_clean=True: migrate_specs_layout(sync, write=write),
+    "reviews": lambda sync, write=False, require_clean=True: migrate_reviews(sync, write=write),
+    "adr": lambda sync, write=False, require_clean=True: migrate_adr(sync, write=write),
     "retired-hooks": lambda sync, write=False, require_clean=True: _migrate_retired_hooks(sync, write=write),
     "pending-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "p", write=write),
     "findings-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "d", write=write),
     "entity-storage": lambda sync, write=False, require_clean=True: migrate_entity_storage(
         sync=sync, write=write, require_clean=require_clean
+    ),
+    "state-root": lambda sync, write=False, require_clean=True: migrate_state_root(
+        sync=sync, write=write
     ),
 }
 

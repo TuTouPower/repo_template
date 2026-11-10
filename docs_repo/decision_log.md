@@ -126,6 +126,13 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
 
 归档引用约束补充裁决：用户明确允许直接在 main 完成而没有 task ID。所有 pending archive 均强制非空 --reason，--fix-ref 仅为可选引用且不校验 task ID；默认 resolved，转办显式 transferred。备注须说明结果与验证依据，存在引用时可填 main、commit、PR、pending 或 task，不为通过归档伪造 tid。原“默认 transferred 需 tid、duplicate 需引用”约束取消。
 
+| L64 | 本机状态散落、worktree 与主仓状态混淆 | 2026-11-10 实施计划、用户批准 S4 | 主仓运行态统一到 `$GIT_COMMON_DIR/repo_template/`；worktree execution context 进私有 Git 目录；`.scratch` 只留草稿与缓存；新增 state-root 迁移 | `repo_task/context.py`、`template_sync/state_root_migration.py`、usage/recovery | 已落地 |
+| L65 | 模板与消费仓文件所有权不可机械判断 | 2026-11-10 实施计划、用户批准 S5 | AGENTS 两区标记整块替换；gitignore 托管块保留块外规则；conventions 只留项目约定，原子写/隐私移入 architecture | `template_sync/{agents_merge,shared_files,conventions_migration}.py`、architecture/usage | 已落地 |
+| L66 | specs 归档、review 无界增长、ADR 单文件冲突 | 2026-11-10 实施计划、用户批准 S6 | specs 取消归档并改 front matter；review 保留最近 5 个并由 pre-commit 阻断；ADR 一条一文件；repo-hygiene 退役 | `repo_task/specs.py`、`template_sync/{specs,reviews,adr}_migration.py`、hooks/pre-commit | 已落地 |
+| L67 | task 实施与 spec 脱节，finish 重复测试 | 2026-11-10 实施计划、用户批准 S7 | task 模板与 preflight 增加关联 spec；review prompt 注入路径/摘要；finish 不执行 test_cmd，不新增验证状态 | task 模板、`repo_task/{documents,specs,finalization}.py`、render_review_prompts.py | 已落地 |
+| L68 | done 未合并 task 无公开入口，初始化步骤多 | 2026-11-10 实施计划、用户批准 S8 | task-integrate 公开；task-merge 改名 task-combine；export/bootstrap、healthcheck、husky/lefthook 片段 | registry、skills、`template_sync/{hooks,healthcheck}.py`、export_template.py | 已落地 |
+| L69 | 产物文档依赖审阅史，工厂测试难发现 | 2026-11-10 实施计划、用户批准 S9 | 文档只描述现状；工厂测试按 state/sync/workflow/review/docs/support 分目录；测试按模块改名 | `repo/.repo_template/docs/`、`factory_tests/` | 已落地 |
+
 归档备注契约补充验证：工厂全量 562 passed，无跳过；覆盖无引用、main/commit/PR 引用、所有 resolution 的空备注拒绝，以及缺少备注时零迁移。
 
 ## 后续缺陷核验与 Python 3.9

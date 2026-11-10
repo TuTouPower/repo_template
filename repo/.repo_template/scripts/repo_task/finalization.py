@@ -10,7 +10,7 @@ from .documents import (
     parse_front_matter_text,
 )
 from .spikes import SpikeMetadataError, validate_spike_metadata
-from .specs_index import parse_specs_index
+from .specs import SpecError, active_specs
 
 
 def _prose(text):
@@ -100,15 +100,18 @@ def _resolve_and_validate_spike(root, sid, visited=None):
 
 
 def check_finalization(root, tid, task_dir):
-    entries = parse_specs_index(root)
-    included = any(tid in tokens for tokens in entries.values())
-    if included:
-        matches = [path for path in (root / "docs" / "tasks").glob(f"{tid}_*/{ctx.PROGRESS_FILE}")]
-        if len(matches) != 1 or matches[0].parent.resolve() != task_dir.resolve():
-            raise ValueError(f"当前 specs_index task 引用缺失或重复：{tid}")
+    try:
+        specs = active_specs(root)
+    except SpecError as error:
+        raise ValueError(f"spec front matter 校验失败：{error}") from error
+    included = any(tid in spec["tasks"] for spec in specs)
     note_text = (task_dir / ctx.PROGRESS_FILE).read_text(encoding="utf-8")
     if not included and not re.search(r"(?m)^- specs_index: not_applicable: \S.+$", note_text):
-        raise ValueError(f"当前 task 未进入 specs_index；无长期 spec 变更时在 {ctx.PROGRESS_FILE} 写 - specs_index: not_applicable: 原因")
+        candidates = "\n".join(f"- {spec['path']} tasks={spec['tasks']}" for spec in specs) or "- （无 active spec）"
+        raise ValueError(
+            f"当前 task 未进入任何 active spec 的 tasks；候选 spec：\n{candidates}\n"
+            f"无长期 spec 变更时在 {ctx.PROGRESS_FILE} 写 - specs_index: not_applicable: 原因"
+        )
     combined = note_text + "\n" + (task_dir / "task.md").read_text(encoding="utf-8")
     for sid in _references(combined, "s"):
         _resolve_and_validate_spike(root, sid)

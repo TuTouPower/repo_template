@@ -1,32 +1,23 @@
+# repo-template:begin
 /artifacts/
 /data/
 .scratch/
-
 # 用户私有本地文件（备份、大文件、参考资料），不入库、工具链不清理
 /local/
 node_modules/
 *.log
 __pycache__/
 *.py[cod]
-
 # 本地密钥
 .env
 .env.*
 !.env.example
-
 # 多路 review 会话的过程文件（报告 review_*.md 本身入库）
 docs/reviews/review_*/_meta/
 docs/archive/reviews/review_*/_meta/
-
-# 并行调度账本，运行态不入库
-docs/runtime/
-
-# 模板同步状态，运行态不入库
-.repo_template/sync_state.json
-
 # CommandCode local runtime state
 .commandcode/
-
 # 派生 task 索引不再入库（task 文件是唯一权威）
 docs/tasks_index.json
 docs/archive/tasks_index.json
+# repo-template:end

@@ -2,7 +2,7 @@
 
 goal 模式的提示词必须是可机器判定的终态，而不是过程指令。本模块提供一对命令：
 
-- ``goal``：查看或冻结 ``docs/runtime/goal_queue.json``（已 gitignore，仅主仓）。
+- ``goal``：查看或冻结 ``Git common dir/repo_template/goal_queue.json``（已 gitignore，仅主仓）。
   无参且已有快照时只读展示，不改顺序；首次无快照才按 backlog ∪ active 依赖拓扑冻结。
   重建须显式 tid 或 ``--reset``；显式 tid 覆盖且与旧队列不一致时须确认（或 ``--yes``），
   ``--reset`` 直接覆盖免确认。
@@ -40,14 +40,14 @@ from .plan import build_execution_plan, group_queue
 from .store import discover_effective_tasks, scan_tasks
 
 def queue_path(repo) -> Path:
-    return repo.runtime_dir / "goal_queue.json"
+    return repo.goal_path
 
 CLOSED_STATES = {"closed", "integrated"}
 STOP_STATES = {"blocked", "failed", "dropped"}
 
 GOAL_LINE_TEMPLATE = (
     '/goal 按 task-run skill 链式串行执行冻结队列 [{queue}]'
-    "（快照 docs/runtime/goal_queue.json，禁止变更队列成员）。"
+    "（快照 Git common dir/repo_template/goal_queue.json，禁止变更队列成员）。"
     "队列执行授权已给出：禁止逐 task 征求确认、禁止进入 plan mode；"
     "停止条件仅限 task-run skill「停止条件」列举项；attempt report=blocked 只停所在链："
     "按 skill 跳过该链后续成员并继续其它链。"

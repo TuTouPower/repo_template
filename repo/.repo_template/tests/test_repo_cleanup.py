@@ -345,162 +345,34 @@ def test_cli_apply_expected_count_blocks_on_change(tree):
     assert (tree / "src/app/__pycache__").is_dir()
 
 
-def test_hard_protected_runtime_paths_are_never_collected_or_deleted(tree):
-    """HARD_PROTECTED 必须真正生效：伪造 hits 直接调 apply_delete 也不删（DS L289）。
 
-    默认扫描下 docs/ 的 logs 类本就不收集，只断言「不在默认扫描」即使删掉
-    HARD_PROTECTED 两项也照过；这里直接验证 collect 与 apply_delete 的防线。
-    """
-    protected = [
-        {"path": "docs/runtime/tasks_audit.log", "category": "logs", "kind": "file"},
-        {"path": "docs/runtime/dispatch_ledger.jsonl", "category": "logs", "kind": "file"},
-    ]
-    deleted = rc.apply_delete(tree, protected)
-    assert deleted == []
-    assert (tree / "docs/runtime/tasks_audit.log").is_file()
-    assert (tree / "docs/runtime/dispatch_ledger.jsonl").is_file()
-
-    hits, _ = rc.collect(tree, ["logs"], [])
-    paths = {h["path"] for h in hits}
-    assert "docs/runtime/tasks_audit.log" not in paths
-    assert "docs/runtime/dispatch_ledger.jsonl" not in paths
-    assert "scripts/debug.log" in paths
+def _old(path):
+    old = time.time() - 4 * 86400
+    path.touch()
+    os.utime(path, (old, old), follow_symlinks=False)
 
 
+def _pending(repo, pid, slug, status, body, *, resolution="", reason=""):
+    target = repo / "docs/pending" / f"{pid}_{slug}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    extra = ""
+    if resolution:
+        extra += f"resolution: {resolution}\n"
+    if reason:
+        extra += f"reason: {reason}\n"
+    target.write_text(f"---\npid: {pid}\nslug: {slug}\nstatus: {status}\n{extra}---\n\n# {pid}\n\n{body}\n", encoding="utf-8")
+    return target
 
 
-
-def _txn(repo: Path, directory: str, status: str, *, corrupt: bool = False) -> Path:
-    path = repo / directory
-    path.mkdir(parents=True, exist_ok=True)
-    (path / "backup.txt").write_text("backup\n", encoding="utf-8")
-    journal = path / "transaction.json"
-    journal.write_text("{bad" if corrupt else json.dumps({"status": status}), encoding="utf-8")
-    return path
-
-
-def _pending(repo: Path, pid: str, slug: str, status: str, body: str, **extra) -> Path:
-    directory = repo / "docs/pending"
-    directory.mkdir(parents=True, exist_ok=True)
-    lines = ["---", f'pid: "{pid}"', f'slug: "{slug}"', f'status: "{status}"']
-    for key, value in extra.items():
-        lines.append(f'{key}: "{value}"')
-    lines.extend(["---", body, ""])
-    path = directory / f"{pid}_{slug}.md"
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return path
-
-
-def _old(path: Path, days: float = 4) -> None:
-    stamp = time.time() - days * 86400
-    os.utime(path, (stamp, stamp))
-
-
-def _issue(repo: Path, stamp: str, issue: str = "") -> tuple[Path, Path]:
+def _issue(repo, stamp, issue_url=""):
     directory = repo / ".scratch/repo_template_issues"
     directory.mkdir(parents=True, exist_ok=True)
     full = directory / f"{stamp}.md"
     copy = directory / f"{stamp}.issue.md"
-    full.write_text(f'---\nissue: "{issue}"\n---\n# 模板仓问题报告\n', encoding="utf-8")
-    copy.write_text("issue body\n", encoding="utf-8")
+    front = f"---\nissue: {issue_url}\n---\n\n" if issue_url else "---\nissue: \n---\n\n"
+    full.write_text(front + "# report\n", encoding="utf-8")
+    copy.write_text(front + "# copy\n", encoding="utf-8")
     return full, copy
-
-
-@pytest.mark.parametrize("status", ["preparing", "applying", "applied", "restore_failed"])
-def test_open_transaction_skips_scratch_and_keeps_other_categories(tmp_path, status):
-    repo = tmp_path / "repo"
-    _txn(repo, ".scratch/repo_sync_rollback", status)
-    (repo / "scripts").mkdir()
-    (repo / "scripts/debug.log").write_text("log\n", encoding="utf-8")
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note and status in result.scratch_note
-    assert "transaction accept" in result.scratch_note
-    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
-    assert "scripts/debug.log" in {h["path"] for h in result.hits}
-
-    rc.apply_delete(repo, result.hits, [])
-    assert (repo / ".scratch/repo_sync_rollback/backup.txt").is_file()
-    assert not (repo / "scripts/debug.log").exists()
-
-
-def test_corrupt_transaction_skips_scratch(tmp_path):
-    repo = tmp_path / "repo"
-    _txn(repo, ".scratch/repo_sync_rollback", "", corrupt=True)
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note and "记录损坏" in result.scratch_note
-    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
-    assert (repo / ".scratch/repo_sync_rollback/transaction.json").is_file()
-
-
-def test_transaction_dir_without_journal_is_corrupt_and_keeps_backup(tmp_path):
-    """journal 被单独删除时残留备份不得按无主清掉，scratch 整体跳过。"""
-    repo = tmp_path / "repo"
-    transaction_dir = repo / ".scratch/repo_sync_rollback"
-    transaction_dir.mkdir(parents=True)
-    backup = transaction_dir / "backup.txt"
-    backup.write_text("backup\n", encoding="utf-8")
-    (repo / "scripts").mkdir()
-    (repo / "scripts/debug.log").write_text("log\n", encoding="utf-8")
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note and "记录损坏" in result.scratch_note
-    assert "人工核对" in result.scratch_note
-    assert "transaction accept" not in result.scratch_note
-    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
-    assert "scripts/debug.log" in {h["path"] for h in result.hits}
-
-    rc.apply_delete(repo, result.hits, [])
-    assert backup.is_file()
-
-
-@pytest.mark.parametrize("create_dir", [True, False])
-def test_empty_or_absent_transaction_dir_allows_scratch_cleanup(tmp_path, create_dir):
-    repo = tmp_path / "repo"
-    if create_dir:
-        (repo / ".scratch/repo_sync_rollback").mkdir(parents=True)
-    (repo / ".scratch/exp").mkdir(parents=True)
-    (repo / ".scratch/exp/tmp.txt").write_text("x\n", encoding="utf-8")
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note is None
-    assert ".scratch/exp/tmp.txt" in {h["path"] for h in result.hits}
-
-    rc.apply_delete(repo, result.hits, [])
-    assert not (repo / ".scratch/exp").exists()
-
-
-def test_open_graph_transaction_skips_scratch_with_graph_hint(tmp_path):
-    repo = tmp_path / "repo"
-    _txn(repo, ".scratch/task_graph_transaction", "preparing")
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note and "图事务" in result.scratch_note
-    assert "graph-transaction" in result.scratch_note
-    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
-
-
-@pytest.mark.parametrize(("directory", "status"), [
-    (".scratch/repo_sync_rollback", "accepted"),
-    (".scratch/task_graph_transaction", "rolled_back"),
-])
-def test_finished_transaction_backups_are_cleaned(tmp_path, directory, status):
-    repo = tmp_path / "repo"
-    _txn(repo, directory, status)
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    reasons = [h.get("reason", "") for h in result.hits if h["path"].startswith(directory)]
-    assert any(f"事务已结束（{status}）" in reason for reason in reasons)
-    rc.apply_delete(repo, result.hits, [])
-    assert not (repo / directory).exists()
-
 
 def test_pending_reference_protects_recent_draft(tmp_path):
     repo = tmp_path / "repo"
@@ -652,24 +524,11 @@ def test_corrupt_issue_front_matter_is_treated_as_unpublished(tmp_path):
                for item in result.protected)
 
 
-def test_unknown_transaction_status_skips_scratch(tmp_path):
-    repo = tmp_path / "repo"
-    _txn(repo, ".scratch/repo_sync_rollback", "foo")
-    init_repo(repo)
-
-    result = rc.scan_repository(repo, list(rc.DEFAULT_CATEGORIES), [])
-    assert result.scratch_note and "记录损坏" in result.scratch_note
-    assert not any(h["path"].startswith(".scratch/") for h in result.hits)
-
-
-@pytest.mark.parametrize("error", [
-    rc.TaskDataError("同步验证子进程禁止修改当前仓库"),
-    OSError("无法解析 git 公共目录"),
-])
-def test_lock_errors_become_cleanup_errors(tmp_path, monkeypatch, error):
+def test_lock_errors_become_cleanup_errors(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.setattr(rc, "repo_root", lambda: repo)
+    error = OSError("busy")
 
     @contextmanager
     def boom(*args, **kwargs):

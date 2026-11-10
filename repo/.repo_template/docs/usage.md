@@ -9,15 +9,15 @@
 |路径|用途|写权归属|
 |---|---|---|
 |`docs/tasks/{tid}_{slug}/`|task 需求规格、进展与评审证据|终生在 `docs/tasks/` 原位流转（`backlog/active/done/dropped`），不进 `archive/`。`task.md`、`progress.md`、`handoff.json`、`review_*.md` 属于受保护核心资产，禁止跨 task 篡改|
+|`docs/specs/<slug>.md`|需求级 spec；front matter `slug/status/tasks` 派生清单|task 收尾时更新 tasks；废弃置 `status: retired`，不迁移目录|
 |`docs/pending/`|待办条目（`pNNN_{slug}.md`）|终生在 `docs/pending/` 原位流转（`todo/parked/closed`），不进 `archive/`|
 |`docs/spikes/{sid}_{slug}/`|技术 spike 报告与实验代码|终生在 `docs/spikes/` 原位流转（`active/completed/superseded`），不进 `archive/`|
 |`docs/findings/`|技术发现（`dNNN_{slug}.md`）|在 `docs/findings/` 递增保存已验证技术事实，不进 `archive/`|
 |`docs/handoff.md`|当前项目交接快照（人类上下文）|固定单文件维护当前焦点与交接上下文，不进 `archive/`（历史由 Git 提交保存）|
-|`docs/archive/reviews/`|独立冷文稿归档|仅 `.repo_template/scripts/repo_hygiene.py archive-review` 独占整包归档已闭环独立 review 会话产物；交接、task、spike 严禁归档|
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
-|`docs/runtime/tasks_audit.log`|状态回退审计（append-only）|`task.py rewind` / `purge` / `finish-unwind` 与 `rewind_failed` 恢复分支经 `append_audit` 独占 append，禁止 agent 手动修改|
-|`docs/runtime/dispatch_ledger.jsonl`|attempt 控制面（append-only；已 gitignore，仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
-|`docs/runtime/goal_queue.json`|goal 模式冻结队列快照（已 gitignore，仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
+|`$GIT_COMMON_DIR/repo_template/tasks_audit.log`|状态回退审计（append-only）|`task.py rewind` / `purge` / `finish-unwind` 与 `rewind_failed` 恢复分支经 `append_audit` 独占 append，禁止 agent 手动修改|
+|`$GIT_COMMON_DIR/repo_template/ledger.jsonl`|attempt 控制面（append-only；仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
+|`$GIT_COMMON_DIR/repo_template/goal_queue.json`|goal 模式冻结队列快照（仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
 |`.repo_template/docs/review_prompts/`|review prompt 模板|改审查标准时更新|
 |`.repo_template/docs/spike_report_template.md`|spike 报告模板|只改模板本身|
 |`.repo_template/skills/`|skill 正文|改 skill 走文档纪律；不放业务代码|
@@ -39,7 +39,7 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 
 ## task worktree 本地文件
 
-`start`（含 `run-begin`）把主仓任意层级（跳过依赖、缓存与产物目录）的 `.env` 软链进 task worktree；主仓根有 `.worktreeinclude` 时，另把其命中且确被 `.gitignore` 忽略的文件或整目录软链到同相对路径，用于本地配置、证书、容器数据等不入库但测试必需的内容。未被忽略的未跟踪文件（在途工作）、已入库文件、`.git` 与 `docs/runtime/` 不链接；仓库根 `local/`（用户私有本地文件）默认不链接，`.env` 扫描也不进入，需要时在 `.worktreeinclude` 显式声明 `/local/` 或其子路径；worktree 已有同名路径时跳过。`.gitignore` 以 `/` 结尾的规则（如 `node_modules/`）只匹配目录、不匹配同名软链，脚本对这类链接在 Git 公共目录 `info/exclude` 的托管块追加锚定规则（如 `/node_modules`），保证链接在 worktree 中仍被忽略、不会被暂存；该路径在主仓本已忽略，规则不改变主仓行为。清理、drop、rewind 只删除脚本创建的软链，不触及主仓目标。
+`start`（含 `run-begin`）把主仓任意层级（跳过依赖、缓存与产物目录）的 `.env` 软链进 task worktree；主仓根有 `.worktreeinclude` 时，另把其命中且确被 `.gitignore` 忽略的文件或整目录软链到同相对路径，用于本地配置、证书、容器数据等不入库但测试必需的内容。未被忽略的未跟踪文件（在途工作）、已入库文件与 `.git` 不链接；仓库根 `local/`（用户私有本地文件）默认不链接，`.env` 扫描也不进入，需要时在 `.worktreeinclude` 显式声明 `/local/` 或其子路径；worktree 已有同名路径时跳过。`.gitignore` 以 `/` 结尾的规则（如 `node_modules/`）只匹配目录、不匹配同名软链，脚本对这类链接在 Git 公共目录 `info/exclude` 的托管块追加锚定规则（如 `/node_modules`），保证链接在 worktree 中仍被忽略、不会被暂存；该路径在主仓本已忽略，规则不改变主仓行为。清理、drop、rewind 只删除脚本创建的软链，不触及主仓目标。
 
 环境声明与软链规则：若开发者在 worktree 手工建立环境软链（例如软链到外部 `node_modules`），但项目 `.gitignore` 仅配置了带尾斜杠的目录规则（如 `node_modules/`），Git 原生规则不会忽略该软链。工具链在 `review` 指纹计算与 `finish` 门禁时均会进行精准诊断并报错阻断，禁止将其作为交付物暂存；开发者应在 `.gitignore` 或 `info/exclude` 补充精准规则（如 `/node_modules`），或在主仓 `.worktreeinclude` 中声明由环境托管机制维护。项目合法的代码软链（如相对软链）则属于交付物，须正常 `git add` 纳入交付指纹与实现 commit。
 
@@ -54,8 +54,8 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 - AC 编号：spec 验收标准每条行为 AC 用 `AC-NNN`（三位十进制，task 内从 1 顺序编号）。编号一旦分配永久归属，删除后不复用（允许断号，不强制连续），新增用下一个编号。创建时均为未勾选（`- [ ]`），实施验证通过后由实施 Agent 就地打勾（`- [x]`），Review Agent 独立复核打勾真实性（报告「AC 复验方式」逐条判 `TICK-VALID` / `TICK-VOID`，未打勾记 `TICK-VOID`；`task.py review-status` 门禁：任一 `TICK-VOID` 判 FAIL，AC 行与 `task.md` 编号不一致或格式错判 INCOMPLETE，完整格式见 `.repo_template/docs/review_prompts/share_prompt.txt`）。合入时门禁机械检查全部 AC 是否勾选完成——未打勾阻断合入。编号规范属 task 模板门禁，见 `.repo_template/docs/task_template/task.md`。
 - 占位示例（模板、示例行）不得占用真实 `tid` / `sid` / `pNNN`，也不得当作 active 工作项执行。
 - Markdown 嵌套内容缩进 4 空格，禁止 tab。
-- 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。md_kx 来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装（`uv tool install md-kx`）；消费仓不逐仓安装，缺二进制时 `md_format.py` / pre-commit 会在报错里给出来源与安装入口。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，格式化本次 staged 的 `.md` 并重新暂存；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`（已有其它 hooksPath 须 `--force`）；merge 自动提交另由 `.repo_template/hooks/commit-msg` 校验 MERGE_HEAD 来源协议，并扫描最终提交消息中的家目录泄漏（普通提交与 merge 提交都覆盖；截掉 `git commit -v` 的 diff、按 `core.commentChar` 剔除注释行）。临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
-- 消费仓 `prettier --check .` 豁免模板侧路径：分发静态文件（`.repo_template/scripts/package.json`、`view_static/` 看板 UI——模板自有 `2` 空格/单引号风格）、同步元数据（`.repo_template/sync_state.json`、`sync_manifest.json`、`sync_policy.json`）与 skill 注册表（`.repo_template/skills/registry.json`）、任务产物（执行回执 `docs/**/handoff.json`，逐任务生成），以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认嵌套 `.gitignore`）。模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`；`.prettierignore` 机械追加与缺失项展示规则见 `sync.md`。
+- 非归档 Markdown 统一用 md_kx 格式化（`.repo_template/scripts/md_format.py`），表用 `compact`（`|a|b|`）。md_kx 来源 [TuTouPower/md_kx](https://github.com/TuTouPower/md_kx)（PyPI 发行名 `md-kx`，命令 `md_kx`），通常已在开发机全局安装（`uv tool install md-kx`）；消费仓不逐仓安装，缺二进制时 `md_format.py` / pre-commit 会在报错里给出来源与安装入口。格式由 `.md_kx.toml` 统一，禁止 prettier / 按列 pad。commit 由 pre-commit hook 强制（`.repo_template/hooks/pre-commit`，只格式化本提交新增/修改的 `.md`；纯重命名与“改名并编辑”不自动格式化，需要时手动运行 `md_format.py --changed`；工作区与 index 不一致则拒绝），需先 `python3 .repo_template/scripts/repo_sync.py install-hooks` 启用 `core.hooksPath`；已有其它 hooksPath 时不覆盖，按输出接入 husky/lefthook，并可运行 `repo_sync.py healthcheck` 检查；merge 自动提交另由 `.repo_template/hooks/commit-msg` 校验 MERGE_HEAD 来源协议，并扫描最终提交消息中的家目录泄漏（普通提交与 merge 提交都覆盖；截掉 `git commit -v` 的 diff、按 `core.commentChar` 剔除注释行）。临时手动格式化用 `python3 .repo_template/scripts/md_format.py --changed`，commit 前 `--check` 为绿。
+- 消费仓 `prettier --check .` 豁免模板侧路径：分发静态文件（`.repo_template/scripts/package.json`、`view_static/` 看板 UI——模板自有 `2` 空格/单引号风格）、同步元数据（`sync_manifest.json`、`sync_policy.json`）与 skill 注册表（`.repo_template/skills/registry.json`）、任务产物（执行回执 `docs/**/handoff.json`，逐任务生成），以及本地生成的 `.opencode/package.json` / `package-lock.json`（`prettier` 不认嵌套 `.gitignore`）。模板文件不随消费仓 `tabWidth` / 引号配置重排，消费侧不手改、不逐个加 `ignore`；`.prettierignore` 机械追加与缺失项展示规则见 `sync.md`。
 - front matter 注释独占整行；行内注释有解析器兜底，但勿依赖。
 - 原子写：权威/派生文件与待办维护走原子写（tmp + fsync + os.replace）。公共 helper：`from repo_task.documents import atomic_write_text`。
 
@@ -71,13 +71,12 @@ task 状态读取优先级：登记 worktree → 未合并 task 分支 ref → �
 |`pending-fix`|用户入口|
 |`pending-record`|用户入口|
 |`repo-cleanup`|用户入口|
-|`repo-hygiene`|用户入口|
 |`repo-template-sync`|用户入口|
 |`repo-template-sync-core`|内部正文流程|
 |`task-create`|用户入口|
 |`pending-to-task`|用户入口|
-|`task-integrate`|内部正文流程|
-|`task-merge`|用户入口|
+|`task-integrate`|用户入口|
+|`task-combine`|用户入口|
 |`task-preflight`|用户入口|
 |`task-run`|用户入口|
 |`task-schedule`|用户入口|
@@ -109,23 +108,25 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
 消费仓旧布局或旧 schema 升级须通过显式迁移命令完成，日常 `apply` 遇到旧 schema 会直接阻断并拒绝写入。
 
 - **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`/`--source`/`--checkout` 固定 pin，默认 dry-run、`--write` 落盘：
-  `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`。
-  针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
-  - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时由业务门禁核验）；
-  - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref；声明身份与文件名不符即阻断）；
-  - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（恢复原位流转，校验报告与 findings 闭环证据）；
-  - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节；目标已存在即阻断）；
-  - `docs/archive/handoff.md` -> 确认内容已完整进入 Git 历史后退役移除；
-  - 清理空旧目录（含仅剩占位文件的旧目录）并更新维护文档中确定引用。
-  同时转换仅有旧 active spike 的仓库；归档与当前 task 均验证 tid/slug 与目录一致、全状态编号唯一。缺 progress.md 先执行 workflow-schema；全部目标实体通过正式模型校验后才建立 schema 标记。
-  默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败回滚本项。`migrate all` 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
+    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`。
+    针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
+    - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时由业务门禁核验）；
+    - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref；声明身份与文件名不符即阻断）；
+    - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（恢复原位流转，校验报告与 findings 闭环证据）；
+    - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节；目标已存在即阻断）；随后 state-root 迁移再迁入 Git common dir；
+    - `docs/archive/handoff.md` -> 确认内容已完整进入 Git 历史后退役移除；
+    - 清理空旧目录（含仅剩占位文件的旧目录）并更新维护文档中确定引用。
+        同时转换仅有旧 active spike 的仓库；归档与当前 task 均验证 tid/slug 与目录一致、全状态编号唯一。缺 progress.md 先执行 workflow-schema；全部目标实体通过正式模型校验后才建立 schema 标记。
+        默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败回滚本项。`migrate all` 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
+- **state-root 迁移**：`repo_sync.py migrate state-root --write` 把 `docs/runtime/`、`.repo_template/sync_state.json` 与 `.scratch` 事务目录迁入 `$GIT_COMMON_DIR/repo_template/`；要求无登记 worktree，失败回滚。entity-storage 之后执行。
+- **所有权与 spec 文稿迁移**：`agents-zones` 拆 AGENTS 两区；`specs-layout` 把 archive specs 迁回 `docs/specs` 并写 front matter；`reviews` 只保留最近 5 个；`adr` 把 `decisions.md` 拆成一条一文件。全部默认 dry-run，`--write` 落盘且不修改 Git index。
 - **其他历史迁移**（逐项事务，已完成步骤保留；`migrate all` 失败仅阻断当前类型，不整体回滚已完成步骤）：
-  - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
-  - `legacy-state` 迁移（来源 product 脚本 `repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate legacy-state --write`）：将旧版 state 迁至 `.repo_template/sync_state.json`（旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）；
-  - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，须先显式拆分，之后执行 entity-storage 完成目标模型验收。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
-    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate pending-ledger --write` 与
-    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate findings-ledger --write`。
-    核对拆分条目编号与正文无遗漏；entity-storage 验收 task/pending/spike 身份与状态后写入 `.repo_template/entity_schema.json`。提交一致版本后才能继续分配。仅声明当前协议的分支/worktree 参与取号；旧来源保留为历史，不参与运行集合，也不得直接 integrate。合并边界仍检查目标协议与编号唯一性，不能仅复制 schema 标记代替迁移。
+    - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
+    - `legacy-state` 迁移（来源 product 脚本 `repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate legacy-state --write`）：将旧版 state 迁至 `$GIT_COMMON_DIR/repo_template/sync_state.json`（旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）；
+    - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不再参与运行期解析，须先显式拆分，之后执行 entity-storage 完成目标模型验收。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
+        `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate pending-ledger --write` 与
+        `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate findings-ledger --write`。
+        核对拆分条目编号与正文无遗漏；entity-storage 验收 task/pending/spike 身份与状态后写入 `.repo_template/entity_schema.json`。提交一致版本后才能继续分配。仅声明当前协议的分支/worktree 参与取号；旧来源保留为历史，不参与运行集合，也不得直接 integrate。合并边界仍检查目标协议与编号唯一性，不能仅复制 schema 标记代替迁移。
 
 Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-only`，最低要求 Git 2.38；工具会在执行 `git merge --no-commit` 前检查，版本不足时不会留下 pending merge。
 
@@ -162,7 +163,7 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 
 ## 状态行绑定与执行范围
 
-状态行默认不产生绑定。需要展示时，给 `run-begin` 提供 `--session-id <宿主真实会话ID>`；执行权仍用独立 `--owner-id`。绑定记录同时保存 session、owner、attempt 与 execution_id，解析时核对当前 ledger 身份。`run-close --session-id <同一会话ID>` 显式解绑；未提供时终态 ledger 仍使旧绑定失效。宿主配置由消费仓维护，模板不改写 settings。
+状态行默认不产生绑定。需要展示时，给 `run-begin` 提供 `--session-id <宿主真实会话ID>`；执行权仍用独立 `--owner-id`。绑定记录保存在 `$GIT_COMMON_DIR/repo_template/statusline_workdir.jsonl`，同时保存 session、owner、attempt 与 execution_id，解析时核对当前 ledger 身份。`run-close --session-id <同一会话ID>` 显式解绑；未提供时终态 ledger 仍使旧绑定失效。宿主配置由消费仓维护，模板不改写 settings。
 
 模板提供可直接调用的渲染端：在消费仓根运行 `python3 .repo_template/scripts/track_worktree.py render --session <宿主真实会话ID> --project <主仓路径>`，输出对应 worktree 名；未绑定时输出主仓名。只需绝对路径可用 `resolve` 子命令。手动绑定必须同时提供 `bind --session <宿主真实会话ID> --owner-id <执行权ID> --tid <tid> --attempt <attempt> --execution-id <execution_id> --project <主仓路径>`。宿主负责传入真实 session ID，不再假定它等于 owner。绑定与渲染失败可诊断，不阻断业务事务。命令写法已静态核对，宿主显示未实测。
 
@@ -176,14 +177,14 @@ pending 闭环必须提供非空 `--reason`，说明处理结果、验证依据�
 python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
 
-`docs/specs_index.md` 是唯一 spec 清单，全文只允许一张表（HTML 注释与围栏代码块内的行不参与），表头严格为 `|slug|task 清单|最后更新时间|`（单元格两端空白允许，紧凑/对齐写法均可），分隔行每格匹配 `:?-+:?`，说明性表格不得放进本文件。数据行 3 列：slug 匹配 `^[a-z][a-z0-9_]*$`、全表不重复、不加反引号，且 `docs/specs/<slug>.md` 必须存在；task 清单用半角逗号分隔，每个 token 是 `t\d{3,}` 或 `baseline`（spec 早于 task 体系、无 tid 可登记时写 `baseline`）；最后更新时间为 `YYYY-MM-DD`。finish 严格校验整张表，违规一次全部列出（带行号）并使收尾失败，没有「历史条目需维护」告警降级。当前 task 满足其一即可：当前 tid 出现在某行的 task 清单（在表即生效），或无长期 spec 变更时在 progress.md 写 `- specs_index: not_applicable: 具体原因`。历史 tid 不要求对应 task 目录仍存在。废弃 spec 先删索引行再归档。
+`docs/specs/<slug>.md` 的 front matter 是唯一 spec 清单：`slug` 必须等于文件名并匹配 `^[a-z][a-z0-9_]*$`，`status` 只允许 `active` / `retired`，`tasks` 至少含一个 `tNNN` 或 `baseline`。`task.py specs list --json` 只读派生清单，不输出更新时间。finish 要求当前 tid 出现在任一 active spec 的 `tasks` 中，或 `progress.md` 写 `- specs_index: not_applicable: 具体原因`。废弃 spec 只改 `status`，不迁移目录。
 
 正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 spikes complete 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
-`repo_hygiene.py archive-review` 是唯一的冷文稿归档命令，限定将已闭环独立的 `docs/reviews/review_*/` 会话目录迁入 `docs/archive/reviews/`；项目交接固定在 `docs/handoff.md` 单文件快照，不进 archive；task、spike、pending 均终生在规范路径原位流转，严禁归档。
+`docs/reviews/review_*` 只保留最近 5 个；pre-commit 在本次新增 review 后超限时阻断并列出可删除旧目录，删除由用户确认后执行。项目交接固定在 `docs/handoff.md` 单文件快照；task、spec、spike、pending 均终生在规范路径原位流转，不归档。
 
 Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
 
 ## 路径隐私审计
 
-隐私策略与各检查点定义见 `docs/blueprint/conventions.md`「路径隐私」。日常门禁比较新增文本行；全量审计在消费仓根运行 `python3 .repo_template/scripts/task.py privacy-audit --ref HEAD`。命令只读，退出 1 表示存在泄漏，读取或解码失败非零退出；先核对诊断，不以空输出代替通过。
+隐私策略与各检查点定义见 `.repo_template/docs/architecture.md`「路径隐私」。日常门禁比较新增文本行；全量审计在消费仓根运行 `python3 .repo_template/scripts/task.py privacy-audit --ref HEAD`。命令只读，退出 1 表示存在泄漏，读取或解码失败非零退出；先核对诊断，不以空输出代替通过。

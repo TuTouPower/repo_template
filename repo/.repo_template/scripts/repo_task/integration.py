@@ -1236,11 +1236,27 @@ def _commit_native_merge(
     return existing
 
 
+def _list_integrate_candidates(repo) -> None:
+    branches = []
+    for branch in _local_task_branches(repo=repo):
+        if has_unmerged_commits(branch, repo=repo):
+            branches.append(branch)
+    if not branches:
+        print("没有待合并的 task 分支")
+        return
+    print("待合并单体/链尾（需用户明确授权；脚本不自动 merge）：")
+    for branch in branches:
+        print(f"- {branch}")
+
+
 @_chain_locked
 @control_locked
 def cmd_integrate(args):
     repo = args.repo
     require_primary_worktree(repo=repo)
+    if not getattr(args, "tid", None):
+        _list_integrate_candidates(repo)
+        return
     try:
         attempt, execution_id = resolve_identity(
             args.tid, args.attempt, args.execution_id, repo=repo

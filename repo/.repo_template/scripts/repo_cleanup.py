@@ -4,19 +4,17 @@
 删除仓库内明确无用的文件系统垃圾（缓存、OS/编辑器垃圾、点名的运行产物）。
 扫描、类别匹配、保护名单过滤、dry-run 预览与 apply 删除全部由本脚本执行；
 agent 只保留裁定语义：人工额外保留路径（--keep 传入）、审批 commit 门禁、
-「需用户决定」项汇报；未结束事务与有主草稿由脚本机械保护。
+「需用户决定」项汇报；有主草稿由脚本机械保护。
 
 类别：
   默认（scan/apply 未点名类别时）：pycache / pytest / logs / os / editor / scratch
   点名才清：node / artifacts / data
   scratch / artifacts / data 清目录内容、保留目录本身；
   默认扫描不进入未点名的 node_modules 与 artifacts/data 目录树。
-  scratch 默认清理，但存在未结束事务时整体跳过；未关闭 pending 引用与
-  未发布 issue 报告按最后修改时间保留 3 天，无主内容直接清理。
+  scratch 默认清理；未关闭 pending 引用与未发布 issue 报告按最后修改时间保留
+  3 天，无主内容直接清理。
 
-保护（永不删）：.git/、AGENTS.md、README.md、.gitignore、
-docs/runtime/tasks_audit.log、docs/runtime/dispatch_ledger.jsonl、
-docs/archive/tasks_audit.log（旧布局审计日志，迁移前保留）；
+保护（永不删）：.git/、AGENTS.md、README.md、.gitignore；
 仓库根 local/ 整树（用户私有本地文件，任何类别都不进入）；
 docs/ 下仅 os/editor 类放行；src/tests/schemas/
 config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不因「目录」被误删）。
@@ -32,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
-import json
 import os
 import re
 import shutil
@@ -45,21 +42,13 @@ from pathlib import Path
 from pending import open_scratch_references
 from repo_task.context import RepoContext, TaskDataError
 from repo_task.documents import parse_front_matter_text
-from repo_task.file_transaction import (
-    FINISHED_STATUSES,
-    GRAPH_TRANSACTION_DIR,
-    OPEN_STATUSES,
-    SYNC_TRANSACTION_DIR,
-    TRANSACTION_DIRS,
-    open_transactions,
-)
 from repo_task.locks import CONTROL_LOCK_NAME, LockBusyError, git_common_lock
 
 DEFAULT_CATEGORIES = ("pycache", "pytest", "logs", "os", "editor", "scratch")
 NAMED_CATEGORIES = ("node", "artifacts", "data")
 ALL_CATEGORIES = DEFAULT_CATEGORIES + NAMED_CATEGORIES
 BULK_CATEGORY_DIRS = {"scratch": ".scratch", "artifacts": "artifacts", "data": "data"}
-# 有主草稿的最后修改保留期；未结束事务不适用此期限，直接跳过 scratch。
+# 有主草稿的最后修改保留期。
 OWNED_GRACE_SECONDS = 3 * 86400
 ISSUE_DIR = ".scratch/repo_template_issues"
 ISSUE_URL_RE = re.compile(r"^https://github\.com/[^/\s]+/[^/\s]+/issues/[1-9][0-9]*$")
@@ -71,9 +60,6 @@ HARD_PROTECTED = {
     "AGENTS.md",
     "README.md",
     ".gitignore",
-    "docs/runtime/tasks_audit.log",
-    "docs/runtime/dispatch_ledger.jsonl",
-    "docs/archive/tasks_audit.log",
 }
 # 仓库根下整树保护的目录：用户私有本地文件，scan 不进入、apply 不删除。
 PROTECTED_ROOT_DIRS = ("local",)
@@ -258,24 +244,6 @@ def _scratch_metadata(repo: Path) -> tuple[dict[str, dict], dict[str, str]]:
     return owners, unowned
 
 
-def _transaction_reason(repo: Path, rel: str) -> str | None:
-    for directory in TRANSACTION_DIRS:
-        if rel != directory and not rel.startswith(directory + "/"):
-            continue
-        journal = repo / directory / "transaction.json"
-        try:
-            data = json.loads(journal.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError):
-            return "无主"
-        status = data.get("status") if isinstance(data, dict) else None
-        if status in FINISHED_STATUSES:
-            return f"事务已结束（{status}）"
-        if status in OPEN_STATUSES:
-            return "未结束事务"
-        return "事务记录损坏"
-    return None
-
-
 def _scratch_reason(
     repo: Path, rel: str, owners: dict[str, dict], unowned: dict[str, str], now: float
 ) -> tuple[bool, str]:
@@ -293,40 +261,18 @@ def _scratch_reason(
     for path, reason in unowned.items():
         if rel == path or rel.startswith(path.rstrip("/") + "/"):
             return False, reason
-    reason = _transaction_reason(repo, rel)
-    if reason is not None:
-        return False, reason
     return False, "无主"
 
 
 def _scratch_policy(
     repo: Path,
 ) -> tuple[dict[str, dict], dict[str, str], str | None]:
-    """返回 (owners, unowned, skip_note)；skip_note 非空表示本次跳过 scratch。"""
-    open_txns = open_transactions(repo)
-    if open_txns:
-        parts = []
-        hints = []
-        for directory, status in open_txns:
-            label = "同步" if directory == SYNC_TRANSACTION_DIR else "图"
-            state = "记录损坏" if status == "corrupt" else status
-            parts.append(f"{label}事务 {state}（{directory}）")
-            if status == "corrupt":
-                hints.append(
-                    f"{directory} 记录损坏或缺失；先人工核对备份与 journal，"
-                    "不要直接 accept/rollback 或重新开始迁移"
-                )
-            elif directory == SYNC_TRANSACTION_DIR:
-                hints.append("先 `repo_sync.py transaction accept` 或 `transaction rollback`")
-            elif directory == GRAPH_TRANSACTION_DIR:
-                hints.append("先 `task.py graph-transaction status` / `rollback`")
-        return {}, {}, "；".join(parts) + "；" + "；".join(dict.fromkeys(hints))
+    """返回 (owners, unowned, skip_note)；事务已移出 scratch，不再参与清理判定。"""
     try:
         owners, unowned = _scratch_metadata(repo)
     except Exception as error:
         return {}, {}, f"pending 条目损坏，无法确定引用：{error}"
     return owners, unowned, None
-
 
 
 def scan_repository(repo: Path, categories: list[str], keeps: list[str]) -> ScanResult:

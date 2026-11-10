@@ -16,9 +16,8 @@ from .locks import git_common_dir
 from .store import discover_effective_sources, load_task_at_ref
 
 WORKTREE_INCLUDE = ".worktreeinclude"
-# 控制面与 Git 元数据不随 .worktreeinclude 共享：worktree 写入 docs/runtime
-# 会混淆主仓 ledger 与 execution_context。
-INCLUDE_DENY = (".git", "docs/runtime")
+# 控制面与 Git 元数据不随 .worktreeinclude 共享。
+INCLUDE_DENY = (".git",)
 EXCLUDE_BLOCK_START = "# repo_template:worktreeinclude start"
 EXCLUDE_BLOCK_END = "# repo_template:worktreeinclude end"
 

@@ -379,8 +379,38 @@ def _head_or_empty(root: Path) -> str:
     return _empty_tree(root)
 
 
+def _diff_name_status(root: Path, base: str, target: str | None) -> dict[str, str]:
+    """返回 new_path -> old_path 的 rename 映射；非 rename 不入表。"""
+    args = ["diff", "--name-status", "-M", "--no-ext-diff", "-z"]
+    if target is None:
+        args += ["--cached", "--end-of-options", base]
+    else:
+        args += ["--end-of-options", base, target]
+    result = _git(root, *args, "--")
+    if result.returncode != 0:
+        raise PrivacyScanError(f"无法读取 Git rename 分类：{result.stderr.strip()}")
+    fields = result.stdout.split("\0")
+    mapping: dict[str, str] = {}
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        if status[0] in {"R", "C"}:
+            if index + 1 >= len(fields):
+                raise PrivacyScanError("Git rename 输出截断")
+            old, new = fields[index], fields[index + 1]
+            index += 2
+            if status[0] == "R":
+                mapping[new] = old
+        else:
+            index += 1
+    return mapping
+
+
 def _binary_changes(root: Path, base: str, target: str | None) -> set[str]:
-    args = ["diff", "--numstat", "--no-renames", "--no-ext-diff", "-z"]
+    args = ["diff", "--numstat", "-M", "--no-ext-diff", "-z"]
     if target is None:
         args += ["--cached", "--end-of-options", base]
     else:
@@ -389,11 +419,22 @@ def _binary_changes(root: Path, base: str, target: str | None) -> set[str]:
     if result.returncode != 0:
         raise PrivacyScanError(f"无法读取 Git 文本/二进制分类：{result.stderr.strip()}")
     binary = set()
-    for record in result.stdout.split("\0"):
-        if record:
-            added, removed, path = record.split("\t", 2)
-            if added == "-" and removed == "-":
-                binary.add(path)
+    fields = result.stdout.split("\0")
+    index = 0
+    while index < len(fields):
+        record = fields[index]
+        index += 1
+        if not record:
+            continue
+        parts = record.split("\t")
+        if len(parts) < 3:
+            continue
+        added, removed, path = parts[0], parts[1], parts[2]
+        if not path and index + 1 < len(fields):
+            index += 2  # rename: 旧路径 + 新路径
+            path = fields[index - 1]
+        if added == "-" and removed == "-":
+            binary.add(path)
     return binary
 
 
@@ -475,6 +516,7 @@ def scan_privacy_changes(
     before = _entry_map(_tree_entries(root, base))
     after = _entry_map(_tree_entries(root, target) if target is not None else _index_entries(root))
     overrides = {rel: _worktree_bytes(root, rel) for rel in set(worktree_paths) if is_privacy_candidate(rel)}
+    renames = _diff_name_status(root, base, target)
     changed = {
         rel for rel in set(before) | set(after) | set(overrides)
         if is_privacy_candidate(rel)
@@ -492,7 +534,7 @@ def scan_privacy_changes(
                 binary.add(path)
 
     oids = {
-        entry[1] for rel in changed for entry in (before.get(rel), after.get(rel))
+        entry[1] for rel in changed for entry in (before.get(rel), before.get(renames.get(rel, "")), after.get(rel))
         if entry is not None and entry[0] != "160000"
     }
     blobs = _read_blobs(root, sorted(oids)) if oids else {}
@@ -507,7 +549,7 @@ def scan_privacy_changes(
         candidates = _text_candidates_or_binary(data, label=rel, binary=rel in binary)
         if not candidates:
             continue
-        old = before.get(rel)
+        old = before.get(renames.get(rel, rel))
         original = ""
         if old is not None and old[0] != "160000":
             old_candidates = _text_candidates_or_binary(
@@ -525,10 +567,17 @@ def scan_commit_introduced_privacy(root: Path, ref: str) -> list[str]:
     return scan_privacy_changes(root, base=_first_parent_or_empty(root, ref), target=ref)
 
 
-def _audit_entries(root: Path, entries: Iterable[tuple[str, str, str]], *, binary: set[str]) -> list[str]:
+def _is_excluded_path(rel: str, excluded_paths: Iterable[str]) -> bool:
+    return any(rel == prefix.rstrip("/") or rel.startswith(prefix.rstrip("/") + "/") for prefix in excluded_paths)
+
+
+def _audit_entries(
+    root: Path, entries: Iterable[tuple[str, str, str]], *, binary: set[str],
+    excluded_paths: Iterable[str] = (),
+) -> list[str]:
     violations = []
     for rel, mode, oid in entries:
-        if mode == "160000" or not is_privacy_candidate(rel):
+        if mode == "160000" or not is_privacy_candidate(rel) or _is_excluded_path(rel, excluded_paths):
             continue
         data = _read_blobs(root, [oid])[oid]
         candidates = _text_candidates_or_binary(data, label=rel, binary=rel in binary)
@@ -550,13 +599,20 @@ def scan_git_index_privacy(root: Path, *, extra_worktree_paths: Iterable[str] = 
     return list(dict.fromkeys(violations))
 
 
-def scan_git_tree_privacy(root: Path, ref: str = "HEAD") -> list[str]:
+def scan_git_tree_privacy(
+    root: Path, ref: str = "HEAD", *, excluded_paths: Iterable[str] = (),
+) -> list[str]:
     """显式全量审计 tree；不作为历史存量阻断门禁。"""
-    return _audit_entries(root, _tree_entries(root, ref), binary=_binary_changes(root, _empty_tree(root), ref))
+    return _audit_entries(
+        root, _tree_entries(root, ref), binary=_binary_changes(root, _empty_tree(root), ref),
+        excluded_paths=excluded_paths,
+    )
 
 
 def cmd_privacy_audit(args) -> None:
-    findings = scan_git_tree_privacy(args.repo.root, args.ref)
+    findings = scan_git_tree_privacy(
+        args.repo.root, args.ref, excluded_paths=getattr(args, "privacy_excluded", ()),
+    )
     for finding in findings:
         print(finding)
     if findings:

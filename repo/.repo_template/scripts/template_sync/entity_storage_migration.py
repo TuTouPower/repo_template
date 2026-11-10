@@ -42,7 +42,7 @@ from repo_task.documents import (
     dump_front_matter,
     parse_front_matter_text,
 )
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.store import task_record, scan_tasks
 from repo_task.entity_schema import SCHEMA_PATH, SCHEMA_VERSION, current_schema
@@ -1013,7 +1013,7 @@ def migrate_entity_storage(
         # 真实写入：持久文件事务保护
         tx_paths = _collect_transaction_paths(consumer, plan)
         tx_paths.append(SCHEMA_PATH)
-        transaction = FileTransaction(consumer, SYNC_TRANSACTION_DIR)
+        transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
         try:
             transaction.begin(tx_paths)
         except ValueError as err:

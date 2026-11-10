@@ -31,7 +31,7 @@ def staged_md() -> list[str]:
     否则中文等路径会被引号化而在后续 is_file 判断中被静默跳过。
     """
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.md"],
+        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=AM", "--", "*.md"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )
@@ -42,6 +42,92 @@ def staged_md() -> list[str]:
         rel for rel in result.stdout.split("\0")
         if rel and not md_format._is_blacklisted(rel, repo=repo)
     ]
+
+
+def _git_z(args: list[str]) -> list[str]:
+    result = subprocess.run(
+        ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    if result.returncode != 0:
+        print(f"pre-commit: git {' '.join(args)} 失败：{result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    return [item for item in result.stdout.split("\0") if item]
+
+
+def _review_dirs(paths: list[str]) -> set[str]:
+    return {path.split("/")[2] for path in paths if path.startswith("docs/reviews/review_") and len(path.split("/")) > 2}
+
+
+def _review_refs(directory: str) -> list[str]:
+    refs: list[str] = []
+    roots = [Path("docs/tasks"), Path("docs/blueprint")]
+    files = [Path("docs/handoff.md")]
+    for root in roots:
+        if root.is_dir():
+            files.extend(path for path in root.rglob("*") if path.is_file())
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if directory in text:
+            refs.append(path.as_posix())
+    return refs
+
+
+def review_retention_check() -> int:
+    merge = subprocess.run(
+        ["git", "rev-parse", "--git-path", "MERGE_HEAD"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    merge_path = Path(merge.stdout.strip()) if merge.returncode == 0 and merge.stdout.strip() else Path(".git/MERGE_HEAD")
+    if merge_path.exists():
+        return 0
+    added = _review_dirs(_git_z(["diff", "--cached", "--name-only", "--diff-filter=A", "-z", "--", "docs/reviews/review_*"]))
+    if not added:
+        return 0
+    head = set()
+    head_result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "docs/reviews/"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    if head_result.returncode == 0:
+        head = _review_dirs([item for item in head_result.stdout.split("\0") if item])
+    if not (added - head):
+        return 0
+    dirs = _review_dirs(_git_z(["ls-files", "-z", "--", "docs/reviews/review_*"]))
+    if len(dirs) <= 5:
+        return 0
+    dated = []
+    for directory in dirs:
+        suffix = directory[len("review_"):]
+        date = suffix[:8]
+        if len(date) != 8 or not date.isdigit():
+            print(f"pre-commit: review 目录名缺 YYYYMMDD：docs/reviews/{directory}", file=sys.stderr)
+            return 1
+        dated.append((date, directory))
+    dated.sort(reverse=True)
+    removable = []
+    referenced = []
+    for _date, directory in dated[5:]:
+        refs = _review_refs(f"docs/reviews/{directory}")
+        if refs:
+            referenced.append((directory, refs))
+        else:
+            removable.append(directory)
+    if not removable:
+        print("pre-commit: docs/reviews 超过 5 个，但超出项均被引用；先处理引用。", file=sys.stderr)
+        return 1
+    print(f"pre-commit: 本次新增 review 后 docs/reviews 有 {len(dirs)} 个 review，超过 5 个。\n可删除的最旧目录：", file=sys.stderr)
+    for directory in removable:
+        print(f"  git rm -r -q -- docs/reviews/{directory} && rm -rf -- docs/reviews/{directory}", file=sys.stderr)
+    if referenced:
+        print("被引用、不能删除：", file=sys.stderr)
+        for directory, refs in referenced:
+            print(f"  docs/reviews/{directory}（{', '.join(refs)}）", file=sys.stderr)
+    return 1
 
 
 def dirty_vs_index(rels: list[str]) -> list[str]:
@@ -77,6 +163,8 @@ def main() -> int:
             "（请改为仓库相对路径或 <worktree> 占位符）：\n" + "\n".join(leaks),
             file=sys.stderr,
         )
+        return 1
+    if review_retention_check():
         return 1
     rels = staged_md()
     if not rels:

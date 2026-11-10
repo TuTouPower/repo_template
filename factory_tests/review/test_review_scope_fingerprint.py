@@ -1,0 +1,195 @@
+"""review_scope_fingerprint（repo_task.monitoring）集成测试。
+
+防回归：render_review_prompts 的产物（code/test/general_review_prompt.md）经 --out-dir
+落 task 目录后是 untracked 文件，若未进指纹排除列表会参与重算，review-status 门禁随之
+误判 review_scope=stale。真实 git 仓库，不 stub 指纹函数，直接触达 monitoring 哈希逻辑。
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+from factory_paths import FACTORY_ROOT
+
+
+import pytest
+
+SCRIPTS_DIR = FACTORY_ROOT / "repo/.repo_template/scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+from repo_task.monitoring import (
+    REVIEW_PROCESS_FILES,
+    REVIEW_PROMPT_OUTPUT_FILES,
+    review_scope_fingerprint,
+)
+
+TASK_REL = "docs/tasks/t001_foo"
+
+
+def _git(repo: Path, *args) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    )
+
+
+@pytest.fixture()
+def git_repo(tmp_path):
+    """真实 git 仓库：README + task 目录（task.md/spec.md 已提交到 main）。"""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-b", "main")
+    _git(root, "config", "user.email", "test@example.com")
+    _git(root, "config", "user.name", "test")
+    task_dir = root / TASK_REL
+    task_dir.mkdir(parents=True)
+    (root / "README.md").write_text("repo\n", encoding="utf-8")
+    (task_dir / "progress.md").write_text("---\ntid: t001\n---\n", encoding="utf-8")
+    (task_dir / "task.md").write_text("## 契约区\nAC1\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "init")
+    anchor = _git(root, "rev-parse", "HEAD").stdout.strip()
+    return root, anchor
+
+
+def _fingerprint(repo: Path, anchor: str) -> str:
+    fp = review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+    assert fp, "指纹不应为空（git 失败会静默返回空串，测试应暴露）"
+    return fp
+
+
+@pytest.mark.parametrize("filename", [name for name in REVIEW_PROCESS_FILES if name != "progress.md"])
+def test_untracked_review_artifacts_keep_content_fingerprint(git_repo, filename):
+    repo, anchor = git_repo
+    before = _fingerprint(repo, anchor)
+    (repo / TASK_REL / filename).write_text("untracked 流程内容\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) == before
+
+
+def test_task_body_is_excluded_but_review_level_is_bound(git_repo):
+    repo, anchor = git_repo
+    path = repo / TASK_REL / "progress.md"
+    path.write_text("---\nreview_level: full\n---\noriginal notes\n", encoding="utf-8")
+    before = _fingerprint(repo, anchor)
+    path.write_text("---\nreview_level: full\n---\nupdated notes\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) == before
+    path.write_text("---\nreview_level: single\n---\nupdated notes\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) != before
+
+
+def test_malformed_review_metadata_fails_closed(git_repo):
+    """非法 front matter 必须显式抛 TaskDataError（DS L221：不再静默返回空串 fail-open）。
+
+    旧断言 `== ""` 固化的是「静默空串」语义；采纳项改为显式失败后按新语义改写，
+    空串不再是可接受的兜底结果。
+    """
+    from repo_task.context import TaskDataError
+
+    repo, anchor = git_repo
+    (repo / TASK_REL / "progress.md").write_text("unstructured task metadata\n", encoding="utf-8")
+    with pytest.raises(TaskDataError, match="front matter"):
+        review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+
+
+def test_os_error_is_wrapped_as_task_data_error(git_repo, monkeypatch):
+    """DS L221：OSError/ValueError 不再静默返回空串，统一包装成 TaskDataError 上抛。"""
+    from repo_task import monitoring
+
+    repo, anchor = git_repo
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(monitoring, "_review_worktree", boom)
+    with pytest.raises(monitoring.ctx.TaskDataError, match="disk failure"):
+        monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+
+
+def test_untracked_foreign_file_changes_fingerprint(git_repo):
+    """对照：非流程 untracked 文件仍改指纹——排除不是一刀切放掉 task 目录。"""
+    repo, anchor = git_repo
+    before = _fingerprint(repo, anchor)
+    (repo / TASK_REL / "stray_progress.md").write_text("x\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) != before
+
+
+def test_tracked_change_still_changes_fingerprint(git_repo):
+    """对照：review 后 tracked 代码/spec 改动仍改指纹——stale 判定不因排除而失效。"""
+    repo, anchor = git_repo
+    before = _fingerprint(repo, anchor)
+    (repo / "README.md").write_text("repo v2\n", encoding="utf-8")
+    assert _fingerprint(repo, anchor) != before
+
+
+def test_prompt_output_filenames_covered_by_review_process_files():
+    """渲染产物输出名全部在指纹排除清单内（防排除列表漏新增产物）。"""
+    covered = {name for names in REVIEW_PROMPT_OUTPUT_FILES.values() for name in names}
+    assert covered <= set(REVIEW_PROCESS_FILES)
+
+
+def test_scope_is_stable_across_staging_and_commit(git_repo):
+    """The same delivered bytes have one scope, independent of Git lifecycle phase."""
+    repo, anchor = git_repo
+    (repo / 'new.py').write_text('result = 1\n')
+    (repo / TASK_REL / 'task.md').write_text('## 契约区\nverified AC1\n')
+    reviewed = _fingerprint(repo, anchor)
+    _git(repo, 'add', '-N', 'new.py')
+    assert _fingerprint(repo, anchor) == reviewed
+    _git(repo, 'add', '-A')
+    assert _fingerprint(repo, anchor) == reviewed
+    _git(repo, 'commit', '-m', 'complete task')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == reviewed
+
+
+def test_committed_scope_tracks_task_spec_and_not_primary_dirt(git_repo):
+    repo, anchor = git_repo
+    (repo / TASK_REL / 'handoff.json').write_text('{}\n')
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-m', 'finish in place')
+    before = review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD')
+    (repo / 'README.md').write_text('unrelated primary worktree dirt\n')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == before
+    (repo / TASK_REL / 'task.md').write_text('changed AC\n')
+    _git(repo, 'add', TASK_REL)
+    _git(repo, 'commit', '-m', 'change task spec')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') != before
+
+
+def test_scope_tracks_mode_and_symlink_target(git_repo):
+    repo, anchor = git_repo
+    before = _fingerprint(repo, anchor)
+    (repo / 'README.md').chmod(0o755)
+    mode_scope = _fingerprint(repo, anchor)
+    assert mode_scope != before
+    link = repo / 'link'
+    link.symlink_to('README.md')
+    link_scope = _fingerprint(repo, anchor)
+    assert link_scope != mode_scope
+    link.unlink()
+    link.symlink_to('missing-target')
+    assert _fingerprint(repo, anchor) != link_scope
+    _git(repo, 'add', '-A')
+    reviewed = _fingerprint(repo, anchor)
+    _git(repo, 'commit', '-m', 'mode and link')
+    assert review_scope_fingerprint(anchor, TASK_REL, repo_root=repo, ref='HEAD') == reviewed
+
+
+def test_review_scope_large_file_limit_and_streaming(git_repo, monkeypatch):
+    """验证 review scope 流式计算且当单文件超过安全上限时报错（Issue #50）。"""
+    from repo_task import monitoring
+
+    repo, anchor = git_repo
+
+    # 1. 模拟将上限调小为 100 字节以进行超限验证
+    monkeypatch.setattr(monitoring, "_REVIEW_MAX_FILE_SIZE", 100)
+
+    oversized = repo / "huge.bin"
+    oversized.write_bytes(b"x" * 150)
+
+    # 超过限制时 review_scope_fingerprint 显式抛 TaskDataError（DS L221 已废弃静默空串）
+    with pytest.raises(monitoring.ctx.TaskDataError, match="review scope 文件过大"):
+        monitoring.review_scope_fingerprint(anchor, TASK_REL, repo_root=repo)
+
+    # 直接调用 _review_worktree 同样触发 TaskDataError 并指出文件过大
+    with pytest.raises(monitoring.ctx.TaskDataError, match="review scope 文件过大"):
+        monitoring._review_worktree(repo, "t001_first")
+

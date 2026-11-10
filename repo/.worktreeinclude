@@ -1,6 +1,6 @@
 # task worktree 本地文件接管清单（gitignore 语法）。
 # run-begin / start 把主仓中命中且被 .gitignore 忽略的路径软链进 task worktree；
-# 未被忽略的未跟踪文件、已入库文件、.git 与 docs/runtime/ 不链接。.env 始终默认链接，无需列出。
+# 未被忽略的未跟踪文件、已入库文件与 .git 不链接。.env 始终默认链接，无需列出。
 # 软链共享同一份内容：worktree 内修改即修改主仓。不要列 .venv 等含 editable 安装的环境目录。
 # 说明见 .repo_template/docs/usage.md「task worktree 本地文件」。
 #

@@ -3,7 +3,7 @@ import json
 import sys
 
 from . import context as ctx
-from .attempts import current_attempt_record, overlapping_attempts, validate_execution_context
+from .attempts import current_attempt_record, execution_context_path, overlapping_attempts, validate_execution_context
 from .documents import parse_front_matter
 from .git_ops import _git, is_ancestor, require_primary_worktree, worktree_paths
 from .ledger import ledger_read
@@ -106,7 +106,7 @@ def recovery_state(tid: str, *, repo) -> dict:
         )
     if fm["status"] == "active":
         if record is None:
-            if (worktree / "docs/runtime/execution_context.json").exists():
+            if execution_context_path(worktree).exists():
                 return phase("runtime_missing", "worktree 留有执行 identity，但主仓 ledger 缺失；停止并恢复 runtime 备份，不 reserve、不猜补 active 历史")
             return phase("started_without_attempt", "只 reserve；不重复 start")
         try:

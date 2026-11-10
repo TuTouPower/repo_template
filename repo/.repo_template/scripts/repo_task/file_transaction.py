@@ -4,6 +4,8 @@ Snapshots precede every asset mutation. Backups are copied on restore, never
 consumed, and a failed restore remains visible as an unfinished transaction.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil
@@ -11,24 +13,26 @@ from pathlib import Path
 
 from .documents import atomic_write_text
 
-SYNC_TRANSACTION_DIR = ".scratch/repo_sync_rollback"
-GRAPH_TRANSACTION_DIR = ".scratch/task_graph_transaction"
+SYNC_TRANSACTION_DIR = "sync_transaction"
+GRAPH_TRANSACTION_DIR = "graph_transaction"
 TRANSACTION_DIRS = (SYNC_TRANSACTION_DIR, GRAPH_TRANSACTION_DIR)
 OPEN_STATUSES = frozenset({"preparing", "applying", "applied", "restore_failed"})
 FINISHED_STATUSES = frozenset({"accepted", "rolled_back"})
 
 
 def open_transactions(root) -> list[tuple[str, str]]:
-    """返回未结束或记录损坏的事务目录与状态。
+    """返回 Git common 状态目录内未结束或记录损坏的事务。
 
     仅检查 ``TRANSACTION_DIRS``；事务目录不存在或为空视为无事务。目录非空但
-    缺少 journal，说明备份已成为无主残留，按 ``corrupt`` 阻断 scratch 清理；
-    记录无法解析或不是对象时同样为 ``corrupt``。
+    缺少 journal，说明备份已成为无主残留，按 ``corrupt`` 带诊断返回；记录无法
+    解析或不是对象时同样为 ``corrupt``。
     """
+    from .context import common_state_dir
+
     root = Path(root)
     findings: list[tuple[str, str]] = []
     for directory in TRANSACTION_DIRS:
-        transaction_dir = root / directory
+        transaction_dir = common_state_dir(root) / directory
         journal = transaction_dir / "transaction.json"
         if not journal.is_file():
             if transaction_dir.is_dir():
@@ -50,6 +54,13 @@ def open_transactions(root) -> list[tuple[str, str]]:
         elif status not in FINISHED_STATUSES:
             findings.append((directory, "corrupt"))
     return findings
+
+
+def state_transaction(root: Path, directory: str) -> "FileTransaction":
+    """事务备份落在 Git common 状态目录；资产路径仍相对仓库根。"""
+    from .context import common_state_dir
+
+    return FileTransaction(root, directory, backup_root=common_state_dir(root))
 
 
 def _remove(path):
@@ -93,9 +104,9 @@ def fingerprint(root, paths):
 
 
 class FileTransaction:
-    def __init__(self, root: Path, directory: str):
+    def __init__(self, root: Path, directory: str, *, backup_root: Path | None = None):
         self.root = root
-        self.backup = root / directory
+        self.backup = (Path(backup_root) if backup_root is not None else root) / directory
         self.journal = self.backup / "transaction.json"
 
     def read(self):

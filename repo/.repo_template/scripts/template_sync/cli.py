@@ -10,6 +10,7 @@ from repo_task.context import TaskDataError
 
 from . import context as ctx
 from .apply import cmd_apply
+from .healthcheck import run_healthcheck
 from .hooks import cmd_install_hooks
 from .shared_files import SHARED_DISPOSITIONS
 from .skills_links import cmd_link_skills
@@ -70,7 +71,6 @@ def build_parser() -> argparse.ArgumentParser:
     apply.add_argument("--skip-tests", action="store_true", help="仅跳过模板契约测试（-m contract），仍校验项目策略")
     apply.add_argument("--allow-dirty-source", action="store_true", help="显式开发模式；不推进 resolved commit")
     apply.add_argument("--expected-commit", help="必须与 plan 的完整来源 SHA 相同，否则零写入拒绝")
-    apply.add_argument("--agents-file", type=Path, help="在事务内应用已裁定的 AGENTS 语义合并；项目介绍必须保留")
     apply.set_defaults(func=cmd_apply)
 
     prompt = sub.add_parser("prompt", help="管理 user_prompts")
@@ -88,7 +88,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hooks.add_argument("--force", action="store_true", help="覆盖已有的 core.hooksPath")
     hooks.set_defaults(func=cmd_install_hooks)
+    health = sub.add_parser("healthcheck", help="只读检查安装、hooks、来源、验证策略与模板占位符")
+    health.set_defaults(func=cmd_healthcheck)
     return parser
+
+
+def cmd_healthcheck(args: argparse.Namespace) -> int:
+    sync: ctx.SyncContext = args.sync
+    issues = run_healthcheck(sync)
+    if issues:
+        for issue in issues:
+            print(f"FAIL: {issue}")
+        return 1
+    print("healthcheck=PASS")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> None:

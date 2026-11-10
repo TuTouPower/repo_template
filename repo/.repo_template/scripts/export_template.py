@@ -6,6 +6,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -34,11 +35,7 @@ def is_non_distributable(name: str) -> bool:
         if part.startswith(_NON_DISTRIBUTABLE_PREFIXES):
             return True
     posix = path.as_posix()
-    return (
-        posix.startswith("docs/runtime/")
-        or posix.startswith(".claude/state/")
-        or posix == ".repo_template/sync_state.json"
-    )
+    return posix.startswith(".claude/state/")
 
 
 def _extract_product(stream, destination):
@@ -125,17 +122,41 @@ def export_template(source: Path, target: Path, ref: str = "HEAD") -> None:
             shutil.rmtree(staging)
 
 
+def bootstrap(source: Path, target: Path, ref: str) -> None:
+    export_template(source, target, ref)
+    try:
+        if not (target / ".git").exists():
+            subprocess.run(["git", "-C", str(target), "init", "-b", "main"], check=True)
+        script = target / ".repo_template/scripts/repo_sync.py"
+        subprocess.run([sys.executable, str(script), "install-hooks"], cwd=target, check=True)
+        subprocess.run(
+            [sys.executable, str(script), "init", "--source", str(source.resolve())],
+            cwd=target, check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise ValueError(
+            f"bootstrap 在步骤中失败（{error}）；已完成导出/初始化部分，"
+            "请检查现场后人工完成剩余步骤，或删除目标目录重来"
+        ) from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--ref", default="HEAD")
+    parser.add_argument("--bootstrap", action="store_true", help="导出后 git init、安装 hooks、登记来源")
     args = parser.parse_args()
     try:
-        export_template(args.source, args.target, args.ref)
+        if args.bootstrap:
+            bootstrap(args.source, args.target, args.ref)
+        else:
+            export_template(args.source, args.target, args.ref)
     except (OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f"导出失败：{error}\n")
-    print(f"已从 Git commit 导出：{args.target}；下一步完成 README 初始化与 doctor/contract")
+    print(f"已从 Git commit 导出：{args.target}")
+    if args.bootstrap:
+        print("bootstrap 完成；下一步填写 docs/blueprint/testing.md 并运行 repo_sync.py healthcheck")
 
 
 if __name__ == "__main__":

@@ -189,13 +189,12 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
     if current == hooks_rel:
         print(f"core.hooksPath 已指向 {hooks_rel}，无需改动")
         return 0
-    if current and not getattr(args, "force", False):
-        print(
-            f"错误: core.hooksPath 已是 {current}；"
-            f"覆盖为 {hooks_rel} 须加 --force",
-            file=sys.stderr,
-        )
-        return 1
+    if current and current != hooks_rel and not getattr(args, "force", False):
+        print(f"已有 core.hooksPath={current}，不覆盖；请人工接入模板 hook：", file=sys.stderr)
+        print("  .husky/pre-commit:\n    python3 .repo_template/hooks/pre-commit", file=sys.stderr)
+        print("  .husky/commit-msg:\n    python3 .repo_template/hooks/commit-msg \"$1\"", file=sys.stderr)
+        print("  lefthook.yml:\n    pre-commit:\n      commands:\n        repo-template:\n          run: python3 .repo_template/hooks/pre-commit", file=sys.stderr)
+        return 0
     result = _git(sync.consumer, "config", "core.hooksPath", hooks_rel)
     if result.returncode != 0:
         print(f"错误: 设置 core.hooksPath 失败：{result.stderr.strip()}", file=sys.stderr)

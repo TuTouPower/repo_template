@@ -154,8 +154,6 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     """迁移旧布局 state。默认 dry-run，仅在 write=True 时写盘与删除旧文件。"""
-    from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR
-
     legacy = legacy_state_path(sync)
     if not legacy.exists():
         return []
@@ -180,11 +178,8 @@ def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[
             f"{sync.rel(legacy)} 拟迁移至 {sync.rel(sync.state_path)}"
             + (f"（并入字段 {', '.join(sorted(set(merged)))}）" if merged else "")
         ]
-    transaction = FileTransaction(sync.consumer, SYNC_TRANSACTION_DIR)
-    try:
-        transaction.begin([sync.rel(sync.state_path), sync.rel(legacy)])
-    except ValueError as error:
-        raise ctx.SyncError(str(error)) from error
+    old_state = sync.state_path.read_bytes() if sync.state_path.exists() else None
+    old_legacy = legacy.read_bytes()
     try:
         write_state(merged_data, sync)
         expected = {
@@ -193,15 +188,19 @@ def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[
         if json.loads(sync.state_path.read_text(encoding="utf-8")) != expected:
             raise ctx.SyncError("迁移后回读新 state 与合并结果不一致")
         legacy.unlink()
-        transaction.applied()
-        transaction.accept()
     except Exception as error:
         try:
-            transaction.rollback(automatic=True)
+            if old_state is None:
+                sync.state_path.unlink(missing_ok=True)
+            else:
+                sync.state_path.parent.mkdir(parents=True, exist_ok=True)
+                sync.state_path.write_bytes(old_state)
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_bytes(old_legacy)
         except Exception as rollback_error:  # noqa: BLE001 - 恢复失败必须显式报告
             raise ctx.SyncError(
                 f"legacy-state 迁移失败（{error}）；自动回滚失败：{rollback_error}；"
-                f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工恢复"
+                f"备份文件：{sync.rel(legacy)}"
             ) from error
         raise ctx.SyncError(f"legacy-state 迁移失败，已回滚：{error}") from error
     return [

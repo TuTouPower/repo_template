@@ -337,11 +337,6 @@ def validate_worktree_shape(root: Path) -> None:
             nested = [path for path in directory.iterdir() if path.is_dir() and not path.name.startswith(".tmp_")]
             if nested:
                 raise IdScanError(f"当前 {name} 布局禁止嵌套目录：{nested[0]}；先显式 migrate")
-    archive = root / "docs/archive"
-    if archive.is_dir():
-        invalid = [path for path in archive.iterdir() if path.is_dir() and path.name not in {"reviews", "specs"}]
-        if invalid:
-            raise IdScanError(f"Archive 仅允许 reviews/specs 冷文稿：{invalid[0]}；先显式 migrate")
 
 
 def require_current_schema(repo_root: Path) -> None:
@@ -389,10 +384,6 @@ def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
     """合并/提交边界校验当前布局编号唯一性，不加载历史解析器。"""
     args = ["ls-files", "-z"] if ref is None else ["ls-tree", "-r", "--name-only", "-z", ref]
     files = _run_git(repo_root, args).split("\0")
-    for rel in files:
-        parts = rel.split("/")
-        if len(parts) > 3 and parts[:2] == ["docs", "archive"] and parts[2] not in {"reviews", "specs"}:
-            raise IdScanError(f"Archive 仅允许 reviews/specs 冷文稿目录：{rel}；先显式 migrate")
     for prefix, directory, kind in (("p", "docs/pending", "file"), ("d", "docs/findings", "file"), ("s", "docs/spikes", "dir")):
         found: dict[int, list[str]] = {}
         for rel in files:

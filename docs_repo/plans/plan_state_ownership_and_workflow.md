@@ -1,8 +1,8 @@
 # 本机状态、所有权与工作流收口方案
 
-> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T10:23:30+08:00。
+> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T12:10:00+08:00。
 >
-> 文档性质：已确定范围的实施方案，尚未实施。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态最终写入 [decision_log.md](../decision_log.md)。
+> 文档性质：已实施的工厂改造方案。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态见 [decision_log.md](../decision_log.md)。消费仓铺开仍未执行。
 >
 > 适用范围：工厂仓 `repo/` 产物、`factory_tests/`、`docs_repo/` 工厂笔记，以及 12 个消费仓的一次性同步迁移。目标仓为消费项目；模板工具链本身仍留在产物内，不做外置。
 >
@@ -821,3 +821,9 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 1. 12 个仓是否仍是全部消费方；铺开前只读清点。
 2. `omni_panel` 的 594 个 task 规模下，`view`/`plan`/取号是否可接受；pilot 实测后决定是否需要后续性能工作。
 3. 消费仓自有 `docs/archive` 内容是否保留原处；本方案默认保留，不自动迁移。
+
+## 13. 实施记录
+
+- 2026-11-10：WP1–WP6 工厂侧完成；工厂全量 `1520 passed, 1 skipped`，`md_format --check` 与 `skill_registry.py` 通过。
+- 已实现 state-root、agents-zones、specs-layout、reviews、adr 迁移器、隐私 rename-aware、review 数量 hook、spec 读取与 bootstrap/healthcheck。
+- 未执行 12 个消费仓迁移、pilot、备份恢复演练与发布铺开；这些步骤需按第 6 节在维护窗口逐仓执行。

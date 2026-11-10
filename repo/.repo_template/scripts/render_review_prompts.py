@@ -38,6 +38,7 @@ from repo_task.monitoring import (
     review_scope_fingerprint as monitoring_scope_fingerprint,
 )
 from repo_task.store import resolve_baseline_spec_text
+from repo_task.specs import load_spec
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TOOLKIT_ROOT.parent
@@ -175,6 +176,35 @@ def validate_output_format_template(template: str, *, source: Path) -> None:
                 f"{source}: `## 输出格式` 不得引用本机绝对路径占位符 {forbidden}；"
                 "请改用仓库相对路径（如 `git diff {diff_anchor}`、`{task_dir_rel}`）"
             )
+
+
+def linked_spec_summary(task_dir: Path) -> str:
+    task_md = task_dir / "task.md"
+    if not task_md.is_file():
+        return ""
+    linked = None
+    for line in task_md.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            stripped = stripped[2:]
+        if stripped.startswith("关联 spec："):
+            linked = stripped.split("：", 1)[1].strip()
+            break
+    if not linked or linked == "无":
+        return ""
+    path = REPO_ROOT / linked
+    try:
+        spec = load_spec(path, root=REPO_ROOT)
+    except TaskDataError as error:
+        sys.exit(f"关联 spec 无法读取：{error}")
+    tasks = ", ".join(spec["tasks"])
+    return (
+        "## 关联 spec\n\n"
+        f"- 路径：`{linked}`\n"
+        f"- 标题：{spec['title']}\n"
+        f"- 状态：{spec['status']}；tasks：{tasks}\n"
+        "请核对实现是否破坏该 spec 描述的既有行为；需要时直接读取路径。\n"
+    )
 
 
 def _normalize_checkboxes(text: str) -> str:
@@ -322,9 +352,11 @@ def render_review_prompts(
             ),
         }
 
-    if drift:
+    linked = linked_spec_summary(task_dir)
+    extras = "\n".join(part for part in (linked, drift) if part)
+    if extras:
         prompts = {
-            name: f"{content.rstrip()}\n\n{drift}\n" for name, content in prompts.items()
+            name: f"{content.rstrip()}\n\n{extras}\n" for name, content in prompts.items()
         }
     return prompts
 

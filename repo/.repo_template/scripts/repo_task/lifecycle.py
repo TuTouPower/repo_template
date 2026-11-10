@@ -456,11 +456,10 @@ def cmd_preflight(args):
 
     if not source_ref and fm["status"] == "active":
         from .attempts import current_attempt_record
-        from .git_ops import primary_worktree_path
         from .ledger import ledger_read
         record = current_attempt_record(
             args.tid,
-            ledger_read(primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl", repo=repo),
+            ledger_read(repo.ledger_path, repo=repo),
         )
         if record and record["state"] == "running":
             owner = record.get("owner_id")
@@ -805,7 +804,6 @@ def _finish_prechecks(args) -> dict:
     """finish 的全部前置检查；任何一项失败都在写入前 sys.exit，零写入。"""
     repo = args.repo
     from .attempts import current_attempt_record, resolve_identity
-    from .git_ops import primary_worktree_path
     from .ledger import ledger_read
     from .monitoring import build_handoff, review_scope_fingerprint
     from .review import ReviewDataError, evaluate_review
@@ -931,7 +929,7 @@ def _finish_prechecks(args) -> dict:
     # 7. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
         attempt, execution_id = resolve_identity(tid, repo=repo)
-        ledger = primary_worktree_path(repo=repo) / "docs/runtime/dispatch_ledger.jsonl"
+        ledger = repo.ledger_path
         record = current_attempt_record(tid, ledger_read(ledger, tid=tid, repo=repo))
     except ctx.TaskDataError as error:
         sys.exit(f"finish=FAIL：{error}；零写入退出")

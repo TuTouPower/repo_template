@@ -1,15 +1,14 @@
 ---
 name: task-integrate
-description: 内部合并流程：task-run 取得用户明确 merge 授权后读取正文，合入本地主干，不 push。
+description: 合并已完成的单 task 分支或线性链尾；必须明确授权，只合入本地主干，不 push。
 disable-model-invocation: true
-user-invocable: false
 metadata:
   opencode/autoinvoke: "false"
 ---
 
 # task-integrate
 
-将已完成的单 task 分支或线性链尾合入本地主干。必须先明确向用户核对并列出待合分支名（如 t001_xxx 或链尾）与目标主干分支，取得明确批准后再执行本次 merge；禁止未经核对自动或推测性合并；不 push。
+用户可执行 `/task-integrate [tid]`。无参时先运行 `task.py integrate` 列出待合并单体/链尾，等待用户选择并授权；显式 tid 或链尾只授权该确切范围。将已完成的单 task 分支或线性链尾合入本地主干。必须先明确向用户核对并列出待合分支名（如 t001_xxx 或链尾）与目标主干分支，取得明确批准后再执行本次 merge；禁止未经核对自动或推测性合并；不 push。
 
 ## 组合契约
 

@@ -23,6 +23,7 @@ from .recovery import cmd_recovery, cmd_ledger_import, cmd_finish_txn_clear
 from .graph import cmd_merge_backlog, cmd_graph_transaction
 from .plan import cmd_plan
 from .review_status import cmd_review_status
+from .specs import cmd_specs_list
 from .integration import cmd_cleanup_worktree, cmd_integrate, cmd_integrate_chain, cmd_start
 from .lifecycle import (
     cmd_add,
@@ -51,6 +52,13 @@ def main():
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     from .privacy import PrivacyScanError, cmd_privacy_audit
+    specs = sub.add_parser("specs", help="长期 spec 派生清单")
+    specs_sub = specs.add_subparsers(dest="specs_cmd", required=True)
+    specs_list = specs_sub.add_parser("list", help="列出 spec front matter")
+    specs_list.add_argument("--all", action="store_true", help="包含 retired")
+    specs_list.add_argument("--json", action="store_true", help="JSON 输出")
+    specs_list.set_defaults(func=cmd_specs_list)
+
     audit = sub.add_parser("privacy-audit", help="显式扫描指定 Git 快照全部非归档文本")
     audit.add_argument("--ref", default="HEAD")
     audit.set_defaults(func=cmd_privacy_audit)
@@ -285,8 +293,8 @@ def main():
     _add_identity(cleanup)
     cleanup.set_defaults(func=cmd_cleanup_worktree)
 
-    integrate = sub.add_parser("integrate", help="合并单个 exact terminal attempt")
-    integrate.add_argument("tid")
+    integrate = sub.add_parser("integrate", help="合并单个 exact terminal attempt；无 tid 只列候选")
+    integrate.add_argument("tid", nargs="?")
     _add_identity(integrate)
     integrate.add_argument("--continue", dest="continue_merge", action="store_true")
     integrate.add_argument("--keep-branch", action="store_true", help="仅在 --continue 收尾或幂等重入时保留已合入分支")
@@ -340,6 +348,16 @@ def main():
     args = parser.parse_args()
     # 入口构造不可变仓库身份，所有子命令显式接收；不再依赖模块级路径。
     args.repo = ctx.RepoContext.from_code_location(Path(__file__))
+    if args.cmd == "privacy-audit":
+        from .specs import retired_spec_paths
+        from .store import scan_tasks
+
+        excluded = [
+            task["dir"] for task in scan_tasks(repo=args.repo)
+            if task.get("status") in ctx.TERMINAL_STATUSES
+        ]
+        excluded.extend(retired_spec_paths(args.repo.root))
+        args.privacy_excluded = excluded
     try:
         args.func(args)
     except (ctx.TaskDataError, PrivacyScanError) as error:

@@ -18,15 +18,12 @@ from datetime import timedelta, timezone
 from pathlib import Path
 
 
-def _git_common_root(code_root: Path) -> Path:
-    """由当前工作区解析主工作区根；仅在 .git 不存在时退回 code_root。
+def git_common_dir(code_root: Path) -> Path:
+    """解析当前工作区的 Git common dir；非 Git 工作区退回 code_root。
 
-    .git 存在即代表这是 Git 工作区（含 linked worktree 的 gitfile）。此时 git 调用
-    失败、超时或输出为空都意味着无法确认主工作区身份，必须显式报错，禁止把
-    工作区本地目录静默当作主工作区根。
+    主工作区返回 ``<repo>/.git``；linked worktree 也返回主仓的 common dir。
     """
-    if not (code_root / ".git").exists():
-        return code_root
+    has_dot_git = (code_root / ".git").exists()
     try:
         result = subprocess.run(
             ["git", "-C", str(code_root), "rev-parse", "--git-common-dir"],
@@ -38,6 +35,8 @@ def _git_common_root(code_root: Path) -> Path:
             "拒绝把工作区本地目录当作主工作区根"
         ) from error
     if result.returncode != 0:
+        if not has_dot_git:
+            return code_root
         raise TaskDataError(
             f"无法解析 {code_root} 的 git 公共目录："
             f"git rev-parse --git-common-dir 退出码 {result.returncode}"
@@ -51,7 +50,34 @@ def _git_common_root(code_root: Path) -> Path:
     common = Path(result.stdout.strip())
     if not common.is_absolute():
         common = (code_root / common).resolve()
+    return common
+
+
+def _git_common_root(code_root: Path) -> Path:
+    """由当前工作区解析主工作区根；仅在 .git 不存在时退回 code_root。"""
+    common = git_common_dir(code_root)
     return common.parent if common.name == ".git" else common
+
+
+def common_state_dir(code_root: Path) -> Path:
+    """主仓与 worktree 共享的模板状态目录。"""
+    return git_common_dir(Path(code_root)) / "repo_template"
+
+
+def git_private_dir(code_root: Path) -> Path:
+    """当前工作区的私有 Git 目录；linked worktree 返回其独立 gitdir。"""
+    if not (code_root / ".git").exists():
+        return code_root
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(code_root), "rev-parse", "--absolute-git-dir"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise TaskDataError(f"无法解析 {code_root} 的 Git 私有目录（{error}）") from error
+    if result.returncode != 0 or not result.stdout.strip():
+        raise TaskDataError(f"无法解析 {code_root} 的 Git 私有目录")
+    return Path(result.stdout.strip())
 
 
 @dataclass(frozen=True)
@@ -99,16 +125,36 @@ class RepoContext:
         return self.toolkit_root / "docs" / "task_template"
 
     @property
-    def runtime_dir(self) -> Path:
-        return self.primary_root / "docs" / "runtime"
+    def common_dir(self) -> Path:
+        return git_common_dir(self.root)
+
+    @property
+    def state_dir(self) -> Path:
+        return common_state_dir(self.root)
 
     @property
     def ledger_path(self) -> Path:
-        return self.runtime_dir / "dispatch_ledger.jsonl"
+        return self.state_dir / "ledger.jsonl"
 
     @property
     def audit_path(self) -> Path:
-        return self.primary_root / "docs" / "runtime" / "tasks_audit.log"
+        return self.state_dir / "tasks_audit.log"
+
+    @property
+    def goal_path(self) -> Path:
+        return self.state_dir / "goal_queue.json"
+
+    @property
+    def statusline_path(self) -> Path:
+        return self.state_dir / "statusline_workdir.jsonl"
+
+    @property
+    def sync_state_path(self) -> Path:
+        return self.state_dir / "sync_state.json"
+
+    @property
+    def execution_context_path(self) -> Path:
+        return git_private_dir(self.root) / "repo-task-execution.json"
 
     def rel(self, path: Path) -> str:
         for base in (self.root, self.primary_root):

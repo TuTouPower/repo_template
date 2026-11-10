@@ -13,9 +13,6 @@
     "repo-cleanup": {
       "role": "public"
     },
-    "repo-hygiene": {
-      "role": "public"
-    },
     "repo-template-sync": {
       "role": "public"
     },
@@ -29,9 +26,9 @@
       "role": "public"
     },
     "task-integrate": {
-      "role": "internal"
+      "role": "public"
     },
-    "task-merge": {
+    "task-combine": {
       "role": "public"
     },
     "task-preflight": {
