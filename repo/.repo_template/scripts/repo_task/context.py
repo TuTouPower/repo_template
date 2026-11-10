@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta, timezone
 from pathlib import Path
 
@@ -53,9 +53,7 @@ def git_common_dir(code_root: Path) -> Path:
     return common
 
 
-def _git_common_root(code_root: Path) -> Path:
-    """由当前工作区解析主工作区根；仅在 .git 不存在时退回 code_root。"""
-    common = git_common_dir(code_root)
+def _primary_root_from_common(common: Path) -> Path:
     return common.parent if common.name == ".git" else common
 
 
@@ -86,16 +84,28 @@ class RepoContext:
 
     root：当前工作区根（task 文档所在；主仓内等于 primary_root）。
     primary_root：主工作区根（ledger、audit、worktree 登记与命名）。
+
+    _common_dir / _state_dir 是派生路径缓存（compare=False），不参与身份比较。
     """
 
     root: Path
     primary_root: Path
+    _common_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
+    _state_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def for_root(cls, root: Path, *, primary_root: Path | None = None) -> "RepoContext":
         current = root.expanduser().resolve()
-        primary = (primary_root or _git_common_root(current)).expanduser().resolve()
-        return cls(root=current, primary_root=primary)
+        common: Path | None = None
+        if primary_root is None:
+            common = git_common_dir(current)
+            primary = _primary_root_from_common(common).expanduser().resolve()
+        else:
+            primary = primary_root.expanduser().resolve()
+        context = cls(root=current, primary_root=primary)
+        if common is not None:
+            object.__setattr__(context, "_common_dir", common)
+        return context
 
     @classmethod
     def from_code_location(cls, code_file: Path | str) -> "RepoContext":
@@ -126,11 +136,19 @@ class RepoContext:
 
     @property
     def common_dir(self) -> Path:
-        return git_common_dir(self.root)
+        common = self._common_dir
+        if common is None:
+            common = git_common_dir(self.root)
+            object.__setattr__(self, "_common_dir", common)
+        return common
 
     @property
     def state_dir(self) -> Path:
-        return common_state_dir(self.root)
+        state = self._state_dir
+        if state is None:
+            state = self.common_dir / "repo_template"
+            object.__setattr__(self, "_state_dir", state)
+        return state
 
     @property
     def ledger_path(self) -> Path:

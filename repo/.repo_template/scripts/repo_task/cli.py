@@ -348,17 +348,17 @@ def main():
     args = parser.parse_args()
     # 入口构造不可变仓库身份，所有子命令显式接收；不再依赖模块级路径。
     args.repo = ctx.RepoContext.from_code_location(Path(__file__))
-    if args.cmd == "privacy-audit":
-        from .specs import retired_spec_paths
-        from .store import scan_tasks
-
-        excluded = [
-            task["dir"] for task in scan_tasks(repo=args.repo)
-            if task.get("status") in ctx.TERMINAL_STATUSES
-        ]
-        excluded.extend(retired_spec_paths(args.repo.root))
-        args.privacy_excluded = excluded
     try:
+        if args.cmd == "privacy-audit":
+            from .specs import retired_spec_paths_at_ref
+            from .store import scan_tasks_at_ref
+
+            excluded = [
+                task["dir"] for task in scan_tasks_at_ref(args.ref, repo=args.repo)
+                if task.get("status") in ctx.TERMINAL_STATUSES
+            ]
+            excluded.extend(retired_spec_paths_at_ref(args.ref, repo=args.repo))
+            args.privacy_excluded = excluded
         args.func(args)
     except (ctx.TaskDataError, PrivacyScanError) as error:
         sys.exit(f"{error}\n数据不一致；请提示用户处理。")
