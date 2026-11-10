@@ -33,3 +33,29 @@ def test_default_branch_fails_with_tried_sources_when_only_task_branch_exists(
     assert "init.defaultBranch" in message
     assert "git remote set-head origin --auto" in message
     assert "git config init.defaultBranch <name>" in message
+
+
+def test_default_branch_uses_unborn_head(tmp_path: Path) -> None:
+    """仅 git init、尚无 commit 时，未出生 HEAD 可作为主干。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_run(repo, "init", "-b", "main")
+    git_run(repo, "config", "init.defaultBranch", "")
+    assert default_branch(root=repo) == "main"
+
+
+def test_default_branch_does_not_use_current_feature_branch(tmp_path: Path) -> None:
+    """HEAD 已出生但存在多个非 task 分支时，不得把当前 feature 分支当主干。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_run(repo, "init", "-b", "trunk")
+    git_run(repo, "config", "init.defaultBranch", "")
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    git_run(repo, "add", "README.md")
+    git_run(repo, "commit", "-m", "init")
+    git_run(repo, "branch", "dev")
+    git_run(repo, "branch", "feature-x")
+    git_run(repo, "checkout", "feature-x")
+    with pytest.raises(ctx.TaskDataError, match="无法确定主干分支") as excinfo:
+        default_branch(root=repo)
+    assert "feature-x" not in str(excinfo.value)
