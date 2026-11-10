@@ -1,10 +1,10 @@
 # 本机状态、所有权与工作流收口方案
 
-> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T12:10:00+08:00。
+> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T14:28:43+08:00。
 >
-> 文档性质：已实施的工厂改造方案。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态见 [decision_log.md](../decision_log.md)。消费仓铺开仍未执行。
+> 文档性质：已实施的工厂改造方案。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态见 [decision_log.md](../decision_log.md)。本文只记录工厂实施与验证；消费仓由用户需要时自行迁移，模板不规定铺开流程。
 >
-> 适用范围：工厂仓 `repo/` 产物、`factory_tests/`、`docs_repo/` 工厂笔记，以及 12 个消费仓的一次性同步迁移。目标仓为消费项目；模板工具链本身仍留在产物内，不做外置。
+> 适用范围：工厂仓 `repo/` 产物、`factory_tests/`、`docs_repo/` 工厂笔记，以及迁移脚本对通用旧布局的处理。模板工具链本身仍留在产物内，不做外置。
 >
 > 不在范围：S1 保证等级与预算、S2 tag 发布边界、S3 分发模型、S4 第 5 点权威收敛、S5 第 1 点 `project.json`、S6 第 1–2 点路径单点化与根迁移、S6 第 6 点的 `handoff.json` 改名、S9 第 4 点工厂自用。
 
@@ -29,8 +29,8 @@
 |项|原因或后续|
 |---|---|
 |S1 保证等级与复杂度预算|不做成文模型和预算测试。本批不新增机械测试门禁，S7 只补 spec 读取；测试/黑盒仍由 task-work 与 reviewer 执行。|
-|S2 tag 发布边界|main 仍是事实发布通道。铺开 12 仓前锁定一个全量通过的 commit SHA，并写发布说明；不引入 tag-only 同步。|
-|S3 分发模型|`template_sync/`、`repo_sync.py`、`export_template.py` 继续随产物分发。新增迁移模块也留在产物内，待所有消费仓完成后另行评估删除。|
+|S2 tag 发布边界|main 仍是事实发布通道。发布前锁定一个全量通过的 commit SHA，并写发布说明；不引入 tag-only 同步。|
+|S3 分发模型|`template_sync/`、`repo_sync.py`、`export_template.py` 继续随产物分发。新增迁移模块也留在产物内，删除时机另行评估。|
 |S4 第 5 点|integrate 继续以 ledger 的 terminal/report 为前提；`ledger import` 保留。|
 |S5 第 1 点|门禁命令继续由 `docs/blueprint/testing.md` 承载；本方案不新增 `project.json`，不改变现有校验。|
 |S6 第 1–2 点|不做路径单点化重构，不引入 `work/` 根。`tasks/pending/spikes/reviews` 继续留在 `docs/`。|
@@ -56,7 +56,7 @@
 |文件所有权可机械判断|`AGENTS.md` 模板区同步时整块替换；`conventions.md` 只留项目约定；`.gitignore` 模板规则托管块可重复替换。|
 |归档不再由模板维护|archived specs 回到 `docs/specs`；review 只保留最近 5 个；pre-commit hook 超限阻断；`repo-hygiene` 删除；消费仓自有 `docs/archive` 内容不被删除。|
 |spec 有可派生索引|`docs/specs/<slug>.md` front matter 含 `slug`、`status`、`tasks`；`specs_index.md` 删除。|
-|ADR 可并行追加|`docs/blueprint/decisions/<日期>_<slug>.md` 一条一文件；并行链不改同一文件。|
+|ADR 可并行追加|`docs/blueprint/decisions/YYYYMMDD_<slug>.md` 一条一文件；并行链不改同一文件。|
 |spec 读取闭环|task 模板有“关联 spec”；task-create 填路径；review prompt 注入 spec 路径。|
 |入口完整|done 未合并 task 可单独执行 `/task-integrate`；初始化一条命令完成导出、`git init`、hooks、来源登记。|
 |文档只描述现状|产物文档不再用“彻底废除”“本轮未运行”等依赖变更史或审阅轮次的表述。|
@@ -77,8 +77,6 @@
 
 |项|现状|
 |---|---|
-|消费仓|12 个，全部 `988fd06`，落后基线 173 个 commit，均无 `entity_schema.json`。|
-|在途 worktree|复核时 2 个：`omni_panel_t600`、`CBrowser_t049`。铺开前必须收尾。|
 |本机状态|`docs/runtime/`（ledger、goal、audit）、`.scratch/`（图/同步事务、来源缓存、状态行）、`.repo_template/sync_state.json`、Git common dir（锁、`info/exclude`）、worktree 私有 Git 目录（finish journal）。|
 |worktree 局部状态|`docs/runtime/execution_context.json` 当前在 worktree 工作区，随 `INCLUDE_DENY` 排除。|
 |模板管理 archive|`docs/archive/specs/` 迁回 `docs/specs/`；`docs/archive/reviews/` 与 `docs/reviews/` 合并后只保留最近 5 个 review，旧目录删除；消费仓另有项目自有 archive 内容。|
@@ -91,7 +89,7 @@
 1. task/pending/spike 的规范路径在本批保持不变；不得引入第二地址。
 2. task 状态权威仍是 `progress.md` front matter；派生视图不改写状态。
 3. 合并事实仍由 Git 与 handoff 共同证明；本批不删除 ledger 的 integrate 前提。
-4. 迁移必须先备份、可回滚；不得对 12 个真实消费仓直接试跑。
+4. 迁移必须先备份、可回滚；不得对未备份的真实消费仓直接试跑。
 5. Python 3.9 仍是最低版本；新增代码不得使用 3.10+ 语法或库。
 6. 安全默认：任何无法解析、冲突或缺失的迁移输入都停止，不静默跳过。
 7. 消费仓自有文件默认属用户所有；迁移脚本只能改写明确归属模板的路径。
@@ -271,7 +269,7 @@ docs/
     - 不再接受 agent 语义合并文件。
 3. 定义 `.gitignore` 托管块 `# repo-template:begin` / `# repo-template:end`。迁移脚本把当前模板规则移入块内；块外重复规则保留，不做自动删除，报告确认。
 4. 拆分 `conventions.md`：完整原子写与路径隐私契约写入 `repo/.repo_template/docs/architecture.md` 对应两节；`usage.md` 只留命令与指针；消费仓文件只留项目约定。迁移脚本移出模板段落，消费仓自定义内容保留并报告。
-5. 在 1 个消费仓副本 pilot：检查项目介绍、项目目录行、项目自定义 conventions、gitignore 规则均未丢失。
+5. 在工厂测试的消费仓副本 fixture 中检查项目介绍、项目目录行、项目自定义 conventions、gitignore 规则均未丢失。
 6. 更新 contract 与 factory 测试，覆盖标记缺失、块外规则、重复应用、消费仓自定义内容。
 
 **验收**：
@@ -285,20 +283,20 @@ docs/
 **风险**：
 
 - 消费仓 AGENTS 的项目行与模板行混排，自动识别可能误判；迁移必须 agent 复核，不能只看脚本通过。
-- 消费仓可能自行改过 `## 开发原则`；迁移会以模板为准，需在 pilot 中报告丢失内容。
+- 消费仓可能自行改过 `## 开发原则`；迁移会以模板为准，迁移报告列出被替换的旧内容。
 - `.gitignore` 块外规则若与模板规则冲突，保留消费仓规则并报告，不自动删除。
 
 ### WP3 S6 3–5：归档、spec 索引与 ADR
 
 **目标**：模板不再维护 specs 归档；review 只保留最近 5 个；spec 有 front matter 与派生清单；ADR 一条一文件，可并行追加。
 
-**前置**：先完成现有 `repo_sync.py migrate entity-storage` 一次性迁移，使 12 个消费仓从 `docs/archive/tasks` 等旧布局进入 L59 的 `docs/tasks`、`docs/pending`、`docs/spikes`。本方案不重复实现该迁移，只在其后追加 specs/ADR 迁移与 review 裁剪。
+**前置**：迁移脚本假定旧布局已先执行现有 `repo_sync.py migrate entity-storage`，把 `docs/archive/tasks` 等旧布局转入 L59 的 `docs/tasks`、`docs/pending`、`docs/spikes`。本方案不重复实现该迁移，只在其后追加 specs/ADR 迁移与 review 裁剪。
 
 **WP3 内部顺序**：先完成 WP3.0 的隐私比较器与审计边界；再实现可解析 `docs/specs` 与 `docs/archive/specs` 的 specs 模块；再移动 archive specs、裁剪 review；再补 front matter 与派生索引；最后由 `privacy-audit` 编排层使用 specs 模块计算 retired spec 排除列表。不要先删除 archive 再补解析器。
 
 #### WP3.0 隐私比较器与审计边界（S5/S6 迁移的前置）
 
-**问题**：现有 `scan_privacy_changes` 按路径比较，`_binary_changes` 使用 `--no-renames`。文件从 `docs/archive/` 移到 `docs/tasks/`、`docs/specs/`、`docs/reviews/` 后，整份文件被当成新增内容扫描。S5/S6 迁移 commit 移回的 retired spec 与 review，以及之后任何移动历史文稿的提交都会被拦；entity-storage 移入 `docs/tasks/` 的数百个历史 task 也会让 `privacy-audit` 不可能通过。entity-storage commit 本身在消费仓旧 hook 下提交，处理见 6.2 第 1 步。
+**问题**：现有 `scan_privacy_changes` 按路径比较，`_binary_changes` 使用 `--no-renames`。文件从 `docs/archive/` 移到 `docs/tasks/`、`docs/specs/`、`docs/reviews/` 后，整份文件被当成新增内容扫描。S5/S6 迁移 commit 移回的 retired spec 与 review，以及之后任何移动历史文稿的提交都会被拦；entity-storage 移入 `docs/tasks/` 的历史 task 也会让 `privacy-audit` 不可能通过。entity-storage commit 本身在旧 hook 下提交，须单独跳过 hook 并按重命名摘要核对。
 
 **改动**：
 
@@ -318,12 +316,12 @@ docs/
     - `md_format.py` 继续保留 `docs/archive/` 黑名单；消费仓自有 archive 不被格式化。
     - `staged_md()` 从 `--diff-filter=ACMR` 改为 `AM`：纯 rename 与 rename+modify 都不自动格式化，被移动的历史 task/spec/review 不重排。
     - 该过滤是日常 hook 的永久行为：日常“改名并编辑”的 Markdown 也不再由 hook 格式化，需要时手动运行 `md_format.py --changed`。`usage.md`「命名与格式」写明这一缺口。
-    - 原位补 front matter 的 active spec 属于修改（M），hook 会整文件格式化。粗测各消费仓合计约 40 份 spec 会被重排（测量未在各仓根运行，可能未读取 `.md_kx.toml`），均不含家目录路径，不影响隐私门禁。迁移承诺的是“不重排被移动的历史文稿”，不是“不格式化任何既有文件”。
+    - 原位补 front matter 的 active spec 属于修改（M），hook 会整文件格式化。迁移承诺的是“不重排被移动的历史文稿”，不是“不格式化任何既有文件”。
 4. 验收口径：
-    - S5/S6 迁移 commit 在第 3 步 apply 安装的新 hook 下直接通过 pre-commit 隐私门禁。
-    - entity-storage commit 在旧 hook 下提交，按 6.2 第 1 步跳过 hook，用重命名摘要核对只含纯移动与工具预期改写；纯移动不新增文本行，工具只写状态字段与仓内相对路径，不另做隐私扫描。
-    - `privacy-audit` 不要求迁移后为 0。迁移完成后运行一次，结果记为该仓基线并写入发布说明；不与迁移前比较，因为 `988fd06` 消费仓没有 `privacy-audit`，迁移前布局也无法计算同一范围。
-    - 新增测试：历史 task 整目录移动 0 泄漏、移动+front matter 只报新增行、archive spec 移回同样处理、消费仓 archive 内容仍豁免、`src/` 等非 task/spec 路径仍在全量审计内。
+    - S5/S6 迁移结果在 apply 安装的新 hook 下直接通过 pre-commit 隐私门禁。
+    - 旧布局 fixture 中的 entity-storage 提交在旧 hook 下跳过提交，用重命名摘要核对只含纯移动与工具预期改写；纯移动不新增文本行，工具只写状态字段与仓内相对路径，不另做隐私扫描。
+    - `privacy-audit` 不要求迁移后为 0；迁移仓可运行一次记录基线，旧布局无法计算同一范围，不与迁移前比较。
+    - 工厂测试覆盖：历史 task 整目录移动 0 泄漏、移动+front matter 只报新增行、archive spec 移回同样处理、消费仓 archive 内容仍豁免、`src/` 等非 task/spec 路径仍在全量审计内。
 
 #### WP3.1 取消 specs 归档，review 保留最近 5 个
 
@@ -415,7 +413,7 @@ docs/
 - 检查在隐私/编号校验之后、Markdown 格式化之前执行；失败直接返回 1。
 - 不修改工作区、不删除目录、不自动 `git rm`。
 - 不把 `docs/reviews` 加入 review scope 排除；删除 review 的提交必须经过评审。
-- `omni_panel` 当前 `core.hooksPath=.husky/_`，模板 pre-commit 不会自动运行。必须先在 `.husky/pre-commit` 加入 WP5 的接入片段；`healthcheck` 报告未接入状态。未接入的仓不强制 review 数量，但视为 hooks 未安装。
+- 消费仓已有非模板 `core.hooksPath`（如 husky/lefthook）时模板 pre-commit 不会自动运行。必须在项目 hook 中加入 WP5 的接入片段；`healthcheck` 报告未接入状态。未接入的仓不强制 review 数量，但视为 hooks 未安装。
 
 #### WP3.2 spec front matter 与派生索引
 
@@ -446,7 +444,7 @@ tasks: [t001, t002]
     - 删除 `parse_specs_index()`；
     - 改为“当前 tid 出现在任一 active spec 的 `tasks` 中，或 progress.md 写 `- specs_index: not_applicable: 原因`”；
     - 错误信息列出候选 spec 路径与字段。
-- `repo_task/specs_index.py` 的表格解析逻辑在删除前移入 `template_sync/specs_index_migration.py`，保证迁移仍能读取旧索引；`specs_index_migration.py` 保留到 12 个消费仓全部完成，之后再删除。`tests` 中相关 schema 用例改为 spec front matter 用例。
+- `repo_task/specs_index.py` 的表格解析逻辑在删除前移入 `template_sync/specs_index_migration.py`，保证迁移仍能读取旧索引；`specs_index_migration.py` 随产物分发，删除时机另行评估。`tests` 中相关 schema 用例改为 spec front matter 用例。
 - `task.py` 新增只读 `specs list --json`：
     - 默认只列 active，`--all` 含 retired；
     - 每项字段：`slug`、`path`、`status`、`tasks`、`title`；不输出 `updated`。
@@ -464,9 +462,7 @@ tasks: [t001, t002]
 
 - 目录：`docs/blueprint/decisions/`。
 - 迁移生成的 ADR 文件名：`YYYYMMDD_NNN_<slug>.md`。`NNN` 来自旧 `## NNN`，保证唯一；没有 NNN 的条目停止并报告，不猜编号。
-- 已知会停止的消费仓漂移，与 kebab-case slug 同样处理：由消费仓先补 NNN 再复跑，迁移不猜编号，也不把 H3 日期条目自动映射为 ADR。
-    - kkmail：`## 一、…` 分组下挂 `### YYYY-MM-DD: 标题` 条目，全部没有 NNN。
-    - CBrowser：1 条无编号条目（“产品历史勘误入口与 ADR 传播约定（t024）”）。
+- 无编号条目的旧布局按停止处理：迁移不猜编号，也不把 H3 日期条目自动映射为 ADR；由用户补齐 NNN 后复跑。
 - 新建 ADR 文件名：`YYYYMMDD_<slug>.md`，与仓内 `YYYYMMDD` 惯例一致；slug 使用 snake_case。
 - 中文标题用 `_id_scan.slug_from_title()` 派生；结果为 `entry`、空或冲突时，新建 ADR 追加 `_2`，迁移 ADR 依赖 NNN 保证唯一。
 - 旧 `## NNN 标题（YYYY-MM-DD）` 的 NNN 保留在文件名、正文 H1 与可选 front matter `legacy_id`，不断引用。
@@ -474,7 +470,7 @@ tasks: [t001, t002]
 - 旧 `替代：NNN` 字段迁移为 `supersedes: [YYYYMMDD_NNN_<slug>.md]`；无则省略。无法解析的 NNN 停止并报告。
 - 日期取标题中的 `YYYY-MM-DD`；没有日期时运行 `git log --reverse -S'## NNN' --format=%ad --date=short -- docs/blueprint/decisions.md` 取首次进入 Git 的日期。取不到时停止并要求人工填写，不用迁移日期冒充。
 - 迁移：
-    - 读取现有 `docs/blueprint/decisions.md`，按围栏外的 `## NNN` 条目拆分。拆分识别围栏代码块（复用 `ctx.FENCE_RE`），代码块内的格式示例（capture_all、omni_panel 的 `## NNN 标题（YYYY-MM-DD）`）不算条目；
+    - 读取现有 `docs/blueprint/decisions.md`，按围栏外的 `## NNN` 条目拆分。拆分识别围栏代码块（复用 `ctx.FENCE_RE`），代码块内的格式示例（如 `## NNN 标题（YYYY-MM-DD）`）不算条目；
     - 首个围栏外 H2 之前的前言不生成 ADR，内容列入迁移报告；围栏外任何不匹配 `## NNN` 的 H2 都停止；
     - 每条生成一个文件，NNN、标题、日期、正文原样保留；
     - 无法判断边界的条目停止并报告；
@@ -489,7 +485,7 @@ tasks: [t001, t002]
 
 **验收**：
 
-- entity-storage 迁移后追加 specs 迁移与 review 裁剪；12 个仓 dry-run 输出完整映射。模板不自动修复的消费仓漂移（`omni_panel` 的 kebab-case slug、kkmail 与 CBrowser 的无编号 ADR）单列，修复后复跑。
+- entity-storage 迁移后追加 specs 迁移与 review 裁剪；旧布局 fixture 的 dry-run 输出完整映射。无法自动修复的输入（如 kebab-case slug、无编号 ADR）单列并停止，修复后复跑。
 - `docs/archive/specs` 回到 `docs/specs`；`docs/reviews` 只保留最近 5 个 review；更旧目录从工作区删除但可从 Git 恢复；消费仓自有 archive 内容零删除。
 - `docs/specs_index.md` 删除；`task.py specs list --json` 能列出 active/retired specs 与 task 关联；不输出更新时间。
 - `docs/blueprint/decisions/` 每条 ADR 单独文件；并行两条链新增 ADR 无冲突。
@@ -498,12 +494,12 @@ tasks: [t001, t002]
 
 **风险**：
 
-- 12 个消费仓的 archive 内容差异大；必须 dry-run 全量，不能按统一模板假设。
-- `omni_panel` 的 4 个 kebab-case slug 是消费仓漂移；迁移按严格 snake_case 停止并列出，不自动改名。消费仓修复引用后复跑。
+- 旧布局的 archive 内容差异大；必须 dry-run 全量，不能按统一模板假设；不直接对未备份的真实仓试跑。
+- kebab-case slug 等消费仓漂移按严格 snake_case 停止并列出，不自动改名；消费仓修复引用后复跑。
 - 同名 spec 冲突需要人工合并；不能自动覆盖。
 - 删除旧 review 是不可逆的工作区操作：已跟踪报告只能依赖 Git 历史恢复，`_meta/` 不在 Git 中，删除后无法恢复；必须 dry-run、列清单、用户审批，且不删除被 task/blueprint/handoff 引用的目录。
 - 保留的 5 个 review 若含家目录路径，`privacy-audit` 会阻断；先修正报告或删除该 review，不为历史证据开豁免。
-- ADR 拆分是内容迁移；工厂与消费仓的历史 `decisions.md` 结构不同，需要逐仓报告。kkmail（无 NNN）与 CBrowser（1 条无编号）会按预期停止；capture_all、omni_panel 的格式示例在代码块内，拆分器必须识别围栏。
+- ADR 拆分是内容迁移；旧 `decisions.md` 结构可能不同，迁移报告逐项列出。无编号条目按预期停止；围栏代码块内的格式示例不算条目，拆分器必须识别围栏。
 
 ### WP4 S7：spec 读取闭环
 
@@ -547,7 +543,7 @@ tasks: [t001, t002]
 
 **风险**：
 
-- 消费仓已有 93 份 spec，task-create 需要筛选相关项；只列 active spec，retired 不作为默认候选。
+- 既有仓可能有大量 spec，task-create 需要筛选相关项；只列 active spec，retired 不作为默认候选。
 - 关联 spec 写错会误导 reviewer；review prompt 同时提供路径，reviewer 可核对 front matter 与正文。
 - 这不是测试机械化，不解决 `progress.md` 文字证据问题；该问题本批明确不处理。
 
@@ -609,7 +605,7 @@ tasks: [t001, t002]
 - 新会话对 done 未合并 task 执行 `/task-integrate` 可列出候选并完成合并。
 - 空目录执行 bootstrap 后，`healthcheck` 除人工步骤外全部通过。
 - 非空目录、已有 state、已有 hooksPath 重跑 bootstrap 不覆盖现场。
-- 在 `core.hooksPath=.husky/_` 的 `omni_panel` 副本中，`.husky/pre-commit` 加入接入片段后，模板隐私/编号/review 数量检查生效；`healthcheck` 能识别未接入状态。
+- 在已有非模板 `core.hooksPath` 的测试副本中，项目 hook 加入接入片段后，模板隐私/编号/review 数量检查生效；`healthcheck` 能识别未接入状态。
 - `task-combine` 旧名不再出现在 registry、命令薄层和现行文档；旧任务历史不受影响。
 
 **风险**：
@@ -652,63 +648,6 @@ tasks: [t001, t002]
 - `docs_repo/README.md` 路径与 `plans/` 归档状态正确。
 - decisions 目录、specs 目录、测试目录的现行引用全部更新。
 
-## 6. 迁移与铺开
-
-### 6.1 前置条件
-
-1. 工厂全量测试通过，锁定一个 commit SHA 作为本批发布基线；S2 未实施，不使用 tag-only 策略，但发布说明必须记录该 SHA 与测试结果。
-2. 12 个消费仓全部已知，版本 `988fd06`，无 `entity_schema.json`。铺开前再只读清点一次。
-3. 停止所有会话；无已登记 worktree；无 done 未合并分支；工作区干净。
-4. `omni_panel`、`CBrowser` 的在途 task 先完成或 rewind；`kkmail` 的 `.scratch/worktrees` 不属 task worktree，但迁移前仍要确认无进程占用。
-5. 每个仓备份：Git common dir 的 `info/exclude`、两把锁、迁移后的 `repo_template/` 状态目录，`docs/runtime`、`.repo_template/sync_state.json`、`.scratch` 事务目录。前置要求无 worktree，因此不备份 execution context；若发现残留 worktree，先停止并处理。Git 对象库不复制；迁移不触碰对象库。必要时对整仓做归档。备份可读验证后才开始。
-
-### 6.2 迁移顺序
-
-每个消费仓按以下顺序执行；前三步可在同一维护窗口完成：
-
-1. **entity-storage 迁移**：使用现有 `repo_sync.py migrate entity-storage --write`，把 `docs/archive/tasks|pending|spikes`、`tasks_audit.log`、`handoff.md` 等迁到 L59 布局；写入 `entity_schema.json`。该步骤先落地，并单独提交。它把审计日志写死到 `docs/runtime/tasks_audit.log`（`entity_storage_migration.py`），state-root 迁移必须在它之后执行。
-    - 此时消费仓 hook 仍是 `988fd06` 版（11 个仓 `core.hooksPath=.repo_template/hooks`，omni_panel 走 husky）。旧 hook 没有隐私检查，`--diff-filter=ACMR` 会把移出 `docs/archive/` 的历史 Markdown 整文件格式化：抽样中 great_websites 146 个文件有 93 个、omni_panel 255 个有 65 个会被改写，md_kx 任一文件报错即阻断提交。WP3.0 对这一提交不生效。
-    - 因此该 commit 用 `git commit --no-verify` 提交，暂存范围由用户审批。
-    - 提交后用 `git diff -M --name-status HEAD~1 HEAD` 核对：搬迁文件全部为 `R100`；非 `R100` 条目只能是迁移工具预期改写的文件（pending/spike 状态字段、`docs/handoff.md` 与 `docs/specs_index.md` 的路径引用、新增 `entity_schema.json`、删除旧派生索引），逐个人工核对 diff，不得出现格式化改动。核对失败即停止，不进入第 2 步，按 6.4 回滚。
-    - 不另做隐私扫描：纯移动不新增文本行，工具改写只写状态字段与仓内相对路径；上一条核对已覆盖。
-2. **S4 状态迁移**：`repo_sync.py migrate state-root --write`，把 ledger/audit/goal/statusline/sync state/事务移到 Git common dir。前置已要求无 worktree，因此本命令不迁移 execution context；代码切换后新 worktree 使用私有 Git 目录。该命令单独执行，完成后再启动新的 `repo_sync.py` 进程做后续 apply；不要在同一个 `SyncContext` 进程内移动 state 后继续使用旧路径。本步骤只动 `.git` 与本地状态，不产生迁移 commit。
-3. **S5/S6 文件迁移**：同步事务内执行 AGENTS 两区、conventions 拆分、gitignore 托管块、archive specs 回原位、review 裁剪到最近 5 个、spec front matter、ADR 拆分。所有迁移只改工作区文件，不执行 `git add`/`git rm`/任何 index 操作；提交时由用户审批后暂存。
-4. **验证**：
-    - `repo_sync.py status` 无待办；
-    - `task.py list` / `view` / `effective-status` 与迁移前结果一致；
-    - `.repo_template/tests -q -m contract` 通过；
-    - entity-storage commit 通过第 1 步的重命名核对；S5/S6 commit 通过新 hook 的 pre-commit 隐私门禁；迁移后运行 `task.py privacy-audit --ref HEAD`，结果记为该仓基线，不要求为 0；
-    - `repo_sync.py healthcheck` 通过；
-    - 检查 `docs/archive` 只剩消费仓自有内容。
-5. **提交**：分两个 commit：
-    - entity-storage 迁移 commit：第 1 步完成后立即提交，按第 1 步跳过旧 hook 并复核；
-    - S5/S6 模板布局、spec/ADR/review 迁移 commit：新 hook 已由第 3 步 apply 写入 `.repo_template/hooks`，正常经过 pre-commit。
-    S4 状态迁移不进入 Git commit；更新 `sync_manifest`/`sync_state`，记录发布说明。回滚按这两个 commit 分层。
-
-### 6.3 pilot
-
-1. 先复制一个小仓（建议 `agent_rank`）做实际迁移、回滚、再次迁移。复制到系统临时目录（`mktemp -d`），不放在 `~/kar/code`。
-2. 再复制 `omni_panel`（594 个历史 task）做规模与性能测量：`view`、`plan`、`effective-status`、取号、迁移 dry-run 耗时。其 4 个 kebab-case spec slug 先由消费仓修正，否则迁移按预期停止。
-3. 复制 `omni_panel` 前先收尾 t600 worktree；若复制发生在收尾前，必须在副本内删除/清理 `.git/worktrees/*` 元数据，禁止在副本内执行 `git worktree remove`，否则会删到原仓 worktree。
-4. pilot 通过后，按仓逐个铺开；不要并行迁移多个仓，避免共享脚本状态与人工注意力分散。
-
-### 6.4 回滚
-
-|层|回滚方式|
-|---|---|
-|同步事务|`repo_sync.py transaction rollback --confirm-restore`；失败保留事务与备份，报告人工条件。|
-|Git 文件|回滚同步 commit；消费仓自有改动不覆盖。|
-|S4 本机状态|恢复备份的 `repo_template/` 状态目录、锁与 `docs/runtime`；停止所有会话后执行。|
-|S6 specs/ADR/review|Git 回滚 + 恢复备份；被删 review 的已跟踪报告由迁移 commit 恢复，`_meta/` 只能从整仓备份恢复；同名冲突未自动合并，回滚必须保留用户内容。|
-
-分层回滚的组合约束：
-
-- 按迁移逆序回滚：S5/S6 → S4 → entity-storage；不允许只回滚中间或更早的层。
-- 回滚 S5/S6（同步事务 rollback 或 revert 该 commit）会把工具链恢复到 `988fd06`，而本机状态已在 `$GIT_COMMON_DIR/repo_template/`，旧工具读不到 ledger 与 sync_state。工具链回到 WP1 之前的版本时必须同时回滚 S4：从备份恢复 `docs/runtime/`、`.repo_template/sync_state.json` 与 `.scratch` 事务目录，再删除 `$GIT_COMMON_DIR/repo_template/`。
-- 以上只适用于维护窗口内、迁移后尚未产生新 ledger 事件或 sync 事务的情况；窗口外回滚需先人工合并新状态，不直接覆盖。
-
-回滚验证：pilot 仓必须实际执行一次“迁移 -> 按逆序全量回滚 -> 旧工具链读取状态与迁移前一致”，不能只验证脚本退出码。
-
 ## 7. 测试策略
 
 ### 7.1 工厂全量
@@ -730,17 +669,16 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 |review hook|只有本次新增 HEAD 中不存在的 review 顶层目录才检查，往已有目录追加文件不触发；按 index 计数；`MERGE_HEAD` 跳过；引用目录不提示删除；删除 review 进入 review scope。|
 |spec/ADR|front matter schema、派生清单、finish 登记、ADR 并行新增、旧索引迁移；ADR 拆分识别围栏、无 NNN 条目停止、旧“替代”转 `supersedes`。|
 |spec 读取|task 模板“关联 spec”、task-create 选择、review prompt 注入、路径不存在拒绝。|
-|迁移链|从 `988fd06` 布局 fixture（含 `988fd06` 版 hook）依次跑 `migrate entity-storage` → `--no-verify` 提交并核对重命名摘要 → `migrate state-root` → S5/S6 apply → 新 hook 下提交 → `healthcheck`；断言审计日志路径、entity-storage commit 只含移动与预期改写、review 数量、spec/ADR 结果；另测按逆序全量回滚后旧工具链能读取状态。|
+|迁移链|从旧布局 fixture（含旧版 hook）依次跑 `migrate entity-storage` → `--no-verify` 提交并核对重命名摘要 → `migrate state-root` → S5/S6 apply → 新 hook 下提交 → `healthcheck`；断言审计日志路径、entity-storage commit 只含移动与预期改写、review 数量、spec/ADR 结果；另测迁移失败回滚后旧布局可复用。|
 |入口|integrate 无参候选、task-combine 改名、bootstrap/healthcheck 幂等。|
 |文档|路径引用、`本轮` 禁令、decision_log 状态、测试命名。|
 
 ### 7.3 迁移验收
 
-- 12 个消费仓 dry-run 输出完整映射与冲突清单。
-- 工厂新增整链测试：`988fd06` fixture -> entity-storage -> state-root -> S5/S6 apply -> healthcheck。entity-storage 写 `docs/runtime/tasks_audit.log` 的顺序耦合必须被用例覆盖；fixture 使用 `988fd06` 版 hook，覆盖跳过旧 hook 提交与重命名摘要核对。
-- 1 个小仓实际迁移 + 回滚；`omni_panel` 规模测量。
-- 全部 12 仓迁移后版本一致，`sync_manifest` 指向同一 SHA。
-- 不运行 L71 已否决的“真实仓备份恢复演练”；pilot 的回滚演练属于迁移验证，不重开该裁决。
+- 旧布局 fixture dry-run 输出完整映射与冲突清单。
+- 工厂整链测试：旧布局 fixture -> entity-storage -> state-root -> S5/S6 apply -> healthcheck。entity-storage 写 `docs/runtime/tasks_audit.log` 的顺序耦合必须被用例覆盖；fixture 使用旧版 hook，覆盖跳过旧 hook 提交与重命名摘要核对。
+- 迁移失败时按项回滚并保留备份；恢复未完成时给出人工处理诊断。
+- 不运行 L71 已否决的“真实仓备份恢复演练”；迁移恢复的证据边界为代码路径与工厂 rollback 用例，不重开该裁决。
 
 ## 8. 风险与缓解
 
@@ -748,19 +686,17 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 |---|---|---|
 |S4 状态迁移中断|ledger/goal/audit 丢失或重复|持久事务 + 备份 + 逐文件校验；失败不继续同步。|
 |worktree 私有状态随 `git worktree remove` 删除|execution context、finish journal 丢失|run-close 顺序固定；worktree 已删且事务未完成时停止并报告。|
-|S5 AGENTS 自动拆分误判|消费仓项目规则丢失|pilot 人工复核；无法判断的行保留；失败即回滚。|
+|S5 AGENTS 自动拆分误判|消费仓项目规则丢失|迁移报告逐条列出无法判断的行并保留；人工确认；失败即回滚。|
 |S6 specs archive/review 裁剪误删|不可逆内容损失|只处理模板管理路径；review 删除走 dry-run、引用检查、用户审批与文件删除；迁移不修改 index；整仓备份。|
 |迁移 commit 被隐私门禁拦|历史 task/spec 移动被当新增，无法提交|rename-aware 比较；全量审计排除 done/dropped task 与 retired spec；S5/S6 commit 走新 hook；工厂用例覆盖。|
 |entity-storage commit 跑旧 hook|历史 Markdown 被整文件重排；md_kx 报错即阻断；新隐私比较器不生效|该 commit `--no-verify` 提交；`git diff -M --name-status` 核对只含纯移动与工具预期改写；核对失败不进入下一步。|
-|只回滚部分层|旧工具链读不到已迁入 common dir 的状态|按逆序全量回滚；维护窗口外回滚先人工合并新状态。|
 |review 数量 hook 拦 finish/integrate|实现或合并被卫生规则阻断|只在本次新增 review 目录时检查；按 index 计数；`MERGE_HEAD` 跳过；引用目录不提示删除。|
-|pilot 复制带 worktree 元数据|副本内 `git worktree remove` 误删原仓 worktree|复制前收尾或清理副本 `.git/worktrees/*`；副本放系统临时目录；禁止在副本内执行 worktree remove。|
 |保留 review 含家目录路径|`privacy-audit` 失败|保留的 5 个 review 先按规范修正或删除；不为历史证据开豁免。|
 |spec/ADR 迁移冲突|覆盖旧文稿或索引丢失|同名冲突阻断；旧索引进 Git 历史；人工合并后才继续。|
 |S7 测试证据仍为文字|`progress.md` 摘要可能失真|本批明确不机械化；task-work 测试、reviewer 独立复跑与 review 门禁仍是现有控制。|
 |S7 spec 关联写错|reviewer 被误导|review prompt 提供 spec 路径；`preflight --creation` 校验路径与 front matter；已有 task 缺行按未声明处理。|
-|S3 未做，迁移模块常驻产物|产物继续增长|接受；所有消费仓完成后统一评估删除迁移模块，不在本方案内。|
-|S2 未做，main 即发布|同步到未验证提交|铺开前锁定全量通过的 commit SHA + 发布说明；各仓只同步该 SHA。|
+|S3 未做，迁移模块常驻产物|产物继续增长|接受；删除迁移模块的时机另行评估，不在本方案内。|
+|S2 未做，main 即发布|同步到未验证提交|发布前锁定全量通过的 commit SHA + 发布说明。|
 
 ## 9. 提交与验收计划
 
@@ -774,20 +710,20 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 4. `feat(specs): spec 读取闭环`（WP4）
 5. `feat(workflow): 公开 integrate 与初始化入口`（WP5）
 6. `docs: 收敛产物文档与工厂测试`（WP6）
-7. `chore(migration): 一次性消费仓迁移`（迁移脚本与 pilot 记录）
+7. `chore(migration): 一次性旧布局迁移脚本`
 
-迁移脚本可并入对应 WP 提交，但消费仓实际迁移必须单独记录，不与工厂代码混在同一不可回滚步骤。消费仓迁移至少拆成两个 commit：entity-storage 一个，S5/S6 文件布局一个；S4 状态迁移只动本地状态，不 commit。
+迁移脚本可并入对应 WP 提交；迁移脚本随工厂测试一起验证，不单独规定消费仓迁移步骤。
 
 ### 9.2 全局验收
 
 - 工厂全量测试通过；契约测试通过。
-- 12 个消费仓 dry-run 输出完整映射；预期消费仓漂移单独列出，修复后复跑；pilot 实际迁移成功并可回滚。
-- 工厂整链测试 `988fd06 -> entity-storage -> state-root -> S5/S6 -> healthcheck` 通过。
+- 旧布局 fixture dry-run 输出完整映射；无法自动修复的输入单独列出，修复后复跑。
+- 工厂整链测试 `旧布局 fixture -> entity-storage -> state-root -> S5/S6 -> healthcheck` 通过。
 - `task-create` 生成“关联 spec”；review prompt 含 spec 路径与摘要。
 - done 未合并 task 可通过 `/task-integrate` 合并。
 - `AGENTS.md` 模板区改动同步无需人工合并；项目区不变。
 - `docs/specs_index.md`、`specs_index` 模板引用清零；`docs/reviews` 只保留最近 5 个 review。
-- entity-storage commit 通过重命名摘要核对；S5/S6 commit 在新 hook 下通过 pre-commit；迁移后 `privacy-audit` 结果记为基线。
+- 整链测试覆盖 entity-storage 重命名摘要核对、S5/S6 迁移后的 pre-commit 隐私门禁与 `privacy-audit` 基线计算。
 - privacy、md_format、review scope、id_scan、cleanup 的行为测试通过。
 - 产物文档不再依赖审阅轮次或变更史表述。
 
@@ -801,7 +737,7 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 |L68 事务避让|S4 后事务移出 `.scratch`，避让机制不再需要；删除对应 cleanup 特例。|
 |L69 授权只记录|保留。S7 不新增 TTY 确认或授权证明。|
 |L70 隐私只阻断新增行|保留；`docs/archive/` 继续作为消费仓冻结历史豁免；review 保留最近 5 个并进入审计；不为保留 review 额外开豁免。|
-|L71 不做真实仓备份恢复演练|保留；pilot 的回滚属于迁移验证，不是该裁决所指的备份恢复演练。|
+|L71 不做真实仓备份恢复演练|保留；迁移恢复的证据边界为代码路径与工厂 rollback 用例，不重开该裁决。|
 
 ## 11. 完成后需要写入 decision_log 的条目
 
@@ -818,12 +754,11 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 
 以下不影响开工，但需在对应阶段前确认：
 
-1. 12 个仓是否仍是全部消费方；铺开前只读清点。
-2. `omni_panel` 的 594 个 task 规模下，`view`/`plan`/取号是否可接受；pilot 实测后决定是否需要后续性能工作。
-3. 消费仓自有 `docs/archive` 内容是否保留原处；本方案默认保留，不自动迁移。
+1. 消费仓自有 `docs/archive` 内容是否保留原处；本方案默认保留，不自动迁移。
 
 ## 13. 实施记录
 
 - 2026-11-10：WP1–WP6 工厂侧完成；工厂全量 `1520 passed, 1 skipped`，`md_format --check` 与 `skill_registry.py` 通过。
 - 已实现 state-root、agents-zones、specs-layout、reviews、adr 迁移器、隐私 rename-aware、review 数量 hook、spec 读取与 bootstrap/healthcheck。
-- 未执行 12 个消费仓迁移、pilot、备份恢复演练与发布铺开；这些步骤需按第 6 节在维护窗口逐仓执行。
+- 2026-11-10：实施审阅项 A1–A4、B1–B5、C1–C4、C5a 已实施；B6 关闭为“工厂只保证 migrate all → apply 路径正确，不规定消费仓铺开流程”；C5b 维持拒绝。
+- 消费仓迁移不在本文范围；由用户需要时自行执行，模板不规定铺开流程。
