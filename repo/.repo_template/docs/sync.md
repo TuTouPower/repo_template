@@ -4,11 +4,13 @@
 
 ## AGENTS.md 同步分区协议
 
-`AGENTS.md` 用 `<!-- repo-template:begin -->` / `<!-- repo-template:end -->` 分两区：项目区（介绍与项目目录规则）原样保留，模板区整块替换。缺少标记时 `status`/`plan`/`apply` 均拒绝并提示 `repo_sync.py migrate agents-zones --write`；`apply` 不支持软链 `AGENTS.md`。消费仓项目专属规则写入项目区，不放模板区。
+`AGENTS.md` 用 `<!-- repo-template:begin -->` / `<!-- repo-template:end -->` 分两区：`begin` 之前的项目区（介绍与项目专属规则）原样保留；`begin`/`end` 之间的模板区（目录与读写规则、开发原则）由同步整块替换；`end` 之后不得有内容。缺少完整标记时 `status`/`plan` 列入迁移待办，`apply` 拒绝并提示 `repo_sync.py migrate agents-zones --write`；`apply` 不支持软链 `AGENTS.md`。消费仓项目专属规则写入项目区，不放模板区。
+
+`.gitignore` 使用 `# repo-template:begin` / `# repo-template:end` 托管块：`apply` 整块替换块内模板规则，块外消费仓规则保留；缺托管块时在文件末尾补建，原规则不删除。
 
 ## entity-storage 一次性实体存储迁移
 
-日常 `apply` 遇到旧实体存储布局时会先阻断，并提示从固定来源 product 运行**来源脚本**（带 `--consumer`/`--source`/`--checkout` 固定 pin）执行 `migrate entity-storage --write`。该一次性迁移彻底废除物理搬迁归档与交接归档，收敛至固定规范路径契约：
+日常 `apply` 遇到旧实体存储布局时会先阻断，并提示从固定来源 product 运行**来源脚本**（带 `--consumer`/`--source`/`--checkout` 固定 pin）执行 `migrate entity-storage --write`。该一次性迁移把历史归档收敛至固定规范路径契约：
 
 - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时由业务门禁核验）；
 - `docs/pending/todo/pNNN.md` -> `docs/pending/pNNN.md`（status: todo；声明 pid/slug 与文件名不符即阻断，不静默改写）；
@@ -54,7 +56,7 @@
 
 2. 逐节核对真实门禁，把确实需要执行的命令按原顺序合入一个 bash/sh 块；示例和占位说明改为 `text` 围栏或正文。不适用的门禁整节正文写「无」，理由放入 `verification_notes`。保留已配置的项目策略。
 
-3. 在消费仓根用本轮固定模板源校验。下列 `product` 为已核实、固定来源 SHA 的产物根绝对路径；工厂来源为 `<checkout>/repo`，产物来源为 `<checkout>`。命令只解析当前消费仓策略，不运行项目门禁；退出码 0 才可继续同步，非零则先修正文档。
+3. 在消费仓根用固定模板源校验。下列 `product` 为已核实、固定来源 SHA 的产物根绝对路径；工厂来源为 `<checkout>/repo`，产物来源为 `<checkout>`。命令只解析当前消费仓策略，不运行项目门禁；退出码 0 才可继续同步，非零则先修正文档。
 
     ```bash
     python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from repo_task.validation import load_policy; load_policy(Path.cwd())' "$product/.repo_template/scripts"
@@ -74,7 +76,7 @@
 
 ## 同步准备与 apply 事务
 
-同步准备仅改 `.scratch/` 来源缓存，取消 prep 与覆盖同步器自举。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目验证策略校验或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
+同步准备仅改 `.scratch/` 来源缓存；同步器不自覆盖，也不执行 prep。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目验证策略校验或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
 
 apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务；此时 `repo-cleanup` 会跳过 scratch 并提示先 `transaction accept` 或 `transaction rollback`，其它类别照常处理。同步命令或其它控制面命令持有控制面锁时，带 scratch 的 cleanup 立即失败、零删除。
 
@@ -92,12 +94,12 @@ apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务�
 
 ## .prettierignore 机械追加
 
-`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径清单见 `usage.md`「命名与格式」。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。`.github/workflows/repo-template-ci.yml` 已下线（`b3e5c8f` 起不再分发），残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
+`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径清单见 `usage.md`「命名与格式」。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 
 ## 实体协议切换验收
 
-`migrate all` 依次处理旧 state、workflow、pending/findings、entity-storage、state-root、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks。每项拥有独立文件事务；失败保留之前已完成步骤，只恢复当前项，不宣称全流程原子性。单文件总账转换不再修改 Git index。
+`migrate all` 依次处理旧 state、workflow、pending/findings、entity-storage、state-root、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks。每项拥有独立文件事务；失败保留之前已完成步骤，只恢复当前项，不宣称全流程原子性。单文件总账转换不修改 Git index。
 
 entity-storage 先验证源身份与冲突，再转换实体，使用正常运行时模型验证全部目标数据，最后写 schema 标记并接受事务。迁移不复验历史实现血缘；handoff 字节保留，历史 done 被用作依赖时才查证实现来源。缺 progress.md 应先转换 workflow，不接受“搬完旧目录即成功”。
 
-切换前停止所有会话并验证备份可恢复。旧分支保留作历史；新执行从当前协议主干或已完成前驱创建，不能仅补标记让旧分支参与。已有新协议业务写入时禁止仅降级脚本或直接反搬目录；按 recovery 保留现场并前向修复。以上流程已按源码静态核对，本轮未运行迁移演练。
+切换前停止所有会话并验证备份可恢复。旧分支保留作历史；新执行从当前协议主干或已完成前驱创建，不能仅补标记让旧分支参与。已有新协议业务写入时禁止仅降级脚本或直接反搬目录；按 recovery 保留现场并前向修复。迁移前须在隔离副本演练并核对备份可恢复；模板发布验证不替代目标仓演练。
