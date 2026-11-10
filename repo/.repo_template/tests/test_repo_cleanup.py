@@ -524,11 +524,14 @@ def test_corrupt_issue_front_matter_is_treated_as_unpublished(tmp_path):
                for item in result.protected)
 
 
-def test_lock_errors_become_cleanup_errors(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    [OSError("busy"), rc.TaskDataError("git 公共目录损坏")],
+)
+def test_lock_errors_become_cleanup_errors(tmp_path, monkeypatch, error):
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.setattr(rc, "repo_root", lambda: repo)
-    error = OSError("busy")
 
     @contextmanager
     def boom(*args, **kwargs):

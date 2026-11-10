@@ -21,7 +21,7 @@ SCRIPTS_DIR = FACTORY_ROOT / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from template_sync import context as ctx
-from template_sync.agents_merge import _apply_agents_sectioned, _replace_agents_force, agents_section_status
+from template_sync.agents_merge import _apply_agents_sectioned, agents_section_status
 from template_sync.apply import _assert_distributable_tree, cmd_apply
 from template_sync.assets import retired_template_warnings, sync_dir, sync_file
 from template_sync.cli import _parse_decisions, main as repo_sync_main
