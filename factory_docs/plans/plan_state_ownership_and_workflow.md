@@ -765,4 +765,4 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 - WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。
 - WP6 第 5 项曾删除 `docs/archive/reviews/review_*/_meta/` 规则并让迁移清理保留 review 的 `_meta`；该做法与计划 WP3「`_meta` 跟随 review 生命周期」和第 393 行继续保留规则冲突。现已恢复该 ignore 规则，撤销 5d7bd8b/f78b281 的保留 review `_meta` 清理与引用 fail-closed 逻辑：保留 review 不动，删除 review 整目录删除并在 dry-run 列出 `_meta`。
 - `f78b281` / `57f972e` 仅保留其未跟踪 review 不得删除的边界结论；迁移实现已按上述生命周期规则收敛。
-- 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1572 passed, 1 skipped`。
+- 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1571 passed, 1 skipped in 495.22s`。
