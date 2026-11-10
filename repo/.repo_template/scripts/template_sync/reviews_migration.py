@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 from repo_task.specs import SpecError
@@ -20,11 +21,16 @@ def _dirs(root: Path, rel: str) -> list[Path]:
     return [path for path in base.glob("review_*") if path.is_dir()] if base.is_dir() else []
 
 
-def _date(path: Path) -> str:
-    match = DATE_RE.match(path.name)
-    if not match:
-        raise ctx.SyncError(f"review 目录名缺 YYYYMMDD：{path}")
-    return match.group(1)
+def _validate_dates(sync: ctx.SyncContext, paths: list[Path]) -> None:
+    invalid = sorted(
+        path.relative_to(sync.consumer).as_posix()
+        for path in paths
+        if not DATE_RE.match(path.name)
+    )
+    if invalid:
+        raise ctx.SyncError(
+            "review 目录名缺 YYYYMMDD，停止迁移：\n- " + "\n- ".join(invalid)
+        )
 
 
 def _referenced(root: Path, directory: str) -> list[str]:
@@ -42,14 +48,40 @@ def _referenced(root: Path, directory: str) -> list[str]:
     return refs
 
 
-def _tracked(root: Path, rel: str) -> bool:
-    import subprocess
-
+def _git_paths(root: Path, *args: str) -> list[str]:
     result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--", rel],
+        ["git", "-C", str(root), "ls-files", "-z", *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
-    return result.returncode == 0 and bool(result.stdout.strip())
+    if result.returncode != 0:
+        raise ctx.SyncError(
+            f"git ls-files {' '.join(args)} 失败：{result.stderr.strip()}"
+        )
+    return [item for item in result.stdout.split("\0") if item]
+
+
+def _tracked(root: Path, rel: str) -> bool:
+    return bool(_git_paths(root, "--", rel))
+
+
+def _untracked_paths(root: Path, rel: str) -> list[str]:
+    paths = set(_git_paths(root, "--others", "--exclude-standard", "--", rel))
+    paths.update(_git_paths(root, "--others", "--ignored", "--exclude-standard", "--", rel))
+    return sorted(paths)
+
+
+def _deletion_content(root: Path, path: Path) -> tuple[list[str], list[str]]:
+    """返回 (将删除的 _meta 报告, 非 _meta 未跟踪文件)；后者写入时阻断。"""
+    rel = path.relative_to(root).as_posix()
+    meta_rel = f"{rel}/_meta"
+    meta_reports = (
+        [f"删除 _meta 过程文件：{meta_rel}"] if (path / "_meta").is_dir() else []
+    )
+    untracked = [
+        item for item in _untracked_paths(root, rel)
+        if not item.startswith(meta_rel + "/")
+    ]
+    return meta_reports, untracked
 
 
 def reviews_migration_status(sync: ctx.SyncContext) -> list[str]:
@@ -64,37 +96,57 @@ def reviews_migration_status(sync: ctx.SyncContext) -> list[str]:
 
 
 def migrate_reviews(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
-    live = _dirs(sync.consumer, LIVE)
-    archived = _dirs(sync.consumer, ARCHIVE)
-    all_dirs = live + archived
-    for path in all_dirs:
-        _date(path)
+    live_dir = sync.consumer / LIVE
+    all_dirs = _dirs(sync.consumer, LIVE) + _dirs(sync.consumer, ARCHIVE)
+    _validate_dates(sync, all_dirs)
     ordered = sorted(all_dirs, key=lambda path: (path.name[:15], path.name), reverse=True)
     keep = ordered[:5]
-    reports = []
+
+    moves: list[tuple[Path, Path]] = []
     for path in keep:
-        target = sync.consumer / LIVE / path.name
-        if path.parent == sync.consumer / LIVE:
+        target = live_dir / path.name
+        if path.parent == live_dir:
             continue
         if target.exists():
             raise ctx.SyncError(f"review 同名冲突，停止迁移：{path} -> {target}")
-        reports.append(f"{path.relative_to(sync.consumer).as_posix()} -> {LIVE}/{path.name}")
-        if write:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(path), str(target))
+        moves.append((path, target))
+
+    deletions: list[tuple[Path, bool, list[str], list[str], str]] = []
+    untracked_blockers: list[str] = []
     for path in ordered[5:]:
         rel = path.relative_to(sync.consumer).as_posix()
         refs = _referenced(sync.consumer, rel)
         if refs:
-            reports.append(f"保留被引用 review：{rel}（{', '.join(refs)}）")
+            deletions.append((path, False, [], [], f"保留被引用 review：{rel}（{', '.join(refs)}）"))
             continue
         if not _tracked(sync.consumer, rel):
-            reports.append(f"跳过未跟踪 review：{rel}")
+            deletions.append((path, False, [], [], f"跳过未跟踪 review：{rel}"))
             continue
-        reports.append(f"删除旧 review：{rel}")
-        if write:
-            shutil.rmtree(path)
+        meta_reports, untracked = _deletion_content(sync.consumer, path)
+        untracked_blockers.extend(untracked)
+        deletions.append((path, True, meta_reports, untracked, f"删除旧 review：{rel}"))
+
+    reports = [
+        f"{path.relative_to(sync.consumer).as_posix()} -> {LIVE}/{path.name}"
+        for path, _target in moves
+    ]
+    for _path, _remove, meta_reports, untracked, label in deletions:
+        reports.append(label)
+        reports.extend(meta_reports)
+        reports.extend(f"未跟踪文件（写入将停止）：{item}" for item in untracked)
+
+    if write and untracked_blockers:
+        raise ctx.SyncError(
+            "review 删除前发现未跟踪文件，停止迁移（未删除任何 review 目录）：\n- "
+            + "\n- ".join(untracked_blockers)
+        )
     if write:
+        for path, target in moves:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+        for path, remove, _meta_reports, _untracked, _label in deletions:
+            if remove:
+                shutil.rmtree(path)
         archive = sync.consumer / ARCHIVE
         if archive.is_dir() and not any(archive.iterdir()):
             archive.rmdir()
