@@ -141,3 +141,19 @@ def test_mid_path_home_forms_are_seen_by_gate(repo):
     leaks = _gate(repo)
     assert any(mac in item for item in leaks)
     assert any(unc in item for item in leaks)
+
+
+def test_utf8_with_single_nul_still_reports_path(repo):
+    """UTF-8 文本混入单个 NUL 时不得被 UTF-16 候选遮住家目录。"""
+    token = _home("alice")
+    body = "\n".join(f"line {i}" for i in range(1, 51)) + "\n" + token + "/proj\x00"
+    data = body.encode("utf-8")
+    if len(data) % 2:
+        data += b"x"
+    (repo / "a.txt").write_bytes(data)
+    git_run(repo, "add", "a.txt")
+
+    expected = f"a.txt:51: {token}"
+    assert privacy.scan_candidate_bytes(data, label="a.txt") == [expected]
+    assert expected in _gate(repo)
+    assert expected in _audit(repo)

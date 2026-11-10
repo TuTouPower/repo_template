@@ -144,20 +144,14 @@ def _is_plausible_text(text: str) -> bool:
     return printable / len(text) >= 0.9
 
 
-def decode_candidate_bytes(data: bytes, *, label: str) -> str:
-    """字节 → 可扫描文本；BOM/UTF-16/UTF-32/UTF-8/GBK 判定，未知编码 fail-closed（不跳过）。
+def _decode_text_candidates(data: bytes, *, label: str) -> list[str]:
+    """返回全部可读解码候选；无 BOM 时宽字符与 UTF-8 可同时成立，交由调用方并集扫描。"""
+    candidates: list[str] = []
 
-    - BOM 显式指定编码；UTF-32 BOM 以 4 字节优先判定（LE32 前缀与 LE16 相同），
-      解码后必须过可读性 gate，否则 fail-closed（防 BOM 伪装绕过）；
-    - 无 BOM 且 UTF-8 失败时，数据含 NUL 且长度为偶数就按 NUL 交错位置试探
-      UTF-16 LE/BE（不设 NUL 占比门槛，CJK 主导文本 NUL 很少），能否作文本
-      由解码结果和可读性决定；再按 4 字节周期试探 UTF-32 LE/BE（NUL 本身是
-      合法 UTF-8 字符，必须先于 UTF-8 试探，否则宽字符编码的家目录会被 NUL
-      隔断而漏报）；
-    - ASCII 兼容的 GBK 作最后一次尝试（中文语境常见），同样必须过可读性
-      gate，二进制垃圾解码后多半不可读，仍 fail-closed；
-    - 仍无法确定则抛 PrivacyScanError，绝不 ``errors='ignore'`` 静默放行。
-    """
+    def add(text: str) -> None:
+        if text not in candidates:
+            candidates.append(text)
+
     if data.startswith((_BOM_UTF32_LE, _BOM_UTF32_BE)):
         try:
             text = data.decode("utf-32")
@@ -165,10 +159,10 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
             raise PrivacyScanError(f"{label}：UTF-32 BOM 解码失败（{error}）") from error
         if not _is_plausible_text(text):
             raise PrivacyScanError(f"{label}：UTF-32 BOM 解码内容非可读文本，隐私扫描 fail-closed")
-        return text
+        return [text]
     if data.startswith((_BOM_UTF16_LE, _BOM_UTF16_BE)):
         try:
-            return data.decode("utf-16")
+            return [data.decode("utf-16")]
         except UnicodeDecodeError as error:
             raise PrivacyScanError(f"{label}：UTF-16 BOM 解码失败（{error}）") from error
     if data.startswith(_BOM_UTF8):
@@ -186,7 +180,7 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
             except UnicodeDecodeError:
                 continue
             if _is_plausible_text(candidate):
-                return candidate
+                add(candidate)
     if len(data) >= 8 and len(data) % 4 == 0 and data.count(0) * 2 >= len(data):
         # 无 BOM 的 UTF-32：ASCII 字符呈 4 字节周期，NUL 占比不低于一半。
         for encoding in ("utf-32-le", "utf-32-be"):
@@ -195,12 +189,17 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
             except UnicodeDecodeError:
                 continue
             if _is_plausible_text(candidate):
-                return candidate
+                add(candidate)
+    utf8_error: UnicodeDecodeError | None = None
     try:
-        return data.decode("utf-8")
+        utf8 = data.decode("utf-8")
     except UnicodeDecodeError as error:
         utf8_error = error
-    if b"\x00" not in data:
+    else:
+        # UTF-8 + 零散 NUL 是合法文本（NUL 本身合法）；与宽字符候选一起扫描。
+        if b"\x00" not in data or _is_plausible_text(utf8):
+            add(utf8)
+    if not candidates and b"\x00" not in data:
         # GBK 与 UTF-8 同为 ASCII 兼容，ASCII 字节不会被误释；含 NUL 的不可
         # 解码字节交由调用方的二进制嗅探处理，这里不尝试。
         try:
@@ -209,10 +208,17 @@ def decode_candidate_bytes(data: bytes, *, label: str) -> str:
             pass
         else:
             if _is_plausible_text(candidate):
-                return candidate
-    raise PrivacyScanError(
-        f"{label}：编码无法判定（非 UTF-8/UTF-16），隐私扫描 fail-closed"
-    ) from utf8_error
+                add(candidate)
+    if not candidates:
+        raise PrivacyScanError(
+            f"{label}：编码无法判定（非 UTF-8/UTF-16），隐私扫描 fail-closed"
+        ) from utf8_error
+    return candidates
+
+
+def decode_candidate_bytes(data: bytes, *, label: str) -> str:
+    """字节 → 单个可扫描文本（首个可读候选）；需要并集时用 _decode_text_candidates。"""
+    return _decode_text_candidates(data, label=label)[0]
 
 
 def scan_text_privacy_leaks(text: str, *, label: str = "") -> list[str]:
@@ -225,25 +231,34 @@ def scan_text_privacy_leaks(text: str, *, label: str = "") -> list[str]:
     return findings
 
 
-def _text_or_binary(data: bytes, *, label: str, binary: bool = False) -> str | None:
-    """门禁、审计与候选三入口共用判定：可读文本返回内容，不可读二进制返回 None。"""
+def _text_candidates_or_binary(
+    data: bytes, *, label: str, binary: bool = False,
+) -> list[str] | None:
+    """门禁、审计与候选三入口共用判定：可读文本候选列表，不可读二进制返回 None。"""
     try:
-        text = decode_candidate_bytes(data, label=label)
+        candidates = _decode_text_candidates(data, label=label)
     except PrivacyScanError:
         if binary or b"\x00" in data:
             return None
         raise
-    if b"\x00" in data and not _is_plausible_text(text):
-        return None
-    return text
+    return candidates or None
+
+
+def _text_or_binary(data: bytes, *, label: str, binary: bool = False) -> str | None:
+    """单候选兼容入口；扫描并集请用 _text_candidates_or_binary。"""
+    candidates = _text_candidates_or_binary(data, label=label, binary=binary)
+    return candidates[0] if candidates else None
 
 
 def scan_candidate_bytes(data: bytes, *, label: str) -> list[str]:
-    """字节候选统一入口：与门禁/审计共用 _text_or_binary，不可读二进制跳过。"""
-    text = _text_or_binary(data, label=label)
-    if text is None:
+    """字节候选统一入口：所有可读解码候选并集扫描，不可读二进制跳过。"""
+    candidates = _text_candidates_or_binary(data, label=label)
+    if candidates is None:
         return []
-    return scan_text_privacy_leaks(text, label=label)
+    findings: list[str] = []
+    for text in candidates:
+        findings.extend(scan_text_privacy_leaks(text, label=label))
+    return list(dict.fromkeys(findings))
 
 
 def _git(
@@ -489,16 +504,21 @@ def scan_privacy_changes(
         data = overrides[rel] if rel in overrides else blobs[new[1]]
         if data is None:
             continue
-        text = _text_or_binary(data, label=rel, binary=rel in binary)
-        if text is None:
+        candidates = _text_candidates_or_binary(data, label=rel, binary=rel in binary)
+        if not candidates:
             continue
         old = before.get(rel)
         original = ""
         if old is not None and old[0] != "160000":
-            original = _text_or_binary(blobs[old[1]], label=rel, binary=rel in binary) or ""
-        violations.extend(_scan_text_change(original, text, label=rel))
+            old_candidates = _text_candidates_or_binary(
+                blobs[old[1]], label=rel, binary=rel in binary
+            ) or []
+            original = old_candidates[0] if old_candidates else ""
+        violations.extend(_scan_text_change(original, candidates[0], label=rel))
+        for extra in candidates[1:]:
+            violations.extend(scan_text_privacy_leaks(extra, label=rel))
     violations.extend(scan_text_privacy_leaks(message, label="commit message"))
-    return violations
+    return list(dict.fromkeys(violations))
 
 
 def scan_commit_introduced_privacy(root: Path, ref: str) -> list[str]:
@@ -511,10 +531,10 @@ def _audit_entries(root: Path, entries: Iterable[tuple[str, str, str]], *, binar
         if mode == "160000" or not is_privacy_candidate(rel):
             continue
         data = _read_blobs(root, [oid])[oid]
-        text = _text_or_binary(data, label=rel, binary=rel in binary)
-        if text is not None:
+        candidates = _text_candidates_or_binary(data, label=rel, binary=rel in binary)
+        for text in candidates or []:
             violations.extend(scan_text_privacy_leaks(text, label=rel))
-    return violations
+    return list(dict.fromkeys(violations))
 
 
 def scan_git_index_privacy(root: Path, *, extra_worktree_paths: Iterable[str] = ()) -> list[str]:
@@ -524,10 +544,10 @@ def scan_git_index_privacy(root: Path, *, extra_worktree_paths: Iterable[str] = 
         if is_privacy_candidate(rel):
             data = _worktree_bytes(root, rel)
             if data is not None:
-                text = _text_or_binary(data, label=rel)
-                if text is not None:
+                candidates = _text_candidates_or_binary(data, label=rel)
+                for text in candidates or []:
                     violations.extend(scan_text_privacy_leaks(text, label=rel))
-    return violations
+    return list(dict.fromkeys(violations))
 
 
 def scan_git_tree_privacy(root: Path, ref: str = "HEAD") -> list[str]:
