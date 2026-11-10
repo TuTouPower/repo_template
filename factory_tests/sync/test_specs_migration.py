@@ -2,6 +2,7 @@
 
 六种 front matter 形态（只含 slug、slug+tid、完整字段+有索引一致、
 完整字段+有索引冲突、完整字段+无索引行、slug 与文件名不一致）；
+另补非法 status（active/archive）与 archive 同名目标冲突的失败路径。
 全部失败路径断言零写入。
 """
 
@@ -166,6 +167,58 @@ def test_archive_front_matter_forces_retired_and_drops_extra_field(consumer):
     assert not (consumer / "docs/archive/specs").exists()
     assert any("由 active 改为 retired" in line for line in reports)
     assert any("丢弃多余字段" in line and "tid=t002" in line for line in reports)
+
+
+def test_archive_illegal_status_aborts_without_writes(consumer):
+    archive = consumer / "docs/archive/specs"
+    archive.mkdir(parents=True)
+    source = archive / "old.md"
+    source.write_text(
+        "---\nslug: old\nstatus: bogus\ntasks: [t002]\n---\n\n# Old\n",
+        encoding="utf-8",
+    )
+    _write_index(consumer, "|old|t002|2025-01-01|\n")
+    before = _snapshot(consumer)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="status 只允许 active/retired"):
+        migrate_specs_layout(sync, write=True)
+    _assert_zero_write(consumer, before)
+    assert source.is_file()
+
+
+def test_active_illegal_status_aborts_without_writes(consumer):
+    source = _write_spec(
+        consumer, "feature.md",
+        "---\nslug: feature\nstatus: bogus\ntasks: [t001]\n---\n\n# Feature\n",
+    )
+    _write_index(consumer, "|feature|t001|2026-01-01|\n")
+    before = _snapshot(consumer)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="status 只允许 active/retired"):
+        migrate_specs_layout(sync, write=True)
+    _assert_zero_write(consumer, before)
+    assert source.is_file()
+
+
+def test_archive_same_name_conflict_aborts_without_writes(consumer):
+    active_source = _write_spec(
+        consumer, "dup.md",
+        "---\nslug: dup\nstatus: active\ntasks: [t001]\n---\n\n# Dup\n",
+    )
+    archive = consumer / "docs/archive/specs"
+    archive.mkdir(parents=True)
+    archive_source = archive / "dup.md"
+    archive_source.write_text(
+        "---\nslug: dup\nstatus: retired\ntasks: [t001]\n---\n\n# Dup old\n",
+        encoding="utf-8",
+    )
+    _write_index(consumer, "|dup|t001|2026-01-01|\n")
+    before = _snapshot(consumer)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="同名 spec 冲突"):
+        migrate_specs_layout(sync, write=True)
+    _assert_zero_write(consumer, before)
+    assert active_source.is_file() and archive_source.is_file()
 
 
 def test_dry_run_returns_reports_without_writes(consumer):

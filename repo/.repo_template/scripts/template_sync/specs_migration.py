@@ -102,6 +102,10 @@ def _plan_spec(
             )
         fm_status = fm.get("status")
         if archived:
+            if fm_status is not None and fm_status not in SPEC_STATUSES:
+                raise ctx.SyncError(
+                    f"{path.name} front matter status 只允许 active/retired（实得 {fm_status!r}）"
+                )
             status = "retired"
             if fm_status is not None and fm_status != "retired":
                 reports.append(
