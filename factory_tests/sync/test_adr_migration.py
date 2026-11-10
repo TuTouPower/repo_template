@@ -1,4 +1,10 @@
-"""A3 follow-up：围栏外无编号 H2 一律停止，且停止早于任何写盘。"""
+"""ADR 迁移（decisions.md -> 一条一文件）工厂测试。
+
+覆盖：围栏外非 NNN H2 一律停止；NNN 唯一校验（重复即停止）；前言语法
+（只许 H1 与正文，出现 H3+ 停止）；零条目即空文件退役；文件名统一为
+YYYYMMDD_<slug>.md（同名冲突追加 _2/_3 后缀、supersedes 指向带后缀文件）。
+全部失败路径断言停止早于写盘、零写入。
+"""
 
 from __future__ import annotations
 
@@ -214,6 +220,17 @@ def test_preface_only_dry_run_writes_nothing(consumer):
 
 def test_preface_h3_stops_without_writes(consumer):
     text = "# ADR\n\n### 前言小标题\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert any("第 3 行前言出现 H3+ 标题" in item for item in status), status
+    with pytest.raises(ctx.SyncError, match="第 3 行前言出现 H3\\+ 标题"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_preface_bare_h3_heading_stops_without_writes(consumer):
+    text = "# ADR\n\n###\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
     source = _write_decisions(consumer, text)
     sync = ctx.SyncContext.for_consumer(consumer)
     status = adr_migration_status(sync)

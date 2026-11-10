@@ -13,11 +13,17 @@ from . import context as ctx
 
 SOURCE = "docs/blueprint/decisions.md"
 TARGET = "docs/blueprint/decisions"
-H2_RE = re.compile(r"^ {0,3}##(?!#)(?:[ \t]|$)")
-H3_RE = re.compile(r"^ {0,3}#{3,6}[ \t]")
-ENTRY_RE = re.compile(r"^ {0,3}##[ \t]+([0-9]+)[ \t]+(.+?)[ \t]*$")
+HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$")
+NNN_TITLE_RE = re.compile(r"([0-9]+)[ \t]+(.+?)[ \t]*$")
 DATE_RE = re.compile(r"[（(](\d{4}-\d{2}-\d{2})[）)]\s*$")
 SUPERSEDES_RE = re.compile(r"^\s*[-*]?\s*替代\s*[:：]\s*([0-9]+)\s*$", re.MULTILINE)
+
+
+def _heading(line: str) -> tuple[int, str] | None:
+    match = HEADING_RE.match(line)
+    if match is None:
+        return None
+    return len(match.group(1)), match.group(2)
 
 
 def _entries(text: str) -> tuple[list[dict], list[str]]:
@@ -30,14 +36,18 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
     duplicate: tuple[str, int, int] | None = None
     for lineno, line in enumerate(lines, 1):
         if fence.feed(line):
-            if current:
-                current["lines"].append(line)
-            else:
-                preface.append(line)
+            (current["lines"] if current else preface).append(line)
             continue
-        match = ENTRY_RE.match(line)
-        if match:
-            nnn = match.group(1)
+        heading = _heading(line)
+        level = heading[0] if heading else None
+        if level == 2:
+            title_match = NNN_TITLE_RE.fullmatch(heading[1])
+            if title_match is None:
+                raise ctx.SyncError(
+                    f"{SOURCE} 第 {lineno} 行围栏外 H2 不是 `## NNN 标题`：{line.strip()}；"
+                    "拒绝迁移，请先补编号或移除该标题"
+                )
+            nnn = title_match.group(1)
             if duplicate is None:
                 if nnn in first_seen:
                     duplicate = (nnn, first_seen[nnn], lineno)
@@ -45,21 +55,13 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
                     first_seen[nnn] = lineno
             if current:
                 entries.append(current)
-            current = {"nnn": nnn, "title": match.group(2), "lines": [line]}
+            current = {"nnn": nnn, "title": title_match.group(2), "lines": [line]}
             continue
-        if H2_RE.match(line):
-            raise ctx.SyncError(
-                f"{SOURCE} 第 {lineno} 行围栏外 H2 不是 `## NNN 标题`：{line.strip()}；"
-                "拒绝迁移，请先补编号或移除该标题"
-            )
-        if current is None and H3_RE.match(line):
+        if current is None and level is not None and level >= 3:
             raise ctx.SyncError(
                 f"第 {lineno} 行前言出现 H3+ 标题，ADR 条目须为 `## NNN 标题`"
             )
-        if current:
-            current["lines"].append(line)
-        else:
-            preface.append(line)
+        (current["lines"] if current else preface).append(line)
     if current:
         entries.append(current)
     if duplicate is not None:
