@@ -120,7 +120,7 @@ def test_install_hooks_refuses_foreign_path(tmp_path, capsys):
     _ensure_hook(consumer)
     sync = ctx.SyncContext.for_consumer(consumer)
 
-    assert cmd_install_hooks(Namespace(sync=sync)) == 0
+    assert cmd_install_hooks(Namespace(sync=sync)) == 2
     err = capsys.readouterr().err
     assert "不覆盖" in err
     assert _git(consumer, "config", "--get", "core.hooksPath").stdout.strip() \

@@ -99,7 +99,7 @@ def test_install_hooks_foreign_path_reports_not_installed_and_lefthook_commit_ms
     hook.chmod(0o755)
     sync = ctx.SyncContext.for_consumer(consumer)
 
-    assert cmd_install_hooks(Namespace(sync=sync)) == 0
+    assert cmd_install_hooks(Namespace(sync=sync)) == 2
     err = capsys.readouterr().err
     assert "未安装，需人工接入" in err
     assert "run: python3 .repo_template/hooks/commit-msg {1}" in err

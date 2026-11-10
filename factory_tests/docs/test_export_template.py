@@ -64,6 +64,12 @@ def _fake_repo_sync(target: Path, *, install_hooks: bool) -> None:
             "    subprocess.run("
             "['git', 'config', 'core.hooksPath', '.repo_template/hooks'], check=True)\n"
         )
+    else:
+        # 未安装按新契约退出码 2（需人工接入），而非静默 0。
+        body += (
+            "if sys.argv[1] == 'install-hooks':\n"
+            "    sys.exit(2)\n"
+        )
     script.write_text(body, encoding="utf-8")
 
 

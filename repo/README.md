@@ -15,7 +15,7 @@
       --source /path/to/repo_template --target /path/to/new_project --ref HEAD --bootstrap
     ```
 
-    目标必须不存在或为空；已有 `core.hooksPath` 时默认不覆盖（确需覆盖时在目标仓显式运行 `repo_sync.py install-hooks --force`），按命令输出的 husky/lefthook 片段人工接入。失败即停止，按输出检查现场或删除目标重来。
+    目标必须不存在或为空；已有 `core.hooksPath` 时默认不覆盖（确需覆盖时在目标仓显式运行 `repo_sync.py install-hooks --force`），按命令输出的 husky/lefthook 片段人工接入，此时 `install-hooks` 退出码为 2（0 已安装、1 错误、2 未安装需人工接入）；bootstrap 遇退出码 2 会继续完成其余步骤并输出未完成提示。失败即停止，按输出检查现场或删除目标重来。
 
 2. 替换本文件与 `AGENTS.md` 项目区介绍。
 
