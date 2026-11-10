@@ -7,6 +7,8 @@ from pathlib import Path
 
 from . import context as ctx
 from .documents import atomic_write_text, parse_front_matter_text
+from .git_ops import _git
+from .store import git_text_at_ref
 
 SPECS_DIR = "docs/specs"
 SPEC_SLUG_RE = ctx.SLUG_RE
@@ -38,12 +40,7 @@ def render_spec_text(slug: str, status: str, tasks: list[str], body: str) -> str
     return "\n".join(lines) + body.lstrip("\n")
 
 
-def load_spec(path: Path, *, root: Path | None = None) -> dict:
-    source = f"{root / path if root else path}"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise SpecError(f"spec 无法读取：{source}（{error}）") from error
+def _spec_record(path: Path, text: str, *, source: str) -> dict:
     fm, body = parse_front_matter_text(text, source=source)
     slug = fm.get("slug", "")
     if slug != path.stem:
@@ -70,17 +67,61 @@ def load_spec(path: Path, *, root: Path | None = None) -> dict:
     }
 
 
-def load_specs(root: Path | str, *, include_retired: bool = True) -> list[dict]:
-    root = Path(root)
-    directory = root / SPECS_DIR
-    if not directory.is_dir():
-        return []
-    specs = [load_spec(path, root=root) for path in sorted(directory.glob("*.md"))]
+def load_spec(path: Path, *, root: Path | None = None) -> dict:
+    source = f"{root / path if root else path}"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise SpecError(f"spec 无法读取：{source}（{error}）") from error
+    return _spec_record(path, text, source=source)
+
+
+def _unique_specs(specs: list[dict]) -> list[dict]:
     seen: set[str] = set()
     for spec in specs:
         if spec["slug"] in seen:
             raise SpecError(f"spec slug 重复：{spec['slug']}")
         seen.add(spec["slug"])
+    return specs
+
+
+def load_specs(root: Path | str, *, include_retired: bool = True) -> list[dict]:
+    root = Path(root)
+    directory = root / SPECS_DIR
+    if not directory.is_dir():
+        return []
+    specs = _unique_specs([load_spec(path, root=root) for path in sorted(directory.glob("*.md"))])
+    return [spec for spec in specs if include_retired or spec["status"] == "active"]
+
+
+def _spec_paths_at_ref(ref: str, *, root: Path | None, repo: ctx.RepoContext) -> list[str]:
+    result = _git(
+        [
+            "ls-tree", "-r", "-z", "--name-only", "--end-of-options",
+            ref, "--", SPECS_DIR,
+        ],
+        root=root, repo=repo,
+    )
+    if result.returncode != 0:
+        raise SpecError(f"无法读取 {ref!r} 中 {SPECS_DIR}：{result.stderr.strip()}")
+    return sorted(
+        path for path in result.stdout.split("\0")
+        if path.startswith(SPECS_DIR + "/") and path.endswith(".md")
+    )
+
+
+def load_specs_at_ref(
+    ref: str, *, root: Path | None = None, repo: ctx.RepoContext,
+    include_retired: bool = True,
+) -> list[dict]:
+    specs = _unique_specs([
+        _spec_record(
+            Path(path),
+            git_text_at_ref(ref, path, root=root, repo=repo),
+            source=f"{ref}:{path}",
+        )
+        for path in _spec_paths_at_ref(ref, root=root, repo=repo)
+    ])
     return [spec for spec in specs if include_retired or spec["status"] == "active"]
 
 
@@ -96,6 +137,16 @@ def retired_spec_paths(root: Path | str) -> set[str]:
     return {
         spec["path"].relative_to(Path(root)).as_posix()
         for spec in load_specs(root, include_retired=True)
+        if spec["status"] == "retired"
+    }
+
+
+def retired_spec_paths_at_ref(
+    ref: str, *, root: Path | None = None, repo: ctx.RepoContext,
+) -> set[str]:
+    return {
+        spec["path"].as_posix()
+        for spec in load_specs_at_ref(ref, root=root, repo=repo)
         if spec["status"] == "retired"
     }
 
