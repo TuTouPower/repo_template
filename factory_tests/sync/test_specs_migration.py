@@ -233,3 +233,16 @@ def test_dry_run_returns_reports_without_writes(consumer):
     _assert_zero_write(consumer, before)
     assert source.read_text(encoding="utf-8").startswith("---\nslug: feature\ntid: t001")
     assert any("丢弃多余字段" in line for line in reports)
+
+
+def test_corrupt_front_matter_aborts_with_sync_error_without_writes(consumer):
+    source = _write_spec(
+        consumer, "feature.md",
+        "---\nslug: feature\n未闭合\n\n# Feature\n",
+    )
+    before = _snapshot(consumer)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="front matter 未闭合"):
+        migrate_specs_layout(sync, write=True)
+    _assert_zero_write(consumer, before)
+    assert source.is_file()

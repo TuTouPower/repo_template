@@ -6,8 +6,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from repo_task.context import TaskDataError
-
 from . import context as ctx
 from .apply import cmd_apply
 from .healthcheck import run_healthcheck
@@ -119,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         if getattr(args, "cmd", None) == "apply":
             args.decisions = _parse_decisions(args.decision)
         sys.exit(args.func(args))
-    except (ctx.SyncError, TaskDataError) as e:
+    except (ctx.SyncError, ctx.TaskDataError) as e:
         print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
     except OSError as e:
