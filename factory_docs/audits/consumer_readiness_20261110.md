@@ -4,7 +4,7 @@
 
 - 审计目录：`/Users/karson/kar/code` 下全部消费仓。
 - 排除：`repo_template`、`repo_template_wt_*`，以及审计所在 worktree。
-- 判定依据：`docs_repo/plans/plan_state_ownership_and_workflow.md` 第 6 节（6.1 前置条件、6.2 迁移顺序、6.3 pilot）与 `repo/AGENTS.md`。
+- 判定依据：`factory_docs/plans/plan_state_ownership_and_workflow.md` 第 6 节（6.1 前置条件、6.2 迁移顺序、6.3 pilot）与 `repo/AGENTS.md`。
 - 全程只读：仅使用 `git rev-parse`、`git status`、`git worktree list`、`git config --get`、`find`/文件读取，以及工厂迁移代码的只读导入；未在消费仓执行 checkout、commit、migrate、task 命令或任何写操作。
 - 仓库识别口径：存在 `.repo_template/scripts/task.py`，或根 `AGENTS.md` 提及 `repo_template`。实际命中 14 个目录，其中 2 个是已登记 worktree，不是独立消费仓。
 

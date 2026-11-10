@@ -1,4 +1,4 @@
-# docs_repo
+# factory_docs
 
 **仅本模板仓**的流程设计笔记与实战复盘。不是业务文档，复制成新项目时不得带入。
 
@@ -9,9 +9,9 @@
 | 路径 | 内容 |
 | --- | --- |
 | `README.md` / `decision_log.md` | 入口与跨文档裁决总账（唯一权威状态表） |
-| `plans/` | 当前方案：[本机状态、所有权与工作流收口](plans/plan_state_ownership_and_workflow.md)、[测试性能优化与工作流基线重构](plans/plan_test_suite_performance.md)、[生命周期实体稳定存储与历史文稿归档重构](plans/plan_entity_storage_and_archive.md)。已实施或被替代方案归入 `archive/` |
+| `plans/` | 当前方案：[本机状态、所有权与工作流收口](plans/plan_state_ownership_and_workflow.md)。已实施或被替代方案归入 `archive/` |
 | `reflections/` | 实战复盘、会话反思与实证分析（`workflow_reflection_*` / `reflection_*` / `analysis_*`） |
-| `reviews/` | [2026-11-10 宏观审阅与改进方案](reviews/review_20261110_macro.md)；[2026-11-10 四线合并审阅处置](reviews/review_20261110/adoption.md)；[2026-11-09 合并审阅与修复](reviews/review_20261109.md)；各轮评审产物（`2026-07/` 多路评审意见；`review_20260805_133245/` 多模型交叉评审） |
+| `reviews/` | [2026-11-10 宏观审阅与改进方案](reviews/review_20261110_macro.md)；[2026-11-10 四线合并审阅处置](reviews/review_20261110/adoption.md)；[2026-11-09 合并审阅与修复](reviews/review_20261109.md)；各轮评审产物（`review_202607/` 多路评审意见；`review_20260805_133245/` 多模型交叉评审） |
 | `archive/` | 已实施、已终止或被替代方案及历史机制说明；含 [scratch 默认清理与在用草稿保护](archive/plan_scratch_cleanup.md)、看板 mock demo 的历史计划 `plan_board_v2_chain_panel_demo.md`（demo 源码已删，现行实现见该文首部说明） |
 
 ## 命名
@@ -22,7 +22,7 @@
 | `analysis_*` | 会话或日志实证分析 |
 | `plan_*` | 方案与设计笔记（部分已退役，以文档内状态标注为准） |
 | `reflection_*` | 单主题反思 |
-| `reviews/2026-07/{author}.md` | 对本目录的多方审阅意见 |
+| `reviews/review_202607/{author}.md` | 对本目录的多方审阅意见 |
 | `decision_log.md` | 跨文档裁决总账（唯一权威状态表） |
 
 ## 纪律
@@ -38,9 +38,11 @@
 |文档|归档依据|
 |---|---|
 |[plan_goal_mode_autonomy.md](archive/plan_goal_mode_autonomy.md)|goal 方案已落地|
+|[plan_entity_storage_and_archive.md](archive/plan_entity_storage_and_archive.md)|生命周期实体稳定存储与历史文稿归档重构已实施|
 |[plan_macro_overhaul_2026_11.md](archive/plan_macro_overhaul_2026_11.md)|宏观改造已实施并合入 main|
 |[plan_manual_concurrency.md](archive/plan_manual_concurrency.md)|手动并发方案已落地|
 |[plan_md_kx_template.md](archive/plan_md_kx_template.md)|md_kx 接入已落地|
 |[plan_task_batch_scheduling.md](archive/plan_task_batch_scheduling.md)|批次调度方案已由 task.py plan 取代|
+|[plan_test_suite_performance.md](archive/plan_test_suite_performance.md)|测试性能优化与工作流基线重构已实施|
 |[plan_workflow_simplification.md](archive/plan_workflow_simplification.md)|工作流瘦身已实施|
 |[worktree_statusline_tracking.md](archive/worktree_statusline_tracking.md)|已实现状态栏机制说明；现行入口在 usage.md|
