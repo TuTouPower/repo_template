@@ -2,6 +2,8 @@
 
 本项目使用模板仓 repo_template。此声明必须保留，消费仓不得删除。
 
+项目专属规则写在 `<!-- repo-template:begin -->` 之前；标记之间由模板同步整块替换，`<!-- repo-template:end -->` 之后不得有内容。
+
 <!-- repo-template:begin -->
 
 ## 目录与读写规则
@@ -14,8 +16,8 @@
 |`docs/pending/pNNN_{slug}.md`|待办总账（一条目一文件，统一`pNNN`，原位表达 `todo / parked / closed`，不进 Archive）|条目创建与状态维护只经`.repo_template/scripts/pending.py`；skill 流程见`.repo_template/docs/usage.md`「skill 调用」|
 |`docs/findings/dNNN_{slug}.md`|已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`）|条目创建只经`.repo_template/scripts/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入|
 |`docs/blueprint/`|当前长期真相：架构、领域、约定、决策、测试|finalization 时更新；写代码或文档前读`conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions/`。门禁命令在 `testing.md` 的 `## doctor_cmd` / `## test_cmd` / `## blackbox_verify` 章节。`architecture.md` / `domain.md` 是模板仓占位符，**消费项目复制后自行填充**，未填充前不视为权威。`conventions.md` / `testing.md` 是模板默认，复制后按技术栈修改，不是空壳|
-|`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；只保留最近 5 个；更旧目录由用户确认后删除，Git 历史保留|
-|`docs/spikes/{sid}_{slug}/`|技术 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`“实施”中的未知契约处理；结论入 `docs/findings/`；完结原位标 completed 或 superseded，不再迁入 archive|
+|`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；以最近 5 个为保留上限；被 task/blueprint/handoff 引用的旧目录先解除引用；更旧目录由用户确认后删除，Git 历史保留|
+|`docs/spikes/{sid}_{slug}/`|技术 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`“实施”中的未知契约处理；结论入 `docs/findings/`；完结原位标 completed 或 superseded，不迁入 archive|
 |`docs/guides/`|给人看的使用指南|给人读，不写 agent 行为规则|
 |`docs/archive/`|消费仓自有历史（研究、蓝图、旧计划等）；模板不管理|日常只追加；模板迁移不删除|
 |`schemas/`|跨服务接口契约|改契约走 task 流程|

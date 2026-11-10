@@ -29,7 +29,7 @@ main ─┬─ t001 ── t003 ── t004   链 1：三者经依赖或冲突�
 run-begin(start → reserve → claim) → task-work(finish) → run-close(terminal → report → cleanup)
 ```
 
-主路径只传 `tid` 与 `owner_id`：`run-begin` 在控制面锁内完成前三步并输出 identity，`run-close` 按 done/blocked/failed 写 terminal 与 report（done 另 exact cleanup），已写事件不重复写。attempt、execution_id 由脚本从 ledger（主仓）或 `execution_context.json`（worktree）解析，显式提供须与解析结果一致。`attempt reserve/claim/terminal/report` 与 `cleanup-worktree` 是 recovery 用的低层原语；ledger 事件类型不因编排收敛而改变。
+主路径只传 `tid` 与 `owner_id`：`run-begin` 在控制面锁内完成前三步并输出 identity，`run-close` 按 done/blocked/failed 写 terminal 与 report（done 另 exact cleanup），已写事件不重复写。attempt、execution_id 由脚本从 ledger（主仓）或 `repo-task-execution.json`（worktree 私有 Git 目录）解析，显式提供须与解析结果一致。`attempt reserve/claim/terminal/report` 与 `cleanup-worktree` 是 recovery 用的低层原语；ledger 事件类型不因编排收敛而改变。
 
 执行权由 ledger 的 execution_claimed 事件表达，在 ledger 锁内比较并交换；owner_id 属于会话，identity 属于 attempt，两者不可混用。没有自动过期；跨会话接管须确认原会话停止并提供旧 owner。start、图维护、集成和模板同步共用 Git common dir 控制面锁，避免互相读写半途状态。
 
@@ -53,7 +53,7 @@ backlog 合并通过 merge-backlog 收缩子图：外部前置并集进入目标
 
 ### 固定路径契约
 
-Task 终生在 `docs/tasks/{tid}_{slug}/` 原位流转，生命周期业务状态为 `backlog / active / done / dropped`，彻底废除物理搬迁归档机制：
+Task 终生在 `docs/tasks/{tid}_{slug}/` 原位流转，生命周期业务状态为 `backlog / active / done / dropped`，不进行物理搬迁归档：
 
 - `add` 创建固定目录，状态为 backlog；
 - `start` / `run-begin` 保持同一相对路径并在所属 worktree 激活；
@@ -62,7 +62,7 @@ Task 终生在 `docs/tasks/{tid}_{slug}/` 原位流转，生命周期业务状�
 - `merge-backlog` 改写依赖图并将非目标来源原位写 dropped；
 - `integrate` 保持所有成员目录在原位，主干记录 `integrated` 事件。
 
-Pending 终生在 `docs/pending/` 原位流转（`todo / parked / closed`）；Spike 终生在 `docs/spikes/` 原位流转（`active / completed / superseded`）；交接快照固定在 `docs/handoff.md` 单文件维护，review 只保留最近 5 个，且不归档。所有查询和恢复工具均基于规范固定路径，取消多目录与位置推断。
+Pending 终生在 `docs/pending/` 原位流转（`todo / parked / closed`）；Spike 终生在 `docs/spikes/` 原位流转（`active / completed / superseded`）；交接快照固定在 `docs/handoff.md` 单文件维护，review 以最近 5 个为保留上限（pre-commit 在新增 review 时检查），且不归档。所有查询和恢复工具均基于规范固定路径，不做多目录或位置推断。
 
 ### 核心资产所有权
 
@@ -89,7 +89,7 @@ Review 使用 finding ID、PASS/FAIL/INCOMPLETE、处置表、fix_ref 和 scope 
 
 ## 合并
 
-merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。彻底删除旧搬迁归档与专用豁免逻辑，合并事务不再移动实体目录。单 task 和链式合并均先完成 exact gate，然后：
+merge 必须获得用户明确授权。内容门禁要求 Git 2.38 或更高版本，并在创建 pending merge 前预检能力。合并事务保持实体目录原位，不设搬迁归档专用豁免。单 task 和链式合并均先完成 exact gate，然后：
 
 ```text
 git merge --no-ff --no-commit <branch-or-tail>
@@ -99,7 +99,7 @@ git merge --no-ff --no-commit <branch-or-tail>
 → 失败：git merge --abort
 ```
 
-Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，取消物理归档，全部成员目录保留在 `docs/tasks/` 原位。最终 staged 检查严格验证两层不变量：非成员核心资产相对当前 HEAD 完全不变；成员核心资产必须严格等于该成员已验证实现 tip 中的相应条目。
+Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链式只 merge 链尾；Git ancestry 自然包含全部前置实现 commit，全部成员目录保留在 `docs/tasks/` 原位。最终 staged 检查严格验证两层不变量：非成员核心资产相对当前 HEAD 完全不变；成员核心资产必须严格等于该成员已验证实现 tip 中的相应条目。
 
 ## Goal
 
@@ -117,7 +117,7 @@ Git 的 `MERGE_HEAD`、index 和 `git status` 是合并事务唯一真相。链�
 
 初始化只从指定 Git commit 的产品树导出，拒绝 tracked secret 与本机状态；dirty 工作区不参与分发。
 
-同步器直接从固定来源运行，consumer 显式指定，core 直接读取。准备阶段只写来源缓存；不自覆盖、不 prep。apply 在控制面锁内保存全部受管资产的 before-image 和持久日志，schema、入口、共享裁定、项目策略校验、模板契约测试与 state 推进纳入同一事务。apply 始终校验 testing.md 存在性、策略配置与命令格式，--skip-tests 仅跳过模板契约测试；accept 每次重读策略，契约测试按未验证或受管资产变化决定是否复跑。同步不执行项目 doctor/test/blackbox。失败恢复原始内容且保留备份；恢复失败不得吞错。成功后仍处于 applied，批准提交后 accept，放弃则 rollback。AGENTS 两区由同步器整块替换模板区；项目区原样保留。
+同步器直接从固定来源运行，consumer 显式指定，core 直接读取。准备阶段只写来源缓存；不自覆盖、不 prep。apply 在控制面锁内保存全部受管资产的 before-image 和持久日志，schema、入口、共享裁定、项目策略校验、模板契约测试与 state 推进纳入同一事务。apply 始终校验 testing.md 存在性、策略配置与命令格式，--skip-tests 仅跳过模板契约测试；accept 每次重读策略，契约测试按未验证或受管资产变化决定是否复跑。同步不执行项目 doctor/test/blackbox。失败恢复原始内容且保留备份；恢复失败不得吞错。成功后仍处于 applied，批准提交后 accept，放弃则 rollback。AGENTS 两区由同步器整块替换模板区，项目区原样保留；`.gitignore` 的 `# repo-template:begin/end` 托管块整块替换，块外规则保留。
 
 sync_manifest 是可入库版本基线；sync_policy 是显式共享保护决策；sync_state 只承载本机来源和私人 prompt。新 clone 依据 manifest 重新接入，本机 ledger 丢失仅从严格验证的 done Git/执行回执重建，active 不猜补。支持范围见 `usage.md`，灾难恢复步骤见 `recovery.md`，同步与降级步骤见 `sync.md`。
 
