@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from repo_task.documents import atomic_write_text
-from repo_task.specs import SpecError, load_spec, load_specs, render_spec_text
+from repo_task.specs import SpecError, SPEC_SLUG_RE, load_spec, load_specs, render_spec_text
 from .specs_index_migration import parse_specs_index
 
 from . import context as ctx
@@ -43,8 +43,32 @@ def specs_migration_status(sync: ctx.SyncContext) -> list[str]:
     return findings
 
 
+def _validate_before_write(sync: ctx.SyncContext, index: dict[str, list[str]]) -> None:
+    active = sync.consumer / ACTIVE_DIR
+    for path in sorted(active.glob("*.md")):
+        if not SPEC_SLUG_RE.fullmatch(path.stem):
+            raise ctx.SyncError(f"spec slug 非法，停止迁移：{path.name}")
+        if _has_front_matter(path):
+            try:
+                current = load_spec(path, root=sync.consumer)
+            except SpecError as error:
+                raise ctx.SyncError(str(error)) from error
+            tasks = index.get(path.stem, ["baseline"])
+            if current["tasks"] != tasks:
+                raise ctx.SyncError(f"{path.name} front matter tasks={current['tasks']} 与索引 {tasks} 冲突")
+    archive = sync.consumer / ARCHIVE_DIR
+    for path in sorted(archive.glob("*.md")) if archive.is_dir() else []:
+        if not SPEC_SLUG_RE.fullmatch(path.stem):
+            raise ctx.SyncError(f"spec slug 非法，停止迁移：{path.name}")
+        target = active / path.name
+        if target.exists():
+            raise ctx.SyncError(f"同名 spec 冲突，停止迁移：{path} -> {target}")
+
+
 def migrate_specs_layout(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     index = _index_map(sync)
+    if write:
+        _validate_before_write(sync, index)
     reports: list[str] = []
     moves: list[tuple[Path, Path]] = []
     archive = sync.consumer / ARCHIVE_DIR

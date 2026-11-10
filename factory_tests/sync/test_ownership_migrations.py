@@ -132,3 +132,43 @@ def test_gitignore_managed_block_preserves_outside_rules(consumer, tmp_path):
     assert "keep.txt" in text.splitlines()
     assert "node_modules/" in text.splitlines()
     assert "*.log" in info["added"]
+
+
+def test_invalid_kebab_spec_aborts_before_any_migration_write(consumer):
+    (consumer / "docs/specs").mkdir(parents=True)
+    (consumer / "docs/archive/specs").mkdir(parents=True)
+    (consumer / "docs/specs/feature.md").write_text("# Feature\n", encoding="utf-8")
+    (consumer / "docs/specs/ai-cli-token-stats.md").write_text("# Bad slug\n", encoding="utf-8")
+    (consumer / "docs/archive/specs/old.md").write_text("# Old\n", encoding="utf-8")
+    (consumer / "docs/specs_index.md").write_text(
+        "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
+        "|feature|t001|2026-01-01|\n|old|t002|2025-01-01|\n",
+        encoding="utf-8",
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="slug 非法"):
+        migrate_specs_layout(sync, write=True)
+    assert (consumer / "docs/specs/feature.md").read_text(encoding="utf-8") == "# Feature\n"
+    assert (consumer / "docs/specs/ai-cli-token-stats.md").read_text(encoding="utf-8") == "# Bad slug\n"
+    assert (consumer / "docs/archive/specs/old.md").is_file()
+    assert (consumer / "docs/specs_index.md").is_file()
+
+
+def test_reviews_migration_rolls_back_on_delete_failure(consumer, monkeypatch):
+    reviews = consumer / "docs/reviews"
+    for index in range(1, 7):
+        directory = reviews / f"review_2026010{index}_120000"
+        directory.mkdir(parents=True)
+        (directory / "review_general.md").write_text("PASS\n", encoding="utf-8")
+    _git(consumer, "add", "-A")
+    _git(consumer, "commit", "-m", "reviews")
+    from template_sync import migrate as migrate_mod
+    from template_sync import reviews_migration
+
+    def boom(_path):
+        raise OSError("injected delete failure")
+
+    monkeypatch.setattr(reviews_migration.shutil, "rmtree", boom)
+    with pytest.raises(ctx.SyncError, match="review 保留"):
+        migrate_mod.cmd_migrate(Namespace(sync=ctx.SyncContext.for_consumer(consumer), kind="reviews", write=True))
+    assert len(list(reviews.glob("review_*"))) == 6

@@ -185,6 +185,67 @@ def _migrate_workflow(sync: ctx.SyncContext, write: bool = False) -> list[str]:
     )
 
 
+def _migrate_agents_zones(sync: ctx.SyncContext, write: bool = False) -> list[str]:
+    status = agents_zone_migration_status(sync=sync)
+    if not status:
+        return []
+    src = _resolve_source(sync)
+    if not write:
+        return [f"{path} 拟拆为项目区 + 模板区" for path in status]
+    return _transactional(
+        ["AGENTS.md"],
+        lambda _changed: migrate_agents_zones(sync, src, write=True),
+        lambda: agents_zone_migration_status(sync=sync),
+        "AGENTS 两区",
+        sync=sync,
+    )
+
+
+def _migrate_specs_layout(sync: ctx.SyncContext, write: bool = False) -> list[str]:
+    status = specs_migration_status(sync=sync)
+    if not status:
+        return []
+    if not write:
+        return migrate_specs_layout(sync, write=False)
+    return _transactional(
+        ["docs/specs", "docs/archive/specs", "docs/specs_index.md"],
+        lambda _changed: migrate_specs_layout(sync, write=True),
+        lambda: specs_migration_status(sync=sync),
+        "specs front matter",
+        sync=sync,
+    )
+
+
+def _migrate_reviews(sync: ctx.SyncContext, write: bool = False) -> list[str]:
+    status = reviews_migration_status(sync=sync)
+    if not status:
+        return []
+    if not write:
+        return migrate_reviews(sync, write=False)
+    return _transactional(
+        ["docs/reviews", "docs/archive/reviews"],
+        lambda _changed: migrate_reviews(sync, write=True),
+        lambda: [],
+        "review 保留",
+        sync=sync,
+    )
+
+
+def _migrate_adr(sync: ctx.SyncContext, write: bool = False) -> list[str]:
+    status = adr_migration_status(sync=sync)
+    if not status:
+        return []
+    if not write:
+        return migrate_adr(sync, write=False)
+    return _transactional(
+        ["docs/blueprint/decisions.md", "docs/blueprint/decisions"],
+        lambda _changed: migrate_adr(sync, write=True),
+        lambda: adr_migration_status(sync=sync),
+        "ADR 拆分",
+        sync=sync,
+    )
+
+
 def _migrate_conventions(sync: ctx.SyncContext, write: bool = False) -> list[str]:
     status = conventions_migration_status(sync=sync)
     if not status:
@@ -201,16 +262,6 @@ def _migrate_conventions(sync: ctx.SyncContext, write: bool = False) -> list[str
         "conventions 原子写约定",
         sync=sync,
     )
-
-
-def _migrate_agents_zones(sync: ctx.SyncContext, write: bool = False) -> list[str]:
-    status = agents_zone_migration_status(sync=sync)
-    if not status:
-        return []
-    src = _resolve_source(sync)
-    if not write:
-        return [f"{path} 拟拆为项目区 + 模板区" for path in status]
-    return migrate_agents_zones(sync, src, write=True)
 
 
 def _migrate_retired_hooks(sync: ctx.SyncContext, write: bool = False) -> list[str]:
@@ -280,9 +331,9 @@ _STEPS = {
     "workflow-schema": lambda sync, write=False, require_clean=True: _migrate_workflow(sync, write=write),
     "conventions": lambda sync, write=False, require_clean=True: _migrate_conventions(sync, write=write),
     "agents-zones": lambda sync, write=False, require_clean=True: _migrate_agents_zones(sync, write=write),
-    "specs-layout": lambda sync, write=False, require_clean=True: migrate_specs_layout(sync, write=write),
-    "reviews": lambda sync, write=False, require_clean=True: migrate_reviews(sync, write=write),
-    "adr": lambda sync, write=False, require_clean=True: migrate_adr(sync, write=write),
+    "specs-layout": lambda sync, write=False, require_clean=True: _migrate_specs_layout(sync, write=write),
+    "reviews": lambda sync, write=False, require_clean=True: _migrate_reviews(sync, write=write),
+    "adr": lambda sync, write=False, require_clean=True: _migrate_adr(sync, write=write),
     "retired-hooks": lambda sync, write=False, require_clean=True: _migrate_retired_hooks(sync, write=write),
     "pending-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "p", write=write),
     "findings-ledger": lambda sync, write=False, require_clean=True: _migrate_ledger(sync, "d", write=write),
