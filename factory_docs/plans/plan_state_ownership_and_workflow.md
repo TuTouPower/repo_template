@@ -1,6 +1,6 @@
 # 本机状态、所有权与工作流收口方案
 
-> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T14:28:43+08:00。
+> 编写时间：2026-11-10T09:25:18+08:00。更新时间：2026-11-10T16:13:56+08:00。
 >
 > 文档性质：已实施的工厂改造方案。范围依据用户 2026-11-10 裁决，以及 [宏观审阅与改进方案](../reviews/review_20261110_macro.md) 的 S4–S9。裁决状态见 [decision_log.md](../decision_log.md)。本文只记录工厂实施与验证；消费仓由用户需要时自行迁移，模板不规定铺开流程。
 >
@@ -758,8 +758,9 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 
 ## 13. 实施记录
 
-- 2026-11-10：WP1–WP6 工厂侧完成；工厂全量 `1520 passed, 1 skipped`，`md_format --check` 与 `skill_registry.py` 通过。
-- 已实现 state-root、agents-zones、specs-layout、reviews、adr 迁移器、隐私 rename-aware、review 数量 hook、spec 读取与 bootstrap/healthcheck。
+- 2026-11-10 首批工厂改造（WP1–WP5 与 WP6 部分）完成；当时记录的“WP1–WP6 工厂侧完成”不准确：WP6 尚缺测试命名收敛、超大测试拆分、工厂笔记归档与目录改名、usage 数据迁移搬迁、退役 gitignore 规则处理、产物文档变更史措辞清理和体积测量。
+- WP6 收口完成：测试按被测模块命名并拆分 `test_repo_sync.py` / `test_task_start_flow.py`，新增 `factory_tests/integration/`；`docs_repo/` 改名 `factory_docs/`；两份已实施方案移入 `factory_docs/archive/`；`usage.md` 数据迁移章节迁入 `sync.md`；删除两条退役 gitignore 规则并由迁移清理/报告 archive 残留；产物文档去除“本轮/不再/退役”等变更史措辞。
 - 2026-11-10：实施审阅项 A1–A4、B1–B5、C1–C4、C5a 已实施；B6 关闭为“工厂只保证 migrate all → apply 路径正确，不规定消费仓铺开流程”；C5b 维持拒绝。
 - 消费仓迁移不在本文范围；由用户需要时自行执行，模板不规定铺开流程。
-- 2026-11-10：WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。
+- WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。
+- 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1571 passed, 1 skipped in 481.50s`。
