@@ -94,19 +94,3 @@ def _apply_agents_sectioned(src: Path, changed: set[Path], sync: ctx.SyncContext
         target.write_text(result, encoding="utf-8")
         changed.add(target)
     return True
-
-
-def _agents_parts(text: str, *, allow_extra: bool = False) -> dict[str, tuple[int, int, str]]:
-    """兼容旧调用：返回项目区/模板区偏移；新代码只应使用 agents_parts。"""
-    begin, end = _zone_bounds(text)
-    return {
-        "intro": (0, begin, text[:begin]),
-        "merge": (begin, end, text[begin:end]),
-        "force": (end, end, ""),
-    }
-
-
-def _replace_agents_force(src_text: str, dst_text: str) -> tuple[str, bool, bool, bool]:
-    """兼容旧调用，映射到两区替换；force 字段不再存在。"""
-    result, changed, project_diff = replace_template_zone(src_text, dst_text)
-    return result, changed, False, project_diff
