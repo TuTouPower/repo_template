@@ -460,14 +460,16 @@ tasks: [t001, t002]
 
 #### WP3.3 ADR 一条一文件
 
+本节文件名规则已被 reviews/review_20261110_203124/adoption_decision.md A11 发展：迁移产物统一为 `YYYYMMDD_<slug>.md` 单一语法，旧编号只保留在正文 H1，不进文件名。
+
 - 目录：`docs/blueprint/decisions/`。
-- 迁移生成的 ADR 文件名：`YYYYMMDD_NNN_<slug>.md`。`NNN` 来自旧 `## NNN`，保证唯一；没有 NNN 的条目停止并报告，不猜编号。
+- 迁移生成的 ADR 文件名：`YYYYMMDD_<slug>.md`，与新建 ADR 同一语法。同名冲突（同日期同 slug，含目标目录已存在文件）按新建 ADR 同规则追加 `_2`、`_3`…，按 NNN 升序确定性分配；分配在写入前完成。没有 NNN 的条目停止并报告，不猜编号。
 - 无编号条目的旧布局按停止处理：迁移不猜编号，也不把 H3 日期条目自动映射为 ADR；由用户补齐 NNN 后复跑。
 - 新建 ADR 文件名：`YYYYMMDD_<slug>.md`，与仓内 `YYYYMMDD` 惯例一致；slug 使用 snake_case。
-- 中文标题用 `_id_scan.slug_from_title()` 派生；结果为 `entry`、空或冲突时，新建 ADR 追加 `_2`，迁移 ADR 依赖 NNN 保证唯一。
-- 旧 `## NNN 标题（YYYY-MM-DD）` 的 NNN 保留在文件名、正文 H1 与可选 front matter `legacy_id`，不断引用。
+- 中文标题用 `_id_scan.slug_from_title()` 派生；结果为 `entry`、空或冲突时，新建与迁移 ADR 均追加 `_2`、`_3`…。NNN 仍用于 `supersedes` 解析（A3 保证唯一），不进文件名。
+- 旧 `## NNN 标题（YYYY-MM-DD）` 的 NNN 保留在正文 H1 与可选 front matter `legacy_id`，不断引用；不进文件名。
 - 每条 ADR 只含一个决策。front matter 只允许可选 `supersedes: [<filename>]`；ADR 是否被取代由其他文件的 `supersedes` 引用派生，不在旧文件写 `status: superseded`，也不改写旧文件。
-- 旧 `替代：NNN` 字段迁移为 `supersedes: [YYYYMMDD_NNN_<slug>.md]`；无则省略。无法解析的 NNN 停止并报告。
+- 旧 `替代：NNN` 字段迁移为 `supersedes: [YYYYMMDD_<slug>.md]`（被取代文件因同名冲突带 `_2` 后缀时指向带后缀的文件名）；无则省略。无法解析的 NNN 停止并报告。
 - 日期取标题中的 `YYYY-MM-DD`；没有日期时运行 `git log --reverse -S'## NNN' --format=%ad --date=short -- docs/blueprint/decisions.md` 取首次进入 Git 的日期。取不到时停止并要求人工填写，不用迁移日期冒充。
 - 迁移：
     - 读取现有 `docs/blueprint/decisions.md`，按围栏外的 `## NNN` 条目拆分。拆分识别围栏代码块（复用 `ctx.FENCE_RE`），代码块内的格式示例（如 `## NNN 标题（YYYY-MM-DD）`）不算条目；

@@ -156,3 +156,165 @@ def test_preface_report_says_content_is_removed_after_migration(consumer):
     assert "迁移后从仓库移除" in text
     assert "安全保留" not in text
     assert "迁移前言内容。" in text
+
+
+def test_duplicate_nnn_status_reports_and_migrate_fails_without_writes(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n\n"
+        "## 001 重复编号（2026-01-03）\n\n- 结论：B\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert any("编号 001 重复（第 3、7 行）" in item for item in status), status
+    assert any("拒绝迁移，请先改号" in item for item in status)
+    with pytest.raises(ctx.SyncError, match="编号 001 重复"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_duplicate_nnn_dry_run_reports_and_writes_nothing(consumer):
+    text = (
+        "# ADR\n\n## 044 方案甲（2026-01-02）\n\n- 结论：A\n\n"
+        "## 053 方案乙（2026-01-03）\n\n- 结论：B\n\n"
+        "## 044 方案丙（2026-01-04）\n\n- 结论：C\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="编号 044 重复（第 3、11 行）"):
+        migrate_adr(sync, write=False)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+TEMPLATE_ONLY_PREFACE = (
+    "# 决策记录（ADR）\n\n只记录已经确认、影响后续工作的非显然决策。\n"
+)
+
+
+def test_preface_only_status_reports_removal_and_migrate_deletes_file(consumer):
+    source = _write_decisions(consumer, TEMPLATE_ONLY_PREFACE)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert status[0] == "decisions.md 无条目，迁移将移除（前言见报告）", status
+    assert any("只记录已经确认" in item for item in status)
+    reports = migrate_adr(sync, write=True)
+    assert not source.exists()
+    assert not _decisions_dir(consumer).exists()
+    assert any("只记录已经确认" in item for item in reports)
+
+
+def test_preface_only_dry_run_writes_nothing(consumer):
+    source = _write_decisions(consumer, TEMPLATE_ONLY_PREFACE)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=False)
+    assert source.is_file()
+    assert not _decisions_dir(consumer).exists()
+    assert any("只记录已经确认" in item for item in reports)
+
+
+def test_preface_h3_stops_without_writes(consumer):
+    text = "# ADR\n\n### 前言小标题\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert any("第 3 行前言出现 H3+ 标题" in item for item in status), status
+    with pytest.raises(ctx.SyncError, match="第 3 行前言出现 H3\\+ 标题"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_preface_fenced_h3_does_not_stop(consumer):
+    text = (
+        "# ADR\n\n```markdown\n### 格式示例（不是条目）\n```\n\n"
+        "## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    assert len(list(_decisions_dir(consumer).glob("*.md"))) == 1
+    assert not source.exists()
+    assert reports
+
+
+def test_h3_inside_entry_body_does_not_stop(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n"
+        "### 实现细节\n\n- 结论：A\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = list(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 1
+    assert "### 实现细节" in files[0].read_text(encoding="utf-8")
+    assert not source.exists()
+    assert reports
+
+
+def test_migrated_filename_has_no_nnn_and_h1_keeps_nnn(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n\n"
+        "## 002 替代方案（2026-01-03）\n\n- 替代：001\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = sorted(path.name for path in _decisions_dir(consumer).glob("*.md"))
+    assert files == ["20260102_entry.md", "20260103_entry.md"]
+    first = (_decisions_dir(consumer) / "20260102_entry.md").read_text(encoding="utf-8")
+    assert first.startswith("# 001 采用方案（2026-01-02）")
+    second = (_decisions_dir(consumer) / "20260103_entry.md").read_text(encoding="utf-8")
+    assert "supersedes: [20260102_entry.md]" in second
+    assert not source.exists()
+    assert any("20260102_entry.md" in item for item in reports)
+
+
+def test_same_date_same_slug_gets_suffix_in_nnn_order(consumer):
+    text = (
+        "# ADR\n\n## 002 采用方案（2026-01-02）\n\n- 结论：B\n\n"
+        "## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_adr(sync, write=True)
+    files = sorted(path.name for path in _decisions_dir(consumer).glob("*.md"))
+    assert files == ["20260102_entry.md", "20260102_entry_2.md"]
+    assert "# 001 采用方案" in (_decisions_dir(consumer) / "20260102_entry.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# 002 采用方案" in (_decisions_dir(consumer) / "20260102_entry_2.md").read_text(
+        encoding="utf-8"
+    )
+    assert not source.exists()
+
+
+def test_supersedes_points_to_suffixed_filename(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n\n"
+        "## 002 采用方案（2026-01-02）\n\n- 结论：B\n\n"
+        "## 003 替代方案（2026-01-03）\n\n- 替代：002\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_adr(sync, write=True)
+    files = sorted(path.name for path in _decisions_dir(consumer).glob("*.md"))
+    assert files == ["20260102_entry.md", "20260102_entry_2.md", "20260103_entry.md"]
+    third = (_decisions_dir(consumer) / "20260103_entry.md").read_text(encoding="utf-8")
+    assert "supersedes: [20260102_entry_2.md]" in third
+    assert not source.exists()
+
+
+def test_conflict_with_existing_target_file_gets_suffix(consumer):
+    target = _decisions_dir(consumer)
+    target.mkdir(parents=True)
+    existing = target / "20260102_entry.md"
+    existing.write_text("# 000 已有文件\n", encoding="utf-8")
+    text = "# ADR\n\n## 001 采用方案（2026-01-02）\n\n- 结论：A\n"
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_adr(sync, write=True)
+    assert existing.read_text(encoding="utf-8") == "# 000 已有文件\n"
+    migrated = target / "20260102_entry_2.md"
+    assert migrated.is_file()
+    assert "# 001 采用方案" in migrated.read_text(encoding="utf-8")
+    assert not source.exists()

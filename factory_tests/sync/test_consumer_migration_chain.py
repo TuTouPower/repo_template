@@ -271,10 +271,10 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     assert not (consumer / "docs/archive/reviews").exists()
 
     decisions = sorted(path.name for path in (consumer / "docs/blueprint/decisions").glob("*.md"))
-    assert decisions == ["20260102_001_sqlite.md", "20260103_002_entry.md"]
+    assert decisions == ["20260102_sqlite.md", "20260103_entry.md"]
     assert not (consumer / "docs/blueprint/decisions.md").exists()
-    assert "supersedes: [20260102_001_sqlite.md]" in (
-        consumer / "docs/blueprint/decisions/20260103_002_entry.md"
+    assert "supersedes: [20260102_sqlite.md]" in (
+        consumer / "docs/blueprint/decisions/20260103_entry.md"
     ).read_text(encoding="utf-8")
 
     for relative in ("scripts", "hooks", "docs/task_template"):

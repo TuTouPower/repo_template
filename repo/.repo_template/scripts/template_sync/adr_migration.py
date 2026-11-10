@@ -14,6 +14,7 @@ from . import context as ctx
 SOURCE = "docs/blueprint/decisions.md"
 TARGET = "docs/blueprint/decisions"
 H2_RE = re.compile(r"^ {0,3}##(?!#)(?:[ \t]|$)")
+H3_RE = re.compile(r"^ {0,3}#{3,6}[ \t]")
 ENTRY_RE = re.compile(r"^ {0,3}##[ \t]+([0-9]+)[ \t]+(.+?)[ \t]*$")
 DATE_RE = re.compile(r"[（(](\d{4}-\d{2}-\d{2})[）)]\s*$")
 SUPERSEDES_RE = re.compile(r"^\s*[-*]?\s*替代\s*[:：]\s*([0-9]+)\s*$", re.MULTILINE)
@@ -25,6 +26,8 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
     entries: list[dict] = []
     current = None
     preface: list[str] = []
+    first_seen: dict[str, int] = {}
+    duplicate: tuple[str, int, int] | None = None
     for lineno, line in enumerate(lines, 1):
         if fence.feed(line):
             if current:
@@ -34,14 +37,24 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
             continue
         match = ENTRY_RE.match(line)
         if match:
+            nnn = match.group(1)
+            if duplicate is None:
+                if nnn in first_seen:
+                    duplicate = (nnn, first_seen[nnn], lineno)
+                else:
+                    first_seen[nnn] = lineno
             if current:
                 entries.append(current)
-            current = {"nnn": match.group(1), "title": match.group(2), "lines": [line]}
+            current = {"nnn": nnn, "title": match.group(2), "lines": [line]}
             continue
         if H2_RE.match(line):
             raise ctx.SyncError(
                 f"{SOURCE} 第 {lineno} 行围栏外 H2 不是 `## NNN 标题`：{line.strip()}；"
                 "拒绝迁移，请先补编号或移除该标题"
+            )
+        if current is None and H3_RE.match(line):
+            raise ctx.SyncError(
+                f"第 {lineno} 行前言出现 H3+ 标题，ADR 条目须为 `## NNN 标题`"
             )
         if current:
             current["lines"].append(line)
@@ -49,8 +62,11 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
             preface.append(line)
     if current:
         entries.append(current)
-    if not entries:
-        raise ctx.SyncError(f"{SOURCE} 未找到任何 ## NNN 条目")
+    if duplicate is not None:
+        nnn, first, second = duplicate
+        raise ctx.SyncError(
+            f"decisions.md 编号 {nnn} 重复（第 {first}、{second} 行）；拒绝迁移，请先改号"
+        )
     return entries, preface
 
 
@@ -79,7 +95,30 @@ def _slug(title: str) -> str:
 
 
 def _filename(entry: dict, date: str) -> str:
-    return f"{date.replace('-', '')}_{entry['nnn']}_{_slug(entry['title'])}.md"
+    return f"{date.replace('-', '')}_{_slug(entry['title'])}.md"
+
+
+def _allocate_filenames(sync: ctx.SyncContext, dated: list[tuple[dict, str]]) -> dict[str, str]:
+    """按 NNN 升序为每条迁移 ADR 分配最终文件名。
+
+    同名冲突（同日期同 slug，含目标目录已存在文件）追加 `_2`、`_3`…；
+    分配在写入前完成，无法分配时抛错、零写入。
+    """
+    target = sync.consumer / TARGET
+    used = {path.name for path in target.iterdir()} if target.is_dir() else set()
+    allocated: dict[str, str] = {}
+    for entry, date in sorted(dated, key=lambda item: int(item[0]["nnn"])):
+        base = _filename(entry, date)[: -len(".md")]
+        candidate = f"{base}.md"
+        suffix = 2
+        while candidate in used:
+            if suffix > 10000:
+                raise ctx.SyncError(f"ADR {entry['nnn']} 文件名冲突无法分配：{base}.md 已有过多同名文件")
+            candidate = f"{base}_{suffix}.md"
+            suffix += 1
+        used.add(candidate)
+        allocated[entry["nnn"]] = candidate
+    return allocated
 
 
 def adr_migration_status(sync: ctx.SyncContext) -> list[str]:
@@ -90,6 +129,8 @@ def adr_migration_status(sync: ctx.SyncContext) -> list[str]:
         entries, preface = _entries(source.read_text(encoding="utf-8"))
     except ctx.SyncError as error:
         return [str(error)]
+    if not entries:
+        return ["decisions.md 无条目，迁移将移除（前言见报告）", *_preface_report(preface)]
     return [f"{SOURCE} -> {TARGET}（{len(entries)} 条）", *_preface_report(preface)]
 
 
@@ -98,11 +139,20 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     if not source.is_file():
         return []
     entries, preface = _entries(source.read_text(encoding="utf-8"))
-    prepared = []
+    if not entries:
+        reports = _preface_report(preface)
+        if write:
+            source.unlink()
+        return reports
+    dated = []
     for entry in entries:
         date_match = DATE_RE.search(entry["title"])
         date = date_match.group(1) if date_match else _date_from_git(sync.consumer, entry["nnn"])
-        filename = _filename(entry, date)
+        dated.append((entry, date))
+    filenames = _allocate_filenames(sync, dated)
+    prepared = []
+    for entry, date in dated:
+        filename = filenames[entry["nnn"]]
         body = "\n".join(entry["lines"])
         heading = f"## {entry['nnn']} {entry['title']}"
         if heading in body:
