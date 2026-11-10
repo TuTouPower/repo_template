@@ -762,3 +762,4 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 - 已实现 state-root、agents-zones、specs-layout、reviews、adr 迁移器、隐私 rename-aware、review 数量 hook、spec 读取与 bootstrap/healthcheck。
 - 2026-11-10：实施审阅项 A1–A4、B1–B5、C1–C4、C5a 已实施；B6 关闭为“工厂只保证 migrate all → apply 路径正确，不规定消费仓铺开流程”；C5b 维持拒绝。
 - 消费仓迁移不在本文范围；由用户需要时自行执行，模板不规定铺开流程。
+- 2026-11-10：WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。

@@ -105,28 +105,7 @@ review 指纹绑定实际交付内容（包含当前 task 的 spec、新文件�
 
 ## 数据迁移
 
-消费仓旧布局或旧 schema 升级须通过显式迁移命令完成，日常 `apply` 遇到旧 schema 会直接阻断并拒绝写入。
-
-- **实体存储一次性迁移**：从固定来源 product 运行**来源脚本**并指定 `--consumer`/`--source`/`--checkout` 固定 pin，默认 dry-run、`--write` 落盘：
-    `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate entity-storage --write`。
-    针对历史消费仓将 task/pending/spike 搬迁至 `docs/archive/`、存在 `docs/archive/tasks_audit.log` 或 `docs/archive/handoff.md` 的历史布局，执行一次性实体存储迁移：
-    - `docs/archive/tasks/tNNN_slug/` -> `docs/tasks/tNNN_slug/`（恢复原位流转，校验状态字段为 done/dropped；迁移不复验 handoff/实现血缘，使用时由业务门禁核验）；
-    - `docs/pending/todo/`、`docs/pending/parked/` 与 `docs/archive/pending/` -> `docs/pending/`（原位表达 todo/parked/closed，保留 resolution/reason/fix_ref；声明身份与文件名不符即阻断）；
-    - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（恢复原位流转，校验报告与 findings 闭环证据）；
-    - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（保持原始字节；目标已存在即阻断）；随后 state-root 迁移再迁入 Git common dir；
-    - `docs/archive/handoff.md` -> 确认内容已完整进入 Git 历史后退役移除；
-    - 清理空旧目录（含仅剩占位文件的旧目录）并更新维护文档中确定引用。
-        同时转换仅有旧 active spike 的仓库；归档与当前 task 均验证 tid/slug 与目录一致、全状态编号唯一。缺 progress.md 先执行 workflow-schema；全部目标实体通过正式模型校验后才建立 schema 标记。
-        默认 dry-run 拟定计划；加 `--write` 在持久文件事务中落盘，失败回滚本项。`migrate all` 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。迁移预检发现旧 `.scratch/repo_sync_rollback` 为未结束状态或记录损坏时，在任何写入前停止并提示先用升级前脚本 accept/rollback；新 transaction 只读 Git common 目录。日常 `repo_sync.py apply` 检测到旧实体存储布局时会阻断并要求先执行该迁移。规程见 `sync.md`。
-- **state-root 迁移**：`repo_sync.py migrate state-root --write` 把 `docs/runtime/`、`.repo_template/sync_state.json`、`.scratch` 事务目录与旧状态行迁入 `$GIT_COMMON_DIR/repo_template/`；清理 `docs/runtime/dispatch_ledger.lock`，旧状态行从 `.scratch/statusline_workdir.jsonl` 或 `docs/runtime/statusline_workdir.jsonl` 择一迁移，两处并存或 `docs/runtime` 有未知残留时停止；要求无登记 worktree，复制或恢复失败按项回滚（清理残缺目标、恢复源文件、保留备份），恢复未完成时报告人工处理。entity-storage 之后执行。
-- **所有权与 spec 文稿迁移**：`agents-zones` 拆 AGENTS 两区，历史模板基线从 `sync_manifest.resolved_commit` 回退 `sync_state.last_synced_commit`，再用来源仓 `git show` 读取，取不到即停止；`specs-layout` 把 archive specs 迁回 `docs/specs`、写 front matter 并删除旧 `docs/specs_index.md`（清单改由 front matter 派生），写入前校验全部 slug、front matter 与同名冲突；`reviews` 合并 archive 后以最近 5 个为上限，被 task/blueprint/handoff 引用的旧目录保留并报告，dry-run 列出将删除的 `_meta/` 与未跟踪文件，已跟踪旧 review 内存在非 `_meta` 未跟踪内容时写入前停止，未跟踪目录不删除；`adr` 把 `decisions.md` 拆成一条一文件，围栏外非 `## NNN` 的 H2（含前言）一律停止并报告。四项均在持久文件事务内执行，默认 dry-run 零写入，`--write` 落盘且不修改 Git index。
-- **其他历史迁移**（逐项事务，已完成步骤保留；`migrate all` 失败仅阻断当前类型，不整体回滚已完成步骤）：
-    - `workflow schema` 迁移（`repo_sync.py migrate all` 或单项 `workflow-schema`）：将旧格式 task/note 转换为当前 `task.md` 与 `progress.md`，详见 `sync.md`；
-    - `legacy-state` 迁移（来源 product 脚本 `repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate legacy-state --write`）：将旧版 state 迁至 `$GIT_COMMON_DIR/repo_template/sync_state.json`（旧消费仓本地脚本缺 migrate 子命令，不得用本地路径）；
-    - `pending / findings` 单文件总账迁移：旧版 `docs/pending.md` / `docs/findings.md` 不参与运行期解析，须先显式拆分，之后执行 entity-storage 完成目标模型验收。先备份，再执行来源仓脚本的显式迁移子命令（默认 dry-run 拟定，`--write` 落盘）：
-        `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate pending-ledger --write` 与
-        `python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> migrate findings-ledger --write`。
-        核对拆分条目编号与正文无遗漏；entity-storage 验收 task/pending/spike 身份与状态后写入 `.repo_template/entity_schema.json`。提交一致版本后才能继续分配。仅声明当前协议的分支/worktree 参与取号；旧来源保留为历史，不参与运行集合，也不得直接 integrate。合并边界仍检查目标协议与编号唯一性，不能仅复制 schema 标记代替迁移。
+消费仓旧布局与旧 schema 升级、各类型迁移命令及维护窗口规程统一见 [sync.md](sync.md)「数据迁移」。
 
 Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-only`，最低要求 Git 2.38；工具会在执行 `git merge --no-commit` 前检查，版本不足时不会留下 pending merge。
 
