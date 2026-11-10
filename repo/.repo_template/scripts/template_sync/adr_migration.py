@@ -14,6 +14,7 @@ from . import context as ctx
 SOURCE = "docs/blueprint/decisions.md"
 TARGET = "docs/blueprint/decisions"
 H2_RE = re.compile(r"^ {0,3}##(?!#)(?:[ \t]|$)")
+H3_RE = re.compile(r"^ {0,3}#{3,6}[ \t]")
 ENTRY_RE = re.compile(r"^ {0,3}##[ \t]+([0-9]+)[ \t]+(.+?)[ \t]*$")
 DATE_RE = re.compile(r"[（(](\d{4}-\d{2}-\d{2})[）)]\s*$")
 SUPERSEDES_RE = re.compile(r"^\s*[-*]?\s*替代\s*[:：]\s*([0-9]+)\s*$", re.MULTILINE)
@@ -51,6 +52,10 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
                 f"{SOURCE} 第 {lineno} 行围栏外 H2 不是 `## NNN 标题`：{line.strip()}；"
                 "拒绝迁移，请先补编号或移除该标题"
             )
+        if current is None and H3_RE.match(line):
+            raise ctx.SyncError(
+                f"第 {lineno} 行前言出现 H3+ 标题，ADR 条目须为 `## NNN 标题`"
+            )
         if current:
             current["lines"].append(line)
         else:
@@ -62,8 +67,6 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
         raise ctx.SyncError(
             f"decisions.md 编号 {nnn} 重复（第 {first}、{second} 行）；拒绝迁移，请先改号"
         )
-    if not entries:
-        raise ctx.SyncError(f"{SOURCE} 未找到任何 ## NNN 条目")
     return entries, preface
 
 
@@ -103,6 +106,8 @@ def adr_migration_status(sync: ctx.SyncContext) -> list[str]:
         entries, preface = _entries(source.read_text(encoding="utf-8"))
     except ctx.SyncError as error:
         return [str(error)]
+    if not entries:
+        return ["decisions.md 无条目，迁移将移除（前言见报告）", *_preface_report(preface)]
     return [f"{SOURCE} -> {TARGET}（{len(entries)} 条）", *_preface_report(preface)]
 
 
@@ -111,6 +116,11 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     if not source.is_file():
         return []
     entries, preface = _entries(source.read_text(encoding="utf-8"))
+    if not entries:
+        reports = _preface_report(preface)
+        if write:
+            source.unlink()
+        return reports
     prepared = []
     for entry in entries:
         date_match = DATE_RE.search(entry["title"])
