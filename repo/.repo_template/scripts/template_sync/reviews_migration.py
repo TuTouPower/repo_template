@@ -33,19 +33,25 @@ def _validate_dates(sync: ctx.SyncContext, paths: list[Path]) -> None:
         )
 
 
-def _referenced(root: Path, directory: str) -> list[str]:
-    refs = []
+def _reference_hits(root: Path, directory: str) -> list[tuple[str, str]]:
+    hits: list[tuple[str, str]] = []
     for rel in ("docs/tasks", "docs/blueprint", "docs/handoff.md"):
         base = root / rel
         files = [base] if base.is_file() else (base.rglob("*") if base.is_dir() else [])
         for path in files:
             if path.is_file():
                 try:
-                    if directory in path.read_text(encoding="utf-8"):
-                        refs.append(path.relative_to(root).as_posix())
+                    text = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeError):
                     continue
-    return refs
+                for line in text.splitlines():
+                    if directory in line:
+                        hits.append((path.relative_to(root).as_posix(), line.strip()))
+    return hits
+
+
+def _referenced(root: Path, directory: str) -> list[str]:
+    return list(dict.fromkeys(rel for rel, _line in _reference_hits(root, directory)))
 
 
 def _git_paths(root: Path, *args: str) -> list[str]:
@@ -117,19 +123,32 @@ def migrate_reviews(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     archive_dir = sync.consumer / ARCHIVE
     deletions: list[tuple[Path, bool, list[str], list[str], str]] = []
     untracked_blockers: list[str] = []
+    meta_ref_blockers: list[str] = []
     for path in ordered[5:]:
         rel = path.relative_to(sync.consumer).as_posix()
         refs = _referenced(sync.consumer, rel)
-        # archive 内被保留（引用/未跟踪）的 review 仍可能带 _meta 过程目录；
-        # 归档区不再承载过程文件，写入时清掉并在 dry-run 报告，避免成为未跟踪噪音。
-        retained_meta = _meta_report(sync.consumer, path) if path.parent == archive_dir else []
+        meta_refs = [
+            (source, line) for source, line in _reference_hits(sync.consumer, rel)
+            if f"{rel}/_meta" in line
+        ]
+        if meta_refs:
+            meta_ref_blockers.extend(
+                f"{rel}/_meta 被引用：{source}（{line}）" for source, line in meta_refs
+            )
+            continue
+        # archive 内被保留且引用报告正文的 review 可清理 _meta；
+        # 未跟踪 review 整体跳过，不能删除其中任何内容。
+        retained_meta = (
+            _meta_report(sync.consumer, path)
+            if path.parent == archive_dir and refs else []
+        )
         if refs:
             deletions.append(
                 (path, False, retained_meta, [], f"保留被引用 review：{rel}（{', '.join(refs)}）")
             )
             continue
         if not _tracked(sync.consumer, rel):
-            deletions.append((path, False, retained_meta, [], f"跳过未跟踪 review：{rel}"))
+            deletions.append((path, False, [], [], f"跳过未跟踪 review：{rel}"))
             continue
         meta_reports, untracked = _deletion_content(sync.consumer, path)
         untracked_blockers.extend(untracked)
@@ -144,6 +163,11 @@ def migrate_reviews(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
         reports.extend(meta_reports)
         reports.extend(f"未跟踪文件（写入将停止）：{item}" for item in untracked)
 
+    if meta_ref_blockers:
+        raise ctx.SyncError(
+            "review 的 _meta 被引用，停止迁移（未删除任何内容）：\n- "
+            + "\n- ".join(meta_ref_blockers)
+        )
     if write and untracked_blockers:
         raise ctx.SyncError(
             "review 删除前发现未跟踪文件，停止迁移（未删除任何 review 目录）：\n- "
