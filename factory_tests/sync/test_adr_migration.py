@@ -335,3 +335,14 @@ def test_conflict_with_existing_target_file_gets_suffix(consumer):
     assert migrated.is_file()
     assert "# 001 采用方案" in migrated.read_text(encoding="utf-8")
     assert not source.exists()
+
+
+def test_entry_h2_with_extra_spaces_still_gets_canonical_h1(consumer):
+    text = "# ADR\n\n##  001  采用方案（2026-01-02）\n\n- 结论：A\n"
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_adr(sync, write=True)
+    files = list(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 1
+    assert files[0].read_text(encoding="utf-8").startswith("# 001 采用方案（2026-01-02）")
+    assert not source.exists()

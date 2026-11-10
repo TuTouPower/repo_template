@@ -55,7 +55,7 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
                     first_seen[nnn] = lineno
             if current:
                 entries.append(current)
-            current = {"nnn": nnn, "title": title_match.group(2), "lines": [line]}
+            current = {"nnn": nnn, "title": title_match.group(2), "lines": [f"# {nnn} {title_match.group(2)}"]}
             continue
         if current is None and level is not None and level >= 3:
             raise ctx.SyncError(
@@ -156,9 +156,6 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     for entry, date in dated:
         filename = filenames[entry["nnn"]]
         body = "\n".join(entry["lines"])
-        heading = f"## {entry['nnn']} {entry['title']}"
-        if heading in body:
-            body = body.replace(heading, f"# {entry['nnn']} {entry['title']}", 1)
         prepared.append((entry, filename, body))
     by_nnn = {entry["nnn"]: filename for entry, filename, _body in prepared}
     fronts: dict[str, list[str]] = {}
