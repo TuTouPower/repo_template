@@ -30,7 +30,7 @@
 
 ## 开发原则
 
-- specs driven：需求拆分为可独立验证的 task，填写 `task.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions/<日期>_<slug>.md`。
+- specs driven：需求拆分为可独立验证的 task，填写 `task.md`（契约区行为 AC 须非空）；版本号、底层库选型、目录结构不写进行为 AC，需要长期约束的写 `docs/blueprint/decisions/YYYYMMDD_<slug>.md`。
 - TDD：可测部分先红后绿；测试须触达生产逻辑。实现变更让旧测试语义失效时，新增覆盖新语义的测试；旧测试原样保留或整体删除并写明理由，**禁止就地把旧测试的预期改成当前实现的输出**。
 - 用户未明确要求修改，且当前任务不在获准写入的 skill 流程中时，禁止修改未被 gitignore 的代码文件。
 - task 状态以 `task.py effective-status` 为准；进行中 task 的状态在其合并前不进主干，细则见 `.repo_template/docs/usage.md`「task 状态读取」。
