@@ -14,10 +14,8 @@ __pycache__/
 !.env.example
 # 多路 review 会话的过程文件（报告 review_*.md 本身入库）
 docs/reviews/review_*/_meta/
-docs/archive/reviews/review_*/_meta/
 # CommandCode local runtime state
 .commandcode/
 # 派生 task 索引不再入库（task 文件是唯一权威）
 docs/tasks_index.json
-docs/archive/tasks_index.json
 # repo-template:end
