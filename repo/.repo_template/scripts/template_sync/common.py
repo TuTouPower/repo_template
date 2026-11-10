@@ -7,10 +7,50 @@ import subprocess
 from functools import wraps
 from pathlib import Path
 
-from repo_task.file_transaction import SYNC_TRANSACTION_DIR, FileTransaction, state_transaction
+from repo_task.file_transaction import (
+    FINISHED_STATUSES,
+    OPEN_STATUSES,
+    SYNC_TRANSACTION_DIR,
+    FileTransaction,
+    state_transaction,
+)
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 
 from . import context as ctx
+
+LEGACY_SYNC_TRANSACTION_DIR = ".scratch/repo_sync_rollback"
+
+
+def _legacy_transaction_hint(detail: str) -> str:
+    return (
+        f"{detail}；新 transaction 只读 Git common 目录，看不到 {LEGACY_SYNC_TRANSACTION_DIR}。"
+        "请先用升级前的消费仓脚本（旧版 repo_sync.py）执行 `transaction accept` 或 "
+        "`transaction rollback`（现场变化时 rollback 需加 --confirm-restore），"
+        "或人工核对该目录后再迁移；未自动 accept/rollback"
+    )
+
+
+def open_legacy_sync_transaction(sync: ctx.SyncContext) -> str | None:
+    """旧 ``.scratch`` 同步事务未结束或记录损坏时返回阻断说明；否则 None。"""
+    journal = sync.consumer / LEGACY_SYNC_TRANSACTION_DIR / "transaction.json"
+    if not journal.is_file():
+        return None
+    try:
+        data = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return _legacy_transaction_hint(
+            f"旧同步事务记录损坏：{LEGACY_SYNC_TRANSACTION_DIR}/transaction.json 无法读取"
+        )
+    status = data.get("status") if isinstance(data, dict) else None
+    if status in FINISHED_STATUSES:
+        return None
+    if status in OPEN_STATUSES:
+        return _legacy_transaction_hint(
+            f"旧同步事务未结束：{LEGACY_SYNC_TRANSACTION_DIR} 状态为 {status}"
+        )
+    return _legacy_transaction_hint(
+        f"旧同步事务记录非法：{LEGACY_SYNC_TRANSACTION_DIR}/transaction.json 状态为 {status!r}"
+    )
 
 
 def migration_transaction(sync: ctx.SyncContext) -> FileTransaction:
@@ -19,10 +59,14 @@ def migration_transaction(sync: ctx.SyncContext) -> FileTransaction:
     entity-storage 等步骤先于 state-root 执行。若此时直接写 common dir 的
     ``sync_transaction``，state-root 搬 ``.scratch/repo_sync_rollback`` 时会与
     已有目录冲突；旧目录存在时沿用它，由 state-root 统一迁入 common dir。
+    旧目录内事务未结束时立即停止：新 transaction 看不到该目录，不能静默接管。
     """
-    legacy = sync.consumer / ".scratch" / "repo_sync_rollback"
+    blocker = open_legacy_sync_transaction(sync)
+    if blocker:
+        raise ctx.SyncError(blocker)
+    legacy = sync.consumer / LEGACY_SYNC_TRANSACTION_DIR
     if legacy.exists():
-        return FileTransaction(sync.consumer, ".scratch/repo_sync_rollback")
+        return FileTransaction(sync.consumer, LEGACY_SYNC_TRANSACTION_DIR)
     return state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
 
 

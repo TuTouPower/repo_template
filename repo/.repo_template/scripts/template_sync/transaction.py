@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction, fingerprint
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.validation import ValidationError, load_policy
 
 from . import context as ctx
-from .common import _git
+from .common import _git, open_legacy_sync_transaction
 from .gates import _run_tests
 
 
@@ -20,6 +21,9 @@ def cmd_transaction(args):
         try:
             if args.action == "status":
                 print(json.dumps(transaction.read(), ensure_ascii=False, indent=2))
+                legacy_blocker = open_legacy_sync_transaction(sync)
+                if legacy_blocker:
+                    print(f"注意：{legacy_blocker}", file=sys.stderr)
             elif args.action == "rollback":
                 transaction.rollback(confirm_restore=args.confirm_restore)
                 print("同步事务已回滚；备份保留")

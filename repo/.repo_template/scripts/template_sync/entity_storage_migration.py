@@ -51,7 +51,7 @@ from repo_task.spikes import (
 )
 
 from . import context as ctx
-from .common import _git, migration_transaction
+from .common import _git, migration_transaction, open_legacy_sync_transaction
 
 _IGNORED_NAMES = frozenset({".DS_Store", ".gitkeep", ".git"})
 _CLEANABLE_NAMES = frozenset({".DS_Store", ".gitkeep"})
@@ -952,6 +952,9 @@ def migrate_entity_storage(
     consumer = sync.consumer
 
     with git_common_lock(consumer, CONTROL_LOCK_NAME):
+        legacy_blocker = open_legacy_sync_transaction(sync)
+        if legacy_blocker:
+            raise MigrationError(legacy_blocker)
         # 先判空：无迁移需求时直接返回，不检查工作区（migrate all 前序步骤落盘后
         # 工作区已脏，若 entity 步进门先查干净会必然误报）。
         problems = entity_storage_migration_status(sync=sync)
