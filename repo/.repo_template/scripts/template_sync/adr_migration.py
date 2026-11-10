@@ -95,7 +95,30 @@ def _slug(title: str) -> str:
 
 
 def _filename(entry: dict, date: str) -> str:
-    return f"{date.replace('-', '')}_{entry['nnn']}_{_slug(entry['title'])}.md"
+    return f"{date.replace('-', '')}_{_slug(entry['title'])}.md"
+
+
+def _allocate_filenames(sync: ctx.SyncContext, dated: list[tuple[dict, str]]) -> dict[str, str]:
+    """按 NNN 升序为每条迁移 ADR 分配最终文件名。
+
+    同名冲突（同日期同 slug，含目标目录已存在文件）追加 `_2`、`_3`…；
+    分配在写入前完成，无法分配时抛错、零写入。
+    """
+    target = sync.consumer / TARGET
+    used = {path.name for path in target.iterdir()} if target.is_dir() else set()
+    allocated: dict[str, str] = {}
+    for entry, date in sorted(dated, key=lambda item: int(item[0]["nnn"])):
+        base = _filename(entry, date)[: -len(".md")]
+        candidate = f"{base}.md"
+        suffix = 2
+        while candidate in used:
+            if suffix > 10000:
+                raise ctx.SyncError(f"ADR {entry['nnn']} 文件名冲突无法分配：{base}.md 已有过多同名文件")
+            candidate = f"{base}_{suffix}.md"
+            suffix += 1
+        used.add(candidate)
+        allocated[entry["nnn"]] = candidate
+    return allocated
 
 
 def adr_migration_status(sync: ctx.SyncContext) -> list[str]:
@@ -121,11 +144,15 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
         if write:
             source.unlink()
         return reports
-    prepared = []
+    dated = []
     for entry in entries:
         date_match = DATE_RE.search(entry["title"])
         date = date_match.group(1) if date_match else _date_from_git(sync.consumer, entry["nnn"])
-        filename = _filename(entry, date)
+        dated.append((entry, date))
+    filenames = _allocate_filenames(sync, dated)
+    prepared = []
+    for entry, date in dated:
+        filename = filenames[entry["nnn"]]
         body = "\n".join(entry["lines"])
         heading = f"## {entry['nnn']} {entry['title']}"
         if heading in body:

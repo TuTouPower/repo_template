@@ -145,8 +145,8 @@ def test_adr_migration_one_file_per_decision(consumer):
     migrate_adr(sync, write=True)
     files = sorted((consumer / "docs/blueprint/decisions").glob("*.md"))
     assert [item.name for item in files] == [
-        "20260102_001_1.md", "20260103_002_2.md",
-    ] or len(files) == 2
+        "20260102_entry.md", "20260103_entry.md",
+    ]
     assert not path.exists()
 
 
