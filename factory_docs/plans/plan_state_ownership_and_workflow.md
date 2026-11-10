@@ -763,4 +763,5 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 - 2026-11-10：实施审阅项 A1–A4、B1–B5、C1–C4、C5a 已实施；B6 关闭为“工厂只保证 migrate all → apply 路径正确，不规定消费仓铺开流程”；C5b 维持拒绝。
 - 消费仓迁移不在本文范围；由用户需要时自行执行，模板不规定铺开流程。
 - WP6 文档收敛后测量 `repo/.repo_template/docs/usage.md` 23760 字节、`repo/.repo_template/docs/architecture.md` 15170 字节；`md_format --check` 通过。
-- 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1571 passed, 1 skipped in 481.50s`。
+- `f78b281` / `57f972e`：修复 reviews 迁移 `_meta` 清理边界（未跟踪 review 保留内容；引用落入 `_meta` 时 fail-closed）。
+- 最终工厂全量：`pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"` → `1572 passed, 1 skipped`。

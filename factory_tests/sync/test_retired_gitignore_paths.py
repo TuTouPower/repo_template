@@ -124,7 +124,7 @@ def test_reviews_migration_cleans_meta_on_referenced_archive_review(tmp_path: Pa
     assert _untracked_meta(root) == []
 
 
-def test_reviews_migration_cleans_meta_on_untracked_archive_review(tmp_path: Path) -> None:
+def test_reviews_migration_keeps_meta_on_untracked_archive_review(tmp_path: Path) -> None:
     root = _init_consumer(tmp_path)
     for index in range(2, 7):
         _write_review(root, f"review_2026010{index}_120000", with_meta=False)
