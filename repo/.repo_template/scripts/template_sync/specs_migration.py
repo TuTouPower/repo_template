@@ -67,8 +67,7 @@ def _validate_before_write(sync: ctx.SyncContext, index: dict[str, list[str]]) -
 
 def migrate_specs_layout(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     index = _index_map(sync)
-    if write:
-        _validate_before_write(sync, index)
+    _validate_before_write(sync, index)
     reports: list[str] = []
     moves: list[tuple[Path, Path]] = []
     archive = sync.consumer / ARCHIVE_DIR

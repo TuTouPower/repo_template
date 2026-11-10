@@ -11,14 +11,32 @@ from . import context as ctx
 from .state import read_state
 
 
+def _hook_file_has(path: Path, needle: str) -> bool:
+    return path.is_file() and needle in path.read_text(encoding="utf-8")
+
+
 def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
-    husky = sync.consumer / ".husky/pre-commit"
-    if husky.is_file() and ".repo_template/hooks/pre-commit" in husky.read_text(encoding="utf-8"):
-        return None
+    husky_pre = sync.consumer / ".husky/pre-commit"
+    husky_msg = sync.consumer / ".husky/commit-msg"
+    husky_ok = _hook_file_has(husky_pre, ".repo_template/hooks/pre-commit") and _hook_file_has(
+        husky_msg, ".repo_template/hooks/commit-msg"
+    )
     lefthook = sync.consumer / "lefthook.yml"
-    if lefthook.is_file() and ".repo_template/hooks/pre-commit" in lefthook.read_text(encoding="utf-8"):
+    lefthook_text = lefthook.read_text(encoding="utf-8") if lefthook.is_file() else ""
+    lefthook_ok = (
+        ".repo_template/hooks/pre-commit" in lefthook_text
+        and ".repo_template/hooks/commit-msg" in lefthook_text
+    )
+    if husky_ok or lefthook_ok:
         return None
-    return "hooks 未接入：在 .husky/pre-commit 或 lefthook.yml 调用 python3 .repo_template/hooks/pre-commit"
+    missing = []
+    if not _hook_file_has(husky_pre, ".repo_template/hooks/pre-commit"):
+        missing.append(".husky/pre-commit")
+    if not _hook_file_has(husky_msg, ".repo_template/hooks/commit-msg"):
+        missing.append(".husky/commit-msg")
+    if not lefthook_ok:
+        missing.append("lefthook.yml（pre-commit 与 commit-msg）")
+    return "hooks 未接入：缺少 " + "、".join(missing) + "；在项目 hook 中调用模板 pre-commit 与 commit-msg"
 
 
 def run_healthcheck(sync: ctx.SyncContext) -> list[str]:
