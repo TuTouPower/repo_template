@@ -8,6 +8,14 @@
 
 `.gitignore` 使用 `# repo-template:begin` / `# repo-template:end` 托管块：`apply` 整块替换块内模板规则，块外消费仓规则保留；缺托管块时在文件末尾补建，原规则不删除。
 
+## 数据迁移
+
+消费仓旧布局或旧 schema 升级须通过显式迁移命令完成；日常 `apply` 遇到旧布局/旧 schema 会直接阻断并拒绝写入。迁移从固定来源 product 运行**来源脚本**并指定 `--consumer`/`--source`/`--checkout` 固定 pin，默认 dry-run，`--write` 落盘：
+
+`python3 <product>/.repo_template/scripts/repo_sync.py --consumer <消费仓路径> --source <来源身份> --checkout <product> migrate <类型> --write`
+
+单次单项迁移在持久文件事务内执行，失败只回滚本项；`migrate all` 按 `workflow-schema → pending/findings → entity-storage → state-root → conventions → agents-zones → specs-layout → reviews → adr → retired-hooks` 固定顺序逐项提交，已完成步骤保留，失败仅阻断当前类型。`--write` 落盘，不修改 Git index。各类型要求见下文。
+
 ## entity-storage 一次性实体存储迁移
 
 日常 `apply` 遇到旧实体存储布局时会先阻断，并提示从固定来源 product 运行**来源脚本**（带 `--consumer`/`--source`/`--checkout` 固定 pin）执行 `migrate entity-storage --write`。该一次性迁移把历史归档收敛至固定规范路径契约：
@@ -18,9 +26,11 @@
 - `docs/archive/pending/pNNN.md` -> `docs/pending/pNNN.md`（status: closed，保留 resolution 与 reason）；
 - `docs/archive/spikes/sNNN/` -> `docs/spikes/sNNN/`（status: completed，校验报告与 findings 闭环证据）；
 - `docs/archive/tasks_audit.log` -> `docs/runtime/tasks_audit.log`（无损保持原始字节，state-root 再迁入 Git common dir）；
-- `docs/archive/handoff.md` -> 确认内容已完整入库 Git 历史后退役移除；
+- `docs/archive/handoff.md` -> 内容已完整入库 Git 历史后移除；
 - 删除已废弃派生索引 `docs/tasks_index.json` / `docs/archive/tasks_index.json`（旧仓已跟踪文件不受 `.gitignore` 影响）；
 - 清理遗留空旧目录（含仅剩 `.gitkeep` / `.DS_Store` 占位文件的旧目录亦列为待清理并移除占位文件），并更新维护文档中的确定引用。
+
+迁移同时转换仅有旧 active spike 的仓库；归档与当前 task 均校验 tid/slug 与目录一致、全状态编号唯一。
 
 ### 迁移维护窗口与规程
 
@@ -40,13 +50,13 @@
 
 ## workflow schema 强制迁移
 
-日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、AGENTS 无两区标记、退役 hook 残留、旧实体存储布局时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。旧布局 state（`legacy-state`）由 `status`/`plan`/`apply`/`link-skills` 入口直接阻断，不在「迁移待办」中展示。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（workflow-schema、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks、entity-storage、state-root 等），并给出带 `--consumer`/`--source`/`--checkout` 固定 pin 的可直接执行迁移命令，避免 plan 显示一致但 apply 阻断。
+日常 `apply` 只接受当前 schema：检测到旧 task 布局、旧 conventions 写法、旧 specs_index 布局、AGENTS 无两区标记、模板已废弃 hook 残留、旧实体存储布局时阻断，并提示 `repo_sync.py migrate all`（或按类型单项迁移）。旧布局 state（`legacy-state`）由 `status`/`plan`/`apply`/`link-skills` 入口直接阻断，不在「迁移待办」中展示。`status` / `plan` 的「迁移待办」段落列出与 `apply` / `migrate` 完全相同的可处理集合（workflow-schema、conventions、agents-zones、specs-layout、reviews、adr、retired-hooks、entity-storage、state-root 等），并给出带 `--consumer`/`--source`/`--checkout` 固定 pin 的可直接执行迁移命令，避免 plan 显示一致但 apply 阻断。
 
 显式迁移把主仓 `docs/tasks/` 下的 task 文档迁移为 `task.md`（需求规格）与 `progress.md`（进展），保留实施记录和 review 处置，更新模板规范块、旧 `status: blocked` 与轮次上限字段。最早布局 `spec.md`（规格）+ `task.md`（过程总账），中间布局 `task.md`（规格）+ `note.md`（过程总账），均一次迁移；`note.md` 与 `progress.md` 并存时整批拒绝迁移，不合并两份记录。迁移在持久文件事务内执行：单次单项迁移内失败回滚本项（作用域限单次迁移内部；`migrate all` 按 `workflow-schema → pending/findings → entity-storage → state-root → conventions → agents-zones → specs-layout → reviews → adr → retired-hooks` 等固定顺序逐项提交，已完成步骤保留），成功后校验目标 schema，不可机械转换的数据列出并中止。`apply` 门禁优先报告 `entity-storage` 旧布局；`migrate all` 中 `workflow-schema` 先行，`entity-storage` 后于 task/pending/finding 拆分，`state-root` 紧随其后；两类旧布局并存时按此顺序收敛。
 
-`agents-zones`、`specs-layout`、`reviews`、`adr` 与 workflow-schema 一样在持久文件事务内执行，dry-run 零写入。`specs-layout` 在写入前校验全部 slug、front matter 与 archive 同名冲突，任一失败不落盘。`reviews` dry-run 逐目录列出将删除的 `_meta/` 与未跟踪文件；已跟踪旧 review 内存在非 `_meta` 未跟踪内容时，写入前停止且不删除任何目录。`adr` 按围栏外 `## NNN` 条目拆分，代码块内示例不算条目；围栏外出现非 `## NNN` 的 H2（含首个条目前言）一律停止并报告，前言内容保留不丢弃。
+`agents-zones`、`specs-layout`、`reviews`、`adr` 与 workflow-schema 一样在持久文件事务内执行，dry-run 零写入，`--write` 落盘且不修改 Git index。`specs-layout` 把 archive specs 迁回 `docs/specs`、写 front matter 并删除 `docs/specs_index.md`（清单改由 front matter 派生），写入前校验全部 slug、front matter 与 archive 同名冲突，任一失败不落盘。`reviews` 合并 archive 后以最近 5 个为上限，被 task/blueprint/handoff 引用的旧目录保留并报告；dry-run 逐目录列出将删除的 `_meta/` 与未跟踪文件；已跟踪旧 review 内存在非 `_meta` 未跟踪内容时，写入前停止且不删除任何目录，未跟踪目录不删除。`adr` 把 `decisions.md` 拆成一条一文件，按围栏外 `## NNN` 条目拆分，代码块内示例不算条目；围栏外出现非 `## NNN` 的 H2（含首个条目前言）一律停止并报告，前言内容保留不丢弃。
 
-state-root 迁移清理 `docs/runtime/dispatch_ledger.lock`，旧状态行从 `.scratch/statusline_workdir.jsonl` 或 `docs/runtime/statusline_workdir.jsonl` 择一迁入 Git common 状态目录；两处并存或 `docs/runtime` 存在未知残留时停止。复制或恢复失败按项回滚：清理残缺目标、恢复源文件并保留备份；恢复未完成时报告人工处理。
+state-root 迁移把 `docs/runtime/`、`.repo_template/sync_state.json`、`.scratch` 事务目录与旧状态行迁入 `$GIT_COMMON_DIR/repo_template/`；清理 `docs/runtime/dispatch_ledger.lock`，旧状态行从 `.scratch/statusline_workdir.jsonl` 或 `docs/runtime/statusline_workdir.jsonl` 择一迁移，两处并存或 `docs/runtime` 存在未知残留时停止；要求无登记 worktree，在 entity-storage 之后执行。复制或恢复失败按项回滚：清理残缺目标、恢复源文件并保留备份；恢复未完成时报告人工处理。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
