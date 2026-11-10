@@ -92,7 +92,7 @@ state-root 迁移把 `docs/runtime/`、`.repo_template/sync_state.json`、`.scra
 
 同步准备仅改 `.scratch/` 来源缓存；同步器不自覆盖，也不执行 prep。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目验证策略校验或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
 
-apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务；此时 `repo-cleanup` 会跳过 scratch 并提示先 `transaction accept` 或 `transaction rollback`，其它类别照常处理。同步命令或其它控制面命令持有控制面锁时，带 scratch 的 cleanup 立即失败、零删除。
+apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务；事务记录在 Git common 目录，`repo-cleanup` 不读取也不清理。同步命令或其它控制面命令持有控制面锁时，带 scratch 的 cleanup 立即失败、零删除。
 
 旧版 `.scratch/repo_sync_rollback` 记录为 preparing/applying/applied/restore_failed 或损坏时，迁移与 `transaction status` 都会阻断并提示先用升级前消费仓脚本 `transaction accept`/`transaction rollback` 处理；新 transaction 只读 Git common 目录，不自动接管或清理旧事务。
 

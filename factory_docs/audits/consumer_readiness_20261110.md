@@ -65,7 +65,7 @@
 - Worktree：2 个。主工作区 `main`；`CBrowser_t049` 在分支 `t049_supervisor_restore_gateway_deadlock`，HEAD `13e6316`，该分支已并入 `main`，但 worktree 有 11 个修改 + 2 个新增文件，`progress.md` 状态为 `active`。
 - 工作区：主工作区脏，未跟踪 `config/deploy/`。
 - Task 规模：`docs/tasks` 1 个（t049）；`docs/archive/tasks` 48 个；spikes 7 个。
-- ADR：`decisions.md` 28 个 H2，27 条为 `## NNN`；第 7 行 `## 产品历史勘误入口与 ADR 传播约定（t024）` 无编号。计划 WP3.3 将其列为停止项；当前 `adr_migration._entries` 不会主动拒绝该 H2。由于它位于首条 `## NNN` 之前，会进入前言且不生成 ADR，实际行为与计划判定不一致，迁移前应修正。
+- **【标注】8f1d8cd 后 `_entries` 对围栏外非 NNN H2 一律停止，本条行为描述已过期；阻断结论不变，迁移前须补编号。见 reviews/review_20261110_203124/adoption_decision.md A6。** ADR：`decisions.md` 28 个 H2，27 条为 `## NNN`；第 7 行 `## 产品历史勘误入口与 ADR 传播约定（t024）` 无编号。计划 WP3.3 将其列为停止项；当前 `adr_migration._entries` 不会主动拒绝该 H2。由于它位于首条 `## NNN` 之前，会进入前言且不生成 ADR，实际行为与计划判定不一致，迁移前应修正。
 - Spec：`docs/specs` 17 个，全部缺 front matter；文件名均为 snake_case；`specs_index` 契约校验 0 错误。
 - 阻断项：worktree 未收尾（t049 脏且 active）；主工作区未跟踪文件；无编号 ADR；review 数 6 需按规则裁剪到 5。
 
@@ -78,7 +78,7 @@
 - Review：`docs/reviews/review_*` 0 个。
 - Worktree：1 个；工作区干净。
 - Task 规模：`docs/tasks` 0 个；`docs/archive/tasks` 470 个；spikes 0 个。
-- ADR：`decisions.md` 90 条，全部为 `## NNN`；`044` 出现两次（2026-08-09 与 2026-08-06，生成文件名不冲突，但旧编号不唯一）。
+- **【标注：若 A3 落地】`_entries` 校验 NNN 唯一，`044` 重复将停止迁移，须先改号；本条「生成文件名不冲突」描述随之过期。见 reviews/review_20261110_203124/adoption_decision.md A6。** ADR：`decisions.md` 90 条，全部为 `## NNN`；`044` 出现两次（2026-08-09 与 2026-08-06，生成文件名不冲突，但旧编号不唯一）。
 - Spec：`docs/specs` 93 个，文件名均为 snake_case。61 个完全缺 front matter；32 个已有 front matter 但只含 `slug` 或 `slug`+`tid`，均缺 `status`/`tasks`。按当前 `repo_task.specs.load_spec`，已有 front matter 缺 `status`/`tasks` 会报错，不会按索引补齐，迁移会停止；这与计划 WP3.2“缺字段用索引补齐”的描述不一致，需先确认修工厂还是修消费仓。
 - `specs_index` 契约校验 2 处错误：第 20 行 task 清单 `汇总（跨 task）`，第 38 行 `t008, t001(e2e), t028, t176, t183, t191, t249`。
 - 阻断项：`specs_index` 非法 task 清单；32 份不完整 front matter；ADR `044` 重复；470 个归档 task 属大规模仓。
@@ -92,7 +92,7 @@
 - Review：`docs/reviews/review_*` 0 个。
 - Worktree：1 个；工作区干净。
 - Task 规模：`docs/tasks` 0 个；`docs/archive/tasks` 0 个；spikes 0 个。
-- ADR：`decisions.md` 存在但只有模板前言，无任何 `## NNN` 条目；当前 `adr_migration._entries` 会抛“未找到任何 `## NNN` 条目”。
+- **【标注：若 A4 落地】零条目不再抛错，迁移将只移除 `decisions.md`（前言见报告）；本条「会抛未找到任何 `## NNN` 条目」描述随之过期。见 reviews/review_20261110_203124/adoption_decision.md A6。** ADR：`decisions.md` 存在但只有模板前言，无任何 `## NNN` 条目；当前 `adr_migration._entries` 会抛“未找到任何 `## NNN` 条目”。
 - Spec：`docs/specs` 0 个；`specs_index` 只有空表，契约校验 0 错误。
 - 阻断项：ADR 文件无可迁移条目，需消费仓或迁移策略先处理空 ADR 文件。
 
@@ -146,7 +146,7 @@
 - Worktree：2 个。主工作区 `main`；`omni_panel_t604` 在分支 `t604_repo_panel_headless_e2e`，HEAD 与 `main` 相同（`7427c14b`），worktree 有 7 个修改 + 4 个新增文件，`progress.md` 状态为 `active`。
 - 工作区：主工作区干净。
 - Task 规模：`docs/tasks` 1 个（t604）；`docs/archive/tasks` 601 个（计划写的 594 已过时）；spikes 41 个。
-- ADR：`decisions.md` 62 条，全部为 `## NNN`；`053` 出现两次（2026-10-01 与 2026-10-13，生成文件名不冲突，但旧编号不唯一）。
+- **【标注：若 A3 落地】`_entries` 校验 NNN 唯一，`053` 重复将停止迁移，须先改号；本条「生成文件名不冲突」描述随之过期。见 reviews/review_20261110_203124/adoption_decision.md A6。** ADR：`decisions.md` 62 条，全部为 `## NNN`；`053` 出现两次（2026-10-01 与 2026-10-13，生成文件名不冲突，但旧编号不唯一）。
 - Spec：`docs/specs` 90 个，全部缺 front matter，文件名均为 snake_case；`specs_index` 契约校验 0 错误。
 - Archive spec 漂移：`docs/archive/specs` 中 4 个 kebab-case slug：`ai-cli-token-stats.md`、`connector-cpa.md`、`platform-services.md`、`ui-views.md`。与计划“4 个 kebab-case spec slug”一致，需先改为 snake_case 并修引用。
 - 阻断项：worktree 未收尾（t604 脏且 active）；4 个 kebab-case archive spec；ADR `053` 重复；601 个归档 task 属最大规模仓。
@@ -203,8 +203,8 @@
 8. **计划中的已知漂移需要扩充。** 除计划的 omni_panel kebab-case、kkmail/CBrowser 无编号 ADR 外，本次只读审计新增：
    - `great_websites`、`omni_caption`、`zmole` 的 `specs_index` task 清单不符合严格 schema，会在 specs 迁移前停止。
    - `great_websites` 32 份已有 front matter 缺 `status`/`tasks`，按当前实现会停止；计划 WP3.2 描述为按索引补齐。
-   - `haiwa_bot` 的 `decisions.md` 无任何 `## NNN` 条目，当前 ADR 迁移实现会报错停止；计划未列该仓。
-   - `great_websites` ADR `044`、`omni_panel` ADR `053` 各重复一次。生成文件名带日期，当前不冲突，但“NNN 唯一”的前提不成立。
+   - **【标注：若 A4 落地】空文件不再报错停止，迁移将移除该文件。见 reviews/review_20261110_203124/adoption_decision.md A6。** `haiwa_bot` 的 `decisions.md` 无任何 `## NNN` 条目，当前 ADR 迁移实现会报错停止；计划未列该仓。
+   - **【标注：若 A3 落地】重复编号将停止迁移，须先改号；本条「生成文件名带日期，当前不冲突」描述随之过期。见 reviews/review_20261110_203124/adoption_decision.md A6。** `great_websites` ADR `044`、`omni_panel` ADR `053` 各重复一次。生成文件名带日期，当前不冲突，但“NNN 唯一”的前提不成立。
    - `CBrowser` 的 review 顶层目录为 6 个，超过保留 5 个的上限；其余仓均不超过 5。
 9. **规模数据需要更新。** omni_panel 当前 `docs/archive/tasks` 601 个、`docs/tasks` 1 个（t604），合计 602 个 task 目录；计划写的 594 已过时。
 10. **hook 现状与计划一致。** 11 个仓 `core.hooksPath=.repo_template/hooks`；`omni_panel` 为 `.husky/_`。因此 entity-storage 迁移 commit 仍应按计划用 `--no-verify` 并做 rename 复核。

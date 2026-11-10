@@ -7,7 +7,7 @@
 
 ## 结论
 
-**暂不建议进入真实迁移。** 新来源脚本 `migrate all --write` 在 `entity-storage` 成功后必然阻断 `state-root`：两步争用同一个 `.git/repo_template/sync_transaction` 路径。需先修模板并补回归用例，再重跑本演练（含回滚与再次迁移）。
+**【标注】阻断已由 791dcbb 修复，见本文复跑段。** **暂不建议进入真实迁移。** 新来源脚本 `migrate all --write` 在 `entity-storage` 成功后必然阻断 `state-root`：两步争用同一个 `.git/repo_template/sync_transaction` 路径。需先修模板并补回归用例，再重跑本演练（含回滚与再次迁移）。
 
 除该阻断外，agent_rank 是合适的 pilot：仓小、9 个 done task、无 worktree、无 review、工作区干净，其余单项迁移均成功。
 
@@ -200,4 +200,4 @@ mv .git/repo_template/sync_transaction \
 5. 未执行 `repo_sync.py apply`，工具链、任务模板、hooks、skills 仍是旧版；`healthcheck` 失败属预期，提交前必须 apply 并复验。
 6. 回滚与再次迁移仍未执行；state-root 迁移留下的 `.state-root-backup/` 与最后一次 S5/S6 事务仍需按计划 6.4 验证分层回滚。
 
-**复跑结论：修复有效，但仍不建议立即真实迁移。** 先解决旧 applied 同步事务的前置处理，并完成 apply 后健康检查与「迁移 → 逆序回滚 → 再次迁移」演练，再进入真实铺开。
+**【标注】回滚再迁移演练已被 decision_log L71 否决，证据边界为代码路径与工厂 rollback 用例；旧 applied 事务的前置阻断与处置见 sync.md。** **复跑结论：修复有效，但仍不建议立即真实迁移。** 先解决旧 applied 同步事务的前置处理，并完成 apply 后健康检查与「迁移 → 逆序回滚 → 再次迁移」演练，再进入真实铺开。
