@@ -19,6 +19,7 @@ for _path in (
     FACTORY_DIR / "state",
     FACTORY_DIR / "sync",
     FACTORY_DIR / "workflow",
+    FACTORY_DIR / "integration",
     FACTORY_DIR / "review",
     FACTORY_DIR / "docs",
     TEMPLATE_DIR / "scripts",
