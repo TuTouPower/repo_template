@@ -264,7 +264,33 @@ def test_healthcheck_reports_missing_real_commit_msg_when_snippets_present(
     )
     (consumer / ".repo_template/hooks/commit-msg").unlink()
     issues = run_healthcheck(sync)
-    assert any("commit-msg" in issue for issue in issues)
+    entry = _entry_issue(issues, "commit-msg")
+    assert entry.startswith(".repo_template/hooks/commit-msg")
+    assert "缺失或非文件" in entry
+    _assert_asset_sync_hint(entry)
+    assert not any("hooks 接入片段齐全，但真实入口" in issue for issue in issues)
+
+
+def test_snippets_complete_and_entry_missing_reports_single_entry_defect(
+    consumer, tmp_path, monkeypatch
+):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    _git(consumer, "config", "core.hooksPath", ".husky/_")
+    (consumer / ".husky").mkdir()
+    (consumer / ".husky/pre-commit").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
+    )
+    (consumer / ".husky/commit-msg").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/commit-msg \"$1\"\n", encoding="utf-8"
+    )
+    (consumer / ".repo_template/hooks/commit-msg").unlink()
+    issues = run_healthcheck(sync)
+    entry_defects = [
+        issue for issue in issues if ".repo_template/hooks/commit-msg" in issue
+    ]
+    assert len(entry_defects) == 1
 
 
 def test_missing_commit_msg_points_to_asset_sync_not_install_hooks(
@@ -382,7 +408,7 @@ def test_snippet_branch_points_to_asset_sync_and_closes_loop(
     )
     (consumer / ".repo_template/hooks/commit-msg").unlink()
     issues = run_healthcheck(sync)
-    entry = next(issue for issue in issues if "hooks 接入片段齐全" in issue)
+    entry = _entry_issue(issues, "commit-msg")
     assert "commit-msg" in entry
     _assert_asset_sync_hint(entry)
     _restore_hooks(sync)

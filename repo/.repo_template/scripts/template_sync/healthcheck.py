@@ -77,12 +77,6 @@ def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
         and ".repo_template/hooks/commit-msg" in lefthook_text
     )
     if husky_ok or lefthook_ok:
-        problem = _hook_entry_issue(sync.consumer / ".repo_template/hooks/commit-msg")
-        if problem:
-            return (
-                "hooks 接入片段齐全，但真实入口 "
-                f".repo_template/hooks/commit-msg {problem}" + _ENTRY_REPAIR_HINT
-            )
         return None
     missing = []
     if not _hook_file_has(husky_pre, ".repo_template/hooks/pre-commit"):
