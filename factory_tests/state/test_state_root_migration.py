@@ -244,3 +244,123 @@ def test_unfinished_restore_state_machine_blocks_rerun(consumer, monkeypatch):
     assert not state_file.exists()
     assert not backup_root.exists()
     assert (state_root / "ledger.jsonl").read_bytes() == ledger_bytes
+
+
+def _backup_snapshot(backup_root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(backup_root).as_posix(): path.read_bytes()
+        for path in sorted(backup_root.rglob("*"))
+        if path.is_file()
+    }
+
+
+@pytest.fixture
+def interrupted_migration(consumer, monkeypatch):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    state_root = common_state_dir(consumer)
+    backup_root = state_root / state_root_migration.BACKUP_NAME
+    state_file = state_root / state_root_migration.STATE_FILE
+    first_source = consumer / "docs/runtime/dispatch_ledger.jsonl"
+
+    original_remove = state_root_migration._remove_tree
+    original_copy = state_root_migration._copy_verify
+
+    def failing_remove(path: Path) -> None:
+        original_remove(path)
+        if path == first_source:
+            raise OSError("injected delete failure")
+
+    def failing_restore(source: Path, target: Path) -> None:
+        if target == first_source and source.parent == backup_root:
+            raise OSError("injected restore failure")
+        original_copy(source, target)
+
+    monkeypatch.setattr(state_root_migration, "_remove_tree", failing_remove)
+    monkeypatch.setattr(state_root_migration, "_copy_verify", failing_restore)
+    with pytest.raises(ctx.SyncError):
+        migrate_state_root(sync, write=True)
+    monkeypatch.setattr(state_root_migration, "_remove_tree", original_remove)
+    monkeypatch.setattr(state_root_migration, "_copy_verify", original_copy)
+
+    assert (backup_root / "0").is_file()
+    assert json.loads(state_file.read_text(encoding="utf-8"))["status"] == "restore_failed"
+    return sync, state_file, backup_root
+
+
+@pytest.mark.parametrize(
+    "kind,payload",
+    [
+        pytest.param("write", '{"status": "unknown"}', id="unknown_status"),
+        pytest.param("write", "{}", id="missing_status_empty"),
+        pytest.param(
+            "write",
+            json.dumps({"backup": "/tmp/backup", "sources": ["/tmp/source"]}),
+            id="missing_status_with_fields",
+        ),
+        pytest.param("write", "[]", id="list_root"),
+        pytest.param("write", '"x"', id="string_root"),
+        pytest.param("write", "{ not json", id="invalid_json"),
+        pytest.param("unreadable", None, id="unreadable"),
+        pytest.param(
+            "write",
+            json.dumps({"status": 1, "backup": "/tmp/backup", "sources": []}),
+            id="status_not_string",
+        ),
+        pytest.param(
+            "write",
+            json.dumps({"status": "in_progress", "sources": []}),
+            id="missing_backup",
+        ),
+        pytest.param(
+            "write",
+            json.dumps({"status": "in_progress", "backup": 5, "sources": []}),
+            id="backup_not_string",
+        ),
+        pytest.param(
+            "write",
+            json.dumps({"status": "in_progress", "backup": "/tmp/backup"}),
+            id="missing_sources",
+        ),
+        pytest.param(
+            "write",
+            json.dumps({"status": "in_progress", "backup": "/tmp/backup", "sources": "x"}),
+            id="sources_not_list",
+        ),
+        pytest.param(
+            "write",
+            json.dumps({"status": "in_progress", "backup": "/tmp/backup", "sources": [1]}),
+            id="sources_element_not_string",
+        ),
+        pytest.param("keep", None, id="valid_restore_failed"),
+    ],
+)
+def test_pending_state_records_block_rerun(interrupted_migration, kind, payload):
+    sync, state_file, backup_root = interrupted_migration
+    ledger_bytes = (backup_root / "0").read_bytes()
+    before = _backup_snapshot(backup_root)
+
+    if kind == "keep":
+        pass
+    elif kind == "unreadable":
+        state_file.unlink()
+        state_file.mkdir()
+    else:
+        state_file.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(ctx.SyncError, match="禁止创建新迁移"):
+        migrate_state_root(sync, write=True)
+
+    assert (backup_root / "0").read_bytes() == ledger_bytes
+    assert _backup_snapshot(backup_root) == before
+    assert backup_root.is_dir()
+
+
+def test_successful_migration_clears_state_and_backup(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    state_root = common_state_dir(consumer)
+    state_file = state_root / state_root_migration.STATE_FILE
+    backup_root = state_root / state_root_migration.BACKUP_NAME
+    migrate_state_root(sync, write=True)
+    assert not state_file.exists()
+    assert not backup_root.exists()
+    assert not state_root_migration_status(sync)

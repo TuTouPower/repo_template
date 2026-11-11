@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from repo_task.context import common_state_dir
+from repo_task.documents import atomic_write_text
 
 from . import context as ctx
 from .common import _git
@@ -60,23 +61,40 @@ def _write_migration_state(
         "backup": str(backup_root),
         "sources": [str(source) for source, _target in sources],
     }
-    state_file.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    atomic_write_text(
+        state_file,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
     )
 
 
-def _unfinished_restore(sync: ctx.SyncContext) -> tuple[str, Path] | None:
-    state_file = _migration_state_file(sync)
+def _read_pending_state(
+    state_file: Path, sync: ctx.SyncContext
+) -> tuple[str, Path] | None:
     if not _present(state_file):
         return None
+    default_backup = str(_state_file_root(sync) / BACKUP_NAME)
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        data = {"status": RESTORE_FAILED}
-    if data.get("status") not in PENDING_STATUSES:
-        return None
-    backup = data.get("backup") or str(_state_file_root(sync) / BACKUP_NAME)
-    return str(backup), state_file
+        return default_backup, state_file
+    if not isinstance(data, dict):
+        return default_backup, state_file
+    status = data.get("status")
+    if not isinstance(status, str) or status not in PENDING_STATUSES:
+        return default_backup, state_file
+    backup = data.get("backup")
+    if not isinstance(backup, str) or not backup:
+        return default_backup, state_file
+    sources = data.get("sources")
+    if not isinstance(sources, list) or any(
+        not isinstance(source, str) for source in sources
+    ):
+        return default_backup, state_file
+    return backup, state_file
+
+
+def _unfinished_restore(sync: ctx.SyncContext) -> tuple[str, Path] | None:
+    return _read_pending_state(_migration_state_file(sync), sync)
 
 
 def _restore_pending_message(backup: str, state_file: Path) -> str:
