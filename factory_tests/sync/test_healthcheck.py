@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 from argparse import Namespace
@@ -16,8 +19,10 @@ sys.path.insert(0, str(FACTORY_ROOT / "repo/.repo_template/scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "support"))
 
 from git_repo_support import install_fake_md_kx, state_file
+from review_support import configure_project_verification
 from template_sync import assets
 from template_sync import context as ctx
+from template_sync.apply import cmd_apply
 from template_sync.healthcheck import run_healthcheck
 from template_sync.hooks import cmd_install_hooks
 
@@ -93,6 +98,56 @@ def consumer(tmp_path: Path) -> Path:
         '{"template_source": {"kind": "path", "value": "x"}}\n', encoding="utf-8"
     )
     return root
+
+
+def _repo_template_status(statuses):
+    return next(item["state"] for item in statuses if item["rel"] == ".repo_template/")
+
+
+@pytest.fixture
+def real_hook_env(tmp_path: Path, monkeypatch) -> dict:
+    """真实模板产物源与逐字节镜像消费仓：hooks 同字节、初始 0755。
+
+    上轮权限测试用简化 hook，字节与真实产物不同，_restore_hooks 的 copy2 因
+    字节差异顺带恢复执行位而掩盖缺陷。本环境以工厂产物树构造独立 clean git
+    源与镜像消费仓，使「同字节仅丢执行位」成为唯一变量。
+    """
+    product = tmp_path / "product"
+    consumer = tmp_path / "consumer"
+    ignore = shutil.ignore_patterns(
+        ".git", ".scratch", "__pycache__", "*.pyc", ".pytest_cache"
+    )
+    for root in (product, consumer):
+        shutil.copytree(FACTORY_ROOT / "repo", root, symlinks=True, ignore=ignore)
+        _git(root, "init", "-b", "main")
+        _git(root, "config", "user.email", "test@example.com")
+        _git(root, "config", "user.name", "test")
+        _git(root, "config", "commit.gpgsign", "false")
+        _git(root, "config", "gc.auto", "0")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "init")
+    configure_project_verification(consumer)
+    state_file(consumer, "sync_state.json").write_text(
+        json.dumps(
+            {
+                "template_source": {"kind": "path", "value": str(product)},
+                "last_synced_commit": None,
+                "last_synced_at": None,
+                "user_prompts": [],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _git(consumer, "config", "core.hooksPath", ".repo_template/hooks")
+    fake_bin = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ.get("PATH", ""))
+    hook = consumer / ".repo_template/hooks/commit-msg"
+    assert hook.read_bytes() == (HOOKS_SRC / "commit-msg").read_bytes()
+    assert stat.S_IMODE(hook.stat().st_mode) == 0o755
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert _repo_template_status(assets.hard_sync_status(product, sync)) == "same"
+    return {"product": product, "consumer": consumer, "sync": sync, "hook": hook}
 
 
 def test_healthcheck_passes_and_install_hooks_does_not_overwrite(consumer, tmp_path, monkeypatch):
@@ -271,18 +326,44 @@ def test_asset_sync_closes_dangling_pre_merge_commit_loop(consumer, tmp_path, mo
     )
 
 
-def test_asset_sync_closes_non_executable_hook_loop(consumer, tmp_path, monkeypatch):
-    bin_dir = install_fake_md_kx(tmp_path)
-    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
-    sync = ctx.SyncContext.for_consumer(consumer)
-    hook = consumer / ".repo_template/hooks/commit-msg"
+def test_asset_sync_status_detects_non_executable_hook(real_hook_env):
+    """只丢执行位时，硬同步状态检测须把 .repo_template/ 从 same 判为 write。"""
+    real_hook_env["hook"].chmod(0o644)
+    assert _repo_template_status(
+        assets.hard_sync_status(real_hook_env["product"], real_hook_env["sync"])
+    ) == "write"
+
+
+def test_asset_sync_closes_non_executable_hook_loop(real_hook_env):
+    """TDD 重写：真实同字节 hook 仅丢执行位，经真实 apply 与 healthcheck 验收闭环。
+
+    旧版用简化 hook + _restore_hooks，因字节差异触发 copy2 顺带恢复执行位而
+    掩盖缺陷。此处只 chmod 0644，走真实 cmd_apply 从固定来源重新同步，要求 apply
+    返回 0 后入口恢复 0755 且 healthcheck 不再点名该入口。
+    """
+    sync = real_hook_env["sync"]
+    hook = real_hook_env["hook"]
     hook.chmod(0o644)
+    assert hook.read_bytes() == (HOOKS_SRC / "commit-msg").read_bytes()
     entry = _entry_issue(run_healthcheck(sync), "commit-msg")
     assert "不可执行" in entry
     _assert_asset_sync_hint(entry)
-    _restore_hooks(sync)
-    assert hook.is_file() and os.access(hook, os.X_OK)
-    assert not any("不可执行" in issue for issue in run_healthcheck(sync))
+    assert cmd_apply(Namespace(sync=sync, skip_tests=True)) == 0
+    assert os.access(hook, os.X_OK), "真实 apply 返回 0 后 commit-msg 仍不可执行"
+    assert stat.S_IMODE(hook.stat().st_mode) == 0o755
+    assert not any(
+        ".repo_template/hooks/commit-msg" in issue for issue in run_healthcheck(sync)
+    )
+
+
+def test_install_hooks_cannot_repair_non_executable_hook(real_hook_env):
+    """反证：install-hooks 单独执行返回 0，但不复制 hook 文件、不恢复执行位。"""
+    sync = real_hook_env["sync"]
+    hook = real_hook_env["hook"]
+    hook.chmod(0o644)
+    assert cmd_install_hooks(Namespace(sync=sync)) == 0
+    assert not os.access(hook, os.X_OK)
+    assert "不可执行" in _entry_issue(run_healthcheck(sync), "commit-msg")
 
 
 def test_snippet_branch_points_to_asset_sync_and_closes_loop(
