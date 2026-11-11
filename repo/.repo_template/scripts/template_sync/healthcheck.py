@@ -2,13 +2,57 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 from repo_task.validation import ValidationError, load_policy
 
 from . import context as ctx
+from .skills_links import symlink_status
 from .state import read_state
+
+
+REQUIRED_HOOKS = ("pre-commit", "commit-msg", "pre-merge-commit")
+
+
+def _hook_entry_issue(path: Path) -> str | None:
+    """单一入口判定：软链悬空 / 解析后非文件 / 不可执行，返回点名原因。"""
+    if path.is_symlink() and not path.exists():
+        return "软链悬空（指向不存在目标）"
+    if not path.is_file():
+        return "缺失或非文件"
+    if not os.access(path, os.X_OK):
+        return "不可执行"
+    return None
+
+
+def _check_required_entries(sync: ctx.SyncContext) -> list[str]:
+    """必需 hook 入口 + 宿主 skill 链接有效性，全部收敛到本检查。
+
+    复用 skills_links.symlink_status 判定每个登记链接，不再用宿主目录
+    is_dir() 作为链接有效的弱代理。
+    """
+    issues: list[str] = []
+    hooks_dir = sync.consumer / ".repo_template/hooks"
+    for name in REQUIRED_HOOKS:
+        problem = _hook_entry_issue(hooks_dir / name)
+        if problem:
+            issues.append(
+                f".repo_template/hooks/{name} {problem}；"
+                "运行 repo_sync.py install-hooks 重新同步模板 hooks"
+            )
+    for host_rel in (".agents/skills", ".claude/skills"):
+        if not (sync.consumer / host_rel).is_dir():
+            issues.append(f"缺 {host_rel}；运行 repo_sync.py link-skills")
+    for item in symlink_status(sync):
+        if item["state"] == "ok":
+            continue
+        issues.append(
+            f"{item['rel']} skill 链接无效（{item['state']}："
+            "悬空/指向仓外/类型不符）；运行 repo_sync.py link-skills"
+        )
+    return issues
 
 
 def _hook_file_has(path: Path, needle: str) -> bool:
@@ -28,6 +72,13 @@ def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
         and ".repo_template/hooks/commit-msg" in lefthook_text
     )
     if husky_ok or lefthook_ok:
+        problem = _hook_entry_issue(sync.consumer / ".repo_template/hooks/commit-msg")
+        if problem:
+            return (
+                "hooks 接入片段齐全，但真实入口 "
+                f".repo_template/hooks/commit-msg {problem}；"
+                "运行 repo_sync.py install-hooks 重新同步模板 hooks"
+            )
         return None
     missing = []
     if not _hook_file_has(husky_pre, ".repo_template/hooks/pre-commit"):
@@ -40,10 +91,7 @@ def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
 
 
 def run_healthcheck(sync: ctx.SyncContext) -> list[str]:
-    issues: list[str] = []
-    hooks = sync.consumer / ".repo_template/hooks/pre-commit"
-    if not hooks.is_file():
-        issues.append("缺 .repo_template/hooks/pre-commit")
+    issues = _check_required_entries(sync)
     core = shutil.which("git")
     if core:
         import subprocess
@@ -65,9 +113,6 @@ def run_healthcheck(sync: ctx.SyncContext) -> list[str]:
     state = read_state(sync)
     if not state:
         issues.append("未初始化：缺 sync_state.json；运行 repo_sync.py init --source <path|url>")
-    for rel in (".agents/skills", ".claude/skills"):
-        if not (sync.consumer / rel).is_dir():
-            issues.append(f"缺 {rel}；运行 repo_sync.py link-skills")
     if not shutil.which("md_kx"):
         issues.append("缺 md_kx；安装 md-kx 或修正 PATH")
     try:

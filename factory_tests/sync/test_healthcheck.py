@@ -31,15 +31,23 @@ def consumer(tmp_path: Path) -> Path:
     _git(root, "init", "-b", "main")
     _git(root, "config", "user.email", "test@example.com")
     _git(root, "config", "user.name", "test")
-    hook = root / ".repo_template/hooks/pre-commit"
-    hook.parent.mkdir(parents=True)
-    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    hook.chmod(0o755)
+    hooks = root / ".repo_template/hooks"
+    hooks.mkdir(parents=True)
+    for name in ("pre-commit", "commit-msg"):
+        hook = hooks / name
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+    (hooks / "pre-merge-commit").symlink_to("pre-commit")
     template = root / ".repo_template/docs/task_template/task.md"
     template.parent.mkdir(parents=True)
     template.write_text("- 关联 spec：{spec 路径；无关联写“无”}\n", encoding="utf-8")
+    skill = root / ".repo_template/skills/task-run"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: run\n---\n", encoding="utf-8")
     for rel in (".agents/skills", ".claude/skills"):
-        (root / rel).mkdir(parents=True)
+        host = root / rel
+        host.mkdir(parents=True)
+        (host / "task-run").symlink_to("../../.repo_template/skills/task-run")
     policy = root / "docs/blueprint/testing.md"
     policy.parent.mkdir(parents=True)
     policy.write_text(
@@ -115,5 +123,57 @@ def test_healthcheck_requires_commit_msg_hook(consumer, tmp_path, monkeypatch):
     (consumer / ".husky/pre-commit").write_text(
         "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
     )
+    issues = run_healthcheck(sync)
+    assert any("commit-msg" in issue for issue in issues)
+
+
+def test_healthcheck_reports_missing_commit_msg_script(consumer, tmp_path, monkeypatch):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    (consumer / ".repo_template/hooks/commit-msg").unlink()
+    issues = run_healthcheck(sync)
+    assert any("commit-msg" in issue for issue in issues)
+
+
+def test_healthcheck_reports_dangling_pre_merge_commit_symlink(consumer, tmp_path, monkeypatch):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    link = consumer / ".repo_template/hooks/pre-merge-commit"
+    link.unlink()
+    link.symlink_to("missing-hook")
+    issues = run_healthcheck(sync)
+    assert any("pre-merge-commit" in issue for issue in issues)
+
+
+def test_healthcheck_reports_dangling_skill_links(consumer, tmp_path, monkeypatch):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    for rel in (".agents/skills/task-run", ".claude/skills/task-run"):
+        link = consumer / rel
+        link.unlink()
+        link.symlink_to("../../.repo_template/skills/missing")
+    issues = run_healthcheck(sync)
+    assert any(".agents/skills/task-run" in issue for issue in issues)
+    assert any(".claude/skills/task-run" in issue for issue in issues)
+
+
+def test_healthcheck_reports_missing_real_commit_msg_when_snippets_present(
+    consumer, tmp_path, monkeypatch
+):
+    bin_dir = install_fake_md_kx(tmp_path)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + str(Path("/usr/bin")))
+    sync = ctx.SyncContext.for_consumer(consumer)
+    _git(consumer, "config", "core.hooksPath", ".husky/_")
+    (consumer / ".husky").mkdir()
+    (consumer / ".husky/pre-commit").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/pre-commit\n", encoding="utf-8"
+    )
+    (consumer / ".husky/commit-msg").write_text(
+        "#!/bin/sh\npython3 .repo_template/hooks/commit-msg \"$1\"\n", encoding="utf-8"
+    )
+    (consumer / ".repo_template/hooks/commit-msg").unlink()
     issues = run_healthcheck(sync)
     assert any("commit-msg" in issue for issue in issues)
