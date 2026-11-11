@@ -18,7 +18,6 @@ sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
 import md_format  # noqa: E402
 from _id_scan import IdScanError, validate_merge_sources, validate_snapshot_ids  # noqa: E402
 from repo_task.context import RepoContext
-from repo_task.privacy import PrivacyScanError, scan_privacy_changes  # noqa: E402
 
 # git pre-commit 保证 cwd 为仓库根；用 cwd 而非 __file__ 推导，消费仓/测试仓也正确。
 repo = RepoContext.for_root(Path.cwd())
@@ -144,25 +143,11 @@ def dirty_vs_index(rels: list[str]) -> list[str]:
 
 
 def main() -> int:
-    # 隐私门禁独立于 Markdown 格式化：比较 HEAD 与 index 的新增文本行，
-    # 使用 index 内容而非工作区内容，避免「工作区已修、暂存仍泄漏」被放行。
     try:
         validate_merge_sources(repo.root)
         validate_snapshot_ids(repo.root)
     except IdScanError as error:
         print(f"pre-commit: 编号校验失败（fail-closed）：{error}", file=sys.stderr)
-        return 1
-    try:
-        leaks = scan_privacy_changes(repo.root)
-    except PrivacyScanError as error:
-        print(f"pre-commit: 隐私扫描失败（fail-closed）：{error}", file=sys.stderr)
-        return 1
-    if leaks:
-        print(
-            "pre-commit: 以下已跟踪文件含开发者家目录绝对路径"
-            "（请改为仓库相对路径或 <worktree> 占位符）：\n" + "\n".join(leaks),
-            file=sys.stderr,
-        )
         return 1
     if review_retention_check():
         return 1

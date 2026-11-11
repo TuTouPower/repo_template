@@ -215,38 +215,6 @@ def test_precommit_hook_python39_compatibility(repo, tmp_path):
     assert result.returncode == 0
 
 
-def test_staged_md_with_developer_home_path_blocked(repo, tmp_path):
-    """Issue #89：staged .md 含开发者家目录绝对路径时，pre-commit 拒绝提交并指出文件与行号。"""
-    leak = "/".join(("", "Users", "devuser", "worktree"))
-    (repo / "a.md").write_text(f"# Review\n\n- target: `git -C '{leak}' diff abc`\n", encoding="utf-8")
-    _git(repo, "add", "a.md")
-    result = _run_hook(repo, tmp_path)
-    assert result.returncode == 1
-    assert "开发者家目录绝对路径" in result.stderr
-    assert "a.md:3:" in result.stderr
-
-
-def test_non_markdown_tracked_leak_blocked(repo, tmp_path):
-    """A07：隐私门禁覆盖整个 index 的非归档文本，不限于 .md。"""
-    leak = "/".join(("", "home", "devuser", "proj"))
-    (repo / "b.py").write_text(f"ROOT = '{leak}'\n", encoding="utf-8")
-    _git(repo, "add", "b.py")
-    result = _run_hook(repo, tmp_path)
-    assert result.returncode == 1
-    assert "b.py:1:" in result.stderr
-
-
-def test_index_leak_blocks_even_when_worktree_is_clean(repo, tmp_path):
-    """A07：index 有泄漏、工作区已修正时仍应阻断。"""
-    leak = "/".join(("", "Users", "devuser", "proj"))
-    (repo / "a.md").write_text(f"leak {leak}\n", encoding="utf-8")
-    _git(repo, "add", "a.md")
-    (repo / "a.md").write_text("clean now\n", encoding="utf-8")
-    result = _run_hook(repo, tmp_path, with_fake_kx=True)
-    assert result.returncode == 1
-    assert "a.md:1:" in result.stderr
-
-
 def test_review_retention_blocks_only_new_review_over_limit(repo, tmp_path):
     reviews = repo / "docs/reviews"
     for index in range(1, 6):

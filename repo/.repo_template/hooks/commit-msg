@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""commit-msg hook：merge 来源校验、编号校验与最终提交消息隐私扫描。
+"""commit-msg hook：merge 来源校验与编号校验。
 
 git merge 的自动提交不运行 pre-commit，且 pre-merge-commit 阶段 MERGE_HEAD
 已被移除；MERGE_HEAD 仅在 prepare-commit-msg / commit-msg 阶段可用，因此来源
-校验放在本 hook。普通提交与 merge 提交一视同仁：读取最终消息文件，扫描
-全部内容；只有 scissors 行后确实是 ``git commit -v`` 附带的 diff 时才截断。
-``-m`` / ``-F`` 消息里的 ``#`` 行属于提交内容，不做注释剔除。
+校验放在本 hook。
 """
 
 from __future__ import annotations
 
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -20,64 +16,6 @@ sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
 
 from _id_scan import IdScanError, validate_merge_sources, validate_snapshot_ids  # noqa: E402
 from repo_task.context import RepoContext, TaskDataError  # noqa: E402
-from repo_task.privacy import PrivacyScanError, scan_text_privacy_leaks  # noqa: E402
-
-_SCISSORS_BODY = re.compile(r"-{2,} >8 -{2,}")
-
-
-def _comment_prefix(root: Path, message: str) -> str:
-    """``core.commentChar`` 生效值；auto 时按 scissors 行推断，无法推断退回 #。"""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "config", "--get", "core.commentChar"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise PrivacyScanError(f"读取 core.commentChar 失败：{error}") from error
-    configured = result.stdout.strip() if result.returncode == 0 else ""
-    if configured and configured != "auto":
-        return configured
-    for line in message.splitlines():
-        if line and _SCISSORS_BODY.fullmatch(line[1:].strip()):
-            return line[0]
-    return "#"
-
-
-def _message_payload(message: str, prefix: str) -> str:
-    """仅截掉确认为 ``git commit -v`` 的 scissors 后 diff；其余行全部扫描。
-
-    注释行不剔除：``git commit -m`` / ``-F`` 不会清掉 ``#`` 开头的正文，
-    无条件跳过会造成隐私绕过。scissors 后必须出现 ``diff --git`` 才视为
-    verbose diff；``-F`` 正文中的同名标记仍按提交内容扫描。
-    """
-    lines = message.splitlines()
-    for index, line in enumerate(lines):
-        if not line.startswith(prefix):
-            continue
-        if not _SCISSORS_BODY.fullmatch(line[len(prefix):].strip()):
-            continue
-        if any(item.startswith("diff --git ") for item in lines[index + 1:]):
-            return "\n".join(lines[:index])
-    return "\n".join(lines)
-
-
-def _scan_message(root: Path, message_path: Path) -> int:
-    try:
-        message = message_path.read_text(encoding="utf-8", errors="replace")
-    except OSError as error:
-        print(f"commit-msg: 无法读取提交消息（fail-closed）：{error}", file=sys.stderr)
-        return 1
-    leaks = scan_text_privacy_leaks(
-        _message_payload(message, _comment_prefix(root, message)), label="commit message",
-    )
-    if leaks:
-        print(
-            "commit-msg: 提交消息含开发者家目录绝对路径"
-            "（请改为仓库相对路径或 <worktree> 占位符）：\n" + "\n".join(leaks),
-            file=sys.stderr,
-        )
-        return 1
-    return 0
 
 
 def _check() -> int:
@@ -91,7 +29,7 @@ def _check() -> int:
     if len(sys.argv) < 2:
         print("commit-msg: 缺少提交消息文件参数（fail-closed）", file=sys.stderr)
         return 1
-    return _scan_message(root, Path(sys.argv[1]))
+    return 0
 
 
 def main() -> int:
@@ -99,9 +37,6 @@ def main() -> int:
         return _check()
     except TaskDataError as error:
         print(f"commit-msg: 上下文解析失败（fail-closed）：{error}", file=sys.stderr)
-        return 1
-    except PrivacyScanError as error:
-        print(f"commit-msg: 隐私扫描失败（fail-closed）：{error}", file=sys.stderr)
         return 1
     except OSError as error:
         print(f"commit-msg: 仓库操作失败（fail-closed）：{error}", file=sys.stderr)

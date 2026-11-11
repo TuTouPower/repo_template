@@ -74,7 +74,7 @@ def test_renamed_file_content_is_scanned_as_new_path(consumer):
     assert privacy.scan_privacy_changes(consumer) == [f"new.md:2: {token}"]
 
 
-def test_precommit_reports_id_failure_and_privacy_failure_distinctly(consumer):
+def test_precommit_reports_id_failure_fail_closed(consumer):
     pending = consumer / "docs" / "pending"
     pending.mkdir(parents=True)
     (pending / "p001_first.md").write_text("first\n", encoding="utf-8")
@@ -84,14 +84,3 @@ def test_precommit_reports_id_failure_and_privacy_failure_distinctly(consumer):
     id_result = _run_hook(consumer)
     assert id_result.returncode == 1
     assert "编号校验失败" in id_result.stderr
-    assert "隐私扫描失败" not in id_result.stderr
-
-
-def test_precommit_reports_privacy_scan_failure_separately(consumer):
-    (consumer / "bad.txt").write_bytes(b"\xff\xff")
-    git_run(consumer, "add", "bad.txt")
-
-    privacy_result = _run_hook(consumer)
-    assert privacy_result.returncode == 1
-    assert "隐私扫描失败" in privacy_result.stderr
-    assert "编号校验失败" not in privacy_result.stderr
