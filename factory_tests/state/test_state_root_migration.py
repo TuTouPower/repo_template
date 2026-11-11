@@ -190,3 +190,57 @@ def test_restore_failure_keeps_backup_and_reports_source(consumer, monkeypatch):
     assert str(first_source) in message
     assert f"备份保留在 {backup_root}" in message
     assert (backup_root / "0").read_text(encoding="utf-8") == '{"event": "start"}\n'
+
+
+def test_unfinished_restore_state_machine_blocks_rerun(consumer, monkeypatch):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    state_root = common_state_dir(consumer)
+    backup_root = state_root / state_root_migration.BACKUP_NAME
+    state_file = state_root / state_root_migration.STATE_FILE
+    first_source = consumer / "docs/runtime/dispatch_ledger.jsonl"
+
+    original_remove = state_root_migration._remove_tree
+    original_copy = state_root_migration._copy_verify
+
+    def failing_remove(path: Path) -> None:
+        original_remove(path)
+        if path == first_source:
+            raise OSError("injected delete failure")
+
+    def failing_restore(source: Path, target: Path) -> None:
+        if target == first_source and source.parent == backup_root:
+            raise OSError("injected restore failure")
+        original_copy(source, target)
+
+    monkeypatch.setattr(state_root_migration, "_remove_tree", failing_remove)
+    monkeypatch.setattr(state_root_migration, "_copy_verify", failing_restore)
+    with pytest.raises(ctx.SyncError):
+        migrate_state_root(sync, write=True)
+
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "restore_failed"
+    assert payload["backup"] == str(backup_root)
+    assert payload["sources"]
+    assert (backup_root / "0").is_file()
+    ledger_bytes = (backup_root / "0").read_bytes()
+
+    monkeypatch.setattr(state_root_migration, "_remove_tree", original_remove)
+    monkeypatch.setattr(state_root_migration, "_copy_verify", original_copy)
+
+    with pytest.raises(ctx.SyncError, match="禁止创建新迁移") as raised:
+        migrate_state_root(sync, write=True)
+    assert str(state_file) in str(raised.value)
+    assert (backup_root / "0").read_bytes() == ledger_bytes
+
+    findings = state_root_migration_status(sync)
+    assert any("恢复未完成" in item for item in findings)
+    assert any(str(state_file) in item for item in findings)
+
+    first_source.write_bytes(ledger_bytes)
+    state_file.unlink()
+    state_root_migration._remove_tree(backup_root)
+    reports = migrate_state_root(sync, write=True)
+    assert reports
+    assert not state_file.exists()
+    assert not backup_root.exists()
+    assert (state_root / "ledger.jsonl").read_bytes() == ledger_bytes

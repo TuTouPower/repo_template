@@ -30,6 +30,10 @@ TRANSACTION_PAIRS = (
     (".scratch/task_graph_transaction", "graph_transaction"),
 )
 BACKUP_NAME = ".state-root-backup"
+STATE_FILE = "state_root_migration.json"
+IN_PROGRESS = "in_progress"
+RESTORE_FAILED = "restore_failed"
+PENDING_STATUSES = frozenset({IN_PROGRESS, RESTORE_FAILED})
 KNOWN_RUNTIME_NAMES = frozenset(
     {LEDGER, LEDGER_LOCK, AUDIT, GOAL, STATUSLINE, EXECUTION_CONTEXT}
 )
@@ -41,6 +45,45 @@ def _state_file_root(sync: ctx.SyncContext) -> Path:
 
 def _present(path: Path) -> bool:
     return path.exists() or path.is_symlink()
+
+
+def _migration_state_file(sync: ctx.SyncContext) -> Path:
+    return _state_file_root(sync) / STATE_FILE
+
+
+def _write_migration_state(
+    state_file: Path, status: str, backup_root: Path, sources: list[tuple[Path, Path]]
+) -> None:
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": status,
+        "backup": str(backup_root),
+        "sources": [str(source) for source, _target in sources],
+    }
+    state_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _unfinished_restore(sync: ctx.SyncContext) -> tuple[str, Path] | None:
+    state_file = _migration_state_file(sync)
+    if not _present(state_file):
+        return None
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {"status": RESTORE_FAILED}
+    if data.get("status") not in PENDING_STATUSES:
+        return None
+    backup = data.get("backup") or str(_state_file_root(sync) / BACKUP_NAME)
+    return str(backup), state_file
+
+
+def _restore_pending_message(backup: str, state_file: Path) -> str:
+    return (
+        f"上次 state-root 恢复未完成，禁止创建新迁移；备份保留在 {backup}，"
+        f"请先按报告人工恢复，再删除状态文件 {state_file} 重试"
+    )
 
 
 def _statusline_source(sync: ctx.SyncContext) -> Path | None:
@@ -103,6 +146,10 @@ def _sources(sync: ctx.SyncContext) -> list[tuple[Path, Path]]:
 
 def state_root_migration_status(sync: ctx.SyncContext) -> list[str]:
     findings = []
+    pending = _unfinished_restore(sync)
+    if pending is not None:
+        backup, state_file = pending
+        findings.append(_restore_pending_message(backup, state_file))
     runtime = sync.consumer.joinpath(*LEGACY_RUNTIME)
     if _present(runtime / EXECUTION_CONTEXT):
         findings.append(
@@ -224,6 +271,10 @@ def _rollback(
 def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     if not (sync.consumer / ".git").exists():
         raise ctx.SyncError("state-root 迁移需要 Git 仓库")
+    pending = _unfinished_restore(sync)
+    if pending is not None:
+        backup, state_file = pending
+        raise ctx.SyncError(_restore_pending_message(backup, state_file))
     worktrees = _registered_worktrees(sync)
     if worktrees:
         raise ctx.SyncError(
@@ -259,9 +310,11 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
         return reports
 
     backup_root = target_root / BACKUP_NAME
+    state_file = _migration_state_file(sync)
+    created_root = not target_root.exists()
+    _write_migration_state(state_file, IN_PROGRESS, backup_root, sources)
     copied: list[tuple[Path, Path, Path]] = []
     current_target: Path | None = None
-    created_root = not target_root.exists()
     try:
         target_root.mkdir(parents=True, exist_ok=True)
         _remove_tree(backup_root)
@@ -298,12 +351,18 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
     except Exception as error:
         failures = _rollback(copied, current_target)
         if failures:
+            _write_migration_state(state_file, RESTORE_FAILED, backup_root, sources)
             raise ctx.SyncError(
                 f"state-root 迁移失败（{error}）；恢复旧布局未完成：\n- "
                 + "\n- ".join(failures)
-                + f"\n备份保留在 {backup_root}，请人工恢复"
+                + f"\n备份保留在 {backup_root}，状态文件 {state_file}，"
+                + f"请按 {backup_root}/manifest.json 人工恢复，完成后删除状态文件 {state_file} 再重试"
             ) from error
+        _remove_tree(state_file)
         if created_root and target_root.exists() and not any(target_root.iterdir()):
             target_root.rmdir()
         raise ctx.SyncError(f"state-root 迁移失败，已恢复旧布局：{error}") from error
+    else:
+        _remove_tree(backup_root)
+        _remove_tree(state_file)
     return reports
