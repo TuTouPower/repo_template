@@ -41,9 +41,12 @@ def parse_spec_text(text: str, *, source: str, path: Path | None = None) -> dict
 
     front matter 只允许 slug/status/tasks 三个键，多余键直接 SpecError；
     tasks 按 TASK_TOKEN_RE 校验、去重、非空。契约只管语义，不管空白与写法；
-    传入 path 时一并校验 slug 与文件名一致。
+    传入 path 时一并校验 slug 与文件名一致；语法与语义错误统一抛 SpecError。
     """
-    fm, body = parse_front_matter_text(text, source=source)
+    try:
+        fm, body = parse_front_matter_text(text, source=source)
+    except ctx.TaskDataError as error:
+        raise SpecError(str(error)) from error
     extra = sorted(set(fm) - SPEC_FM_KEYS)
     if extra:
         raise SpecError(

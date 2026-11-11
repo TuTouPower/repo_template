@@ -47,7 +47,12 @@ KINDS = (
 def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None) -> list[str]:
     """单一来源：某类迁移的待处理项；status / plan / apply / migrate 共用。
 
-    空列表表示已是当前格式。消除「plan 显示一致但 apply 阻断」的分叉。
+    常驻门禁的布局检测只报告迁移前遗留物：完成迁移后，合法日常编辑不得
+    重新产生同类 finding；空列表表示无需该类迁移。spec 内容合法性由公开
+    codec/validate_specs 单独校验，不以渲染后的字节或空白比较判定旧布局。
+    reviews 是已裁定的动态保留策略例外，超过五个会再次要求显式清理；
+    entity-storage 同时承担当前实体合法性校验，不承诺非法编辑仍为空。
+    各入口共用本集合，消除「plan 显示一致但 apply 阻断」的分叉。
     """
     if kind in {"pending-ledger", "findings-ledger"}:
         rel = "docs/pending.md" if kind == "pending-ledger" else "docs/findings.md"

@@ -380,3 +380,28 @@ def test_apply_rejects_spec_contract_violation_before_transaction_begin(env):
     assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
     assert env["state_file"].read_bytes() == state_before
     assert transaction.read() is None
+
+
+@pytest.mark.parametrize("text", [
+    "---\nslug: feature\nstatus: active\ntasks: [t001]\n",
+    "---\nslug: feature\nslug: feature\nstatus: active\ntasks: [t001]\n---\n",
+    "---\nslug: feature\nstatus active\ntasks: [t001]\n---\n",
+])
+def test_apply_rejects_malformed_spec_before_any_asset_write(env, text, capsys):
+    consumer = env["consumer"]
+    (consumer / "docs/specs").mkdir(parents=True)
+    _write_spec(consumer, "feature.md", text)
+    before = {
+        path: data for path, data in _snapshot(consumer).items()
+        if ".git" not in path.relative_to(consumer).parts
+    }
+    state_before = env["state_file"].read_bytes()
+    transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
+    assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
+    assert "尚未写盘" in capsys.readouterr().err
+    assert env["state_file"].read_bytes() == state_before
+    assert transaction.read() is None
+    assert {
+        path: data for path, data in _snapshot(consumer).items()
+        if ".git" not in path.relative_to(consumer).parts
+    } == before

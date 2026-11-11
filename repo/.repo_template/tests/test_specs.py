@@ -153,3 +153,19 @@ def test_formatting_is_not_part_of_contract(tmp_path, front, body):
     spec = load_specs(root)[0]
     assert spec["tasks"] == ["t001", "baseline"]
     assert spec["title"] == "Feature"
+
+
+@pytest.mark.parametrize("text,keyword", [
+    ("---\nslug: feature\nstatus: active\ntasks: [t001]\n", "未闭合"),
+    ("---\nslug: feature\nslug: feature\nstatus: active\ntasks: [t001]\n---\n", "重复键"),
+    ("---\nslug: feature\nstatus active\ntasks: [t001]\n---\n", "缺冒号"),
+])
+def test_malformed_front_matter_uses_spec_error_boundary(tmp_path, text, keyword):
+    with pytest.raises(SpecError, match=keyword):
+        parse_spec_text(text, source="docs/specs/feature.md")
+    root = tmp_path / "repo"
+    path = _spec(root, "feature")
+    path.write_text(text, encoding="utf-8")
+    problems = validate_specs(root)
+    assert len(problems) == 1 and keyword in problems[0]
+    assert "feature.md" in problems[0]
