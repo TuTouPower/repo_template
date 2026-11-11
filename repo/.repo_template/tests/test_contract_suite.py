@@ -37,6 +37,7 @@ CONTRACT_MODULES = frozenset({
     "test_spikes.py",
     "test_task_core_asset_guard.py",
     "test_tooling_guards.py",
+    "test_format_exempt.py",
 })
 
 

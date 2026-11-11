@@ -98,7 +98,7 @@ agent 报告来源完整 SHA、全部变更路径、迁移报告、校验结果�
 
 ## .prettierignore 机械追加
 
-`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径清单见 `usage.md`「命名与格式」。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
+`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径以 `.repo_template/` 整目录为边界，清单见 `usage.md`「命名与格式」。apply 在提交前静态校验模板自有 JSON 全部被覆盖，未覆盖即整体回滚（此时尚未提交，可回滚）；commit hook 因豁免恒为 no-op，审批 diff 与提交内容一致，`transaction accept` 的指纹校验才能通过。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 
 ## 实体协议切换验收
 

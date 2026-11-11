@@ -178,21 +178,38 @@ def test_prettierignore_covers_sync_state_and_handoff_without_derived_indexes(en
     assert "docs/tasks_index.json" not in rules
     assert "docs/archive/tasks_index.json" not in rules
 
-def test_prettierignore_omits_undistributed_test_paths(env):
-    # G1：测试移出产物后消费仓不再收到这两个文件，规则随之删除，新同步不再追加
-    undistributed = (
+def test_prettierignore_uses_owned_directory_boundary(env):
+    """模板工具链整目录豁免，新增产物自动落入，不再逐文件登记。"""
+    retired = (
         ".repo_template/tests/package.json",
         ".repo_template/tests/test_chain_plan_cases.js",
+        ".repo_template/scripts/package.json",
+        ".repo_template/sync_manifest.json",
+        ".repo_template/skills/registry.json",
     )
     rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
-    assert ".repo_template/scripts/package.json" in rules
-    for rule in undistributed:
-        assert rule not in rules
+    assert ".repo_template/" in rules
+    assert "docs/**/handoff.json" in rules
+    assert not any(rule != ".repo_template/" and rule.startswith(".repo_template/") for rule in rules)
     pi = env["consumer"] / ".prettierignore"
     merge_prettierignore(set(), env["sync"])
     lines = pi.read_text().splitlines()
-    for rule in undistributed:
+    assert ".repo_template/" in lines
+    for rule in retired:
         assert rule not in lines
+
+
+def test_preexisting_full_ruleset_merge_is_noop(env):
+    """消费仓已按整目录规则落地时，根本方案上线零追加、文件字节不变。"""
+    pi = env["consumer"] / ".prettierignore"
+    text = "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n"
+    pi.write_text(text)
+    changed: set[Path] = set()
+    info = merge_prettierignore(changed, env["sync"])
+    assert info["added"] == []
+    assert changed == set()
+    assert pi.read_text() == text
+
 
 def test_detect_json_indent(env):
     assert _detect_json_indent('{\n  "a": 1\n}\n') == 2

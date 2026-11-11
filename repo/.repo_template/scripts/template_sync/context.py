@@ -38,18 +38,12 @@ AGENTS_TEMPLATE_BEGIN = "<!-- repo-template:begin -->"
 AGENTS_TEMPLATE_END = "<!-- repo-template:end -->"
 MCP_CANDIDATES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json")
 
-# 模板自有路径：不受消费仓 prettier 门禁约束（Issue #3）。
-# view_static/ 用模板自有风格（2 空格/单引号），
-# package.json 缩进随消费仓 tabWidth 漂移，
-# handoff.json 由 task 流程逐任务生成，
-# .opencode/package*.json 属本地生成（prettier 不认嵌套 .gitignore）。
-# 由 merge_prettierignore 机械追加，消费独有规则保留。
+# 模板自有机器资产边界：不受消费仓 prettier 门禁约束（Issue #3）。
+# .repo_template/ 整目录归模板所有，新增产物自动落入豁免，无需逐文件登记；
+# 目录外生成点无法整目录豁免（会连带豁免消费仓自有文件），逐条显式列出。
+# status/plan 缺失检查、merge_prettierignore 追加、apply 提交前覆盖断言共用本声明。
 PRETTIERIGNORE_TEMPLATE_RULES = (
-    ".repo_template/scripts/package.json",
-    ".repo_template/scripts/repo_task/view_static/",
-    ".repo_template/sync_manifest.json",
-    ".repo_template/sync_policy.json",
-    ".repo_template/skills/registry.json",
+    ".repo_template/",
     "docs/**/handoff.json",
     ".opencode/package.json",
     ".opencode/package-lock.json",

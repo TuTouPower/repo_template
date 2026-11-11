@@ -24,7 +24,13 @@ from .gates import _run_tests
 from .preflight import sync_preflight
 from .migrations import MIGRATIONS
 from .entity_storage_migration import validate_current_entities
-from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
+from .shared_files import (
+    _apply_shared_unit,
+    assert_format_exempt,
+    merge_gitignore,
+    merge_mcp,
+    merge_prettierignore,
+)
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import missing_state_message, prompt_substrings, read_state, write_state
@@ -105,6 +111,7 @@ def _validate_result(src, sync, paths):
     drift = format_paths(_changed_markdown(sync, paths), repo=RepoContext.for_root(sync.consumer), check=True)
     if drift:
         raise ctx.SyncError("Markdown 格式漂移：" + "、".join(drift))
+    assert_format_exempt(sync.consumer)
 
 
 def _apply_sync_write(
