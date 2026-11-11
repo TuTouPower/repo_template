@@ -1,10 +1,20 @@
-"""WP1：state-root 一次性迁移。"""
+"""state-root 迁移：在标准 FileTransaction 内执行，崩溃恢复统一走 transaction rollback。
+
+N1 那套「恢复未完成」状态机（``state_root_migration.json`` + 手写备份 +
+``restore_failed`` 文本 + 参数化 pending 用例）、``_backup_snapshot`` 与
+``interrupted_migration`` fixture 整体删除：根因 2  abolishes 手写事务协议，
+迁移改由 FileTransaction 的 journal/备份机制持久保护，独立恢复入口与状态文案
+不复存在，旧状态机测试断言的对象已不存在，禁止就地改预期掩盖语义变化。
+保留前置阻断（worktree、执行上下文、未知残留、statusline 双来源、目标拒绝覆盖），
+新增标准事务执行、失败/崩溃恢复、status 只报遗留物、日常编辑后单调为空等覆盖。
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 from factory_paths import FACTORY_ROOT
@@ -16,9 +26,12 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from repo_task.context import common_state_dir
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR
 from template_sync import context as ctx
 from template_sync import state_root_migration
+from template_sync.state import write_state
 from template_sync.state_root_migration import migrate_state_root, state_root_migration_status
+from template_sync.transaction import cmd_transaction
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -51,16 +64,37 @@ def consumer(tmp_path: Path) -> Path:
     return root
 
 
-def _originals(consumer: Path) -> dict[Path, bytes]:
+def _legacy_sources() -> dict[str, bytes]:
     return {
-        consumer / "docs/runtime/dispatch_ledger.jsonl": b'{"event": "start"}\n',
-        consumer / "docs/runtime/tasks_audit.log": b"audit\n",
-        consumer / "docs/runtime/goal_queue.json": b'{"queue": ["t001"]}\n',
-        consumer / ".scratch/statusline_workdir.jsonl": b"{}\n",
-        consumer / ".repo_template/sync_state.json": b'{"template_source": {"kind": "path", "value": "x"}}\n',
-        consumer / ".scratch/repo_sync_rollback/transaction.json": b'{"status": "accepted"}\n',
-        consumer / ".scratch/task_graph_transaction/transaction.json": b'{"status": "accepted"}\n',
+        "docs/runtime/dispatch_ledger.jsonl": b'{"event": "start"}\n',
+        "docs/runtime/dispatch_ledger.lock": b"",
+        "docs/runtime/tasks_audit.log": b"audit\n",
+        "docs/runtime/goal_queue.json": b'{"queue": ["t001"]}\n',
+        ".scratch/statusline_workdir.jsonl": b"{}\n",
+        ".repo_template/sync_state.json": b'{"template_source": {"kind": "path", "value": "x"}}\n',
     }
+
+
+def _legacy_records() -> dict[str, bytes]:
+    return {
+        ".scratch/repo_sync_rollback/transaction.json": b'{"status": "accepted"}\n',
+        ".scratch/task_graph_transaction/transaction.json": b'{"status": "accepted"}\n',
+    }
+
+
+def _assert_old_layout_intact(consumer: Path) -> None:
+    for rel, expected in {**_legacy_sources(), **_legacy_records()}.items():
+        path = consumer / rel
+        assert path.is_file(), rel
+        assert path.read_bytes() == expected, rel
+
+
+def _assert_no_common_state_files(state: Path) -> None:
+    for name in (
+        "ledger.jsonl", "tasks_audit.log", "goal_queue.json",
+        "statusline_workdir.jsonl", "sync_state.json",
+    ):
+        assert not (state / name).exists(), name
 
 
 def test_dry_run_writes_nothing(consumer):
@@ -68,8 +102,7 @@ def test_dry_run_writes_nothing(consumer):
     reports = migrate_state_root(sync)
     assert reports
     assert any("清理 docs/runtime/dispatch_ledger.lock" in item for item in reports)
-    assert (consumer / "docs/runtime/dispatch_ledger.jsonl").is_file()
-    assert (consumer / "docs/runtime/dispatch_ledger.lock").is_file()
+    _assert_old_layout_intact(consumer)
     assert not common_state_dir(consumer).exists()
 
 
@@ -80,13 +113,39 @@ def test_write_moves_state_and_preserves_bytes(consumer):
     state = common_state_dir(consumer)
     assert (state / "ledger.jsonl").read_text(encoding="utf-8") == '{"event": "start"}\n'
     assert (state / "tasks_audit.log").read_text(encoding="utf-8") == "audit\n"
+    assert (state / "goal_queue.json").read_text(encoding="utf-8") == '{"queue": ["t001"]}\n'
     assert (state / "statusline_workdir.jsonl").read_text(encoding="utf-8") == "{}\n"
-    assert (state / "sync_transaction/transaction.json").is_file()
-    assert (state / "graph_transaction/transaction.json").is_file()
+    assert json.loads((state / "sync_state.json").read_text(encoding="utf-8"))["template_source"]["value"] == "x"
     assert not (consumer / "docs/runtime").exists()
     assert not (consumer / ".scratch/statusline_workdir.jsonl").exists()
     assert not (consumer / ".repo_template/sync_state.json").exists()
-    assert not state_root_migration_status(sync)
+    assert state_root_migration_status(sync) == []
+
+
+def test_write_executes_standard_file_transaction(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_state_root(sync, write=True)
+    journal = common_state_dir(consumer) / SYNC_TRANSACTION_DIR / "transaction.json"
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    assert data["status"] == "accepted"
+    assert data["gates_verified"] is True
+    assert isinstance(data["after"], str) and data["after"]
+    assert len(data["paths"]) == len(_legacy_sources())
+    assert all(existed is True for existed in data["paths"].values())
+    assert len(data["state_paths"]) == 5
+    assert all(existed is False for existed in data["state_paths"].values())
+
+
+def test_legacy_transaction_records_not_migrated(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    migrate_state_root(sync, write=True)
+    for rel, expected in _legacy_records().items():
+        assert (consumer / rel).read_bytes() == expected
+    state = common_state_dir(consumer)
+    assert not (state / "graph_transaction").exists()
+    data = json.loads((state / SYNC_TRANSACTION_DIR / "transaction.json").read_text(encoding="utf-8"))
+    assert data["status"] == "accepted"
+    assert "paths" in data and "state_paths" in data
 
 
 def test_registered_worktree_blocks(consumer, tmp_path):
@@ -95,7 +154,8 @@ def test_registered_worktree_blocks(consumer, tmp_path):
     sync = ctx.SyncContext.for_consumer(consumer)
     with pytest.raises(ctx.SyncError, match="worktree"):
         migrate_state_root(sync, write=True)
-    assert (consumer / "docs/runtime/dispatch_ledger.jsonl").is_file()
+    _assert_old_layout_intact(consumer)
+    assert not common_state_dir(consumer).exists()
 
 
 def test_unknown_runtime_residual_stops_before_write(consumer):
@@ -106,10 +166,8 @@ def test_unknown_runtime_residual_stops_before_write(consumer):
     assert any("mystery.bin" in item and "未知残留" in item for item in status)
     with pytest.raises(ctx.SyncError, match="未知残留"):
         migrate_state_root(sync, write=True)
-    for path, expected in _originals(consumer).items():
-        assert path.read_bytes() == expected
     assert stray.read_text(encoding="utf-8") == "unknown\n"
-    assert (consumer / "docs/runtime/dispatch_ledger.lock").is_file()
+    _assert_old_layout_intact(consumer)
     assert not common_state_dir(consumer).exists()
 
 
@@ -125,7 +183,35 @@ def test_runtime_and_scratch_statusline_conflict_stops(consumer):
     assert not common_state_dir(consumer).exists()
 
 
-def test_copy_failure_rolls_back_and_rerun_succeeds(consumer, monkeypatch):
+def test_target_exists_blocks_without_transaction(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    state = common_state_dir(consumer)
+    state.mkdir(parents=True)
+    (state / "ledger.jsonl").write_text("existing\n", encoding="utf-8")
+    with pytest.raises(ctx.SyncError, match="拒绝覆盖"):
+        migrate_state_root(sync, write=True)
+    _assert_old_layout_intact(consumer)
+    assert (state / "ledger.jsonl").read_text(encoding="utf-8") == "existing\n"
+    assert not (state / SYNC_TRANSACTION_DIR).exists()
+
+
+def test_status_reports_only_residuals_not_restore_state(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    state = common_state_dir(consumer)
+    state.mkdir(parents=True)
+    (state / "state_root_migration.json").write_text(
+        '{"status": "restore_failed", "backup": "/tmp/x", "sources": []}\n', encoding="utf-8"
+    )
+    status = state_root_migration_status(sync)
+    assert status
+    assert not any("恢复未完成" in item for item in status)
+    assert all("state_root_migration.json" not in item for item in status)
+    reports = migrate_state_root(sync, write=True)
+    assert reports
+    assert state_root_migration_status(sync) == []
+
+
+def test_failure_auto_rollback_restores_old_layout(consumer, monkeypatch):
     sync = ctx.SyncContext.for_consumer(consumer)
     original = state_root_migration._copy_verify
     calls = 0
@@ -133,234 +219,64 @@ def test_copy_failure_rolls_back_and_rerun_succeeds(consumer, monkeypatch):
     def flaky(source: Path, target: Path) -> None:
         nonlocal calls
         calls += 1
-        if calls == 14:
-            if source.is_dir():
-                target.mkdir(parents=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text("partial", encoding="utf-8")
+        if calls == 3:
             raise OSError("injected copy failure")
         original(source, target)
 
     monkeypatch.setattr(state_root_migration, "_copy_verify", flaky)
     with pytest.raises(ctx.SyncError, match="injected copy failure"):
         migrate_state_root(sync, write=True)
-    for path, expected in _originals(consumer).items():
-        assert path.read_bytes() == expected
+    state = common_state_dir(consumer)
+    journal = state / SYNC_TRANSACTION_DIR / "transaction.json"
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+    _assert_old_layout_intact(consumer)
+    _assert_no_common_state_files(state)
+
+
+def test_crash_recovery_via_transaction_rollback(consumer, monkeypatch, capsys):
+    sync = ctx.SyncContext.for_consumer(consumer)
+    original = state_root_migration._copy_verify
+    calls = 0
+
+    def crash_on_second(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt("simulated crash")
+        original(source, target)
+
+    monkeypatch.setattr(state_root_migration, "_copy_verify", crash_on_second)
+    with pytest.raises(KeyboardInterrupt):
+        migrate_state_root(sync, write=True)
+    monkeypatch.setattr(state_root_migration, "_copy_verify", original)
 
     state = common_state_dir(consumer)
-    assert not (state / "sync_transaction").exists()
-    assert not (state / "graph_transaction").exists()
-    assert (consumer / "docs/runtime/dispatch_ledger.lock").is_file()
+    journal = state / SYNC_TRANSACTION_DIR / "transaction.json"
+    crashed = json.loads(journal.read_text(encoding="utf-8"))
+    assert crashed["status"] == "applying"
+    assert "after" not in crashed
+    assert crashed["state_paths"]
 
-    monkeypatch.setattr(state_root_migration, "_copy_verify", original)
+    assert cmd_transaction(Namespace(sync=sync, action="status")) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["status"] == "applying"
+    assert shown["state_paths"]
+
+    assert cmd_transaction(Namespace(sync=sync, action="rollback", confirm_restore=True)) == 0
+    assert "同步事务已回滚" in capsys.readouterr().out
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+    _assert_old_layout_intact(consumer)
+    _assert_no_common_state_files(state)
+
+
+def test_daily_edit_after_migration_keeps_status_empty(consumer):
+    sync = ctx.SyncContext.for_consumer(consumer)
     migrate_state_root(sync, write=True)
-    assert (state / "ledger.jsonl").read_text(encoding="utf-8") == '{"event": "start"}\n'
-    assert (state / "graph_transaction/transaction.json").is_file()
-    assert not (consumer / "docs/runtime").exists()
-
-
-def test_restore_failure_keeps_backup_and_reports_source(consumer, monkeypatch):
-    sync = ctx.SyncContext.for_consumer(consumer)
-    backup_root = common_state_dir(consumer) / state_root_migration.BACKUP_NAME
-    first_source = consumer / "docs/runtime/dispatch_ledger.jsonl"
-
-    original_remove = state_root_migration._remove_tree
-
-    def failing_remove(path: Path) -> None:
-        original_remove(path)
-        if path == first_source:
-            raise OSError("injected delete failure")
-
-    original_copy = state_root_migration._copy_verify
-
-    def failing_restore(source: Path, target: Path) -> None:
-        if target == first_source and source.parent == backup_root:
-            raise OSError("injected restore failure")
-        original_copy(source, target)
-
-    monkeypatch.setattr(state_root_migration, "_remove_tree", failing_remove)
-    monkeypatch.setattr(state_root_migration, "_copy_verify", failing_restore)
-    with pytest.raises(ctx.SyncError) as raised:
-        migrate_state_root(sync, write=True)
-
-    message = str(raised.value)
-    assert "injected delete failure" in message
-    assert "injected restore failure" in message
-    assert str(first_source) in message
-    assert f"备份保留在 {backup_root}" in message
-    assert (backup_root / "0").read_text(encoding="utf-8") == '{"event": "start"}\n'
-
-
-def test_unfinished_restore_state_machine_blocks_rerun(consumer, monkeypatch):
-    sync = ctx.SyncContext.for_consumer(consumer)
-    state_root = common_state_dir(consumer)
-    backup_root = state_root / state_root_migration.BACKUP_NAME
-    state_file = state_root / state_root_migration.STATE_FILE
-    first_source = consumer / "docs/runtime/dispatch_ledger.jsonl"
-
-    original_remove = state_root_migration._remove_tree
-    original_copy = state_root_migration._copy_verify
-
-    def failing_remove(path: Path) -> None:
-        original_remove(path)
-        if path == first_source:
-            raise OSError("injected delete failure")
-
-    def failing_restore(source: Path, target: Path) -> None:
-        if target == first_source and source.parent == backup_root:
-            raise OSError("injected restore failure")
-        original_copy(source, target)
-
-    monkeypatch.setattr(state_root_migration, "_remove_tree", failing_remove)
-    monkeypatch.setattr(state_root_migration, "_copy_verify", failing_restore)
-    with pytest.raises(ctx.SyncError):
-        migrate_state_root(sync, write=True)
-
-    payload = json.loads(state_file.read_text(encoding="utf-8"))
-    assert payload["status"] == "restore_failed"
-    assert payload["backup"] == str(backup_root)
-    assert payload["sources"]
-    assert (backup_root / "0").is_file()
-    ledger_bytes = (backup_root / "0").read_bytes()
-
-    monkeypatch.setattr(state_root_migration, "_remove_tree", original_remove)
-    monkeypatch.setattr(state_root_migration, "_copy_verify", original_copy)
-
-    with pytest.raises(ctx.SyncError, match="禁止创建新迁移") as raised:
-        migrate_state_root(sync, write=True)
-    assert str(state_file) in str(raised.value)
-    assert (backup_root / "0").read_bytes() == ledger_bytes
-
-    findings = state_root_migration_status(sync)
-    assert any("恢复未完成" in item for item in findings)
-    assert any(str(state_file) in item for item in findings)
-
-    first_source.write_bytes(ledger_bytes)
-    state_file.unlink()
-    state_root_migration._remove_tree(backup_root)
-    reports = migrate_state_root(sync, write=True)
-    assert reports
-    assert not state_file.exists()
-    assert not backup_root.exists()
-    assert (state_root / "ledger.jsonl").read_bytes() == ledger_bytes
-
-
-def _backup_snapshot(backup_root: Path) -> dict[str, bytes]:
-    return {
-        path.relative_to(backup_root).as_posix(): path.read_bytes()
-        for path in sorted(backup_root.rglob("*"))
-        if path.is_file()
-    }
-
-
-@pytest.fixture
-def interrupted_migration(consumer, monkeypatch):
-    sync = ctx.SyncContext.for_consumer(consumer)
-    state_root = common_state_dir(consumer)
-    backup_root = state_root / state_root_migration.BACKUP_NAME
-    state_file = state_root / state_root_migration.STATE_FILE
-    first_source = consumer / "docs/runtime/dispatch_ledger.jsonl"
-
-    original_remove = state_root_migration._remove_tree
-    original_copy = state_root_migration._copy_verify
-
-    def failing_remove(path: Path) -> None:
-        original_remove(path)
-        if path == first_source:
-            raise OSError("injected delete failure")
-
-    def failing_restore(source: Path, target: Path) -> None:
-        if target == first_source and source.parent == backup_root:
-            raise OSError("injected restore failure")
-        original_copy(source, target)
-
-    monkeypatch.setattr(state_root_migration, "_remove_tree", failing_remove)
-    monkeypatch.setattr(state_root_migration, "_copy_verify", failing_restore)
-    with pytest.raises(ctx.SyncError):
-        migrate_state_root(sync, write=True)
-    monkeypatch.setattr(state_root_migration, "_remove_tree", original_remove)
-    monkeypatch.setattr(state_root_migration, "_copy_verify", original_copy)
-
-    assert (backup_root / "0").is_file()
-    assert json.loads(state_file.read_text(encoding="utf-8"))["status"] == "restore_failed"
-    return sync, state_file, backup_root
-
-
-@pytest.mark.parametrize(
-    "kind,payload",
-    [
-        pytest.param("write", '{"status": "unknown"}', id="unknown_status"),
-        pytest.param("write", "{}", id="missing_status_empty"),
-        pytest.param(
-            "write",
-            json.dumps({"backup": "/tmp/backup", "sources": ["/tmp/source"]}),
-            id="missing_status_with_fields",
-        ),
-        pytest.param("write", "[]", id="list_root"),
-        pytest.param("write", '"x"', id="string_root"),
-        pytest.param("write", "{ not json", id="invalid_json"),
-        pytest.param("unreadable", None, id="unreadable"),
-        pytest.param(
-            "write",
-            json.dumps({"status": 1, "backup": "/tmp/backup", "sources": []}),
-            id="status_not_string",
-        ),
-        pytest.param(
-            "write",
-            json.dumps({"status": "in_progress", "sources": []}),
-            id="missing_backup",
-        ),
-        pytest.param(
-            "write",
-            json.dumps({"status": "in_progress", "backup": 5, "sources": []}),
-            id="backup_not_string",
-        ),
-        pytest.param(
-            "write",
-            json.dumps({"status": "in_progress", "backup": "/tmp/backup"}),
-            id="missing_sources",
-        ),
-        pytest.param(
-            "write",
-            json.dumps({"status": "in_progress", "backup": "/tmp/backup", "sources": "x"}),
-            id="sources_not_list",
-        ),
-        pytest.param(
-            "write",
-            json.dumps({"status": "in_progress", "backup": "/tmp/backup", "sources": [1]}),
-            id="sources_element_not_string",
-        ),
-        pytest.param("keep", None, id="valid_restore_failed"),
-    ],
-)
-def test_pending_state_records_block_rerun(interrupted_migration, kind, payload):
-    sync, state_file, backup_root = interrupted_migration
-    ledger_bytes = (backup_root / "0").read_bytes()
-    before = _backup_snapshot(backup_root)
-
-    if kind == "keep":
-        pass
-    elif kind == "unreadable":
-        state_file.unlink()
-        state_file.mkdir()
-    else:
-        state_file.write_text(payload, encoding="utf-8")
-
-    with pytest.raises(ctx.SyncError, match="禁止创建新迁移"):
-        migrate_state_root(sync, write=True)
-
-    assert (backup_root / "0").read_bytes() == ledger_bytes
-    assert _backup_snapshot(backup_root) == before
-    assert backup_root.is_dir()
-
-
-def test_successful_migration_clears_state_and_backup(consumer):
-    sync = ctx.SyncContext.for_consumer(consumer)
-    state_root = common_state_dir(consumer)
-    state_file = state_root / state_root_migration.STATE_FILE
-    backup_root = state_root / state_root_migration.BACKUP_NAME
-    migrate_state_root(sync, write=True)
-    assert not state_file.exists()
-    assert not backup_root.exists()
-    assert not state_root_migration_status(sync)
+    assert state_root_migration_status(sync) == []
+    state = common_state_dir(consumer)
+    (state / "ledger.jsonl").write_text('{"event": "daily"}\n', encoding="utf-8")
+    (state / "goal_queue.json").write_text('{"queue": []}\n', encoding="utf-8")
+    write_state({"last_synced_commit": "deadbeef", "user_prompts": []}, sync)
+    assert (state / "sync_state.json").is_file()
+    assert not (consumer / ".repo_template/sync_state.json").exists()
+    assert state_root_migration_status(sync) == []

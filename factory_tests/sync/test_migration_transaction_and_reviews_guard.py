@@ -1,4 +1,8 @@
-"""G1 迁移跟进：B2 旧 .scratch 事务预检；reviews 超 5 个一律删除回归。
+"""G1 迁移跟进：migration_transaction 固定 common 目录；reviews 超 5 个一律删除回归。
+
+根因 2 删除了旧 ``.scratch`` 事务预检与 migration_transaction 双位置分支：
+旧 .scratch 事务阻断用例与「finished 旧事务沿用旧目录」用例整体删除，
+补断言事务恒落在 Git common 状态目录，不受旧目录存在与否影响。
 
 语义变更：用户裁定超过 5 个的旧 review 一律 rmtree，废除「被引用/未跟踪
 保留」规则。原 C1「删除内容预检」与 P1-4「引用源解析」相关用例失去意义，
@@ -13,7 +17,6 @@ N2 顶层方案跟进：reviews_migration_status 曾把「待删除子集」(ord
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -26,9 +29,9 @@ SCRIPTS = FACTORY_ROOT / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from repo_task.context import common_state_dir
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR
 from template_sync import context as ctx
 from template_sync.common import migration_transaction
-from template_sync.entity_storage_migration import MigrationError, migrate_entity_storage
 from template_sync.migrate import cmd_migrate, migration_findings
 from template_sync.reviews_migration import (
     ReviewPlan,
@@ -36,9 +39,6 @@ from template_sync.reviews_migration import (
     migrate_reviews,
     reviews_migration_status,
 )
-from template_sync.transaction import cmd_transaction
-
-LEGACY_TRANSACTION = ".scratch/repo_sync_rollback"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -69,91 +69,22 @@ def consumer(tmp_path: Path) -> Path:
     return root
 
 
-def _write_legacy_transaction(consumer: Path, status: str = "applied") -> Path:
-    journal = consumer / LEGACY_TRANSACTION / "transaction.json"
-    journal.parent.mkdir(parents=True)
-    journal.write_text(
-        json.dumps({"version": 1, "status": status, "paths": {}}) + "\n", encoding="utf-8"
-    )
-    return journal
-
-
-def _make_reviews(consumer: Path, count: int) -> Path:
-    reviews = consumer / "docs/reviews"
-    for index in range(1, count + 1):
-        directory = reviews / f"review_2026010{index}_120000"
-        directory.mkdir(parents=True)
-        (directory / "review_general.md").write_text("PASS\n", encoding="utf-8")
-    _git(consumer, "add", "-A")
-    _git(consumer, "commit", "-m", "reviews")
-    return reviews
-
-
-def test_migrate_all_write_blocks_on_open_legacy_transaction_before_any_write(
-    consumer: Path,
+@pytest.mark.parametrize("legacy_present", [False, True])
+def test_migration_transaction_always_uses_common_state_dir(
+    consumer: Path, legacy_present: bool
 ) -> None:
-    journal = _write_legacy_transaction(consumer)
-    todo = consumer / "docs/pending/todo/p001_x.md"
-    todo.parent.mkdir(parents=True)
-    todo.write_text("# p001 x\n", encoding="utf-8")
-    sync = ctx.SyncContext.for_consumer(consumer)
-
-    with pytest.raises(ctx.SyncError, match="repo_sync_rollback") as error:
-        cmd_migrate(argparse.Namespace(kind="all", write=True, sync=sync))
-
-    assert "transaction accept" in str(error.value)
-    assert "transaction rollback" in str(error.value)
-    assert todo.is_file()
-    assert not (consumer / "docs/pending/p001_x.md").exists()
-    assert not (consumer / ".repo_template/entity_schema.json").exists()
-    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "applied"
-
-
-def test_single_kind_write_blocks_on_open_legacy_transaction(consumer: Path) -> None:
-    _write_legacy_transaction(consumer)
-    reviews = _make_reviews(consumer, 6)
-    sync = ctx.SyncContext.for_consumer(consumer)
-
-    with pytest.raises(ctx.SyncError, match="repo_sync_rollback"):
-        cmd_migrate(argparse.Namespace(kind="reviews", write=True, sync=sync))
-
-    assert sorted(path.name for path in reviews.glob("review_*")) == [
-        f"review_2026010{index}_120000" for index in range(1, 7)
-    ]
-    assert not (common_state_dir(consumer) / "sync_transaction").exists()
-
-
-def test_entity_storage_migration_blocks_on_open_legacy_transaction(consumer: Path) -> None:
-    _write_legacy_transaction(consumer, "applying")
-    sync = ctx.SyncContext.for_consumer(consumer)
-
-    with pytest.raises(MigrationError, match="repo_sync_rollback") as error:
-        migrate_entity_storage(sync, write=True)
-
-    assert "新 transaction" in str(error.value)
-    assert not (consumer / ".repo_template/entity_schema.json").exists()
-
-
-def test_migration_transaction_allows_finished_legacy_transaction(consumer: Path) -> None:
-    _write_legacy_transaction(consumer, "accepted")
+    legacy = consumer / ".scratch/repo_sync_rollback/transaction.json"
+    if legacy_present:
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text('{"status": "applied"}\n', encoding="utf-8")
     sync = ctx.SyncContext.for_consumer(consumer)
 
     transaction = migration_transaction(sync)
 
-    assert transaction.backup == consumer / LEGACY_TRANSACTION
-
-
-def test_transaction_status_reports_open_legacy_transaction(consumer: Path, capsys) -> None:
-    _write_legacy_transaction(consumer, "restore_failed")
-    sync = ctx.SyncContext.for_consumer(consumer)
-
-    assert cmd_transaction(argparse.Namespace(sync=sync, action="status")) == 0
-
-    captured = capsys.readouterr()
-    assert "null" in captured.out
-    assert LEGACY_TRANSACTION in captured.err
-    assert "restore_failed" in captured.err
-    assert "看不到" in captured.err
+    assert transaction.root == consumer
+    assert transaction.backup == common_state_dir(consumer) / SYNC_TRANSACTION_DIR
+    if legacy_present:
+        assert legacy.is_file()
 
 
 def test_reviews_lists_all_undated_directories_at_once(consumer: Path) -> None:

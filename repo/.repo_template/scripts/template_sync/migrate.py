@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 from . import context as ctx
-from .common import consumer_locked, migration_transaction, open_legacy_sync_transaction
+from .common import consumer_locked, migration_transaction
 from .conventions_migration import conventions_migration_status, migrate_conventions
 from .adr_migration import adr_migration_status, migrate_adr
 from .agents_zone_migration import agents_zone_migration_status, migrate_agents_zones
@@ -352,6 +352,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
     逐项事务、已完成步骤保留的语义不变；clean 门禁仅 entity-storage 生效
     （workflow/conventions/specs-index/retired-hooks 可脏运行）。
+    state-root 不套 `_transactional`：它在自身标准 FileTransaction 内以
+    state_paths 管理 common 状态目录，与逐项事务顺序执行、不产生同目录嵌套。
     all 写盘前仅当 entity-storage 有待迁移项时查干净，避免前序步骤落盘后
     entity 步再查干净造成顺序死锁；entity 单项写盘仍自查干净。
     dry-run 下仅有旧布局 state 时只展示 legacy-state 计划并指引先单迁，
@@ -360,9 +362,6 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
     kinds = KINDS if args.kind == "all" else (args.kind,)
     write = getattr(args, "write", False)
-    legacy_blocker = open_legacy_sync_transaction(sync)
-    if legacy_blocker:
-        raise ctx.SyncError(legacy_blocker)
     if args.kind == "all" and not write:
         legacy_findings = migration_findings("legacy-state", sync)
         if legacy_findings:

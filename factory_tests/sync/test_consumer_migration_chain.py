@@ -1,7 +1,8 @@
 """计划 7.3：消费仓从 988fd06 布局到当前布局的真实 Git 迁移链。
 
 链路：entity-storage -> 旧 hook 下 ``--no-verify`` 提交并核对重命名摘要 ->
-state-root（docs/runtime、旧 sync_state、.scratch 事务迁入 Git common dir）->
+state-root（标准 FileTransaction 内把 docs/runtime、旧 sync_state 迁入 Git
+common dir；已结束的 .scratch 旧事务记录保留原地、不再搬迁）->
 S5/S6（agents-zones、specs-layout、reviews、adr）-> 新 hook 提交 -> healthcheck。
 """
 
@@ -208,7 +209,8 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     assert not (consumer / "docs/archive/tasks_audit.log").exists()
     assert (consumer / ".scratch/repo_sync_rollback/transaction.json").is_file()
     assert (consumer / ".scratch/task_graph_transaction/transaction.json").is_file()
-    assert not (common_state_dir(consumer) / "sync_transaction").exists()
+    entity_journal = common_state_dir(consumer) / "sync_transaction/transaction.json"
+    assert json.loads(entity_journal.read_text(encoding="utf-8"))["status"] == "accepted"
 
     _git(consumer, "add", "-A")
     _git(consumer, "commit", "--no-verify", "-m", "chore(migration): entity storage")
@@ -236,15 +238,17 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     assert (state / "tasks_audit.log").read_text(encoding="utf-8") == AUDIT_TEXT
     assert (state / "goal_queue.json").is_file()
     assert (state / "statusline_workdir.jsonl").is_file()
-    assert (state / "sync_transaction/transaction.json").is_file()
-    assert (state / "graph_transaction/transaction.json").is_file()
+    root_journal = json.loads((state / "sync_transaction/transaction.json").read_text(encoding="utf-8"))
+    assert root_journal["status"] == "accepted"
+    assert root_journal["state_paths"]
+    assert not (state / "graph_transaction").exists()
     assert json.loads((state / "sync_state.json").read_text(encoding="utf-8"))["template_source"][
         "value"
     ] == str(PRODUCT)
     assert not (consumer / "docs/runtime").exists()
     assert not (consumer / ".repo_template/sync_state.json").exists()
-    assert not (consumer / ".scratch/repo_sync_rollback").exists()
-    assert not (consumer / ".scratch/task_graph_transaction").exists()
+    assert (consumer / ".scratch/repo_sync_rollback/transaction.json").is_file()
+    assert (consumer / ".scratch/task_graph_transaction/transaction.json").is_file()
     assert state_root_migration_status(sync) == []
 
     for kind in ("agents-zones", "specs-layout", "reviews", "adr"):
