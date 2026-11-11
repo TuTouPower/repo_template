@@ -15,6 +15,14 @@ from .state import read_state
 
 REQUIRED_HOOKS = ("pre-commit", "commit-msg", "pre-merge-commit")
 
+_ENTRY_REPAIR_HINT = (
+    "；入口文件须从固定模板来源重新同步 .repo_template 硬同步树恢复"
+    "（repo_sync.py apply，见 sync.md「正式同步」）："
+    "补回 pre-commit / commit-msg 入口文件与 pre-merge-commit 软链；"
+    "install-hooks 只设置 core.hooksPath、不复制 hook 文件，"
+    "不能修复入口文件，勿用作修复手段"
+)
+
 
 def _hook_entry_issue(path: Path) -> str | None:
     """单一入口判定：软链悬空 / 解析后非文件 / 不可执行，返回点名原因。"""
@@ -38,10 +46,7 @@ def _check_required_entries(sync: ctx.SyncContext) -> list[str]:
     for name in REQUIRED_HOOKS:
         problem = _hook_entry_issue(hooks_dir / name)
         if problem:
-            issues.append(
-                f".repo_template/hooks/{name} {problem}；"
-                "运行 repo_sync.py install-hooks 重新同步模板 hooks"
-            )
+            issues.append(f".repo_template/hooks/{name} {problem}" + _ENTRY_REPAIR_HINT)
     for host_rel in (".agents/skills", ".claude/skills"):
         if not (sync.consumer / host_rel).is_dir():
             issues.append(f"缺 {host_rel}；运行 repo_sync.py link-skills")
@@ -76,8 +81,7 @@ def _check_hook_snippet(sync: ctx.SyncContext) -> str | None:
         if problem:
             return (
                 "hooks 接入片段齐全，但真实入口 "
-                f".repo_template/hooks/commit-msg {problem}；"
-                "运行 repo_sync.py install-hooks 重新同步模板 hooks"
+                f".repo_template/hooks/commit-msg {problem}" + _ENTRY_REPAIR_HINT
             )
         return None
     missing = []
