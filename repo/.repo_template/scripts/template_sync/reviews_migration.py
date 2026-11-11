@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ from . import context as ctx
 LIVE = "docs/reviews"
 ARCHIVE = "docs/archive/reviews"
 DATE_RE = re.compile(r"^review_(\d{8})")
+MD_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]*)(?:\s+[^)]*)?\)")
+PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+")
 
 
 def _dirs(root: Path, rel: str) -> list[Path]:
@@ -33,18 +36,48 @@ def _validate_dates(sync: ctx.SyncContext, paths: list[Path]) -> None:
         )
 
 
+def _reference_targets(text: str, source_path: Path, root: Path) -> set[str]:
+    """提取引用源内所有引用目标，按引用源所在目录解析为仓根相对 POSIX 路径。"""
+    candidates: set[str] = set(MD_LINK_RE.findall(text))
+    for match in PATH_TOKEN_RE.finditer(text):
+        if match.start() and text[match.start() - 1] in ":/":
+            continue
+        candidates.add(match.group(0))
+
+    source_dir = source_path.parent.relative_to(root).as_posix()
+    targets: set[str] = set()
+    for candidate in candidates:
+        cleaned = candidate.strip().strip("<>").strip()
+        if not cleaned or "://" in cleaned:
+            continue
+        path_part = cleaned.split("#", 1)[0].strip()
+        if not path_part:
+            continue
+        targets.add(posixpath.normpath(posixpath.join(source_dir, path_part)))
+    return targets
+
+
 def _referenced(root: Path, directory: str) -> list[str]:
     refs = []
     for rel in ("docs/tasks", "docs/blueprint", "docs/handoff.md"):
         base = root / rel
         files = [base] if base.is_file() else (base.rglob("*") if base.is_dir() else [])
         for path in files:
-            if path.is_file():
-                try:
-                    if directory in path.read_text(encoding="utf-8"):
-                        refs.append(path.relative_to(root).as_posix())
-                except (OSError, UnicodeError):
-                    continue
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                raise ctx.SyncError(
+                    "引用源无法读取，停止 review 迁移："
+                    + path.relative_to(root).as_posix()
+                ) from error
+            targets = _reference_targets(text, path, root)
+            if directory in text or any(
+                target == directory or target.startswith(directory + "/")
+                for target in targets
+            ):
+                refs.append(path.relative_to(root).as_posix())
     return refs
 
 

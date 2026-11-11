@@ -20,7 +20,11 @@ from template_sync import context as ctx
 from template_sync.common import migration_transaction
 from template_sync.entity_storage_migration import MigrationError, migrate_entity_storage
 from template_sync.migrate import cmd_migrate
-from template_sync.reviews_migration import migrate_reviews
+from template_sync.reviews_migration import (
+    _reference_targets,
+    _referenced,
+    migrate_reviews,
+)
 from template_sync.transaction import cmd_transaction
 
 LEGACY_TRANSACTION = ".scratch/repo_sync_rollback"
@@ -214,3 +218,87 @@ def test_reviews_lists_all_undated_directories_at_once(consumer: Path) -> None:
     assert "review_alpha" in message
     assert "review_beta" in message
     assert "review_gamma" in message
+
+
+def test_reviews_relative_link_in_handoff_preserves_dir(consumer: Path) -> None:
+    reviews = _make_reviews(consumer, 6)
+    oldest = reviews / "review_20260101_120000"
+    (oldest / "_meta").mkdir()
+    (oldest / "_meta/run.log").write_text("process\n", encoding="utf-8")
+    (consumer / "docs/handoff.md").write_text(
+        f"[Evidence](reviews/{oldest.name}/review.md)\n", encoding="utf-8"
+    )
+    rel = oldest.relative_to(consumer).as_posix()
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    assert _referenced(consumer, rel) == ["docs/handoff.md"]
+    reports = migrate_reviews(sync, write=True)
+    joined = "\n".join(reports)
+
+    assert f"保留被引用 review：{rel}" in joined
+    assert "docs/handoff.md" in joined
+    assert oldest.is_dir()
+    assert (oldest / "_meta/run.log").is_file()
+
+
+def test_reviews_relative_link_in_nested_doc_resolves_by_location(consumer: Path) -> None:
+    reviews = _make_reviews(consumer, 6)
+    oldest = reviews / "review_20260101_120000"
+    blueprint = consumer / "docs/blueprint"
+    blueprint.mkdir(parents=True)
+    (blueprint / "notes.md").write_text(
+        f"[Evidence](../reviews/{oldest.name}/review.md)\n", encoding="utf-8"
+    )
+    rel = oldest.relative_to(consumer).as_posix()
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    assert _referenced(consumer, rel) == ["docs/blueprint/notes.md"]
+    reports = migrate_reviews(sync, write=True)
+    joined = "\n".join(reports)
+
+    assert f"保留被引用 review：{rel}" in joined
+    assert "docs/blueprint/notes.md" in joined
+    assert oldest.is_dir()
+
+
+def test_reviews_unreadable_reference_source_fails_closed(
+    consumer: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = _make_reviews(consumer, 6)
+    disguised = consumer / "docs/blueprint/broken.md"
+    disguised.mkdir(parents=True)
+    original_is_file = Path.is_file
+
+    def disguised_is_file(self: Path) -> bool:
+        if self == disguised:
+            return True
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", disguised_is_file)
+    sync = ctx.SyncContext.for_consumer(consumer)
+
+    with pytest.raises(ctx.SyncError, match="引用源无法读取") as error:
+        migrate_reviews(sync, write=True)
+
+    assert "docs/blueprint/broken.md" in str(error.value)
+    assert len(list(reviews.glob("review_*"))) == 6
+
+
+def test_reference_targets_resolves_paths_by_source_location(consumer: Path) -> None:
+    source = consumer / "docs/blueprint/notes.md"
+    text = "\n".join(
+        [
+            '[A](<../reviews/review_20260101_120000/review.md> "Evidence")',
+            "[B](https://example.com/reviews/review_20260101_120000/review.md)",
+            "[C](#local-anchor)",
+            "裸路径 ../reviews/review_20260101_120000",
+            "inline `../reviews/review_20260101_120000/review.md`",
+        ]
+    )
+
+    targets = _reference_targets(text, source, consumer)
+
+    assert "docs/reviews/review_20260101_120000/review.md" in targets
+    assert "docs/reviews/review_20260101_120000" in targets
+    assert not any("example.com" in target for target in targets)
+    assert not any("#" in target for target in targets)
