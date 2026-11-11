@@ -225,7 +225,7 @@ def _migrate_reviews(sync: ctx.SyncContext, write: bool = False) -> list[str]:
     return _transactional(
         ["docs/reviews", "docs/archive/reviews"],
         lambda _changed: migrate_reviews(sync, write=True),
-        lambda: [],
+        lambda: reviews_migration_status(sync=sync),
         "review 保留",
         sync=sync,
     )
