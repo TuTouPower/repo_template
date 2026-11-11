@@ -4,10 +4,13 @@
 完整字段+有索引冲突、完整字段+无索引行、slug 与文件名不一致）；
 另补非法 status（active/archive）与 archive 同名目标冲突的失败路径。
 全部失败路径断言零写入。
+P1-7 计划即检测回归：status 与执行共用完整计划、规范文本比对、计划失败转 finding。
 """
 
 from __future__ import annotations
 
+import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,9 +22,10 @@ SCRIPTS = FACTORY_ROOT / "repo/.repo_template/scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from repo_task.specs import load_specs
+from repo_task.specs import load_specs, render_spec_text
 from template_sync import context as ctx
-from template_sync.specs_migration import migrate_specs_layout
+from template_sync.migrate import cmd_migrate
+from template_sync.specs_migration import migrate_specs_layout, specs_migration_status
 
 INDEX_HEADER = "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
 
@@ -246,3 +250,60 @@ def test_corrupt_front_matter_aborts_with_sync_error_without_writes(consumer):
         migrate_specs_layout(sync, write=True)
     _assert_zero_write(consumer, before)
     assert source.is_file()
+
+
+def test_status_detects_slug_only_spec_and_public_migrate_repairs(consumer):
+    subprocess.run(["git", "init", "-q", str(consumer)], check=True, capture_output=True)
+    _write_spec(consumer, "feature.md", "---\nslug: feature\n---\n\n# Feature\n")
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert specs_migration_status(sync)
+    assert cmd_migrate(argparse.Namespace(kind="specs-layout", write=True, sync=sync)) == 0
+    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
+    assert specs["feature"]["status"] == "active"
+    assert specs["feature"]["tasks"] == ["baseline"]
+    assert specs_migration_status(sync) == []
+
+
+def test_status_detects_extra_front_matter_field(consumer):
+    _write_spec(
+        consumer, "feature.md",
+        "---\nslug: feature\ntid: t001\n---\n\n# Feature\n",
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert specs_migration_status(sync)
+    migrate_specs_layout(sync, write=True)
+    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
+    assert "tid" not in specs["feature"]["fm"]
+    assert specs_migration_status(sync) == []
+
+
+def test_status_empty_and_zero_write_for_canonical_spec(consumer):
+    _write_spec(
+        consumer, "feature.md",
+        render_spec_text("feature", "active", ["t001"], "# Feature\n"),
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert specs_migration_status(sync) == []
+    before = _snapshot(consumer)
+    migrate_specs_layout(sync, write=True)
+    _assert_zero_write(consumer, before)
+    assert specs_migration_status(sync) == []
+
+
+def test_status_surfaces_plan_errors_as_findings(consumer):
+    cases = [
+        (
+            "---\nslug: feature\nstatus: bogus\ntasks: [t001]\n---\n\n# Feature\n",
+            "status 只允许 active/retired",
+        ),
+        (
+            "---\nslug: other\nstatus: active\ntasks: [t001]\n---\n\n# Feature\n",
+            "与文件名",
+        ),
+    ]
+    for text, expected in cases:
+        _write_spec(consumer, "feature.md", text)
+        sync = ctx.SyncContext.for_consumer(consumer)
+        findings = specs_migration_status(sync)
+        assert findings
+        assert any(expected in item for item in findings)

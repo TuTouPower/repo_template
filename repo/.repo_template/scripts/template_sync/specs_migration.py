@@ -54,10 +54,6 @@ def _index_map(sync: ctx.SyncContext) -> dict[str, list[str]]:
         raise ctx.SyncError(str(error)) from error
 
 
-def _has_front_matter(path: Path) -> bool:
-    return path.read_text(encoding="utf-8").startswith("---")
-
-
 def specs_migration_status(sync: ctx.SyncContext) -> list[str]:
     findings = []
     if (sync.consumer / INDEX).is_file():
@@ -65,9 +61,16 @@ def specs_migration_status(sync: ctx.SyncContext) -> list[str]:
     archive = sync.consumer / ARCHIVE_DIR
     if archive.is_dir():
         findings.extend(f"{path.relative_to(sync.consumer).as_posix()} 待迁回 docs/specs" for path in archive.glob("*.md"))
-    for path in (sync.consumer / ACTIVE_DIR).glob("*.md"):
-        if not _has_front_matter(path):
-            findings.append(f"{path.relative_to(sync.consumer).as_posix()} 待补 front matter")
+    try:
+        index = _index_map(sync)
+        plans = _plan_specs(sync, index)
+    except ctx.SyncError as error:
+        findings.append(str(error))
+        return findings
+    for plan in plans:
+        rendered = render_spec_text(plan.slug, plan.status, plan.tasks, plan.body)
+        if rendered != plan.source.read_text(encoding="utf-8"):
+            findings.append(f"{sync.rel(plan.source)} 待规范化 front matter")
     return findings
 
 
