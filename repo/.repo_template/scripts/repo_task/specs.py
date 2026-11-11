@@ -64,7 +64,6 @@ def build_spec(
         "tasks": tokens,
         "title": title,
         "body": body,
-        "fm": {"slug": slug, "status": status, "tasks": tasks},
     }
     if path is not None:
         record["path"] = path

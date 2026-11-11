@@ -33,7 +33,7 @@ def sync_preflight(src: Path, sync: ctx.SyncContext) -> SyncPreflight:
             for migration_kind, findings in migrations for item in findings
         ]
         error = (
-            f"检测到{label}；apply 不再自动迁移。先运行 "
+            f"检测到{label}；同步前须显式迁移。先运行 "
             f"`{migrate_command(src, sync, kind)}`：\n- " + "\n- ".join(details)
         )
         return SyncPreflight(migrations, error)

@@ -275,8 +275,8 @@ def test_status_detects_extra_front_matter_field(consumer):
     sync = ctx.SyncContext.for_consumer(consumer)
     assert specs_migration_status(sync)
     migrate_specs_layout(sync, write=True)
-    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
-    assert "tid" not in specs["feature"]["fm"]
+    assert validate_specs(consumer) == []
+    assert "tid:" not in (consumer / "docs/specs/feature.md").read_text(encoding="utf-8")
     assert specs_migration_status(sync) == []
 
 
@@ -349,8 +349,8 @@ def test_migrate_drops_extras_and_product_passes_contract(consumer):
     reports = migrate_specs_layout(sync, write=True)
     assert any("丢弃多余字段" in line for line in reports)
     assert validate_specs(consumer) == []
-    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
-    assert set(specs["feature"]["fm"]) == {"slug", "status", "tasks"}
+    text = (consumer / "docs/specs/feature.md").read_text(encoding="utf-8")
+    assert "tid:" not in text and "note:" not in text
 
 
 def test_migrate_missing_front_matter_product_passes_contract(consumer):

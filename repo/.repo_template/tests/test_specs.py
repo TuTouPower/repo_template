@@ -122,7 +122,6 @@ def test_parse_spec_text_is_public_codec():
     assert record["tasks"] == ["t001", "baseline"]
     assert record["body"].strip() == "# Feature"
     assert record["title"] == "Feature"
-    assert set(record["fm"]) == {"slug", "status", "tasks"}
 
 
 @pytest.mark.parametrize("text,keyword", [
