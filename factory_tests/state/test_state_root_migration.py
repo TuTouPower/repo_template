@@ -7,6 +7,8 @@ N1 那套「恢复未完成」状态机（``state_root_migration.json`` + 手写
 不复存在，旧状态机测试断言的对象已不存在，禁止就地改预期掩盖语义变化。
 保留前置阻断（worktree、执行上下文、未知残留、statusline 双来源、目标拒绝覆盖），
 新增标准事务执行、失败/崩溃恢复、status 只报遗留物、日常编辑后单调为空等覆盖。
+旧「事务记录保留原地」用例整体删除：已结束记录须在标准事务备份后删除，
+退役与故障恢复行为由 test_legacy_transaction_retirement.py 独立覆盖。
 """
 
 from __future__ import annotations
@@ -130,22 +132,12 @@ def test_write_executes_standard_file_transaction(consumer):
     assert data["status"] == "accepted"
     assert data["gates_verified"] is True
     assert isinstance(data["after"], str) and data["after"]
-    assert len(data["paths"]) == len(_legacy_sources())
+    assert set(data["paths"]) == set(_legacy_sources()) | {
+        ".scratch/repo_sync_rollback", ".scratch/task_graph_transaction",
+    }
     assert all(existed is True for existed in data["paths"].values())
     assert len(data["state_paths"]) == 5
     assert all(existed is False for existed in data["state_paths"].values())
-
-
-def test_legacy_transaction_records_not_migrated(consumer):
-    sync = ctx.SyncContext.for_consumer(consumer)
-    migrate_state_root(sync, write=True)
-    for rel, expected in _legacy_records().items():
-        assert (consumer / rel).read_bytes() == expected
-    state = common_state_dir(consumer)
-    assert not (state / "graph_transaction").exists()
-    data = json.loads((state / SYNC_TRANSACTION_DIR / "transaction.json").read_text(encoding="utf-8"))
-    assert data["status"] == "accepted"
-    assert "paths" in data and "state_paths" in data
 
 
 def test_registered_worktree_blocks(consumer, tmp_path):

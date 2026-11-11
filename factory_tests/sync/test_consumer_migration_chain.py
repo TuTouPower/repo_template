@@ -2,7 +2,7 @@
 
 链路：entity-storage -> 旧 hook 下 ``--no-verify`` 提交并核对重命名摘要 ->
 state-root（标准 FileTransaction 内把 docs/runtime、旧 sync_state 迁入 Git
-common dir；已结束的 .scratch 旧事务记录保留原地、不再搬迁）->
+common dir；已结束的 .scratch 旧事务目录经标准事务备份后删除）->
 S5/S6（agents-zones、specs-layout、reviews、adr）-> 新 hook 提交 -> healthcheck。
 """
 
@@ -247,8 +247,8 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     ] == str(PRODUCT)
     assert not (consumer / "docs/runtime").exists()
     assert not (consumer / ".repo_template/sync_state.json").exists()
-    assert (consumer / ".scratch/repo_sync_rollback/transaction.json").is_file()
-    assert (consumer / ".scratch/task_graph_transaction/transaction.json").is_file()
+    # 旧事务退役与恢复覆盖见 test_legacy_transaction_retirement.py；
+    # 迁移链不再承诺保留已结束的旧备份。
     assert state_root_migration_status(sync) == []
 
     for kind in ("agents-zones", "specs-layout", "reviews", "adr"):

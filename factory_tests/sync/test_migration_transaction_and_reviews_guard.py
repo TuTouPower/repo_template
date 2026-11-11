@@ -1,8 +1,8 @@
 """G1 迁移跟进：migration_transaction 固定 common 目录；reviews 超 5 个一律删除回归。
 
 根因 2 删除了旧 ``.scratch`` 事务预检与 migration_transaction 双位置分支：
-旧 .scratch 事务阻断用例与「finished 旧事务沿用旧目录」用例整体删除，
-补断言事务恒落在 Git common 状态目录，不受旧目录存在与否影响。
+旧「applied 旧事务也不阻断」用例整体删除：未结束事务必须保护，
+退役检查覆盖见 test_legacy_transaction_retirement.py；事务始终落在 common 目录。
 
 语义变更：用户裁定超过 5 个的旧 review 一律 rmtree，废除「被引用/未跟踪
 保留」规则。原 C1「删除内容预检」与 P1-4「引用源解析」相关用例失去意义，
@@ -69,22 +69,17 @@ def consumer(tmp_path: Path) -> Path:
     return root
 
 
-@pytest.mark.parametrize("legacy_present", [False, True])
-def test_migration_transaction_always_uses_common_state_dir(
-    consumer: Path, legacy_present: bool
-) -> None:
+def test_finished_legacy_does_not_change_current_transaction_location(consumer: Path) -> None:
     legacy = consumer / ".scratch/repo_sync_rollback/transaction.json"
-    if legacy_present:
-        legacy.parent.mkdir(parents=True)
-        legacy.write_text('{"status": "applied"}\n', encoding="utf-8")
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"status": "accepted"}\n', encoding="utf-8")
     sync = ctx.SyncContext.for_consumer(consumer)
 
     transaction = migration_transaction(sync)
 
     assert transaction.root == consumer
     assert transaction.backup == common_state_dir(consumer) / SYNC_TRANSACTION_DIR
-    if legacy_present:
-        assert legacy.is_file()
+    assert legacy.is_file()  # 删除只由显式 state-root 迁移执行。
 
 
 def test_reviews_lists_all_undated_directories_at_once(consumer: Path) -> None:

@@ -17,7 +17,7 @@ from repo_task.context import common_state_dir
 from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 
 from . import context as ctx
-from .common import _git
+from .common import _git, finished_legacy_transactions
 
 LEDGER = "dispatch_ledger.jsonl"
 LEDGER_LOCK = "dispatch_ledger.lock"
@@ -97,6 +97,10 @@ def _sources(sync: ctx.SyncContext) -> list[tuple[Path, Path]]:
 
 def state_root_migration_status(sync: ctx.SyncContext) -> list[str]:
     findings = []
+    try:
+        findings.extend(f"删除已结束旧事务：{sync.rel(path)}" for path in finished_legacy_transactions(sync))
+    except ctx.SyncError as error:
+        findings.append(str(error))
     runtime = sync.consumer.joinpath(*LEGACY_RUNTIME)
     if _present(runtime / EXECUTION_CONTEXT):
         findings.append(
@@ -176,9 +180,10 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
             "docs/runtime 存在未知残留，停止 state-root 迁移：\n- "
             + "\n- ".join(sync.rel(path) for path in unknown)
         )
+    retired = finished_legacy_transactions(sync)
     sources = _sources(sync)
     locks = _locks(sync)
-    if not sources and not locks:
+    if not sources and not locks and not retired:
         return []
     conflicts = [
         str(target) for _source, target in sources
@@ -190,11 +195,13 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
         )
     reports = [f"{sync.rel(source)} -> {sync.rel(target)}" for source, target in sources]
     reports.extend(f"清理 {sync.rel(lock)}" for lock in locks)
+    reports.extend(f"删除已结束旧事务：{sync.rel(path)}" for path in retired)
     if not write:
         return reports
 
     paths = [source.relative_to(sync.consumer).as_posix() for source, _target in sources]
     paths.extend(lock.relative_to(sync.consumer).as_posix() for lock in locks)
+    paths.extend(path.relative_to(sync.consumer).as_posix() for path in retired)
     state_root = common_state_dir(sync.consumer)
     state_paths = [target.relative_to(state_root).as_posix() for _source, target in sources]
     transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
@@ -203,6 +210,8 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
     except ValueError as error:
         raise ctx.SyncError(f"state-root 事务无法启动：{error}") from error
     try:
+        for path in retired:
+            shutil.rmtree(path)
         for source, target in sources:
             _copy_verify(source, target)
             source.unlink()
