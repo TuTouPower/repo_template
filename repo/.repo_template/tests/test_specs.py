@@ -169,3 +169,37 @@ def test_malformed_front_matter_uses_spec_error_boundary(tmp_path, text, keyword
     problems = validate_specs(root)
     assert len(problems) == 1 and keyword in problems[0]
     assert "feature.md" in problems[0]
+
+
+@pytest.mark.parametrize("tasks", ["t001, baseline", ["t001", "baseline"]])
+def test_build_spec_validates_fields_without_text_roundtrip(tasks):
+    from repo_task.specs import build_spec
+
+    record = build_spec(
+        "feature", "active", tasks, "# Feature\n\n正文保留。\n",
+        source="docs/specs/feature.md", path=Path("docs/specs/feature.md"),
+    )
+    assert record["tasks"] == ["t001", "baseline"]
+    assert record["title"] == "Feature"
+    assert record["body"] == "# Feature\n\n正文保留。\n"
+    assert record["path"] == Path("docs/specs/feature.md")
+
+
+@pytest.mark.parametrize("slug,status,tasks,keyword", [
+    ("bad-slug", "active", ["t001"], "slug"),
+    ("feature", "bogus", ["t001"], "status"),
+    ("feature", "active", ["t001", "t001"], "重复"),
+    ("feature", "active", ["story"], "token"),
+    ("feature", "active", [], "至少"),
+])
+def test_build_spec_rejects_invalid_fields(slug, status, tasks, keyword):
+    from repo_task.specs import build_spec
+
+    with pytest.raises(SpecError, match=keyword):
+        build_spec(slug, status, tasks, "# Feature\n", source="docs/specs/feature.md")
+
+
+def test_missing_spec_front_matter_diagnosis_names_spec():
+    with pytest.raises(SpecError, match="docs/specs/feature.md:1: 必须") as error:
+        parse_spec_text("# Feature\n", source="docs/specs/feature.md")
+    assert "progress.md" not in str(error.value)

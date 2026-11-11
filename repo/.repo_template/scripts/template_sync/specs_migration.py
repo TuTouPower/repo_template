@@ -6,14 +6,14 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from repo_task.documents import atomic_write_text, dump_front_matter, parse_front_matter_text
+from repo_task.documents import atomic_write_text, parse_front_matter_text
 from repo_task.specs import (
     SPEC_FM_KEYS,
     SPEC_SLUG_RE,
     SPEC_STATUSES,
     SpecError,
     load_specs,
-    parse_spec_text,
+    build_spec,
     render_spec_text,
 )
 from .specs_index_migration import parse_specs_index
@@ -138,7 +138,7 @@ def _plan_spec(
         if "tasks" in fm:
             tasks_value = fm["tasks"]
         elif slug in index:
-            tasks_value = ", ".join(index[slug])
+            tasks_value = index[slug]
         else:
             tasks_value = "baseline"
             reports.append(f"{path.name} 无索引行，使用 tasks: [baseline]，请人工确认")
@@ -146,22 +146,15 @@ def _plan_spec(
         body = text
         status = "retired" if archived else "active"
         if slug in index:
-            tasks_value = ", ".join(index[slug])
+            tasks_value = index[slug]
         else:
             tasks_value = "baseline"
             reports.append(f"{path.name} 无索引行，使用 tasks: [baseline]，请人工确认")
 
-    # 单一 codec：先用通用工具把「剥离 extras、补齐后的三键」写成待校验文本，
-    # 再由公开 parse_spec_text 统一严格校验并归一化 tasks；写盘只走 render_spec_text。
-    candidate = dump_front_matter(
-        {"slug": slug, "status": status, "tasks": tasks_value}
-    ) + "\n" + body
     try:
-        record = parse_spec_text(candidate, source=rel, path=target)
+        record = build_spec(slug, status, tasks_value, body, source=rel, path=target)
     except SpecError as error:
         raise ctx.SyncError(f"{path.name} {error}") from error
-    except ctx.TaskDataError as error:
-        raise ctx.SyncError(str(error)) from error
     tasks = record["tasks"]
     if "tasks" in fm and slug in index and tasks != index[slug]:
         raise ctx.SyncError(

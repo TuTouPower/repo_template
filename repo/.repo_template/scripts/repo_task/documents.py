@@ -69,7 +69,7 @@ def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
     lines = text.split("\n")
     if not lines or _clean_line(lines[0]) != "---":
         raise ctx.TaskDataError(
-            f"{source}:1: {ctx.PROGRESS_FILE} 必须以独占一行的 YAML front matter (---) 开头"
+            f"{source}:1: 必须以独占一行的 YAML front matter (---) 开头"
         )
     end = None
     for index in range(1, len(lines)):

@@ -21,27 +21,60 @@ class SpecError(ctx.TaskDataError):
     pass
 
 
-def _parse_tasks(value, *, source: str) -> list[str]:
-    text = str(value or "").strip()
-    if text.startswith("[") and text.endswith("]"):
-        text = text[1:-1]
-    tokens = [token.strip() for token in text.split(",") if token.strip()]
+def _parse_tasks(value: str | list[str], *, source: str) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        tokens = [token.strip() for token in text.split(",") if token.strip()]
+    elif isinstance(value, list):
+        tokens = list(value)
+    else:
+        raise SpecError(f"{source}: tasks 须为逗号分隔文本或 token 列表")
     if not tokens:
         raise SpecError(f"{source}: tasks 至少包含一个 tNNN 或 baseline")
+    for token in tokens:
+        if not isinstance(token, str) or not TASK_TOKEN_RE.fullmatch(token):
+            raise SpecError(f"{source}: tasks token 非法：{token!r}")
     if len(tokens) != len(set(tokens)):
         raise SpecError(f"{source}: tasks 存在重复 token")
-    for token in tokens:
-        if not TASK_TOKEN_RE.fullmatch(token):
-            raise SpecError(f"{source}: tasks token 非法：{token!r}")
     return tokens
 
 
-def parse_spec_text(text: str, *, source: str, path: Path | None = None) -> dict:
-    """spec 文本唯一解码器（严格语义）。
+def build_spec(
+    slug: str, status: str, tasks: str | list[str], body: str,
+    *, source: str, path: Path | None = None,
+) -> dict:
+    """校验 spec 字段并构造记录；文本读取与迁移共用唯一语义入口。"""
+    if path is not None and slug != path.stem:
+        raise SpecError(f"{source}: slug 必须与文件名一致（{slug!r} != {path.stem!r}）")
+    if not isinstance(slug, str) or not SPEC_SLUG_RE.fullmatch(slug):
+        raise SpecError(f"{source}: slug 须匹配 {SPEC_SLUG_RE.pattern}")
+    if status not in SPEC_STATUSES:
+        raise SpecError(f"{source}: status 只允许 active/retired（实得 {status!r}）")
+    tokens = _parse_tasks(tasks, source=source)
+    title = slug
+    for line in body.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+    record = {
+        "slug": slug,
+        "status": status,
+        "tasks": tokens,
+        "title": title,
+        "body": body,
+        "fm": {"slug": slug, "status": status, "tasks": tasks},
+    }
+    if path is not None:
+        record["path"] = path
+    return record
 
-    front matter 只允许 slug/status/tasks 三个键，多余键直接 SpecError；
-    tasks 按 TASK_TOKEN_RE 校验、去重、非空。契约只管语义，不管空白与写法；
-    传入 path 时一并校验 slug 与文件名一致；语法与语义错误统一抛 SpecError。
+
+def parse_spec_text(text: str, *, source: str, path: Path | None = None) -> dict:
+    """解析 front matter 后由 build_spec 校验字段，语法错误统一抛 SpecError。
+
+    front matter 只允许 slug/status/tasks 三个键；契约不限制空白与写法。
     """
     try:
         fm, body = parse_front_matter_text(text, source=source)
@@ -52,31 +85,10 @@ def parse_spec_text(text: str, *, source: str, path: Path | None = None) -> dict
         raise SpecError(
             f"{source}: front matter 只允许 slug/status/tasks 三个键，多余字段：{', '.join(extra)}"
         )
-    slug = fm.get("slug", "")
-    if path is not None and slug != path.stem:
-        raise SpecError(f"{source}: slug 必须与文件名一致（{slug!r} != {path.stem!r}）")
-    if not SPEC_SLUG_RE.fullmatch(slug):
-        raise SpecError(f"{source}: slug 须匹配 {SPEC_SLUG_RE.pattern}")
-    status = fm.get("status", "")
-    if status not in SPEC_STATUSES:
-        raise SpecError(f"{source}: status 只允许 active/retired（实得 {status!r}）")
-    tasks = _parse_tasks(fm.get("tasks", ""), source=source)
-    title = slug
-    for line in body.splitlines():
-        if line.startswith("# "):
-            title = line[2:].strip()
-            break
-    record = {
-        "slug": slug,
-        "status": status,
-        "tasks": tasks,
-        "title": title,
-        "body": body,
-        "fm": fm,
-    }
-    if path is not None:
-        record["path"] = path
-    return record
+    return build_spec(
+        fm.get("slug", ""), fm.get("status", ""), fm.get("tasks", ""), body,
+        source=source, path=path,
+    )
 
 
 def render_spec_text(slug: str, status: str, tasks: list[str], body: str) -> str:
