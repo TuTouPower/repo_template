@@ -276,7 +276,7 @@ def _scratch_policy(
 
 
 def scan_repository(repo: Path, categories: list[str], keeps: list[str]) -> ScanResult:
-    """扫描并判定删除候选；带 scratch 时保护未结束事务与在用草稿。"""
+    """扫描并判定删除候选。事务数据不在 `.scratch/`、记录在 Git common 目录，`repo-cleanup` 不读取也不清理事务记录；带 scratch 时保护在用草稿（3 天内有主草稿）；控制面锁被占用时带 scratch 的 cleanup 整次立即失败、零删除。"""
     cats = set(categories)
     hits: list[dict] = []
     skipped: list[str] = []

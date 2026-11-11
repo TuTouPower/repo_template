@@ -1,6 +1,6 @@
 ---
 name: repo-cleanup
-description: 清理仓库缓存、构建产物与运行垃圾（pycache/pytest/logs/OS/编辑器/scratch），默认 dry-run；scratch 默认清理，未结束事务与 3 天内有主草稿受保护；node/artifacts/data 须点名。用户要求清理仓库垃圾、释放空间或核对可清文件时调用。
+description: 清理仓库缓存、构建产物与运行垃圾（pycache/pytest/logs/OS/编辑器/scratch），默认 dry-run；scratch 默认清理，3 天内有主草稿保留；控制面锁被占用时带 scratch 的 cleanup 立即失败、零删除；node/artifacts/data 须点名。用户要求清理仓库垃圾、释放空间或核对可清文件时调用。
 disable-model-invocation: true
 metadata:
   opencode/autoinvoke: "false"
@@ -16,8 +16,8 @@ metadata:
 
 ## 流程
 
-1. 在消费仓主仓根运行 `repo_cleanup.py scan`，报告分类、路径、保护中的草稿和被 keep 的内容；scratch 默认参与，未结束事务会整体跳过 scratch 并给出处理命令。脚本不报告大小，需要时另行只读统计。
-2. 用户未指定范围时采用默认类别；不把源码、测试、配置、文档、数据或未知目录当垃圾。scratch 只按脚本判定：无主、事务已结束或超期草稿才进入候选，未结束事务与 3 天内有主草稿保留。
+1. 在消费仓主仓根运行 `repo_cleanup.py scan`，报告分类、路径、保护中的草稿和被 keep 的内容；scratch 默认参与。事务数据不在 `.scratch/`、记录在 Git common 目录，`repo-cleanup` 不读取也不清理事务记录；旧 `.scratch/repo_sync_rollback` 的 applied 事务按 `transaction status` / `accept` / `rollback`（或 `graph-transaction status`）处置；带 scratch 的 cleanup 在控制面锁被占用时立即失败、零删除。脚本不报告大小，需要时另行只读统计。
+2. 用户未指定范围时采用默认类别；不把源码、测试、配置、文档、数据或未知目录当垃圾。scratch 只按脚本判定：无主、超期草稿才进入候选，3 天内有主草稿保留。
 3. 删除前将 scan 清单与 `git ls-files` 交叉核对。脚本按类别扫描，不以是否 tracked 自动保护；含受保护内容、仍在使用的文件或无法恢复的数据时停止。保存必须保留的未跟踪内容。须保留的路径用 `--keep`（精确 / glob / 前缀均生效，文件级命中同样排除）；scan 清单中仍出现应保留路径时停止，不执行 apply。
 4. 用户确认后用相同类别和 keep 参数执行 apply（可传入 `--expected-count` 锁定 scan 清单数量，防止期间新增未确认文件被误删）；apply 会重新扫描，若期间候选发生变化（数量不符）将停止并要求重新确认。带 scratch 时脚本非阻塞持有控制面锁，锁被同步或 task 控制命令占用则整次立即失败、零删除，稍后重试；失败时停止，检查已删范围，从备份恢复需要保留的内容，不盲目重试。
 5. 清理后运行 `git status --short`，确保没有误删 tracked 文件。
