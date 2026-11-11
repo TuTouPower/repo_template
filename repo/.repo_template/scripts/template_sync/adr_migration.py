@@ -41,7 +41,10 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
         heading = _heading(line)
         level = heading[0] if heading else None
         if level == 1 and current is not None:
-            break
+            raise ctx.SyncError(
+                f"{SOURCE} 第 {lineno} 行条目正文出现围栏外 H1：{line.strip()}；"
+                "正文只允许 H3 及以下标题，拒绝迁移"
+            )
         if level == 2:
             title_match = NNN_TITLE_RE.fullmatch(heading[1])
             if title_match is None:

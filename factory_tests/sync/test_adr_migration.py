@@ -8,7 +8,9 @@ YYYYMMDD_<slug>.md（同名冲突追加 _2/_3 后缀、supersedes 指向带后�
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 from factory_paths import FACTORY_ROOT
@@ -21,6 +23,7 @@ if str(SCRIPTS) not in sys.path:
 
 from template_sync import context as ctx
 from template_sync.adr_migration import adr_migration_status, migrate_adr
+from template_sync.migrate import cmd_migrate
 
 
 @pytest.fixture
@@ -396,31 +399,59 @@ def test_h3_to_h6_inside_entry_body_are_allowed(consumer):
     assert reports
 
 
-def test_h1_inside_entry_body_stops_parsing(consumer):
+# 旧 test_h1_inside_entry_body_stops_parsing 整体删除：它断言迁移成功并丢弃
+# H1 后全部源内容，违背正文只许 H3+、非法结构必须拒绝且零写入的契约。
+@pytest.mark.parametrize("heading", ["# 下一份记录", "   # 下一份记录", "#"])
+@pytest.mark.parametrize("write", [False, True])
+def test_entry_body_h1_rejects_entire_migration_without_writes(consumer, heading, write):
     text = (
-        "# ADR\n\n"
-        "## 001 采用方案（2026-01-02）\n\n"
-        "- 结论：A\n\n"
-        "### 细节\n\n"
-        "- 细节内容\n\n"
-        "# 下一份记录（误置的 H1）\n\n"
-        "## 002 不该被解析（2026-01-03）\n\n"
-        "- 结论：B\n"
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n"
+        "- 结论：A\n\n### 细节\n\n- 细节内容\n\n"
+        f"{heading}\n\n## 002 后续方案（2026-01-03）\n\n- 结论：B\n"
     )
     source = _write_decisions(consumer, text)
     sync = ctx.SyncContext.for_consumer(consumer)
-    reports = migrate_adr(sync, write=True)
-    files = list(_decisions_dir(consumer).glob("*.md"))
-    assert len(files) == 1
-    body = files[0].read_text(encoding="utf-8")
-    assert body.startswith("# 001 采用方案（2026-01-02）")
-    assert "### 细节" in body
-    assert "- 细节内容" in body
-    assert "下一份记录" not in body
-    assert "## 002" not in body
-    assert "结论：B" not in body
+    status = adr_migration_status(sync)
+    assert len(status) == 1
+    assert "第 11 行" in status[0] and "H1" in status[0]
+    _assert_stopped_before_write(consumer, source, text)
+    with pytest.raises(ctx.SyncError, match="第 11 行.*H1"):
+        migrate_adr(sync, write=write)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+@pytest.mark.parametrize("write", [False, True])
+def test_migrate_adr_command_rejects_body_h1_without_losing_source(consumer, write):
+    subprocess.run(["git", "init", "-b", "main", str(consumer)], check=True, capture_output=True)
+    text = (
+        "## 001 采用方案（2026-01-02）\n\n# 非法标题\n\n"
+        "## 002 后续方案（2026-01-03）\n\n必须保留的后续内容。\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="第 3 行.*H1"):
+        cmd_migrate(Namespace(kind="adr", write=write, sync=sync))
+    _assert_stopped_before_write(consumer, source, text)
+
+
+@pytest.mark.parametrize("fence", ["```markdown", "~~~markdown"])
+def test_fenced_h1_in_entry_body_is_preserved_with_later_entries(consumer, fence):
+    close = fence[:3]
+    example = f"{fence}\n# 示例标题\n## 999 示例条目\n{close}"
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n"
+        f"{example}\n\n"
+        "## 002 后续方案（2026-01-03）\n\n- 结论：B\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert any("2 条" in item for item in adr_migration_status(sync))
+    migrate_adr(sync, write=True)
+    files = sorted(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 2
+    assert example in files[0].read_text(encoding="utf-8")
+    assert "结论：B" in files[1].read_text(encoding="utf-8")
     assert not source.exists()
-    assert reports
 
 
 def test_non_nnn_h2_inside_entry_body_still_stops(consumer):
