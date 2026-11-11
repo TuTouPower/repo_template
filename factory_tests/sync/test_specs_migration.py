@@ -22,10 +22,13 @@ SCRIPTS = FACTORY_ROOT / "repo/.repo_template/scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from repo_task.specs import load_specs, render_spec_text
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
+from repo_task.specs import load_specs, render_spec_text, validate_specs
 from template_sync import context as ctx
+from template_sync.apply import cmd_apply
 from template_sync.migrate import cmd_migrate
 from template_sync.specs_migration import migrate_specs_layout, specs_migration_status
+from test_repo_sync import env
 
 INDEX_HEADER = "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
 
@@ -290,20 +293,90 @@ def test_status_empty_and_zero_write_for_canonical_spec(consumer):
     assert specs_migration_status(sync) == []
 
 
-def test_status_surfaces_plan_errors_as_findings(consumer):
+# 旧 test_status_surfaces_plan_errors_as_findings 已整体删除：新语义下 front matter
+# 值非法（bogus status / slug 与文件名不一致）属契约违规，由 validate_specs 报告；
+# specs_migration_status 只检测遗留物，不再把计划错误转成 finding。
+
+
+def test_contract_violations_are_not_migration_leftovers(consumer):
     cases = [
-        (
-            "---\nslug: feature\nstatus: bogus\ntasks: [t001]\n---\n\n# Feature\n",
-            "status 只允许 active/retired",
-        ),
-        (
-            "---\nslug: other\nstatus: active\ntasks: [t001]\n---\n\n# Feature\n",
-            "与文件名",
-        ),
+        ("---\nslug: feature\nstatus: bogus\ntasks: [t001]\n---\n\n# Feature\n", "status 只允许 active/retired"),
+        ("---\nslug: feature\nstatus: active\ntasks: [t001]\nnote: legacy\n---\n\n# Feature\n", "多余字段"),
     ]
-    for text, expected in cases:
+    for text, keyword in cases:
         _write_spec(consumer, "feature.md", text)
         sync = ctx.SyncContext.for_consumer(consumer)
-        findings = specs_migration_status(sync)
-        assert findings
-        assert any(expected in item for item in findings)
+        assert specs_migration_status(sync) == []
+        problems = validate_specs(consumer)
+        assert problems and any(keyword in item for item in problems)
+
+
+def test_status_detects_only_three_kinds_of_leftovers(consumer):
+    _write_index(consumer, "|feature|t001|2026-01-01|\n")
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert any("specs_index.md" in item for item in specs_migration_status(sync))
+
+    (consumer / "docs/specs_index.md").unlink()
+    archive = consumer / "docs/archive/specs"
+    archive.mkdir(parents=True)
+    (archive / "old.md").write_text("# Old\n", encoding="utf-8")
+    assert any("archive/specs" in item for item in specs_migration_status(sync))
+
+    (archive / "old.md").unlink()
+    _write_spec(consumer, "feature.md", "# Feature\n")
+    assert any("front matter" in item for item in specs_migration_status(sync))
+
+
+@pytest.mark.parametrize("text", [
+    render_spec_text("feature", "active", ["t001", "baseline"], "# Feature\n"),
+    "---\nslug: feature\nstatus: active\ntasks: t001, baseline\n---\n\n# Feature\n",
+    "---\nslug: feature\nstatus: active\ntasks: [t001,baseline]\n---\n\n\n# Feature\n\n正文\n",
+    "---\nslug: feature\n\nstatus: active\ntasks: [t001, baseline]\n---\n\n# Feature\n",
+    "---\nslug: feature\nstatus: active\ntasks: [t001]\nnote: legacy\n---\n\n# Feature\n",
+])
+def test_status_ignores_format_and_contract_violations(consumer, text):
+    _write_spec(consumer, "feature.md", text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    assert specs_migration_status(sync) == []
+
+
+def test_migrate_drops_extras_and_product_passes_contract(consumer):
+    _write_spec(
+        consumer, "feature.md",
+        "---\nslug: feature\nstatus: active\ntasks: [t001]\ntid: t001\nnote: legacy\n---\n\n# Feature\n",
+    )
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_specs_layout(sync, write=True)
+    assert any("丢弃多余字段" in line for line in reports)
+    assert validate_specs(consumer) == []
+    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
+    assert set(specs["feature"]["fm"]) == {"slug", "status", "tasks"}
+
+
+def test_migrate_missing_front_matter_product_passes_contract(consumer):
+    _write_spec(consumer, "feature.md", "# Feature\n")
+    _write_index(consumer, "|feature|t001|2026-01-01|\n")
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_specs_layout(sync, write=True)
+    assert reports
+    assert validate_specs(consumer) == []
+    assert specs_migration_status(sync) == []
+
+
+def test_specs_migration_has_no_private_tokens_import():
+    source = (SCRIPTS / "template_sync/specs_migration.py").read_text(encoding="utf-8")
+    assert "_tokens" not in source
+
+
+def test_apply_rejects_spec_contract_violation_before_transaction_begin(env):
+    consumer = env["consumer"]
+    (consumer / "docs/specs").mkdir(parents=True, exist_ok=True)
+    (consumer / "docs/specs/feature.md").write_text(
+        "---\nslug: feature\nstatus: active\ntasks: [t001]\nnote: legacy\n---\n\n# Feature\n",
+        encoding="utf-8",
+    )
+    state_before = env["state_file"].read_bytes()
+    transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
+    assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
+    assert env["state_file"].read_bytes() == state_before
+    assert transaction.read() is None

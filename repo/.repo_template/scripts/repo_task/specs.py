@@ -14,57 +14,71 @@ SPECS_DIR = "docs/specs"
 SPEC_SLUG_RE = ctx.SLUG_RE
 TASK_TOKEN_RE = re.compile(r"^(?:t[0-9]{3,}|baseline)$")
 SPEC_STATUSES = ("active", "retired")
+SPEC_FM_KEYS = frozenset({"slug", "status", "tasks"})
 
 
 class SpecError(ctx.TaskDataError):
     pass
 
 
-def _tokens(value) -> list[str]:
+def _parse_tasks(value, *, source: str) -> list[str]:
     text = str(value or "").strip()
     if text.startswith("[") and text.endswith("]"):
         text = text[1:-1]
     tokens = [token.strip() for token in text.split(",") if token.strip()]
     if not tokens:
-        raise SpecError("tasks 至少包含一个 tNNN 或 baseline")
+        raise SpecError(f"{source}: tasks 至少包含一个 tNNN 或 baseline")
     if len(tokens) != len(set(tokens)):
-        raise SpecError("tasks 存在重复 token")
+        raise SpecError(f"{source}: tasks 存在重复 token")
     for token in tokens:
         if not TASK_TOKEN_RE.fullmatch(token):
-            raise SpecError(f"tasks token 非法：{token!r}")
+            raise SpecError(f"{source}: tasks token 非法：{token!r}")
     return tokens
 
 
-def render_spec_text(slug: str, status: str, tasks: list[str], body: str) -> str:
-    lines = ["---", f"slug: {slug}", f"status: {status}", f"tasks: [{', '.join(tasks)}]", "---", ""]
-    return "\n".join(lines) + body.lstrip("\n")
+def parse_spec_text(text: str, *, source: str, path: Path | None = None) -> dict:
+    """spec 文本唯一解码器（严格语义）。
 
-
-def _spec_record(path: Path, text: str, *, source: str) -> dict:
+    front matter 只允许 slug/status/tasks 三个键，多余键直接 SpecError；
+    tasks 按 TASK_TOKEN_RE 校验、去重、非空。契约只管语义，不管空白与写法；
+    传入 path 时一并校验 slug 与文件名一致。
+    """
     fm, body = parse_front_matter_text(text, source=source)
+    extra = sorted(set(fm) - SPEC_FM_KEYS)
+    if extra:
+        raise SpecError(
+            f"{source}: front matter 只允许 slug/status/tasks 三个键，多余字段：{', '.join(extra)}"
+        )
     slug = fm.get("slug", "")
-    if slug != path.stem:
+    if path is not None and slug != path.stem:
         raise SpecError(f"{source}: slug 必须与文件名一致（{slug!r} != {path.stem!r}）")
     if not SPEC_SLUG_RE.fullmatch(slug):
         raise SpecError(f"{source}: slug 须匹配 {SPEC_SLUG_RE.pattern}")
     status = fm.get("status", "")
     if status not in SPEC_STATUSES:
         raise SpecError(f"{source}: status 只允许 active/retired（实得 {status!r}）")
-    tasks = _tokens(fm.get("tasks", ""))
+    tasks = _parse_tasks(fm.get("tasks", ""), source=source)
     title = slug
     for line in body.splitlines():
         if line.startswith("# "):
             title = line[2:].strip()
             break
-    return {
+    record = {
         "slug": slug,
-        "path": path,
         "status": status,
         "tasks": tasks,
         "title": title,
         "body": body,
         "fm": fm,
     }
+    if path is not None:
+        record["path"] = path
+    return record
+
+
+def render_spec_text(slug: str, status: str, tasks: list[str], body: str) -> str:
+    lines = ["---", f"slug: {slug}", f"status: {status}", f"tasks: [{', '.join(tasks)}]", "---", ""]
+    return "\n".join(lines) + body.lstrip("\n")
 
 
 def load_spec(path: Path, *, root: Path | None = None) -> dict:
@@ -73,7 +87,7 @@ def load_spec(path: Path, *, root: Path | None = None) -> dict:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         raise SpecError(f"spec 无法读取：{source}（{error}）") from error
-    return _spec_record(path, text, source=source)
+    return parse_spec_text(text, source=source, path=path)
 
 
 def _unique_specs(specs: list[dict]) -> list[dict]:
@@ -115,10 +129,10 @@ def load_specs_at_ref(
     include_retired: bool = True,
 ) -> list[dict]:
     specs = _unique_specs([
-        _spec_record(
-            Path(path),
+        parse_spec_text(
             git_text_at_ref(ref, path, root=root, repo=repo),
             source=f"{ref}:{path}",
+            path=Path(path),
         )
         for path in _spec_paths_at_ref(ref, root=root, repo=repo)
     ])

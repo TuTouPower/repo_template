@@ -158,7 +158,7 @@ pending 闭环必须提供非空 `--reason`，说明处理结果、验证依据�
 python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
 
-`docs/specs/<slug>.md` 的 front matter 是唯一 spec 清单：`slug` 必须等于文件名并匹配 `^[a-z][a-z0-9_]*$`，`status` 只允许 `active` / `retired`，`tasks` 至少含一个 `tNNN` 或 `baseline`。`task.py specs list --json` 只读派生清单，不输出更新时间。finish 要求当前 tid 出现在任一 active spec 的 `tasks` 中，或 `progress.md` 写 `- specs_index: not_applicable: 具体原因`（该行只是无关联 spec 的豁免标记，不是索引）。废弃 spec 只改 `status`，不迁移目录。
+`docs/specs/<slug>.md` 的 front matter 是唯一 spec 清单，只允许 `slug` / `status` / `tasks` 三个键，多余字段一律拒绝：`slug` 必须等于文件名并匹配 `^[a-z][a-z0-9_]*$`，`status` 只允许 `active` / `retired`，`tasks` 至少含一个 `tNNN` 或 `baseline` 且去重。空行、逗号后空格、是否加 `[]` 等空白与写法属格式，不进契约；契约只校验语义，不做逐字节比较，迁移状态也只检测旧布局遗留物。`task.py specs list --json` 只读派生清单，不输出更新时间。finish 要求当前 tid 出现在任一 active spec 的 `tasks` 中，或 `progress.md` 写 `- specs_index: not_applicable: 具体原因`（该行只是无关联 spec 的豁免标记，不是索引）。废弃 spec 只改 `status`，不迁移目录。
 
 正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 spikes complete 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 

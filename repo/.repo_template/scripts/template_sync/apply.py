@@ -55,13 +55,19 @@ def _assert_distributable_tree(src: Path) -> None:
 
 
 def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
-    """日常 apply 只接受当前 schema；旧布局必须先走显式 migrate（A10）。
+    """日常 apply 只接受当前 schema 与合法 spec 契约；旧布局必须先走显式 migrate（A10/R1）。
 
     与 status / plan / migrate 共用 migration_findings 这一单一可处理集合，
     消除「plan 显示一致但 apply 阻断」。引导命令基于固定来源 product 与消费仓身份，
     不再指向旧消费仓本地脚本。entity 与其它旧布局并存时引导 `migrate all`，
     避免先跑 entity-storage 再被 workflow-schema 的缺 progress.md 卡住。
     """
+    specs_problems = validate_specs(sync.consumer)
+    if specs_problems:
+        raise ctx.SyncError(
+            "docs/specs front matter 契约违规（同步中止，尚未写盘）：\n- "
+            + "\n- ".join(specs_problems)
+        )
     entity_problems = migration_findings("entity-storage", sync)
     other_problems: list[str] = []
     for kind in KINDS:
@@ -201,13 +207,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
                     prompt_substrings(state), sync=sync,
                 )
         load_policy(sync.consumer)
-        specs_problems = validate_specs(sync.consumer)
-        if specs_problems:
-            for problem in specs_problems:
-                print(f"spec front matter 契约违规: {problem}")
-            raise ctx.SyncError(
-                "docs/specs front matter 契约违规（同步中止）：" + "；".join(specs_problems)
-            )
         if not args.skip_tests:
             if not _run_tests(sync.consumer):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
