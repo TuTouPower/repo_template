@@ -189,7 +189,12 @@ def test_appending_file_to_existing_review_dir_is_not_new(review_repo: Path, tmp
     assert "超过 5 个" not in result.stderr
 
 
-def test_referenced_old_review_is_not_suggested_for_deletion(review_repo: Path, tmp_path: Path):
+def test_referenced_old_review_is_still_suggested_for_deletion(review_repo: Path, tmp_path: Path):
+    """612c0f1 废除引用/未跟踪保留后，被引用旧目录也列入删除建议，数量检查仍阻断。
+
+    旧用例 test_referenced_old_review_is_not_suggested_for_deletion 固定「被引用
+    不删除」语义，随契约废除整体删除；本用例另立，覆盖新集合语义。
+    """
     _write_review_dir(review_repo, 6)
     (review_repo / "docs/handoff.md").write_text(
         "见 docs/reviews/review_20260101_120000\n", encoding="utf-8",
@@ -203,9 +208,10 @@ def test_referenced_old_review_is_not_suggested_for_deletion(review_repo: Path, 
 
     assert result.returncode == 1
     assert "超过 5 个" in result.stderr
-    assert "git rm -r -q -- docs/reviews/review_20260101_120000" not in result.stderr
-    assert "docs/reviews/review_20260101_120000（docs/handoff.md）" in result.stderr
+    assert "git rm -r -q -- docs/reviews/review_20260101_120000" in result.stderr
     assert "git rm -r -q -- docs/reviews/review_20260102_120000" in result.stderr
+    assert "被引用、不能删除" not in result.stderr
+    assert "先处理引用" not in result.stderr
 
 
 def test_merge_head_in_linked_worktree_skips_review_retention(review_repo: Path, tmp_path: Path):

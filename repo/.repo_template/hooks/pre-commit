@@ -57,25 +57,6 @@ def _review_dirs(paths: list[str]) -> set[str]:
     return {path.split("/")[2] for path in paths if path.startswith("docs/reviews/review_") and len(path.split("/")) > 2}
 
 
-def _review_refs(directory: str) -> list[str]:
-    refs: list[str] = []
-    roots = [Path("docs/tasks"), Path("docs/blueprint")]
-    files = [Path("docs/handoff.md")]
-    for root in roots:
-        if root.is_dir():
-            files.extend(path for path in root.rglob("*") if path.is_file())
-    for path in files:
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        if directory in text:
-            refs.append(path.as_posix())
-    return refs
-
-
 def review_retention_check() -> int:
     merge = subprocess.run(
         ["git", "rev-parse", "--git-path", "MERGE_HEAD"],
@@ -108,24 +89,9 @@ def review_retention_check() -> int:
             return 1
         dated.append((date, directory))
     dated.sort(reverse=True)
-    removable = []
-    referenced = []
-    for _date, directory in dated[5:]:
-        refs = _review_refs(f"docs/reviews/{directory}")
-        if refs:
-            referenced.append((directory, refs))
-        else:
-            removable.append(directory)
-    if not removable:
-        print("pre-commit: docs/reviews 超过 5 个，但超出项均被引用；先处理引用。", file=sys.stderr)
-        return 1
     print(f"pre-commit: 本次新增 review 后 docs/reviews 有 {len(dirs)} 个 review，超过 5 个。\n可删除的最旧目录：", file=sys.stderr)
-    for directory in removable:
+    for _date, directory in dated[5:]:
         print(f"  git rm -r -q -- docs/reviews/{directory} && rm -rf -- docs/reviews/{directory}", file=sys.stderr)
-    if referenced:
-        print("被引用、不能删除：", file=sys.stderr)
-        for directory, refs in referenced:
-            print(f"  docs/reviews/{directory}（{', '.join(refs)}）", file=sys.stderr)
     return 1
 
 

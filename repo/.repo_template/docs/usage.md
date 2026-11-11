@@ -162,7 +162,7 @@ python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求�
 
 正式 spike 的 report、finding、采纳决定与后续 tid/无需后续理由由 finish 与 spikes complete 共用检查；finding/spike 引用使用至少三位编号（如 d001/s001）或 docs 路径，代码块和普通变量不作为引用，字段支持中英文冒号及冒号后空白；一次性 scratch 实验不创建正式 sid。
 
-`docs/reviews/review_*` 以最近 5 个为保留上限。pre-commit 只在本次提交新增 review 顶层目录时检查；按 index 计数，超过 5 个即阻断并列出可删除旧目录；被 `docs/tasks/`、`docs/blueprint/` 或 `docs/handoff.md` 引用的旧目录不能删除，须先处理引用；merge 提交跳过该检查。删除由用户确认后执行。项目交接固定在 `docs/handoff.md` 单文件快照；task、spec、spike、pending 均终生在规范路径原位流转，不归档。
+`docs/reviews/review_*` 以最近 5 个为上限，超出的旧目录一律删除（含 `_meta/`、被引用或未跟踪目录），不因引用保留；删除由显式 `migrate reviews --write` 执行，Git 历史保留。pre-commit 只在本次提交新增 review 顶层目录时检查；按 index 计数，超过 5 个即阻断并列出可删除旧目录；merge 提交跳过该检查。项目交接固定在 `docs/handoff.md` 单文件快照；task、spec、spike、pending 均终生在规范路径原位流转，不归档。
 
 Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
 
