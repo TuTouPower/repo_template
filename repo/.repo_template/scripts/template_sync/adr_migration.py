@@ -32,7 +32,7 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
     entries: list[dict] = []
     current = None
     preface: list[str] = []
-    first_seen: dict[str, int] = {}
+    first_seen: dict[int, int] = {}
     duplicate: tuple[str, int, int] | None = None
     for lineno, line in enumerate(lines, 1):
         if fence.feed(line):
@@ -40,6 +40,8 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
             continue
         heading = _heading(line)
         level = heading[0] if heading else None
+        if level == 1 and current is not None:
+            break
         if level == 2:
             title_match = NNN_TITLE_RE.fullmatch(heading[1])
             if title_match is None:
@@ -47,15 +49,16 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
                     f"{SOURCE} 第 {lineno} 行围栏外 H2 不是 `## NNN 标题`：{line.strip()}；"
                     "拒绝迁移，请先补编号或移除该标题"
                 )
-            nnn = title_match.group(1)
+            nnn_text = title_match.group(1)
+            nnn = int(nnn_text)
             if duplicate is None:
                 if nnn in first_seen:
-                    duplicate = (nnn, first_seen[nnn], lineno)
+                    duplicate = (nnn_text, first_seen[nnn], lineno)
                 else:
                     first_seen[nnn] = lineno
             if current:
                 entries.append(current)
-            current = {"nnn": nnn, "title": title_match.group(2), "lines": [f"# {nnn} {title_match.group(2)}"]}
+            current = {"nnn": nnn, "nnn_text": nnn_text, "title": title_match.group(2), "lines": [f"# {nnn_text} {title_match.group(2)}"]}
             continue
         if current is None and level is not None and level >= 3:
             raise ctx.SyncError(
@@ -65,9 +68,9 @@ def _entries(text: str) -> tuple[list[dict], list[str]]:
     if current:
         entries.append(current)
     if duplicate is not None:
-        nnn, first, second = duplicate
+        nnn_text, first, second = duplicate
         raise ctx.SyncError(
-            f"decisions.md 编号 {nnn} 重复（第 {first}、{second} 行）；拒绝迁移，请先改号"
+            f"decisions.md 编号 {nnn_text} 重复（第 {first}、{second} 行）；拒绝迁移，请先改号"
         )
     return entries, preface
 
@@ -100,7 +103,7 @@ def _filename(entry: dict, date: str) -> str:
     return f"{date.replace('-', '')}_{_slug(entry['title'])}.md"
 
 
-def _allocate_filenames(sync: ctx.SyncContext, dated: list[tuple[dict, str]]) -> dict[str, str]:
+def _allocate_filenames(sync: ctx.SyncContext, dated: list[tuple[dict, str]]) -> dict[int, str]:
     """按 NNN 升序为每条迁移 ADR 分配最终文件名。
 
     同名冲突（同日期同 slug，含目标目录已存在文件）追加 `_2`、`_3`…；
@@ -108,14 +111,14 @@ def _allocate_filenames(sync: ctx.SyncContext, dated: list[tuple[dict, str]]) ->
     """
     target = sync.consumer / TARGET
     used = {path.name for path in target.iterdir()} if target.is_dir() else set()
-    allocated: dict[str, str] = {}
-    for entry, date in sorted(dated, key=lambda item: int(item[0]["nnn"])):
+    allocated: dict[int, str] = {}
+    for entry, date in sorted(dated, key=lambda item: item[0]["nnn"]):
         base = _filename(entry, date)[: -len(".md")]
         candidate = f"{base}.md"
         suffix = 2
         while candidate in used:
             if suffix > 10000:
-                raise ctx.SyncError(f"ADR {entry['nnn']} 文件名冲突无法分配：{base}.md 已有过多同名文件")
+                raise ctx.SyncError(f"ADR {entry['nnn_text']} 文件名冲突无法分配：{base}.md 已有过多同名文件")
             candidate = f"{base}_{suffix}.md"
             suffix += 1
         used.add(candidate)
@@ -149,7 +152,7 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     dated = []
     for entry in entries:
         date_match = DATE_RE.search(entry["title"])
-        date = date_match.group(1) if date_match else _date_from_git(sync.consumer, entry["nnn"])
+        date = date_match.group(1) if date_match else _date_from_git(sync.consumer, entry["nnn_text"])
         dated.append((entry, date))
     filenames = _allocate_filenames(sync, dated)
     prepared = []
@@ -163,9 +166,10 @@ def migrate_adr(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
         supersedes = SUPERSEDES_RE.search(body)
         front = []
         if supersedes:
-            old = supersedes.group(1)
+            old_text = supersedes.group(1)
+            old = int(old_text)
             if old not in by_nnn:
-                raise ctx.SyncError(f"ADR {entry['nnn']} 的替代 {old} 不存在")
+                raise ctx.SyncError(f"ADR {entry['nnn_text']} 的替代 {old_text} 不存在")
             front = ["---", f"supersedes: [{by_nnn[old]}]", "---", ""]
         fronts[filename] = front
     reports = _preface_report(preface) + [

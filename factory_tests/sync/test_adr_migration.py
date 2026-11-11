@@ -346,3 +346,108 @@ def test_entry_h2_with_extra_spaces_still_gets_canonical_h1(consumer):
     assert len(files) == 1
     assert files[0].read_text(encoding="utf-8").startswith("# 001 采用方案（2026-01-02）")
     assert not source.exists()
+
+
+def test_mixed_44_and_044_are_duplicate_number(consumer):
+    text = (
+        "# ADR\n\n"
+        "## 44 方案甲（2026-01-02）\n\n- 结论：A\n\n"
+        "## 044 方案乙（2026-01-03）\n\n- 结论：B\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    status = adr_migration_status(sync)
+    assert any("重复" in item for item in status), status
+    with pytest.raises(ctx.SyncError, match="重复"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_h1_keeps_original_nnn_text_with_leading_zeros(consumer):
+    text = "# ADR\n\n## 044 采用方案（2026-01-02）\n\n- 结论：A\n"
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = list(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    assert body.startswith("# 044 采用方案（2026-01-02）")
+    assert not body.startswith("# 44 ")
+    assert not source.exists()
+    assert reports
+
+
+def test_h3_to_h6_inside_entry_body_are_allowed(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n"
+        "### 三级\n\n#### 四级\n\n##### 五级\n\n###### 六级\n\n"
+        "- 结论：A\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = list(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    for heading in ("### 三级", "#### 四级", "##### 五级", "###### 六级"):
+        assert heading in body
+    assert body.startswith("# 001 采用方案（2026-01-02）")
+    assert not source.exists()
+    assert reports
+
+
+def test_h1_inside_entry_body_stops_parsing(consumer):
+    text = (
+        "# ADR\n\n"
+        "## 001 采用方案（2026-01-02）\n\n"
+        "- 结论：A\n\n"
+        "### 细节\n\n"
+        "- 细节内容\n\n"
+        "# 下一份记录（误置的 H1）\n\n"
+        "## 002 不该被解析（2026-01-03）\n\n"
+        "- 结论：B\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = list(_decisions_dir(consumer).glob("*.md"))
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    assert body.startswith("# 001 采用方案（2026-01-02）")
+    assert "### 细节" in body
+    assert "- 细节内容" in body
+    assert "下一份记录" not in body
+    assert "## 002" not in body
+    assert "结论：B" not in body
+    assert not source.exists()
+    assert reports
+
+
+def test_non_nnn_h2_inside_entry_body_still_stops(consumer):
+    text = (
+        "# ADR\n\n## 001 采用方案（2026-01-02）\n\n"
+        "- 结论：A\n\n### 细节\n\n"
+        "## 无编号小标题\n\n- 混入内容\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="围栏外 H2"):
+        migrate_adr(sync, write=True)
+    _assert_stopped_before_write(consumer, source, text)
+
+
+def test_supersedes_matches_by_int_identity_across_nnn_text(consumer):
+    text = (
+        "# ADR\n\n"
+        "## 44 采用方案（2026-01-02）\n\n- 结论：A\n\n"
+        "## 053 替代方案（2026-01-03）\n\n- 替代：044\n"
+    )
+    source = _write_decisions(consumer, text)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    reports = migrate_adr(sync, write=True)
+    files = sorted(path.name for path in _decisions_dir(consumer).glob("*.md"))
+    assert files == ["20260102_entry.md", "20260103_entry.md"]
+    second = (_decisions_dir(consumer) / "20260103_entry.md").read_text(encoding="utf-8")
+    assert "supersedes: [20260102_entry.md]" in second
+    assert not source.exists()
+    assert reports
