@@ -232,6 +232,15 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
 
     sync = ctx.SyncContext.for_consumer(consumer)
     assert state_root_migration_status(sync)
+    legacy_directories = (".scratch/repo_sync_rollback", ".scratch/task_graph_transaction")
+    legacy_snapshots = {}
+    for rel in legacy_directories:
+        directory = consumer / rel
+        (directory / "backup.bin").write_bytes(b"legacy before-image\x00\xff")
+        legacy_snapshots[rel] = {
+            path.relative_to(directory).as_posix(): path.read_bytes()
+            for path in directory.rglob("*") if path.is_file()
+        }
     _migrate(consumer, "state-root")
     state = common_state_dir(consumer)
     assert (state / "ledger.jsonl").read_text(encoding="utf-8") == '{"event": "start"}\n'
@@ -247,8 +256,17 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     ] == str(PRODUCT)
     assert not (consumer / "docs/runtime").exists()
     assert not (consumer / ".repo_template/sync_state.json").exists()
-    # 旧事务退役与恢复覆盖见 test_legacy_transaction_retirement.py；
-    # 迁移链不再承诺保留已结束的旧备份。
+    # 直接核对退役后置条件，不能只依赖 status 是否仍识别旧目录。
+    assert not (consumer / ".scratch/repo_sync_rollback").exists()
+    assert not (consumer / ".scratch/task_graph_transaction").exists()
+    for rel, snapshot in legacy_snapshots.items():
+        assert root_journal["paths"][rel] is True
+        backup = state / "sync_transaction" / rel
+        assert {
+            path.relative_to(backup).as_posix(): path.read_bytes()
+            for path in backup.rglob("*") if path.is_file()
+        } == snapshot
+        assert json.loads((backup / "transaction.json").read_text(encoding="utf-8"))["status"] == "accepted"
     assert state_root_migration_status(sync) == []
 
     for kind in ("agents-zones", "specs-layout", "reviews", "adr"):
