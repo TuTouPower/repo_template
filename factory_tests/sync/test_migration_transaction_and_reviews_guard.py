@@ -383,4 +383,3 @@ def test_review_plan_is_frozen_single_source(consumer: Path) -> None:
     assert list(plan.reports) == migrate_reviews(sync, write=False)
     with pytest.raises(FrozenInstanceError):
         plan.keep = ()
-
