@@ -166,7 +166,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
-    state_before = sync.state_path.read_bytes() if sync.state_path.exists() else None
     transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
     # 事务范围收敛为 apply 实际写入集合：硬同步树、软链宿主、命令薄层、
     # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs、
@@ -177,7 +176,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
              "AGENTS.md",
              *ctx.MCP_CANDIDATES]
     try:
-        transaction.begin(paths)
+        transaction.begin(paths, state_paths=[sync.state_path.name])
     except ValueError as error:
         raise ctx.SyncError(str(error)) from error
     try:
@@ -244,11 +243,6 @@ def cmd_apply(args: argparse.Namespace) -> int:
         rollback_ok = False
         try:
             transaction.rollback(automatic=True)
-            if state_before is None:
-                sync.state_path.unlink(missing_ok=True)
-            else:
-                sync.state_path.parent.mkdir(parents=True, exist_ok=True)
-                sync.state_path.write_bytes(state_before)
             rollback_ok = True
         except Exception as rb_err:
             print(f"WARNING: 事务自动回滚失败（{rb_err}），现场可能残留未恢复文件", file=sys.stderr)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction, fingerprint
+from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 from repo_task.validation import ValidationError, load_policy
 
@@ -35,7 +35,7 @@ def cmd_transaction(args):
                 if status.returncode or status.stdout.strip():
                     raise ctx.SyncError("accept 前须提交本轮同步资产；不接受未提交现场")
                 load_policy(sync.consumer)
-                if not data.get("gates_verified") or data.get("after") != fingerprint(sync.consumer, data["paths"]):
+                if not data.get("gates_verified") or data.get("after") != transaction.current_fingerprint(data):
                     if not _run_tests(sync.consumer):
                         raise ctx.SyncError("accept 前 contract 复验失败，事务保持 applied")
                 transaction.accept(verified=True)

@@ -5,7 +5,7 @@ from argparse import Namespace
 import pytest
 
 from test_repo_sync import env, _git
-from repo_task.file_transaction import SYNC_TRANSACTION_DIR, fingerprint, state_transaction
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
 from template_sync.state import read_state
@@ -134,7 +134,7 @@ def test_accept_revalidates_policy_without_managed_asset_changes(env, policy_sta
     assert data["gates_verified"] is verified
     assert "docs/blueprint/testing.md" not in data["paths"]
     _set_business_policy(consumer, policy_state)
-    assert fingerprint(consumer, data["paths"]) == data["after"]
+    assert _transaction(consumer).current_fingerprint(data) == data["after"]
     _commit_consumer(consumer)
 
     with pytest.raises(ctx.SyncError, match="缺 docs/blueprint/testing.md|项目验证策略尚未确认|test_cmd 必须有"):

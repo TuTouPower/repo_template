@@ -80,26 +80,57 @@ def _copy(source, target):
         shutil.copy2(source, target)
 
 
-def fingerprint(root, paths):
+def _snapshot_asset(base, name, backup, absent_parents=None):
+    path = base / name
+    if path.is_symlink():
+        raise ValueError(f"事务资产根是软链，不能可靠恢复其目标：{name}")
+    # Never follow a symlink ancestor out of the consumer during restore.
+    for parent in path.parents:
+        if parent == base:
+            break
+        if parent.is_symlink():
+            raise ValueError(f"事务路径父目录是软链：{name}")
+        if absent_parents is not None:
+            rel = str(parent.relative_to(base))
+            if not parent.exists() and rel not in absent_parents:
+                absent_parents.append(rel)
+    exists = path.exists() or path.is_symlink()
+    if exists:
+        _copy(path, backup)
+    return exists
+
+
+def fingerprint(root, paths, state_paths=()):
     digest = hashlib.sha256()
+
+    def feed(logical, path):
+        digest.update(logical.encode())
+        if path.is_symlink():
+            digest.update(b"link" + str(path.readlink()).encode())
+        elif path.is_file():
+            digest.update(b"file" + str(path.stat().st_mode).encode() + path.read_bytes())
+        elif path.is_dir():
+            digest.update(b"dir")
+        else:
+            digest.update(b"absent")
+
     for name in paths:
         base = root / name
         items = [base]
         if base.is_dir() and not base.is_symlink():
             items.extend(sorted(base.rglob("*")))
         for path in items:
+            rel = path.relative_to(root)
             if any(part in {"__pycache__", ".pytest_cache"} or part.endswith(".pyc")
-                   for part in path.relative_to(root).parts):
+                   for part in rel.parts):
                 continue
-            digest.update(path.relative_to(root).as_posix().encode())
-            if path.is_symlink():
-                digest.update(b"link" + str(path.readlink()).encode())
-            elif path.is_file():
-                digest.update(b"file" + str(path.stat().st_mode).encode() + path.read_bytes())
-            elif path.is_dir():
-                digest.update(b"dir")
-            else:
-                digest.update(b"absent")
+            feed(rel.as_posix(), path)
+    if state_paths:
+        from .context import common_state_dir
+
+        state_base = common_state_dir(root)
+        for name in state_paths:
+            feed("@state/" + name, state_base / name)
     return digest.hexdigest()
 
 
@@ -115,7 +146,7 @@ class FileTransaction:
     def save(self, data):
         atomic_write_text(self.journal, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
-    def begin(self, paths):
+    def begin(self, paths, *, state_paths=()):
         old = self.read()
         if old and old["status"] in OPEN_STATUSES:
             raise ValueError("存在未结束文件事务；先 transaction status，再 rollback 或 accept")
@@ -130,32 +161,42 @@ class FileTransaction:
                         "事务目录缺少 journal 但存在残留备份；拒绝开始新事务，先人工核对"
                     )
             shutil.rmtree(self.backup)
-        data = {"version": 1, "status": "preparing", "paths": {}, "absent_parents": []}
+        data = {"version": 1, "status": "preparing", "paths": {}, "state_paths": {}, "absent_parents": []}
         self.save(data)
         for name in paths:
-            path = self.root / name
-            if path.is_symlink():
-                raise ValueError(f"事务资产根是软链，不能可靠恢复其目标：{name}")
-            # Never follow a symlink ancestor out of the consumer during restore.
-            for parent in path.parents:
-                if parent == self.root:
-                    break
-                if parent.is_symlink():
-                    raise ValueError(f"事务路径父目录是软链：{name}")
-                if not parent.exists() and str(parent.relative_to(self.root)) not in data["absent_parents"]:
-                    data["absent_parents"].append(parent.relative_to(self.root).as_posix())
-            exists = path.exists() or path.is_symlink()
-            if exists:
-                _copy(path, self.backup / name)
-            data["paths"][name] = exists
+            data["paths"][name] = _snapshot_asset(
+                self.root, name, self.backup / name, data["absent_parents"]
+            )
+        if state_paths:
+            from .context import common_state_dir
+
+            state_base = common_state_dir(self.root)
+            for name in state_paths:
+                data["state_paths"][name] = _snapshot_asset(
+                    state_base, name, self.backup / "__state__" / name
+                )
         data["status"] = "applying"
         self.save(data)
+
+    def _assets(self, data):
+        for name, existed in data["paths"].items():
+            yield self.root, name, self.backup / name, existed
+        state_paths = data.get("state_paths", {})
+        if state_paths:
+            from .context import common_state_dir
+
+            state_base = common_state_dir(self.root)
+            for name, existed in state_paths.items():
+                yield state_base, name, self.backup / "__state__" / name, existed
+
+    def current_fingerprint(self, data) -> str:
+        return fingerprint(self.root, data["paths"], data.get("state_paths", {}))
 
     def applied(self, *, verified=False):
         data = self.read()
         data["status"] = "applied"
         data["gates_verified"] = verified
-        data["after"] = fingerprint(self.root, data["paths"])
+        data["after"] = self.current_fingerprint(data)
         self.save(data)
 
     def rollback(self, *, confirm_restore=False, automatic=False):
@@ -170,14 +211,14 @@ class FileTransaction:
             self.save(data)
             return
         if not automatic and not confirm_restore:
-            if data["status"] != "applied" or data.get("after") != fingerprint(self.root, data["paths"]):
+            if data["status"] != "applied" or data.get("after") != self.current_fingerprint(data):
                 raise ValueError("现场发生变化或事务被中断；先备份新增改动，再用 --confirm-restore 明确恢复基线")
         try:
-            for name, existed in data["paths"].items():
-                path = self.root / name
+            for base, name, backup, existed in self._assets(data):
+                path = base / name
                 _remove(path)
                 if existed:
-                    _copy(self.backup / name, path)
+                    _copy(backup, path)
             for name in sorted(data.get("absent_parents", []), key=lambda name: name.count("/"), reverse=True):
                 path = self.root / name
                 if path.is_dir() and not any(path.iterdir()):
@@ -193,7 +234,7 @@ class FileTransaction:
         data = self.read()
         if not data or data["status"] != "applied":
             raise ValueError("只有 applied 事务可以 accept")
-        current = fingerprint(self.root, data["paths"])
+        current = self.current_fingerprint(data)
         if data.get("after") != current and not verified:
             raise ValueError("apply 后资产发生变化；先验证并处理事务，不能静默 accept")
         data["after"] = current
