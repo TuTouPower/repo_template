@@ -13,8 +13,11 @@ def _is_noise(name: str) -> bool:
 
 
 def _file_differs(a: Path, b: Path) -> bool:
-    if a.is_symlink() or b.is_symlink():
-        return a.resolve() != b.resolve()
+    a_link, b_link = a.is_symlink(), b.is_symlink()
+    if a_link or b_link:
+        if a_link != b_link:
+            return True
+        return a.readlink() != b.readlink()
     if a.stat().st_size != b.stat().st_size:
         return True
     return a.read_bytes() != b.read_bytes()
@@ -28,6 +31,32 @@ def _reject_unsafe_target(dst: Path, reason: str, sync: ctx.SyncContext) -> None
         )
     if dst.is_dir():
         raise ctx.SyncError(f"{sync.rel(dst)} 是目录：{reason}。请人工处理该目录后重跑 apply")
+
+
+def _sync_link(src_link: Path, dst: Path, changed: set[Path], sync: ctx.SyncContext) -> None:
+    """链接对象独立同步：按 readlink 比较/替换，写盘前校验父目录链与链接目标边界。"""
+    link_target = src_link.readlink()
+    if not sync.contains(dst.parent):
+        raise ctx.SyncError(
+            f"{sync.rel(dst)} 父目录链含越界软链，拒绝在消费仓外创建链接；请人工处理后重跑 apply"
+        )
+    if not sync.contains(dst.parent / link_target):
+        raise ctx.SyncError(
+            f"{sync.rel(dst)} 链接目标 {link_target} 解析到消费仓外，拒绝创建越界链接；请人工处理后重跑 apply"
+        )
+    if dst.is_symlink():
+        if dst.readlink() == link_target:
+            return
+        dst.unlink()
+        dst.symlink_to(link_target)
+        changed.add(dst)
+    elif dst.exists():
+        raise ctx.SyncError(
+            f"{sync.rel(dst)} 是真实文件或目录，模板源是软链；拒绝覆盖，请人工处理后重跑 apply"
+        )
+    else:
+        dst.symlink_to(link_target)
+        changed.add(dst)
 
 
 def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync: ctx.SyncContext) -> None:
@@ -52,10 +81,7 @@ def sync_dir(src_dir: Path, dst_dir: Path, changed: set[Path], sync: ctx.SyncCon
         if entry.is_dir() and not entry.is_symlink():
             sync_dir(entry, target, changed, sync)
         elif entry.is_symlink():
-            _reject_unsafe_target(target, "模板源是文件/软链，拒绝写入目录内部", sync)
-            if not target.exists() or _file_differs(entry, target):
-                shutil.copy2(entry, target, follow_symlinks=False)
-                changed.add(target)
+            _sync_link(entry, target, changed, sync)
         else:
             _reject_unsafe_target(target, "模板源是文件，拒绝写入目录内部", sync)
             if not target.exists() or _file_differs(entry, target):
