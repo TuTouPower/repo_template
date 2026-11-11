@@ -16,6 +16,7 @@ from repo_task.context import RepoContext, TaskDataError
 
 ACTIVE = "docs/tasks/t001_alpha"
 SHARED = "shared_overlap.txt"
+DATA = "data.txt"
 
 
 def _prepare_overlapping_clean_merge(git_repo):
@@ -161,3 +162,73 @@ def test_member_paths_changed_between_fail_closed(git_repo):
         integration._main_touched_member_paths(
             "refs/heads/nonexistent-branch-xyz", ["t001_alpha"], repo=context
         )
+
+
+def _prepare_a06_member_overlap_merge(git_repo):
+    """真实 git：base 含成员 data.txt，feature 改 line1、main 改 line5 干净合并，
+    按 A06 取分支 tip。返回 (branch, branch_tip, data_path, auto_tree)。"""
+    data_path = f"{ACTIVE}/{DATA}"
+    data = git_repo / data_path
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text("line1\nline2\nline3\nline4\nline5\n", encoding="utf-8")
+    _git(git_repo, "add", data_path)
+    _git(git_repo, "commit", "-m", "test: base adds member data.txt")
+
+    def mutate(worktree):
+        (worktree / data_path).write_text(
+            "line1 branch\nline2\nline3\nline4\nline5\n", encoding="utf-8"
+        )
+
+    identity, branch, tip = _prepare_done(git_repo, "t001", "alpha", mutate=mutate)
+    _cleanup(git_repo, "t001", identity)
+
+    data.write_text("line1\nline2\nline3\nline4\nline5 main\n", encoding="utf-8")
+    _git(git_repo, "add", data_path)
+    _git(git_repo, "commit", "-m", "test: main edits member data.txt tail")
+
+    merged = _git(git_repo, "merge", "--no-commit", "--no-ff", branch, check=False)
+    assert merged.returncode == 0, merged.stderr
+    context = RepoContext.for_root(git_repo)
+    auto_tree, conflicts = integration._expected_auto_merge(tip, repo=context)
+    assert not conflicts
+    auto_text = _git(git_repo, "show", f"{auto_tree}:{data_path}").stdout
+    assert "line1 branch" in auto_text and "line5 main" in auto_text
+
+    _git(git_repo, "checkout", branch, "--", data_path)
+    return branch, tip, data_path, auto_tree
+
+
+def test_a06_member_overlap_merge_claim_matches_precommit(git_repo):
+    """P1-6：提交前放行的 A06 重叠 clean merge，认领同一 merge commit 须一致通过。"""
+    branch, tip, data_path, auto_tree = _prepare_a06_member_overlap_merge(git_repo)
+    context = RepoContext.for_root(git_repo)
+    main_touched = set(
+        integration._main_touched_member_paths(tip, [branch], repo=context)
+    )
+    assert data_path in main_touched
+
+    staged_tree = integration._validate_merge_staged_scope(
+        tip, [branch], member_tips={branch: tip}, repo=context
+    )
+    assert staged_tree
+
+    _git(git_repo, "commit", "-m", "merge(t001): t001_alpha")
+    merge = _git(git_repo, "rev-parse", "HEAD").stdout.strip()
+    merge_tree = _git(git_repo, "rev-parse", f"{merge}^{{tree}}").stdout.strip()
+    assert _git(git_repo, "show", f"{merge}:{data_path}").stdout == _git(
+        git_repo, "show", f"{tip}:{data_path}"
+    ).stdout
+
+    integration._validate_claimed_merge_commit(
+        merge, tip, names=[branch], member_tips={branch: tip}, repo=context
+    )
+
+    divergence = {
+        path for path in _git(
+            git_repo, "diff", "--no-renames", "--name-only", "-z", auto_tree, merge_tree
+        ).stdout.split("\0") if path
+    }
+    assert data_path in divergence
+    integration._validate_automated_merge_result(divergence, set(), main_touched)
+    with pytest.raises(TaskDataError, match="自动合并结果"):
+        integration._validate_automated_merge_result(divergence, set(), set())

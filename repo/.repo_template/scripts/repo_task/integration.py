@@ -698,6 +698,28 @@ def _verify_merge_privacy(base: str, target: str, *, repo: "ctx.RepoContext") ->
         )
 
 
+def _validate_automated_merge_result(
+    divergence: set[str],
+    conflict_paths: set[str],
+    main_touched: set[str],
+) -> None:
+    """提交前与认领共用的自动合并结果合法性校验。
+
+    自动合并结果与实际结果的差异路径，减去冲突解决路径、再减去主干独立改写的
+    成员路径（A06 授权取分支 tip），剩余才是未被 handoff/review 覆盖的非法偏离。
+    两处共用同一规则，确保提交前已放行的合法 A06 结果在认领时得出一致结论，
+    避免 --continue 提交后、写 integrated 前中断导致的恢复阻断。
+    """
+    unexpected = sorted(divergence - conflict_paths - main_touched)
+    if unexpected:
+        raise ctx.TaskDataError(
+            "非冲突文件偏离 Git 自动合并结果"
+            "（被认领的 merge commit 内容与 Git 自动合并结果不一致）："
+            + ", ".join(unexpected[:10])
+            + "；这些内容未被 task handoff/review 覆盖，请恢复后再继续或拒绝认领"
+        )
+
+
 def _validate_claimed_merge_commit(
     merge_sha: str,
     second_parent: str,
@@ -712,26 +734,21 @@ def _validate_claimed_merge_commit(
     ``base..tip`` 差异冒充。分支与主干重叠修改同一文件不同行时，Git 干净合并
     结果同时包含两侧改动（与 tip 不等），旧的逐路径 ``tip == merge`` 断言会误拒
     合法 clean merge，导致 --continue 重入与幂等清理不可重入（恢复阻断）。
-    非冲突路径必须等于自动合并结果；冲突解决路径显式放行，但叠加核心资产
-    （成员核心资产必须等于已验证 tip）与变更集隐私校验。
+    自动合并结果与实际结果的差异由共用验证器判定：冲突解决路径与主干独立
+    改写的成员路径（A06 取分支 tip）均显式放行，叠加核心资产（成员核心资产
+    必须等于已验证 tip）与变更集隐私校验。
     """
     first_parent = _validate_merge_lineage(merge_sha, second_parent, repo=repo)
     auto_tree_oid, conflict_paths = _merge_tree_result(first_parent, second_parent, repo=repo)
     auto_entries = git_tree_entries(auto_tree_oid, repo=repo)
     merge_entries = git_tree_entries(merge_sha, repo=repo)
-    tampered = sorted(
+    divergence = {
         path for path in set(auto_entries) | set(merge_entries)
         if auto_entries.get(path) != merge_entries.get(path)
-        and path not in conflict_paths
-    )
-    if tampered:
-        raise ctx.TaskDataError(
-            "被认领的 merge commit 内容与 Git 自动合并结果不一致："
-            + ", ".join(tampered[:10])
-            + "；拒绝认领"
-        )
+    }
     resolved_names = list(names) if names else []
     tips = dict(member_tips) if member_tips else {}
+    main_touched: set[str] = set()
     if resolved_names:
         mb = _git(["merge-base", first_parent, second_parent], repo=repo)
         if mb.returncode != 0 or not mb.stdout.strip():
@@ -739,6 +756,8 @@ def _validate_claimed_merge_commit(
         main_touched = set(_member_paths_changed_between(
             mb.stdout.strip(), first_parent, resolved_names, repo=repo
         ))
+    _validate_automated_merge_result(divergence, conflict_paths, main_touched)
+    if resolved_names:
         _validate_main_touched_from_tip(
             main_touched - conflict_paths, resolved_names, tips, merge_entries, repo=repo
         )
@@ -1173,15 +1192,8 @@ def _validate_merge_staged_scope(
     if changed_result.returncode != 0:
         raise ctx.TaskDataError("无法比较 staged tree 与 Git 自动合并结果")
     changed = {path for path in changed_result.stdout.split("\0") if path}
-    # 主干独立改写的成员路径由 A06 授权取分支 tip，不属于「非冲突文件偏离自动合并」。
     main_touched = set(_main_touched_member_paths(expected_head, names, repo=repo))
-    altered_clean_paths = sorted(changed - conflict_paths - main_touched)
-    if altered_clean_paths:
-        raise ctx.TaskDataError(
-            "非冲突文件偏离 Git 自动合并结果："
-            + ", ".join(altered_clean_paths[:10])
-            + "；这些内容未被 task handoff/review 覆盖，请恢复后再继续"
-        )
+    _validate_automated_merge_result(changed, conflict_paths, main_touched)
 
     head_entries = git_tree_entries("HEAD", repo=repo)
     staged_entries = git_tree_entries(current_tree_oid, repo=repo)
