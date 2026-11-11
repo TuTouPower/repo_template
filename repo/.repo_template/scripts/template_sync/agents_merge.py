@@ -14,7 +14,7 @@ def _zone_bounds(text: str) -> tuple[int, int]:
     if begin < 0 or end < 0:
         raise ctx.SyncError(
             "AGENTS.md 缺 repo-template 两区标记；先运行 "
-            "`repo_sync.py migrate agents-zones --write`"
+            "固定来源 apply 内置 agents-zones 迁移"
         )
     if text.count(ctx.AGENTS_TEMPLATE_BEGIN) != 1 or text.count(ctx.AGENTS_TEMPLATE_END) != 1:
         raise ctx.SyncError("AGENTS.md 的 repo-template 标记必须各出现一次")

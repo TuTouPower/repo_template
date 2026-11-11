@@ -20,11 +20,9 @@ Git common dir 状态字段级原子更新、差异评估与修改路径清单�
   python3 .repo_template/scripts/repo_sync.py link-skills
   python3 .repo_template/scripts/repo_sync.py install-hooks
   python3 .repo_template/scripts/repo_sync.py healthcheck
-  python3 .repo_template/scripts/repo_sync.py migrate <kind|all> [--write]
 
-本脚本处理模板工具链与模板侧资产。日常 apply 只接受当前 schema；检测到旧布局时
-阻断并指向显式 migrate。每项单项迁移在其持久文件事务内执行，失败回滚本项；
-migrate all 按类型逐项提交，已完成步骤保留，失败仅阻断当前类型。不碰业务代码。
+本脚本处理模板工具链与模板侧资产。status/plan 只读展示迁移与数据阻断项；
+apply 在单个持久文件事务内迁移、同步、格式化并校验，失败整体回滚。
 禁止自动 commit——写盘与 state 更新完成后由 agent 走审批门禁。
 """
 

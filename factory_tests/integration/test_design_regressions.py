@@ -16,7 +16,7 @@ from test_dispatch_integration import (
     git_repo, _git, _task_cli, _reserve, _identity_args, _prepare_done,
     _cleanup, _worktree,
 )
-from test_repo_sync import env
+from test_repo_sync import env, _commit_consumer_baseline
 from task_flow_support import finish_cli, prepare_finish
 from repo_task.documents import parse_front_matter, write_front_matter
 from repo_task.file_transaction import FileTransaction
@@ -254,6 +254,7 @@ def test_source_runner_supports_all_layouts_without_preparatory_asset_writes(env
         assert result.returncode == 0, result.stdout + result.stderr
         assert env["state_file"].read_bytes() == before
         assert not (consumer / ".repo_template/scripts").exists()
+    _commit_consumer_baseline(consumer)
     result = subprocess.run([sys.executable, str(script), "--consumer", str(consumer),
                              "--source", source, "apply", "--skip-tests"], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -290,6 +291,7 @@ def test_fixed_checkout_keeps_canonical_url_identity_and_supports_offline_apply(
     state = {"template_source": {"kind": "url", "value": identity}}
     checkout = resolve_src(state, sync=env["sync"])
     sync = ctx.SyncContext.for_consumer(env["consumer"], source_override=identity, checkout_override=checkout)
+    _commit_consumer_baseline(env["consumer"])
     assert cmd_apply(Namespace(sync=sync, skip_tests=True, decisions={}, expected_commit=env["head"])) == 0
     stored = json.loads(env["state_file"].read_text())
     assert stored["template_source"] == {"kind": "url", "value": identity}
@@ -298,6 +300,7 @@ def test_fixed_checkout_keeps_canonical_url_identity_and_supports_offline_apply(
 
 def test_shared_sync_policy_and_version_survive_local_state_loss(env):
     cmd_prompt(Namespace(sync=env["sync"], action="add", text="保留业务规则", tags="business", scope="shared"))
+    _commit_consumer_baseline(env["consumer"])
     assert cmd_apply(Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 0
     assert any(prompt["text"] == "保留业务规则" for prompt in active_prompts(read_state(env["sync"])))
     env["state_file"].unlink()

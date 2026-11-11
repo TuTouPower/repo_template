@@ -1,9 +1,6 @@
 """计划 7.3：消费仓从 988fd06 布局到当前布局的真实 Git 迁移链。
 
-链路：entity-storage -> 旧 hook 下 ``--no-verify`` 提交并核对重命名摘要 ->
-state-root（标准 FileTransaction 内把 docs/runtime、旧 sync_state 迁入 Git
-common dir；已结束的 .scratch 旧事务目录经标准事务备份后删除）->
-S5/S6（agents-zones、specs-layout、reviews、adr）-> 新 hook 提交 -> healthcheck。
+链路：固定当前来源 → 一次 apply 内置全部迁移 → hooks 下单 commit → accept。
 """
 
 from __future__ import annotations
@@ -59,22 +56,6 @@ def _git(repo: Path, *args: str, env: dict[str, str] | None = None, check: bool 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-
-
-def _migrate(consumer: Path, kind: str) -> subprocess.CompletedProcess:
-    result = _run(
-        [
-            sys.executable,
-            str(SCRIPTS / "repo_sync.py"),
-            "--consumer",
-            str(consumer),
-            "migrate",
-            kind,
-            "--write",
-        ]
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result
 
 
 def _name_status(consumer: Path, parent: str, child: str) -> list[tuple[str, ...]]:
@@ -195,141 +176,56 @@ def _build_988fd06_consumer(tmp_path: Path) -> Path:
 
 
 def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatch) -> None:
+    """真实历史来源 + 当前产物，一次 apply 后只提交一次，hooks 不改写。"""
     consumer = _build_988fd06_consumer(tmp_path)
-    old_hook = consumer / ".repo_template/hooks/pre-commit"
-    old_hook_text = old_hook.read_text(encoding="utf-8")
-    assert old_hook_text == LEGACY_HOOK.read_text(encoding="utf-8")
-    assert "--diff-filter=ACMR" in old_hook_text
-    assert "scan_privacy_changes" not in old_hook_text
-
-    _migrate(consumer, "entity-storage")
+    source = tmp_path / "source"
+    result = _run(["git", "clone", "--shared", str(FACTORY_ROOT), str(source)])
+    assert result.returncode == 0, result.stderr
+    shutil.rmtree(source / "repo")
+    shutil.copytree(PRODUCT, source / "repo", symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
+    _git(source, "add", "-A")
+    _git(source, "commit", "-m", "test: current template snapshot")
+    pin = _git(source, "rev-parse", "HEAD").stdout.strip()
+    fake_bin = install_fake_md_kx(tmp_path, monkeypatch)
+    before = _git(consumer, "rev-parse", "HEAD").stdout.strip()
+    command = [sys.executable, str(source / "repo/.repo_template/scripts/repo_sync.py"),
+               "--consumer", str(consumer), "--source", str(source), "--checkout", str(source)]
+    apply = _run([*command, "apply", "--expected-commit", pin, "--skip-tests"])
+    assert apply.returncode == 0, apply.stdout + apply.stderr
+    assert _git(consumer, "rev-parse", "HEAD").stdout.strip() == before
+    state = common_state_dir(consumer)
+    journal = json.loads((state / "sync_transaction/transaction.json").read_text())
+    assert journal["status"] == "applied"
+    assert (state / "tasks_audit.log").read_text() == AUDIT_TEXT
+    assert (state / "ledger.jsonl").read_text() == '{"event": "start"}\n'
+    assert not (consumer / "docs/runtime").exists()
+    for rel in (".scratch/repo_sync_rollback", ".scratch/task_graph_transaction"):
+        assert not (consumer / rel).exists()
+        assert (state / "sync_transaction" / rel / "transaction.json").exists()
     assert (consumer / "docs/tasks/t001_alpha/progress.md").is_file()
     assert (consumer / "docs/pending/p001_fix_cli.md").is_file()
-    assert (consumer / "docs/runtime/tasks_audit.log").read_text(encoding="utf-8") == AUDIT_TEXT
-    assert not (consumer / "docs/archive/tasks_audit.log").exists()
-    assert (consumer / ".scratch/repo_sync_rollback/transaction.json").is_file()
-    assert (consumer / ".scratch/task_graph_transaction/transaction.json").is_file()
-    entity_journal = common_state_dir(consumer) / "sync_transaction/transaction.json"
-    assert json.loads(entity_journal.read_text(encoding="utf-8"))["status"] == "accepted"
-
-    _git(consumer, "add", "-A")
-    _git(consumer, "commit", "--no-verify", "-m", "chore(migration): entity storage")
-    rows = _name_status(consumer, "HEAD~1", "HEAD")
-    pending_rows = [row for row in rows if any("p001_fix_cli.md" in cell for cell in row)]
-    assert len(pending_rows) == 1
-    assert pending_rows[0][0].startswith("R")
-    assert set(rows) - set(pending_rows) == {
-        ("A", ".repo_template/entity_schema.json"),
-        ("D", "docs/archive/handoff.md"),
-        ("M", "docs/handoff.md"),
-        ("R100", "docs/archive/tasks_audit.log", "docs/runtime/tasks_audit.log"),
-        ("R100", "docs/archive/tasks/t001_alpha/progress.md", "docs/tasks/t001_alpha/progress.md"),
-        ("R100", "docs/archive/tasks/t001_alpha/task.md", "docs/tasks/t001_alpha/task.md"),
-    }
-    handoff_text = (consumer / "docs/handoff.md").read_text(encoding="utf-8")
-    assert "docs/archive/tasks/" not in handoff_text
-    assert "docs/pending/todo/" not in handoff_text
-
-    sync = ctx.SyncContext.for_consumer(consumer)
-    assert state_root_migration_status(sync)
-    legacy_directories = (".scratch/repo_sync_rollback", ".scratch/task_graph_transaction")
-    legacy_snapshots = {}
-    for rel in legacy_directories:
-        directory = consumer / rel
-        (directory / "backup.bin").write_bytes(b"legacy before-image\x00\xff")
-        legacy_snapshots[rel] = {
-            path.relative_to(directory).as_posix(): path.read_bytes()
-            for path in directory.rglob("*") if path.is_file()
-        }
-    _migrate(consumer, "state-root")
-    state = common_state_dir(consumer)
-    assert (state / "ledger.jsonl").read_text(encoding="utf-8") == '{"event": "start"}\n'
-    assert (state / "tasks_audit.log").read_text(encoding="utf-8") == AUDIT_TEXT
-    assert (state / "goal_queue.json").is_file()
-    assert (state / "statusline_workdir.jsonl").is_file()
-    root_journal = json.loads((state / "sync_transaction/transaction.json").read_text(encoding="utf-8"))
-    assert root_journal["status"] == "accepted"
-    assert root_journal["state_paths"]
-    assert not (state / "graph_transaction").exists()
-    assert json.loads((state / "sync_state.json").read_text(encoding="utf-8"))["template_source"][
-        "value"
-    ] == str(PRODUCT)
-    assert not (consumer / "docs/runtime").exists()
-    assert not (consumer / ".repo_template/sync_state.json").exists()
-    # 直接核对退役后置条件，不能只依赖 status 是否仍识别旧目录。
-    assert not (consumer / ".scratch/repo_sync_rollback").exists()
-    assert not (consumer / ".scratch/task_graph_transaction").exists()
-    for rel, snapshot in legacy_snapshots.items():
-        assert root_journal["paths"][rel] is True
-        backup = state / "sync_transaction" / rel
-        assert {
-            path.relative_to(backup).as_posix(): path.read_bytes()
-            for path in backup.rglob("*") if path.is_file()
-        } == snapshot
-        assert json.loads((backup / "transaction.json").read_text(encoding="utf-8"))["status"] == "accepted"
-    assert state_root_migration_status(sync) == []
-
-    for kind in ("agents-zones", "specs-layout", "reviews", "adr"):
-        _migrate(consumer, kind)
-
-    agents = (consumer / "AGENTS.md").read_text(encoding="utf-8")
-    assert "这是消费项目介绍。" in agents
-    assert "## 项目目录与读写规则" in agents
-    assert "|`docs/specs_index.md`|旧 spec 清单|模板|" in agents
-    assert "<!-- repo-template:begin -->" in agents
-    assert "docs/specs/<slug>.md" in agents
-    assert "src/` `tests/` `assets/`" in agents
-
-    specs = {spec["slug"]: spec for spec in load_specs(consumer)}
-    assert specs["feature"]["status"] == "active"
+    assert not (consumer / "docs/archive/tasks").exists()
+    assert not (consumer / "docs/archive/handoff.md").exists()
+    agents = (consumer / "AGENTS.md").read_text()
+    assert "这是消费项目介绍。" in agents and "<!-- repo-template:begin -->" in agents
+    specs = {item["slug"]: item for item in load_specs(consumer)}
     assert specs["feature"]["tasks"] == ["t001"]
     assert specs["old"]["status"] == "retired"
-    assert specs["old"]["tasks"] == ["t002"]
-    assert not (consumer / "docs/specs_index.md").exists()
-    assert not (consumer / "docs/archive/specs").exists()
-
-    kept = sorted(path.name for path in (consumer / "docs/reviews").glob("review_*"))
-    assert kept == [f"review_2026010{index}_120000" for index in range(3, 8)]
-    assert not (consumer / "docs/archive/reviews").exists()
-
-    decisions = sorted(path.name for path in (consumer / "docs/blueprint/decisions").glob("*.md"))
-    assert decisions == ["20260102_sqlite.md", "20260103_entry.md"]
-    assert not (consumer / "docs/blueprint/decisions.md").exists()
-    assert "supersedes: [20260102_sqlite.md]" in (
-        consumer / "docs/blueprint/decisions/20260103_entry.md"
-    ).read_text(encoding="utf-8")
-
-    for relative in ("scripts", "hooks", "docs/task_template"):
-        source = PRODUCT / ".repo_template" / relative
-        target = consumer / ".repo_template" / relative
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(
-            source,
-            target,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
-        )
+    assert sorted(path.name for path in (consumer / "docs/reviews").glob("review_*")) == [
+        f"review_2026010{index}_120000" for index in range(3, 8)]
+    assert sorted(path.name for path in (consumer / "docs/blueprint/decisions").glob("*.md")) == [
+        "20260102_sqlite.md", "20260103_entry.md"]
     _git(consumer, "add", "-A")
-    fake_bin = install_fake_md_kx(tmp_path)
-    commit = _git(
-        consumer,
-        "commit",
-        "-m",
-        "refactor(specs): 迁移 specs/review/ADR 布局",
-        env={"PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", "")},
-        check=False,
-    )
-    assert commit.returncode == 0, commit.stdout + commit.stderr
-    assert _git(consumer, "status", "--porcelain").stdout.strip() == ""
-
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    sync = ctx.SyncContext.for_consumer(consumer)
-    assert run_healthcheck(sync) == [
-        "缺 .agents/skills；运行 repo_sync.py link-skills",
-        "缺 .claude/skills；运行 repo_sync.py link-skills",
-        "缺 md_kx；安装 md-kx 或修正 PATH",
-    ]
-    for relative in (".agents/skills", ".claude/skills"):
-        (consumer / relative).mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + "/usr/bin:/bin")
-    assert run_healthcheck(sync) == []
+    tree = _git(consumer, "write-tree").stdout
+    _git(consumer, "commit", "-m", "chore: sync template and migrate legacy layout")
+    assert _git(consumer, "rev-parse", "HEAD^{tree}").stdout == tree
+    assert _git(consumer, "rev-list", "--count", before + "..HEAD").stdout.strip() == "1"
+    assert not _git(consumer, "status", "--porcelain").stdout
+    # 全量契约由工厂门禁执行；链路测试隔离契约子进程，避免嵌套整套测试超时。
+    import argparse
+    from template_sync.transaction import cmd_transaction
+    monkeypatch.setattr("template_sync.transaction._run_tests", lambda root: True)
+    assert cmd_transaction(argparse.Namespace(sync=ctx.SyncContext.for_consumer(consumer), action="accept")) == 0
+    assert json.loads((state / "sync_transaction/transaction.json").read_text())["status"] == "accepted"
+    assert run_healthcheck(ctx.SyncContext.for_consumer(consumer)) == []

@@ -22,7 +22,7 @@ from template_sync.entity_storage_migration import (
     entity_storage_migration_status,
     migrate_entity_storage,
 )
-from template_sync.migrate import cmd_migrate, migrate_command
+from migration_support import exercise_migrations
 from template_sync.skills_links import cmd_link_skills, opencode_commands_status
 from template_sync.state import cmd_prompt
 from template_sync.status_plan import cmd_plan, cmd_status
@@ -164,68 +164,17 @@ def test_placeholder_only_dir_listed_for_cleanup(tmp_path):
     _git(consumer, "add", "-A")
     _git(consumer, "commit", "-m", "placeholder")
     problems = entity_storage_migration_status(sync=sync)
-    assert any("仅含占位文件待清理" in p for p in problems)
+    assert any("待收敛并清理" in p for p in problems)
     # 迁移须收敛该目录
     assert migrate_entity_storage(sync=sync, write=True) is not None
     assert not d.exists()
     assert entity_storage_migration_status(sync=sync) == []
 
 
-def test_apply_transaction_scope_excludes_user_docs():
-    import inspect
-
-    from template_sync import apply as apply_mod
-
-    src = inspect.getsource(apply_mod.cmd_apply)
-    assert '"docs/tasks"' not in src
-    assert '"docs/blueprint/conventions.md"' not in src
-    assert '"docs/specs_index.md"' not in src
-    assert '".claude/settings.json"' not in src
-    assert '".claude/hooks"' not in src
 
 
-def test_migrate_command_pins_source_checkout_with_quote(tmp_path):
-    src, consumer, sync = _pair(tmp_path)
-    cmd = migrate_command(src, sync, "entity-storage")
-    assert "--consumer" in cmd and "--source" in cmd and "--checkout" in cmd
-    assert shlex.quote(str(src)) in cmd
-    assert shlex.quote(str(sync.consumer)) in cmd
-    assert "migrate entity-storage --write" in cmd
-    # 含空格路径仍可解析
-    spaced = tmp_path / "with space"
-    spaced.mkdir()
-    sync2 = ctx.SyncContext.for_consumer(spaced)
-    (spaced / ".repo_template").mkdir(parents=True)
-    (state_file(spaced, "sync_state.json")).write_text(json.dumps({
-        "template_source": {"kind": "path", "value": str(src)},
-        "last_synced_commit": None, "last_synced_at": None, "user_prompts": [],
-    }), encoding="utf-8")
-    cmd2 = migrate_command(src, sync2, "all")
-    assert shlex.quote(str(spaced)) in cmd2
 
 
-def test_migrate_all_clean_only_for_entity(tmp_path, capsys):
-    src, consumer, sync = _pair(tmp_path)
-    conv = consumer / "docs/blueprint/conventions.md"
-    conv.parent.mkdir(parents=True)
-    conv.write_text("### 原子写\n- from task import _atomic_write_text 旧写法\n", encoding="utf-8")
-    (consumer / "README.md").write_text("# consumer\n", encoding="utf-8")
-    _git(consumer, "add", "-A")
-    _git(consumer, "commit", "-m", "legacy conv")
-    # 脏工作区但 entity 无待迁移：all --write 不应被 clean 阻断
-    (consumer / "README.md").write_text("dirty\n", encoding="utf-8")
-    assert cmd_migrate(argparse.Namespace(kind="all", write=True, sync=sync)) == 0
-    capsys.readouterr()
-    # 脏工作区且 entity 有待迁移：须阻断
-    _git(consumer, "checkout", "--", "README.md")
-    todo = consumer / "docs/pending/todo/p001_x.md"
-    todo.parent.mkdir(parents=True, exist_ok=True)
-    todo.write_text("# p001\n", encoding="utf-8")
-    _git(consumer, "add", "-A")
-    _git(consumer, "commit", "-m", "legacy entity")
-    (consumer / "README.md").write_text("dirty2\n", encoding="utf-8")
-    with pytest.raises(MigrationError, match="工作区必须干净"):
-        cmd_migrate(argparse.Namespace(kind="all", write=True, sync=sync))
 
 
 def test_missing_handoff_does_not_block_migrate_but_blocks_use(tmp_path):
@@ -262,17 +211,6 @@ def test_manifest_only_prompt_add_blocked(tmp_path):
     assert not (state_file(consumer, "sync_state.json")).exists()
 
 
-def test_migrate_all_dry_run_legacy_reports_and_skips_rest(tmp_path, capsys):
-    _, consumer, sync = _pair(tmp_path)
-    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps({
-        "template_source": {"kind": "path", "value": str(consumer)},
-        "last_synced_commit": "abc", "user_prompts": [],
-    }), encoding="utf-8")
-    assert cmd_migrate(argparse.Namespace(kind="all", write=False, sync=sync)) == 0
-    out = capsys.readouterr().out
-    assert "legacy-state" in out and "先单独执行" in out
 
 
 def test_entity_git_timeout_wrapped(tmp_path, monkeypatch):
@@ -291,4 +229,4 @@ def test_entity_git_timeout_wrapped(tmp_path, monkeypatch):
 
     monkeypatch.setattr("template_sync.common.subprocess.run", boom)
     with pytest.raises(ctx.SyncError, match="超时"):
-        mod._check_clean_working_copy(consumer)
+        mod.build_migration_plan(sync)

@@ -106,13 +106,13 @@ def test_init_refuses_legacy_state_and_requires_explicit_migration(env):
     }), encoding="utf-8")
     env["state_file"].unlink()
 
-    with pytest.raises(ctx.SyncError, match="migrate legacy-state"):
+    with pytest.raises(ctx.SyncError, match="apply 内置迁移"):
         cmd_init(Namespace(sync=env["sync"], source=str(env["src"])))
     assert legacy.is_file()
     assert not env["state_file"].exists()
 
 def test_migrate_legacy_state_preserves_provenance_and_prompts(env):
-    """A11：显式 migrate legacy-state 保留来源、同步记录与 prompts，并删除旧文件。"""
+    """A11：apply 内置 legacy-state 保留来源、同步记录与 prompts，并删除旧文件。"""
     consumer = env["consumer"]
     legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
     legacy.parent.mkdir(parents=True)
@@ -124,15 +124,15 @@ def test_migrate_legacy_state_preserves_provenance_and_prompts(env):
     }), encoding="utf-8")
     env["state_file"].unlink()
 
-    from template_sync.migrate import cmd_migrate
+    from migration_support import exercise_migrations
 
     # dry-run
-    assert cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=False)) == 0
+    assert exercise_migrations(Namespace(sync=env["sync"], kind="legacy-state", write=False)) is not None
     assert legacy.exists()
     assert not env["state_file"].exists()
 
     # write
-    assert cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=True)) == 0
+    assert exercise_migrations(Namespace(sync=env["sync"], kind="legacy-state", write=True)) is not None
     assert not legacy.exists()
     data = json.loads(env["state_file"].read_text(encoding="utf-8"))
     assert data["last_synced_commit"] == "abc123"
@@ -154,7 +154,7 @@ def test_migrate_legacy_state_rollback_after_write_is_byte_identical(env, monkey
     legacy_before = legacy.read_bytes()
 
     from template_sync import state as state_module
-    from template_sync.migrate import cmd_migrate
+    from migration_support import exercise_migrations
 
     real_write = state_module.write_state
 
@@ -163,8 +163,8 @@ def test_migrate_legacy_state_rollback_after_write_is_byte_identical(env, monkey
         raise OSError("injected failure before legacy unlink")
 
     monkeypatch.setattr(state_module, "write_state", write_then_fail)
-    with pytest.raises(ctx.SyncError, match="已回滚"):
-        cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=True))
+    with pytest.raises(OSError, match="injected failure"):
+        exercise_migrations(Namespace(sync=env["sync"], kind="legacy-state", write=True))
 
     assert env["state_file"].read_bytes() == state_before
     assert legacy.read_bytes() == legacy_before
@@ -182,9 +182,9 @@ def test_migrate_legacy_state_success_readback_matches_merged_state(env):
         "user_prompts": [prompt],
     }, indent=2), encoding="utf-8")
 
-    from template_sync.migrate import cmd_migrate
+    from migration_support import exercise_migrations
 
-    assert cmd_migrate(Namespace(sync=env["sync"], kind="legacy-state", write=True)) == 0
+    assert exercise_migrations(Namespace(sync=env["sync"], kind="legacy-state", write=True)) is not None
     assert not legacy.exists()
     data = json.loads(env["state_file"].read_text(encoding="utf-8"))
     assert data == {

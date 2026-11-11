@@ -374,6 +374,8 @@ def test_asset_sync_closes_non_executable_hook_loop(real_hook_env):
     entry = _entry_issue(run_healthcheck(sync), "commit-msg")
     assert "不可执行" in entry
     _assert_asset_sync_hint(entry)
+    from test_repo_sync import _commit_consumer_baseline
+    _commit_consumer_baseline(sync.consumer)
     assert cmd_apply(Namespace(sync=sync, skip_tests=True)) == 0
     assert os.access(hook, os.X_OK), "真实 apply 返回 0 后 commit-msg 仍不可执行"
     assert stat.S_IMODE(hook.stat().st_mode) == 0o755

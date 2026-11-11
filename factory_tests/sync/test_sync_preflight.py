@@ -11,7 +11,7 @@ import pytest
 from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from template_sync.apply import cmd_apply
 from template_sync.status_plan import cmd_plan, cmd_status
-from test_repo_sync import env
+from test_repo_sync import env, _commit_consumer_baseline
 
 
 VALID = "---\nslug: feature\nstatus: active\ntasks: [baseline]\n---\n\n# Feature\n"
@@ -37,6 +37,7 @@ def _assets(root: Path) -> dict:
 
 def _blocked_outputs(env, capsys) -> tuple[list[str], str]:
     root, sync = env["consumer"], env["sync"]
+    _commit_consumer_baseline(root)
     before = _assets(root)
     state_before = env["state_file"].read_bytes()
     previews = []
@@ -57,17 +58,18 @@ def _blocked_outputs(env, capsys) -> tuple[list[str], str]:
 
 
 @pytest.mark.parametrize("text", ["# Feature\n", "---\nslug: feature\n---\n# Feature\n"])
-def test_legacy_specs_get_same_pinned_migration_guidance_before_contract(env, capsys, text):
+def test_legacy_specs_preview_and_apply_without_separate_migration(env, capsys, text):
     _write_spec(env["consumer"], text)
-    previews, error = _blocked_outputs(env, capsys)
-    for output in [*previews, error]:
-        assert "specs-layout" in output
-        assert "migrate all --write" in output
-        assert f"--consumer {env['consumer']}" in output
-        assert f"--source {env['src']}" in output
-        assert f"--checkout {env['src']}" in output
-        assert "front matter 契约违规" not in output
-        assert "progress.md 必须" not in output
+    _commit_consumer_baseline(env["consumer"])
+    before = _assets(env["consumer"])
+    for command in (cmd_status, cmd_plan):
+        assert command(argparse.Namespace(sync=env["sync"], fetch=False)) == 0
+        output = capsys.readouterr().out
+        assert "specs-layout" in output and "apply 内置迁移" in output
+        assert "BLOCKED" not in output
+        assert _assets(env["consumer"]) == before
+    assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 0
+    assert "slug: feature" in (env['consumer'] / 'docs/specs/feature.md').read_text()
 
 
 @pytest.mark.parametrize("text, diagnostic", [
@@ -83,18 +85,16 @@ def test_current_layout_invalid_specs_have_same_contract_blocker(env, capsys, te
     for output in [*previews, error]:
         assert "docs/specs front matter 契约违规" in output
         assert diagnostic in output
-        assert "migrate all --write" not in output
         assert "specs-layout 旧布局" not in output
 
 
-def test_migration_backlog_precedes_invalid_current_spec(env, capsys):
+def test_migration_backlog_and_invalid_current_spec_are_both_reported(env, capsys):
     _write_spec(env["consumer"], VALID.replace("active", "invalid"))
     (env["consumer"] / "docs/pending.md").write_text("# Pending\n", encoding="utf-8")
     previews, error = _blocked_outputs(env, capsys)
     for output in [*previews, error]:
         assert "pending-ledger" in output
-        assert "migrate all --write" in output
-        assert "契约违规" not in output
+        assert "契约违规" in output
 
 
 def test_current_legal_spec_allows_previews_and_apply(env, capsys):
@@ -104,5 +104,18 @@ def test_current_legal_spec_allows_previews_and_apply(env, capsys):
         output = capsys.readouterr().out
         assert "同步预检通过" in output
         assert "front matter 契约违规" not in output
+    _commit_consumer_baseline(env["consumer"])
     assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 0
     assert (env["consumer"] / "docs/specs/feature.md").read_text(encoding="utf-8") == VALID
+
+
+def test_legacy_only_state_points_to_source(env, capsys):
+    legacy = env["sync"].legacy_state_path()
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}", encoding="utf-8")
+    env["state_file"].unlink()
+    for command in (cmd_status, cmd_plan):
+        assert command(argparse.Namespace(sync=env["sync"], fetch=False)) == 0
+        output = capsys.readouterr().out
+        assert "--source" in output
+        assert "init --source" not in output

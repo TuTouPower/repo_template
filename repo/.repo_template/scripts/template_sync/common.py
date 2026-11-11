@@ -7,12 +7,7 @@ import subprocess
 from functools import wraps
 from pathlib import Path
 
-from repo_task.file_transaction import (
-    FINISHED_STATUSES,
-    SYNC_TRANSACTION_DIR,
-    FileTransaction,
-    state_transaction,
-)
+from repo_task.file_transaction import FINISHED_STATUSES
 from repo_task.locks import CONTROL_LOCK_NAME, git_common_lock
 
 from . import context as ctx
@@ -55,17 +50,6 @@ def finished_legacy_transactions(sync: ctx.SyncContext) -> list[Path]:
             ) from error
         finished.append(directory)
     return finished
-
-
-def migration_transaction(sync: ctx.SyncContext) -> FileTransaction:
-    """迁移期文件事务：恒落在 Git common 状态目录的 ``sync_transaction``。
-
-    旧 ``.scratch`` 事务只做退役预检，不沿用其存储位置。state-root 作为独立
-    迁移 step 自建同一标准事务，不套在本函数之上，避免同目录嵌套冲突；
-    崩溃恢复统一走 ``transaction status/rollback``。
-    """
-    finished_legacy_transactions(sync)
-    return state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
 
 
 def consumer_locked(function):

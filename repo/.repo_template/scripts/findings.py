@@ -7,10 +7,9 @@
 用法：
   python3 .repo_template/scripts/findings.py new --slug uv_lock_platform_marker
   python3 .repo_template/scripts/findings.py list
-  python3 .repo_template/scripts/repo_sync.py migrate findings-ledger [--write]
 
 `new` 在 git 公共目录的排他锁内完成「扫描取号 → 建文件」，并发 worker 不会撞号。
-旧仓残留 docs/findings.md 单文件总账时，先用 repo_sync migrate findings-ledger 显式拆分并提交结果，
+旧仓残留 docs/findings.md 单文件总账时，先用 固定来源 repo_sync.py apply 内置迁移拆分并随同步结果单次提交，
 再分配新编号；编号分配本身不解析旧正文。
 """
 

@@ -300,7 +300,7 @@ def test_sectioned_agents_missing_markers_fails_closed(env):
     src, consumer = env["src"], env["consumer"]
     (src / "AGENTS.md").write_text("<!-- repo-template:begin -->\n规则\n<!-- repo-template:end -->\n")
     (consumer / "AGENTS.md").write_text("旧格式\n")
-    with pytest.raises(ctx.SyncError, match="migrate agents-zones"):
+    with pytest.raises(ctx.SyncError, match="apply 内置 agents-zones"):
         _apply_agents_sectioned(src, set(), env["sync"])
 
 def test_agents_section_status_reports_zones(env):

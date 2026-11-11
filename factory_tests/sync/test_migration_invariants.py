@@ -17,12 +17,16 @@ if str(SCRIPTS) not in sys.path:
 
 from repo_task.specs import validate_specs
 from template_sync import context as ctx
-from template_sync.migrate import cmd_migrate, migration_findings
+from migration_support import exercise_migrations, findings
 from template_sync.specs_migration import migrate_specs_layout, specs_migration_status
 from git_repo_support import install_fake_md_kx
 from test_repo_sync import _git, _install_current_workflow_templates, env
-from test_consumer_migration_chain import _build_988fd06_consumer, _migrate
-from test_template_sync_migrate_all import _legacy_workflow_task, _retired_guard
+from test_consumer_migration_chain import _build_988fd06_consumer
+from migration_support import migration
+
+def _migrate(root, kind):
+    migration(kind).execute(ctx.SyncContext.for_consumer(root), FACTORY_ROOT / "repo")
+from test_migration_interfaces import _legacy_workflow_task, _retired_guard
 
 INDEX_HEADER = "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
 
@@ -115,9 +119,9 @@ def test_migrated_layout_stays_current_after_daily_edit(env, tmp_path, monkeypat
         path.write_text("# 项目约定\n\n## 原子写\n", encoding="utf-8")
     else:
         _retired_guard(root)
-    assert migration_findings(kind, sync, src=env["src"])
-    assert cmd_migrate(argparse.Namespace(sync=sync, kind=kind, write=True)) == 0
-    assert migration_findings(kind, sync, src=env["src"]) == []
+    assert findings(kind, sync, src=env["src"])
+    assert exercise_migrations(argparse.Namespace(sync=sync, kind=kind, write=True)) is not None
+    assert findings(kind, sync, src=env["src"]) == []
 
     if kind == "legacy-state":
         data = json.loads(sync.state_path.read_text(encoding="utf-8"))
@@ -134,21 +138,21 @@ def test_migrated_layout_stays_current_after_daily_edit(env, tmp_path, monkeypat
     else:
         path = root / ".claude/settings.json"
         path.write_text('{"permissions": {"allow": ["Bash(pytest *)"]}}\n', encoding="utf-8")
-    assert migration_findings(kind, sync, src=env["src"]) == []
+    assert findings(kind, sync, src=env["src"]) == []
 
 
 @pytest.mark.parametrize("kind", ["entity-storage", "agents-zones", "adr", "reviews"])
 def test_real_consumer_migration_and_daily_edit(tmp_path, kind):
     root = _build_988fd06_consumer(tmp_path)
     sync = ctx.SyncContext.for_consumer(root)
-    assert migration_findings(kind, sync)
+    assert findings(kind, sync)
     if kind == "agents-zones":
         _migrate(root, "entity-storage")
         _git(root, "add", "-A")
         _git(root, "commit", "--no-verify", "-m", "migrate entity storage")
         _migrate(root, "state-root")
     _migrate(root, kind)
-    assert migration_findings(kind, sync) == []
+    assert findings(kind, sync) == []
     if kind == "entity-storage":
         path = root / "docs/pending/p001_fix_cli.md"
         path.write_text(path.read_text(encoding="utf-8") + "\n补充任务边界。\n", encoding="utf-8")
@@ -161,10 +165,10 @@ def test_real_consumer_migration_and_daily_edit(tmp_path, kind):
     else:
         path = next((root / "docs/reviews").glob("review_*/review_general.md"))
         path.write_text("PASS\n\n补充审阅证据。\n", encoding="utf-8")
-    assert migration_findings(kind, sync) == []
+    assert findings(kind, sync) == []
     if kind == "reviews":
         # 超过五个再次要求显式清理是用户已裁定的策略，不能伪称单调为空。
         directory = root / "docs/reviews/review_20260201_120000"
         directory.mkdir()
         (directory / "review_general.md").write_text("PASS\n", encoding="utf-8")
-        assert migration_findings(kind, sync)
+        assert findings(kind, sync)

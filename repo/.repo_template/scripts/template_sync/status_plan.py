@@ -8,19 +8,20 @@ from . import context as ctx
 from .agents_merge import agents_section_diagnosis, agents_section_status
 from .assets import hard_sync_status, retired_template_warnings
 from .common import _git, consumer_locked
-from .migrate import migrate_command
 from .preflight import sync_preflight
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
 from .source import assert_not_self, require_template_source, resolve_src, src_dirty
-from .state import active_prompts, prompt_substrings, read_state, require_no_legacy_state
+from .state import active_prompts, missing_state_message, prompt_substrings, read_state
 
 
 def _print_preflight(sync: ctx.SyncContext, src) -> None:
     result = sync_preflight(src, sync)
     print(f"BLOCKED: {result.error}" if result.error else "同步预检通过")
-    for kind, _findings in result.migrations:
-        print(f"  {kind}: {migrate_command(src, sync, kind)}")
+    for kind, findings in result.migrations:
+        print(f"  {kind}: apply 内置迁移")
+        for item in findings:
+            print(f"    {item}")
 
 
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -51,10 +52,9 @@ def _opencode_section(sync) -> tuple[list[dict] | None, str | None]:
 @consumer_locked
 def cmd_status(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
-    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
-        print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
+        print(missing_state_message(sync))
         return 0
     src = resolve_src(state, refresh=getattr(args, "fetch", False), sync=sync)
     assert_not_self(src, sync=sync)
@@ -119,10 +119,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 @consumer_locked
 def cmd_plan(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
-    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
-        print("未初始化：无 sync_state.json。先运行 init --source <path|url>")
+        print(missing_state_message(sync))
         return 0
     src = resolve_src(state, refresh=getattr(args, "fetch", False), sync=sync)
     assert_not_self(src, sync=sync)
@@ -181,7 +180,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         print("apply 不支持软链 AGENTS.md，先替换为真实文件")
     section_status = agents_section_status(src, sync=sync)
     if section_status is None:
-        print("未识别到完整两区标记，先运行 `repo_sync.py migrate agents-zones --write`")
+        print("未识别到完整两区标记，apply 将内置迁移；数据阻断项见预检")
         for issue in agents_section_diagnosis(src, sync=sync):
             print(f"- {issue}")
     else:

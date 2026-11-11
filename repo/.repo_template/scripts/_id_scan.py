@@ -336,12 +336,12 @@ def validate_worktree_shape(root: Path) -> None:
         if directory.is_dir():
             nested = [path for path in directory.iterdir() if path.is_dir() and not path.name.startswith(".tmp_")]
             if nested:
-                raise IdScanError(f"当前 {name} 布局禁止嵌套目录：{nested[0]}；先显式 migrate")
+                raise IdScanError(f"当前 {name} 布局禁止嵌套目录：{nested[0]}；先从固定来源运行 repo_sync.py plan / apply 完成内置迁移")
 
 
 def require_current_schema(repo_root: Path) -> None:
     if not current_schema(repo_root):
-        raise IdScanError("未建立当前实体 schema；先执行 repo_sync.py migrate all --write 并提交切换结果")
+        raise IdScanError("未建立当前实体 schema；先从固定来源运行 repo_sync.py apply 完成内置迁移，批准后单次提交同步结果")
 
 
 def branch_uses_current_schema(repo_root: Path, ref: str) -> bool:
@@ -391,7 +391,7 @@ def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
                 continue
             tail = rel[len(directory) + 1:].split("/")
             if kind == "file" and len(tail) != 1:
-                raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先显式 migrate")
+                raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先从固定来源运行 repo_sync.py plan / apply 完成内置迁移")
             number = _entry_number(prefix, tail[0], kind=kind)
             if number is not None:
                 identity = directory + "/" + tail[0]

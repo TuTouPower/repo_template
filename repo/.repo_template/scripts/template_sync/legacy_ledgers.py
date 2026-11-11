@@ -191,7 +191,7 @@ def apply_legacy_migration(
             if [(n, t, b) for n, t, b in fresh] != [
                 (item.number, item.title, item.body) for item in items
             ]:
-                raise IdScanError("旧总账在加锁前已被并发修改；迁移中止，请重新执行 repo_sync migrate")
+                raise IdScanError("旧总账在加锁前已被并发修改；迁移中止，请重新执行 repo_sync plan / apply")
             for item in items:
                 occupied = sorted(
                     path

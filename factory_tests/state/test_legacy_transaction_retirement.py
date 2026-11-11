@@ -16,8 +16,8 @@ sys.path.insert(0, str(FACTORY_ROOT / "repo/.repo_template/scripts"))
 from repo_task.context import common_state_dir
 from repo_task.file_transaction import SYNC_TRANSACTION_DIR, FileTransaction
 from template_sync import context as ctx
-from template_sync.common import migration_transaction
-from template_sync.migrate import cmd_migrate
+from template_sync.common import finished_legacy_transactions
+from migration_support import exercise_migrations
 from template_sync.state_root_migration import migrate_state_root, state_root_migration_status
 from template_sync.transaction import cmd_transaction
 
@@ -51,7 +51,7 @@ def test_open_or_corrupt_legacy_blocks_without_writes(consumer, rel, payload):
     sync = ctx.SyncContext.for_consumer(consumer)
     findings = state_root_migration_status(sync)
     assert any(rel in finding for finding in findings)
-    for action in (lambda: migration_transaction(sync), lambda: migrate_state_root(sync),
+    for action in (lambda: finished_legacy_transactions(sync), lambda: migrate_state_root(sync),
                    lambda: migrate_state_root(sync, write=True)):
         with pytest.raises(ctx.SyncError, match="旧.*事务"):
             action()
@@ -66,15 +66,15 @@ def test_finished_legacy_only_migrates_via_public_entry_and_is_idempotent(consum
         _record(consumer, rel, json.dumps({"status": status}))
     sync = ctx.SyncContext.for_consumer(consumer)
     assert len(state_root_migration_status(sync)) == 2
-    assert cmd_migrate(Namespace(sync=sync, kind="state-root", write=False)) == 0
+    assert exercise_migrations(Namespace(sync=sync, kind="state-root", write=False)) is not None
     assert all((consumer / rel).exists() for rel in LEGACY_DIRS)
     assert not common_state_dir(consumer).exists()
-    assert cmd_migrate(Namespace(sync=sync, kind="state-root", write=True)) == 0
+    assert exercise_migrations(Namespace(sync=sync, kind="state-root", write=True)) is not None
     assert all(not (consumer / rel).exists() for rel in LEGACY_DIRS)
     data = json.loads((common_state_dir(consumer) / SYNC_TRANSACTION_DIR / "transaction.json").read_text())
-    assert data["status"] == "accepted"
-    assert set(data["paths"]) == set(LEGACY_DIRS)
-    assert data["state_paths"] == {}
+    assert data["status"] == "applied"
+    assert set(LEGACY_DIRS).issubset(data["paths"])
+    assert "sync_state.json" in data["state_paths"]
     assert state_root_migration_status(sync) == []
     assert migrate_state_root(sync, write=True) == []
 
@@ -120,9 +120,9 @@ def test_retirement_failure_or_crash_restores_legacy_from_standard_transaction(
         raise error_type("injected after retirement")
 
     monkeypatch.setattr(FileTransaction, "applied", fail_after_deletion)
-    expected = ctx.SyncError if error_type is OSError else KeyboardInterrupt
+    expected = error_type
     with pytest.raises(expected, match="injected after retirement"):
-        migrate_state_root(sync, write=True)
+        exercise_migrations(Namespace(sync=sync, kind="state-root", write=True))
     if error_type is KeyboardInterrupt:
         assert cmd_transaction(Namespace(sync=sync, action="status")) == 0
         assert cmd_transaction(Namespace(sync=sync, action="rollback", confirm_restore=True)) == 0

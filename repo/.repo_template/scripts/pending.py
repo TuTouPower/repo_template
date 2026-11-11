@@ -20,10 +20,9 @@
   python3 .repo_template/scripts/pending.py park pNNN ... --reason "..." [--write]
   python3 .repo_template/scripts/pending.py revive pNNN ... [--write]
   python3 .repo_template/scripts/pending.py close pNNN ... --reason "..." [--fix-ref REF] [--resolution RES] [--write]
-  python3 .repo_template/scripts/repo_sync.py migrate pending-ledger [--write]
 
-旧仓残留 docs/pending.md 单文件总账时，先用 repo_sync migrate pending-ledger 显式拆成一条目一文件，
-提交迁移结果后再分配新编号；编号分配本身不解析旧正文。
+旧仓残留 docs/pending.md 单文件总账时，先用 固定来源 repo_sync.py apply 内置迁移拆成一条目一文件，
+逐次批准并单次提交同步结果后再分配新编号；编号分配本身不解析旧正文。
 """
 
 from __future__ import annotations

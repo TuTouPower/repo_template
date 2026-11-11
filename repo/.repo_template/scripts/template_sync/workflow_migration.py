@@ -315,6 +315,8 @@ def _collect_workflow_task_dirs(sync: ctx.SyncContext) -> list[Path]:
         if not parent.is_dir():
             continue
         for child in sorted(parent.iterdir()):
+            if rel_parent == "docs/archive/tasks" and (child.is_symlink() or not child.is_dir() or not ctx.TASK_DIR_RE.fullmatch(child.name)):
+                continue
             if child.is_symlink():
                 raise ctx.SyncError(f"{sync.rel(child)} 是软链 task 目录，拒绝沿软链迁移到仓外")
             if not child.is_dir():
@@ -353,6 +355,10 @@ def _inspect_workflow_task_dir(
     write_ops: list[tuple[Path, str]] = []
     delete_ops: list[Path] = []
 
+    if any(path.is_symlink() for path in (spec_path, task_path, note_path, legacy_note_path)):
+        return [], [f"{sync.rel(task_dir)}: workflow 文档是软链，拒绝沿软链写入"], {
+            "legacy": False, "write": [], "delete": [],
+        }
     if legacy_note_path.exists() and note_path.exists():
         return [], [f"{sync.rel(task_dir)}: note.md 与 {PROGRESS_FILE} 并存，拒绝猜测合并"], {
             "legacy": False, "write": [], "delete": [],

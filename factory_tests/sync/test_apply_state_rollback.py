@@ -15,7 +15,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from template_sync.cli import main as repo_sync_main
 
-from test_repo_sync import env
+from test_repo_sync import env, _commit_consumer_baseline
 
 
 def test_apply_then_cli_rollback_restores_common_dir_state_and_tool_files(env):
@@ -35,6 +35,7 @@ def test_apply_then_cli_rollback_restores_common_dir_state_and_tool_files(env):
     state_before = state_path.read_bytes()
     assert json.loads(state_before)["last_synced_commit"] is None
 
+    _commit_consumer_baseline(consumer)
     assert cli("apply", "--skip-tests") == 0
     assert json.loads(state_path.read_bytes())["last_synced_commit"] == env["head"]
     assert not (old_toolkit.is_file() and old_toolkit.read_text(encoding="utf-8") == "OLD TASK TOOL\n")

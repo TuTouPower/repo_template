@@ -1,12 +1,4 @@
-"""一次性把主仓运行状态迁入 Git common dir。
-
-迁移是文件级操作，不修改 Git index，也不产生 commit。目标目录固定在
-``$GIT_COMMON_DIR/repo_template``；在标准 FileTransaction 内执行，旧路径作为
-消费仓资产纳入 ``paths``，新路径作为 common 状态目录资产纳入 ``state_paths``。
-崩溃恢复统一走 ``transaction status/rollback``，不再有独立状态文件、备份目录
-或手写恢复顺序。作为 ``migrate`` 的独立 step 顺序执行，不与 ``_transactional``
-套叠，避免同一 ``sync_transaction`` 目录出现嵌套事务。
-"""
+"""状态迁入 Git common dir；事务由 apply 统一管理。"""
 
 from __future__ import annotations
 
@@ -14,7 +6,6 @@ import shutil
 from pathlib import Path
 
 from repo_task.context import common_state_dir
-from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 
 from . import context as ctx
 from .common import _git, finished_legacy_transactions
@@ -183,12 +174,12 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
     retired = finished_legacy_transactions(sync)
     sources = _sources(sync)
     locks = _locks(sync)
+    for source, _target in sources:
+        if source.is_symlink() or not source.is_file():
+            raise ctx.SyncError(f"{sync.rel(source)} 不是普通状态文件；请先人工核对")
     if not sources and not locks and not retired:
         return []
-    conflicts = [
-        str(target) for _source, target in sources
-        if _present(target) and not (target.is_dir() and not target.is_symlink() and not any(target.iterdir()))
-    ]
+    conflicts = [str(target) for _source, target in sources if _present(target)]
     if conflicts:
         raise ctx.SyncError(
             "目标 common 状态目录已有文件，拒绝覆盖：\n- " + "\n- ".join(conflicts)
@@ -199,40 +190,18 @@ def migrate_state_root(sync: ctx.SyncContext, *, write: bool = False) -> list[st
     if not write:
         return reports
 
-    paths = [source.relative_to(sync.consumer).as_posix() for source, _target in sources]
-    paths.extend(lock.relative_to(sync.consumer).as_posix() for lock in locks)
-    paths.extend(path.relative_to(sync.consumer).as_posix() for path in retired)
-    state_root = common_state_dir(sync.consumer)
-    state_paths = [target.relative_to(state_root).as_posix() for _source, target in sources]
-    transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
-    try:
-        transaction.begin(paths, state_paths=state_paths)
-    except ValueError as error:
-        raise ctx.SyncError(f"state-root 事务无法启动：{error}") from error
-    try:
-        for path in retired:
-            shutil.rmtree(path)
-        for source, target in sources:
-            _copy_verify(source, target)
-            source.unlink()
-        for lock in locks:
-            lock.unlink()
-        if runtime.is_dir() and not any(runtime.iterdir()):
-            runtime.rmdir()
-        for source, target in sources:
-            if _present(source):
-                raise ctx.SyncError(f"旧路径未清空：{source}")
-            if not _present(target):
-                raise ctx.SyncError(f"新路径缺失：{target}")
-        transaction.applied(verified=True)
-        transaction.accept()
-    except Exception as error:
-        try:
-            transaction.rollback(automatic=True)
-        except Exception as rollback_error:
-            raise ctx.SyncError(
-                f"state-root 迁移失败（{error}）；自动回滚失败：{rollback_error}；"
-                f"备份保留在 {sync.rel(transaction.backup)}，请用 transaction rollback 恢复"
-            ) from error
-        raise ctx.SyncError(f"state-root 迁移失败，已回滚：{error}") from error
+    for path in retired:
+        shutil.rmtree(path)
+    for source, target in sources:
+        _copy_verify(source, target)
+        source.unlink()
+    for lock in locks:
+        lock.unlink()
+    if runtime.is_dir() and not any(runtime.iterdir()):
+        runtime.rmdir()
+    for source, target in sources:
+        if _present(source):
+            raise ctx.SyncError(f"旧路径未清空：{source}")
+        if not _present(target):
+            raise ctx.SyncError(f"新路径缺失：{target}")
     return reports

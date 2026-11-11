@@ -1,18 +1,4 @@
-"""G1 迁移跟进：migration_transaction 固定 common 目录；reviews 超 5 个一律删除回归。
-
-根因 2 删除了旧 ``.scratch`` 事务预检与 migration_transaction 双位置分支：
-旧「applied 旧事务也不阻断」用例整体删除：未结束事务必须保护，
-退役检查覆盖见 test_legacy_transaction_retirement.py；事务始终落在 common 目录。
-
-语义变更：用户裁定超过 5 个的旧 review 一律 rmtree，废除「被引用/未跟踪
-保留」规则。原 C1「删除内容预检」与 P1-4「引用源解析」相关用例失去意义，
-已整体删除并按新语义重写回归（禁止就地把旧预期改成新实现的输出）。
-
-N2 顶层方案跟进：reviews_migration_status 曾把「待删除子集」(ordered[5:])
-冒充「完整迁移集合」，导致 ≤5 个 archive review 的迁回被公开入口静默跳过、
-非法目录名漏报。现全部入口从 frozen ReviewPlan 派生，新增 0–5 个 archive
-公开迁回、非法名、live/archive 混合、同名冲突与计划不可变回归。
-"""
+"""迁移接口与 reviews 完整计划：事务由调用方持有，超额目录统一删除。"""
 
 from __future__ import annotations
 
@@ -29,10 +15,10 @@ SCRIPTS = FACTORY_ROOT / "repo/.repo_template/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from repo_task.context import common_state_dir
-from repo_task.file_transaction import SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from template_sync import context as ctx
-from template_sync.common import migration_transaction
-from template_sync.migrate import cmd_migrate, migration_findings
+from template_sync.common import finished_legacy_transactions
+from migration_support import exercise_migrations, findings
 from template_sync.reviews_migration import (
     ReviewPlan,
     _plan_reviews,
@@ -75,7 +61,7 @@ def test_finished_legacy_does_not_change_current_transaction_location(consumer: 
     legacy.write_text('{"status": "accepted"}\n', encoding="utf-8")
     sync = ctx.SyncContext.for_consumer(consumer)
 
-    transaction = migration_transaction(sync)
+    transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
 
     assert transaction.root == consumer
     assert transaction.backup == common_state_dir(consumer) / SYNC_TRANSACTION_DIR
@@ -136,7 +122,7 @@ def test_reviews_write_deletes_all_removable_including_referenced_untracked_meta
 
     rel = oldest.relative_to(consumer).as_posix()
     assert reviews_migration_status(sync) == [rel]
-    assert migration_findings("reviews", sync) == [rel]
+    assert findings("reviews", sync) == [rel]
 
     reports = migrate_reviews(sync, write=True)
 
@@ -148,7 +134,7 @@ def test_reviews_write_deletes_all_removable_including_referenced_untracked_meta
         f"review_2026010{index}_120000" for index in range(2, 7)
     ]
     assert reviews_migration_status(sync) == []
-    assert migration_findings("reviews", sync) == []
+    assert findings("reviews", sync) == []
 
 
 def _write_archive_review(consumer: Path, name: str) -> Path:
@@ -159,13 +145,13 @@ def _write_archive_review(consumer: Path, name: str) -> Path:
 
 
 @pytest.mark.parametrize("count", [1, 3, 5])
-def test_reviews_archive_within_limit_moves_back_via_cmd_migrate(
+def test_reviews_archive_within_limit_moves_back_via_exercise_migrations(
     consumer: Path, count: int, capsys
 ) -> None:
     """N2 根因复现：≤5 个 archive review 全属 keep，必须 archive→live 迁回。
 
     旧 status 只返回 ordered[5:]（删除子集），≤5 个时为空，公开入口
-    cmd_migrate 因 `if not status: return []` 静默跳过，报「已是当前格式」，
+    旧 CLI 因 `if not status: return []` 静默跳过，报「已是当前格式」，
     源目录仍在 archive、live 目标未创建。现 status 从完整 ReviewPlan 派生，
     迁回项非空，dry-run / --write / 验收全部从计划派生，写盘后收敛为空。
     """
@@ -181,17 +167,17 @@ def test_reviews_archive_within_limit_moves_back_via_cmd_migrate(
     assert status
     assert len(status) == count
     assert all("->" in item for item in status)
-    assert migration_findings("reviews", sync) == status
+    assert findings("reviews", sync) == status
 
-    assert cmd_migrate(argparse.Namespace(kind="reviews", write=False, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="reviews", write=False, sync=sync)) is not None
     dry = capsys.readouterr().out
-    assert "dry-run" in dry
+    assert "未写盘" in dry
     assert "已是当前格式" not in dry
     assert dry.count("->") >= count
     assert not (consumer / "docs/reviews").exists()
     assert all((archived / name).is_dir() for name in names)
 
-    assert cmd_migrate(argparse.Namespace(kind="reviews", write=True, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="reviews", write=True, sync=sync)) is not None
     capsys.readouterr()
     live = consumer / "docs/reviews"
     assert sorted(path.name for path in live.glob("review_*")) == sorted(names)
@@ -199,7 +185,7 @@ def test_reviews_archive_within_limit_moves_back_via_cmd_migrate(
         assert not (archived / name).exists()
     assert not archived.exists()
     assert reviews_migration_status(sync) == []
-    assert migration_findings("reviews", sync) == []
+    assert findings("reviews", sync) == []
 
 
 def test_reviews_no_dirs_is_noop(consumer: Path, capsys) -> None:
@@ -207,9 +193,9 @@ def test_reviews_no_dirs_is_noop(consumer: Path, capsys) -> None:
     sync = ctx.SyncContext.for_consumer(consumer)
 
     assert reviews_migration_status(sync) == []
-    assert migration_findings("reviews", sync) == []
-    assert cmd_migrate(argparse.Namespace(kind="reviews", write=False, sync=sync)) == 0
-    assert "已是当前格式" in capsys.readouterr().out
+    assert findings("reviews", sync) == []
+    assert exercise_migrations(argparse.Namespace(kind="reviews", write=False, sync=sync)) is not None
+    assert "未写盘" in capsys.readouterr().out
     assert not (consumer / "docs/reviews").exists()
 
 
@@ -230,7 +216,7 @@ def test_reviews_mixed_live_archive_within_limit(consumer: Path) -> None:
     assert len(status) == 3
     assert all("->" in item for item in status)
 
-    assert cmd_migrate(argparse.Namespace(kind="reviews", write=True, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="reviews", write=True, sync=sync)) is not None
     assert sorted(path.name for path in live.glob("review_*")) == [
         f"review_2026110{index}_120000" for index in range(1, 6)
     ]
@@ -244,8 +230,8 @@ def test_reviews_invalid_name_within_limit_reports_and_blocks(
     """≤5 个但目录名非法：status 把校验错误作为 finding 暴露，公开入口不跳过。
 
     旧 `_validate_dates` 只在 migrate_reviews 调用，≤5 个时 status 为空、
-    cmd_migrate 提前返回「已是当前格式」，非法名漏报。现计划构造阶段统一校验，
-    status 返回错误文本，migration_findings 暴露阻断，cmd_migrate 不再跳过。
+    旧 CLI 提前返回「已是当前格式」，非法名漏报。现计划构造阶段统一校验，
+    status 返回错误文本，findings 暴露阻断，旧 CLI 不再跳过。
     """
     bad = _write_archive_review(consumer, "review_no_date")
     sync = ctx.SyncContext.for_consumer(consumer)
@@ -254,14 +240,14 @@ def test_reviews_invalid_name_within_limit_reports_and_blocks(
     assert status
     assert "YYYYMMDD" in status[0]
     assert "review_no_date" in status[0]
-    assert migration_findings("reviews", sync) == status
+    assert findings("reviews", sync) == status
 
     with pytest.raises(ctx.SyncError, match="YYYYMMDD"):
-        cmd_migrate(argparse.Namespace(kind="reviews", write=False, sync=sync))
+        exercise_migrations(argparse.Namespace(kind="reviews", write=False, sync=sync))
     assert "已是当前格式" not in capsys.readouterr().out
 
     with pytest.raises(ctx.SyncError, match="YYYYMMDD"):
-        cmd_migrate(argparse.Namespace(kind="reviews", write=True, sync=sync))
+        exercise_migrations(argparse.Namespace(kind="reviews", write=True, sync=sync))
     assert bad.is_dir()
     assert not (consumer / "docs/reviews").exists()
 

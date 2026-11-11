@@ -112,6 +112,7 @@ def env(tmp_path: Path, sync_source_seed: Path) -> dict:
 
     (consumer / ".repo_template").mkdir(parents=True, exist_ok=True)
     (consumer / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
+    _commit_consumer_baseline(consumer)
     sync = ctx.SyncContext.for_consumer(consumer)
     return {"src": src, "consumer": consumer, "head": head, "state_file": state_file, "sync": sync}
 
@@ -381,7 +382,7 @@ def _commit_consumer_baseline(consumer):
     _git(consumer, 'config', 'user.email', 'test@example.com')
     _git(consumer, 'config', 'user.name', 'test')
     _git(consumer, 'add', '-A')
-    _git(consumer, 'commit', '-m', 'baseline')
+    _git(consumer, 'commit', '--allow-empty', '-m', 'baseline')
 
 
 def _task_branch(consumer, tid, slug, status, *, directory='docs/tasks'):

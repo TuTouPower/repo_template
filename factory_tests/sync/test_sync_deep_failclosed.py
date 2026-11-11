@@ -22,7 +22,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
-from template_sync.migrate import cmd_migrate
+from migration_support import exercise_migrations
 from template_sync.skills_links import opencode_commands_status, sync_opencode_commands
 from template_sync.source import resolve_src
 from template_sync.status_plan import cmd_plan, cmd_status
@@ -109,7 +109,7 @@ def test_cmd_without_sync_is_rejected(pair):
     with pytest.raises(ctx.SyncError, match="显式 SyncContext"):
         cmd_plan(Namespace())
     with pytest.raises(ctx.SyncError, match="显式 SyncContext"):
-        cmd_migrate(Namespace(kind="all", write=False))
+        cmd_apply(Namespace(skip_tests=True, decisions={}))
 
 
 def test_helper_without_sync_is_a_type_error(pair):

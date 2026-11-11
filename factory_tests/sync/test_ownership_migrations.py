@@ -189,15 +189,15 @@ def test_reviews_migration_rolls_back_on_delete_failure(consumer, monkeypatch):
         (directory / "review_general.md").write_text("PASS\n", encoding="utf-8")
     _git(consumer, "add", "-A")
     _git(consumer, "commit", "-m", "reviews")
-    from template_sync import migrate as migrate_mod
+    from migration_support import exercise_migrations
     from template_sync import reviews_migration
 
     def boom(_path):
         raise OSError("injected delete failure")
 
     monkeypatch.setattr(reviews_migration.shutil, "rmtree", boom)
-    with pytest.raises(ctx.SyncError, match="review 保留"):
-        migrate_mod.cmd_migrate(Namespace(sync=ctx.SyncContext.for_consumer(consumer), kind="reviews", write=True))
+    with pytest.raises(OSError, match="injected delete failure"):
+        exercise_migrations(Namespace(sync=ctx.SyncContext.for_consumer(consumer), kind="reviews", write=True))
     assert len(list(reviews.glob("review_*"))) == 6
 
 

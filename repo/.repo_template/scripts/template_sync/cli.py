@@ -12,7 +12,6 @@ from .healthcheck import run_healthcheck
 from .hooks import cmd_install_hooks
 from .shared_files import SHARED_DISPOSITIONS
 from .skills_links import cmd_link_skills
-from .migrate import KINDS, cmd_migrate
 from .state import cmd_init, cmd_prompt
 from .status_plan import cmd_plan, cmd_status
 from .transaction import cmd_transaction
@@ -46,11 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help="初始化 sync_state.json 的 template_source")
     init.add_argument("--source", help="模板源：本机路径或 git remote URL")
     init.set_defaults(func=cmd_init)
-
-    migrate = sub.add_parser("migrate", help="显式迁移旧布局数据到当前格式")
-    migrate.add_argument("kind", choices=(*KINDS, "all"), help="迁移目标")
-    migrate.add_argument("--write", action="store_true", help="写入落盘（默认 dry-run）")
-    migrate.set_defaults(func=cmd_migrate)
 
     status_parser = sub.add_parser("status", help="读取状态与差异摘要")
     status_parser.add_argument("--fetch", action="store_true", help="URL 源联网刷新缓存（默认离线只读）")

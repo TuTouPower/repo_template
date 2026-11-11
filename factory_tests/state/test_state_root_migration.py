@@ -28,12 +28,13 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from repo_task.context import common_state_dir
-from repo_task.file_transaction import SYNC_TRANSACTION_DIR
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from template_sync import context as ctx
 from template_sync import state_root_migration
 from template_sync.state import write_state
 from template_sync.state_root_migration import migrate_state_root, state_root_migration_status
 from template_sync.transaction import cmd_transaction
+from migration_support import exercise_migrations
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -124,20 +125,10 @@ def test_write_moves_state_and_preserves_bytes(consumer):
     assert state_root_migration_status(sync) == []
 
 
-def test_write_executes_standard_file_transaction(consumer):
+def test_execute_does_not_create_or_accept_transaction(consumer):
     sync = ctx.SyncContext.for_consumer(consumer)
     migrate_state_root(sync, write=True)
-    journal = common_state_dir(consumer) / SYNC_TRANSACTION_DIR / "transaction.json"
-    data = json.loads(journal.read_text(encoding="utf-8"))
-    assert data["status"] == "accepted"
-    assert data["gates_verified"] is True
-    assert isinstance(data["after"], str) and data["after"]
-    assert set(data["paths"]) == set(_legacy_sources()) | {
-        ".scratch/repo_sync_rollback", ".scratch/task_graph_transaction",
-    }
-    assert all(existed is True for existed in data["paths"].values())
-    assert len(data["state_paths"]) == 5
-    assert all(existed is False for existed in data["state_paths"].values())
+    assert not (common_state_dir(consumer) / SYNC_TRANSACTION_DIR).exists()
 
 
 def test_registered_worktree_blocks(consumer, tmp_path):
@@ -216,8 +207,8 @@ def test_failure_auto_rollback_restores_old_layout(consumer, monkeypatch):
         original(source, target)
 
     monkeypatch.setattr(state_root_migration, "_copy_verify", flaky)
-    with pytest.raises(ctx.SyncError, match="injected copy failure"):
-        migrate_state_root(sync, write=True)
+    with pytest.raises(OSError, match="injected copy failure"):
+        exercise_migrations(Namespace(sync=sync, kind="state-root", write=True))
     state = common_state_dir(consumer)
     journal = state / SYNC_TRANSACTION_DIR / "transaction.json"
     assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
@@ -239,7 +230,7 @@ def test_crash_recovery_via_transaction_rollback(consumer, monkeypatch, capsys):
 
     monkeypatch.setattr(state_root_migration, "_copy_verify", crash_on_second)
     with pytest.raises(KeyboardInterrupt):
-        migrate_state_root(sync, write=True)
+        exercise_migrations(Namespace(sync=sync, kind="state-root", write=True))
     monkeypatch.setattr(state_root_migration, "_copy_verify", original)
 
     state = common_state_dir(consumer)
@@ -272,3 +263,11 @@ def test_daily_edit_after_migration_keeps_status_empty(consumer):
     assert (state / "sync_state.json").is_file()
     assert not (consumer / ".repo_template/sync_state.json").exists()
     assert state_root_migration_status(sync) == []
+
+
+def test_empty_directory_target_is_rejected(consumer):
+    state = common_state_dir(consumer)
+    (state / "ledger.jsonl").mkdir(parents=True)
+    sync = ctx.SyncContext.for_consumer(consumer)
+    with pytest.raises(ctx.SyncError, match="目标 common 状态目录已有文件"):
+        migrate_state_root(sync)

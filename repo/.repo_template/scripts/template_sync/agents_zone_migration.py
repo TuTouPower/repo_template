@@ -44,11 +44,12 @@ def _sync_commit(sync: ctx.SyncContext) -> str:
         resolved = data.get("resolved_commit")
         if isinstance(resolved, str) and resolved.strip():
             return resolved.strip()
-    if sync.state_path.exists():
-        data = _load_json_object(sync.state_path, f"状态文件 {sync.rel(sync.state_path)}")
-        resolved = data.get("last_synced_commit")
-        if isinstance(resolved, str) and resolved.strip():
-            return resolved.strip()
+    for path in (sync.state_path, sync.consumer / ".repo_template/sync_state.json", sync.legacy_state_path()):
+        if path.exists():
+            data = _load_json_object(path, f"状态文件 {sync.rel(path)}")
+            resolved = data.get("last_synced_commit")
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip()
     raise ctx.SyncError(
         "无法确定 AGENTS.md 同步基线：sync_manifest.json 的 resolved_commit "
         "与 sync_state.json 的 last_synced_commit 均缺失；拒绝猜测旧模板分类"
@@ -171,7 +172,7 @@ def migrate_agents_zones(sync: ctx.SyncContext, src: Path, *, write: bool = Fals
     source_text = (src / "AGENTS.md").read_text(encoding="utf-8")
     source_parts = agents_parts(source_text)
     commit = _sync_commit(sync)
-    historical_text = _historical_agents(sync, src, commit)
+    historical_text = _historical_agents(sync, sync.checkout_override or src, commit)
     _historical_before, historical_dir, historical_dev = _legacy_sections(
         historical_text, f"历史模板 AGENTS.md（{commit}）"
     )

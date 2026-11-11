@@ -221,8 +221,8 @@ def test_legacy_layout_dir_blocks_allocation_and_hints_real_command(
             repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
-    assert "migrate" in str(exc.value)
-    assert "显式" in str(exc.value)
+    assert "apply" in str(exc.value)
+    assert "内置迁移" in str(exc.value)
 
 
 def test_legacy_layout_dir_in_other_branch_blocks_allocation(tmp_path: Path):
@@ -247,7 +247,7 @@ def test_legacy_ledger_hints_real_pending_command(tmp_path: Path):
             repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
-    assert "repo_sync.py migrate all --write" in str(exc.value)
+    assert "repo_sync.py apply" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

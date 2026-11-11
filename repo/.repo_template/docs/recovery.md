@@ -62,3 +62,5 @@ prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committ
 旧 journal 不自动升级；存在旧事务时先按原版本恢复或人工核验，禁止直接删除备份后升级。故障注入与真实迁移演练须在目标仓按恢复预案执行；模板发布验证不替代目标仓演练。
 
 同步与图文件事务恢复、`repo-cleanup` 清理边界统一见[同步规程](sync.md#%E5%90%8C%E6%AD%A5%E5%87%86%E5%A4%87%E4%B8%8E-apply-%E4%BA%8B%E5%8A%A1)。
+
+同步回滚仅限提交前：用户拒绝时整体恢复文件、index 与 common 状态；已有后续改动须先备份再 `transaction rollback --confirm-restore`。同步 commit 产生后只能 `git revert`，common 状态不会随之恢复，须人工核对并从备份恢复。每轮同步单独批准，一个 commit 后立即 accept。

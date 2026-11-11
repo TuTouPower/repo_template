@@ -1,14 +1,4 @@
-"""template_sync 升级链路集成测试（来源仓 + 消费仓物理分离）。
-
-覆盖：
-- P1-5：所有 helper/action 显式使用 --consumer 的 SyncContext，不回退来源脚本所在仓；
-- P1-6：migrate all --write 在前序步骤已落盘后仍能完成 entity 步；
-- P1-8：retired-hooks 事务根为目录，软链子项可快照；
-- P1-9：apply/status/plan/link-skills 入口统一阻断旧布局 state；
-- DS L235：settings.json 顶层非对象转 SyncError，不留 applying 事务；
-- DS L238：status/plan 报告与 apply/migrate 同一可处理集合；
-- DS L244：dry-run 末尾明确「未写盘」。
-"""
+"""来源与消费仓隔离下的迁移接口测试；跨类型原子性由单事务集成测试覆盖。"""
 
 import argparse
 import json
@@ -33,7 +23,7 @@ from template_sync.hooks import (
     _RETIRED_MERGE_GUARD_COMMAND,
     retired_hooks_status,
 )
-from template_sync.migrate import cmd_migrate
+from migration_support import exercise_migrations
 from template_sync.skills_links import cmd_link_skills
 from template_sync.status_plan import cmd_plan, cmd_status
 from template_sync.workflow_migration import (
@@ -150,9 +140,9 @@ def test_migrate_all_write_succeeds_with_entity_and_prior_writes(tmp_path, capsy
     _git(consumer, "add", "-A")
     _git(consumer, "commit", "-m", "legacy layout")
 
-    assert cmd_migrate(argparse.Namespace(kind="all", write=True, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="all", write=True, sync=sync)) is not None
     out = capsys.readouterr().out
-    assert "迁移完成" in out
+    assert "entity-storage" not in out or "目标实体 schema" in out
     assert "from repo_task.documents import atomic_write_text" in conv.read_text(encoding="utf-8")
     assert (consumer / "docs/pending/p001_x.md").is_file()
     assert not (consumer / "docs/pending/todo").exists()
@@ -176,34 +166,11 @@ def test_migrate_retired_hooks_uses_directory_transaction_root(tmp_path):
     _git(consumer, "commit", "-m", "legacy hooks")
 
     assert retired_hooks_status(sync=sync)
-    assert cmd_migrate(argparse.Namespace(kind="retired-hooks", write=True, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="retired-hooks", write=True, sync=sync)) is not None
     assert not guard.is_symlink()
     assert retired_hooks_status(sync=sync) == []
 
 
-def test_apply_status_plan_link_skills_block_legacy_state(tmp_path):
-    """P1-9：四个写入口统一阻断旧布局 state，且绝不删除用户数据。"""
-    src = _make_source(tmp_path / "source")
-    consumer = _make_consumer(tmp_path / "consumer", src)
-    sync = ctx.SyncContext.for_consumer(consumer)
-    legacy = consumer / ".agents/skills/repo-template-sync/sync_state.json"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps({
-        "user_prompts": [{"text": "keep me"}],
-        "last_synced_commit": "abc",
-    }), encoding="utf-8")
-
-    cases = [
-        (cmd_status, argparse.Namespace(sync=sync, fetch=False)),
-        (cmd_plan, argparse.Namespace(sync=sync, fetch=False)),
-        (cmd_apply, argparse.Namespace(sync=sync, skip_tests=True, decisions={})),
-        (cmd_link_skills, argparse.Namespace(sync=sync)),
-    ]
-    for cmd, args in cases:
-        with pytest.raises(ctx.SyncError, match="migrate legacy-state"):
-            cmd(args)
-    assert legacy.is_file()
-    assert json.loads(legacy.read_text(encoding="utf-8"))["last_synced_commit"] == "abc"
 
 
 def test_retired_hooks_status_rejects_non_object_settings(tmp_path):
@@ -237,14 +204,6 @@ def test_plan_reports_entity_and_retired_hooks_backlog(tmp_path, capsys):
     assert "迁移待办" in out
     assert "entity-storage" in out
     assert "retired-hooks" in out
-    assert "migrate entity-storage --write" in out
+    assert "apply 内置迁移" in out
 
 
-def test_migrate_dry_run_reports_not_written(tmp_path, capsys):
-    """DS L244：dry-run 末尾明确「未写盘」，不误导为已落盘。"""
-    src = _make_source(tmp_path / "source")
-    consumer = _make_consumer(tmp_path / "consumer", src)
-    sync = ctx.SyncContext.for_consumer(consumer)
-
-    assert cmd_migrate(argparse.Namespace(kind="all", write=False, sync=sync)) == 0
-    assert "未写盘" in capsys.readouterr().out

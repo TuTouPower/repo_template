@@ -1,6 +1,6 @@
 """install-hooks 子命令与已退役 merge guard 配置清理。
 
-status 与 action 共用同一「可处理集合」：status 报告什么，migrate 就处理什么，
+status 与 action 共用同一「可处理集合」：status 报告什么，apply 内置迁移就处理什么，
 避免 plan/apply 显示一致但 action 无法收敛的死锁。
 """
 

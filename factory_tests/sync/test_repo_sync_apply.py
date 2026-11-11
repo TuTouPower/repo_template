@@ -84,6 +84,7 @@ def test_apply_flow_writes_and_advances_state(env, capsys):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text(CONSUMER_AGENTS)
 
+    _commit_consumer_baseline(env["consumer"])
     cmd_apply(Namespace(sync=env["sync"], allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=True, decisions={"AGENTS.md": "update"}))
     out = capsys.readouterr().out
 
@@ -119,6 +120,7 @@ def test_symlinked_agents_warned_in_status_plan_and_rejected_by_apply(env, tmp_p
     assert cmd_plan(Namespace(sync=env["sync"])) == 0
     assert warning in capsys.readouterr().out
 
+    _commit_consumer_baseline(env["consumer"])
     with pytest.raises(ctx.SyncError, match="apply 不支持软链 AGENTS.md"):
         cmd_apply(Namespace(sync=env["sync"], allow_dirty_source=True, skip_tests=True, decisions={}))
     assert not (repo_state_dir(consumer) / "sync_transaction" / "transaction.json").exists()
@@ -128,6 +130,7 @@ def test_apply_skips_unresolved_shared_unit(env):
     old_agents = consumer / "AGENTS.md"
     old_agents.write_text(CONSUMER_AGENTS)
 
+    _commit_consumer_baseline(env["consumer"])
     cmd_apply(Namespace(sync=env["sync"], allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
     result = (consumer / "AGENTS.md").read_text()
     assert "消费仓项目介绍与项目规则。" in result
@@ -137,6 +140,7 @@ def test_apply_src_dirty_does_not_advance_commit(env):
     src, consumer = env["src"], env["consumer"]
     (src / ".repo_template/scripts/dirty_extra.py").write_text("x\n")  # SRC 未提交改动
     _add_prompt(env["sync"], "跳过测试", "")
+    _commit_consumer_baseline(env["consumer"])
     cmd_apply(Namespace(sync=env["sync"], allow_dirty_source=True, decision=[], skip_tests=True, decisions={}))
     state = read_state(env["sync"])
     assert state["last_synced_commit"] is None
@@ -149,6 +153,7 @@ def test_apply_test_failure_rolls_back_keeps_backup_and_prints_changed(env, monk
     old_agents.write_text(CONSUMER_AGENTS)
 
     monkeypatch.setattr("template_sync.apply._run_tests", lambda c: False)
+    _commit_consumer_baseline(env["consumer"])
     rc = cmd_apply(
         Namespace(sync=env["sync"], allow_dirty_source=True, decision=["AGENTS.md:update"], skip_tests=False, decisions={"AGENTS.md": "update"})
     )

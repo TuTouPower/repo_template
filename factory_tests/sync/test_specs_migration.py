@@ -26,9 +26,9 @@ from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction
 from repo_task.specs import load_specs, render_spec_text, validate_specs
 from template_sync import context as ctx
 from template_sync.apply import cmd_apply
-from template_sync.migrate import cmd_migrate
+from migration_support import exercise_migrations
 from template_sync.specs_migration import migrate_specs_layout, specs_migration_status
-from test_repo_sync import env
+from test_repo_sync import env, _commit_consumer_baseline
 
 INDEX_HEADER = "# specs\n\n|slug|task 清单|最后更新时间|\n|---|---|---|\n"
 
@@ -260,7 +260,7 @@ def test_status_detects_slug_only_spec_and_public_migrate_repairs(consumer):
     _write_spec(consumer, "feature.md", "---\nslug: feature\n---\n\n# Feature\n")
     sync = ctx.SyncContext.for_consumer(consumer)
     assert specs_migration_status(sync)
-    assert cmd_migrate(argparse.Namespace(kind="specs-layout", write=True, sync=sync)) == 0
+    assert exercise_migrations(argparse.Namespace(kind="specs-layout", write=True, sync=sync)) is not None
     specs = {spec["slug"]: spec for spec in load_specs(consumer)}
     assert specs["feature"]["status"] == "active"
     assert specs["feature"]["tasks"] == ["baseline"]
@@ -377,6 +377,7 @@ def test_apply_rejects_spec_contract_violation_before_transaction_begin(env):
     )
     state_before = env["state_file"].read_bytes()
     transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
+    _commit_consumer_baseline(env["consumer"])
     assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
     assert env["state_file"].read_bytes() == state_before
     assert transaction.read() is None
@@ -397,6 +398,7 @@ def test_apply_rejects_malformed_spec_before_any_asset_write(env, text, capsys):
     }
     state_before = env["state_file"].read_bytes()
     transaction = state_transaction(consumer, SYNC_TRANSACTION_DIR)
+    _commit_consumer_baseline(env["consumer"])
     assert cmd_apply(argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})) == 1
     assert "尚未写盘" in capsys.readouterr().err
     assert env["state_file"].read_bytes() == state_before

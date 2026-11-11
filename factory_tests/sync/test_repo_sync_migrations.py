@@ -218,42 +218,6 @@ def test_progress_migration_rejects_duplicate_names_before_any_writes(env, paren
     assert changed == set()
     assert {path: path.read_bytes() for path in (consumer / parent).rglob('*') if path.is_file()} == before
 
-def test_migrate_all_failure_keeps_completed_steps_and_blocks_only_failed_kind(env, monkeypatch):
-    """A10（逐项事务语义）：显式 migrate all 中途失败时，已完成步骤保留、仅失败步骤未写入；
-    旧布局与历史文件原样保留，不存在跨类型全局回滚。"""
-    consumer = env['consumer']
-    _bind_repo_task_context(monkeypatch, consumer)
-    spec, progress = _install_current_workflow_templates(env['src'])
-    task_dir = consumer / 'docs/archive/tasks/t001_history'
-    task_dir.mkdir(parents=True)
-    expected_progress = (
-        progress.replace('tid: t000', 'tid: t001')
-        .replace('slug: example_slug', 'slug: history')
-        .replace('status: backlog', 'status: done')
-    )
-    old = expected_progress.replace('# Task 进展', '# Task 过程总账')
-    (task_dir / 'task.md').write_text(spec)
-    (task_dir / 'note.md').write_text(old)
-    state_before = env['state_file'].read_bytes()
-
-    from template_sync import migrate as migrate_mod
-
-    conv_file = consumer / "docs/blueprint/conventions.md"
-    conv_file.parent.mkdir(parents=True, exist_ok=True)
-    conv_file.write_text(
-        "### 原子写\n- from task import _atomic_write_text 旧写法\n", encoding="utf-8"
-    )
-
-    def boom(*_args, **_kwargs):
-        raise ctx.SyncError("模拟 conventions 迁移失败")
-
-    monkeypatch.setitem(migrate_mod._STEPS, "conventions", boom)
-    with pytest.raises(ctx.SyncError, match="模拟 conventions 迁移失败"):
-        migrate_mod.cmd_migrate(Namespace(sync=env["sync"], kind="all", write=True))
-    # 前一步 workflow 与 entity-storage 已完成；失败步骤自身未写入
-    assert (consumer / "docs/tasks/t001_history/progress.md").is_file()
-    assert conv_file.read_text(encoding="utf-8").endswith("旧写法\n")
-    assert env["state_file"].read_bytes() == state_before
 
 def test_force_migrate_workflow_updates_old_task_documents(env):
     consumer = env['consumer']
@@ -342,46 +306,6 @@ def test_force_migrate_workflow_updates_old_task_documents(env):
     assert [t['tid'] for t in tasks] == ['t001']
     assert tasks[0]['status'] == 'active' and tasks[0]['dir'] == 'docs/tasks/t001_old'
 
-def test_apply_refuses_old_workflow_layout_until_explicit_migration(env, capsys):
-    """A10：apply 不再自动迁移；先 migrate workflow-schema，再 apply 成功且不生成索引。"""
-    consumer = env["consumer"]
-    spec, progress = _install_current_workflow_templates(env["src"])
-
-    task_dir = consumer / "docs/tasks/t001_old"
-    task_dir.mkdir(parents=True)
-    (task_dir / "task.md").write_text(spec, encoding="utf-8")
-    old_note = (
-        progress.replace("tid: t000", "tid: t001")
-        .replace("slug: example_slug", "slug: old")
-        .replace("status: backlog", "status: blocked")
-        .replace("# Task 进展", "# Task 过程总账")
-    )
-    (task_dir / "note.md").write_text(old_note, encoding="utf-8")
-
-    assert cmd_apply(Namespace(sync=env["sync"], 
-        allow_dirty_source=True, skip_tests=True, decisions={},
-    )) == 1
-    err = capsys.readouterr().err
-    assert "migrate all" in err
-    assert (task_dir / "note.md").is_file()
-
-    from template_sync.migrate import cmd_migrate
-
-    # dry-run: 默认不落盘
-    assert cmd_migrate(Namespace(sync=env["sync"], kind="workflow-schema", write=False)) == 0
-    assert (task_dir / "note.md").is_file()
-    assert not (task_dir / "progress.md").exists()
-
-    # write: 落盘迁移
-    assert cmd_migrate(Namespace(sync=env["sync"], kind="workflow-schema", write=True)) == 0
-    assert (task_dir / "progress.md").is_file()
-    assert not (task_dir / "note.md").exists()
-
-    assert cmd_apply(Namespace(sync=env["sync"], 
-        allow_dirty_source=True, skip_tests=True, decisions={},
-    )) == 0
-    assert not (consumer / "docs/tasks_index.json").exists()
-    assert not (consumer / "docs/archive/tasks_index.json").exists()
 
 def test_task_migration_only_reads_schema_fields_from_frontmatter(env):
     _, current_task = _install_current_workflow_templates(env['consumer'])

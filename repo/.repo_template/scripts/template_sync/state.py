@@ -16,25 +16,33 @@ def legacy_state_path(sync: ctx.SyncContext):
 
 
 def require_no_legacy_state(sync: ctx.SyncContext) -> None:
-    """apply/status/plan/link-skills 入口门禁：旧布局 state 存在即阻断。
+    """link-skills 入口门禁：旧布局 state 存在即阻断。
 
-    旧布局 state 不参与运行期回退；若放行，apply 的软链修复会删掉宿主位真实目录，
-    连带删除 user_prompts、同步记录与来源记录。存在时一律先走显式迁移。
+    旧布局 state 不参与运行期回退；apply 会在统一事务内完成内置迁移，
+    link-skills 不在同步事务内，不能安全删除宿主位真实目录。
     """
-    import shlex
-
     legacy = sync.legacy_state_path()
     if legacy.exists():
         raise ctx.SyncError(
-            f"检测到旧布局 state：{sync.rel(legacy)}；本命令不读取它，"
-            "先运行 `python3 <product>/.repo_template/scripts/repo_sync.py"
-            f" --consumer {shlex.quote(str(sync.consumer))} migrate legacy-state --write`"
-            "（<product> 为固定来源 product 根，旧消费仓本地脚本缺 migrate 子命令）"
+            f"检测到旧布局 state：{sync.rel(legacy)}；先用 --source 运行 status/plan，"
+            "再 apply 内置迁移（--consumer / --source / --checkout）"
         )
 
 
+def missing_state_message(sync: ctx.SyncContext) -> str:
+    """无 common state 时的统一提示；旧布局 state 只能经 apply 内置迁移。"""
+    legacy = sync.legacy_state_path()
+    if legacy.exists() or legacy.is_symlink():
+        return (
+            f"检测到旧布局 state：{sync.rel(legacy)}；先用 --source <path|url> 运行 "
+            "status/plan 查看待办，再用 apply --source <path|url> 完成内置迁移"
+            "（init 不隐式合并）"
+        )
+    return "未初始化：无 sync_state.json。先运行 init --source <path|url>"
+
+
 def read_state(sync: ctx.SyncContext) -> dict | None:
-    """只读当前本地 state；旧布局 state 必须经 `migrate legacy-state` 显式迁移。"""
+    """只读当前本地 state；旧布局 state 仅在 apply 内迁移，不作运行期回退。"""
     path = sync.state_path
     data = _load_json_object(path, f"状态文件 {sync.rel(path)}") if path.exists() else None
     manifest = sync.consumer / ".repo_template/sync_manifest.json"
@@ -130,14 +138,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise ctx.SyncError("init 需要 --source <path|url>")
     legacy = legacy_state_path(sync)
     if not sync.state_path.exists() and legacy.exists():
-        import shlex
-
-        raise ctx.SyncError(
-            f"检测到旧布局 state：{sync.rel(legacy)}；普通 init 不再隐式合并。"
-            "先运行 `python3 <product>/.repo_template/scripts/repo_sync.py"
-            f" --consumer {shlex.quote(str(sync.consumer))} migrate legacy-state --write`"
-            "（<product> 为固定来源 product 根）"
-        )
+        raise ctx.SyncError("检测到旧布局 state；从固定来源运行 apply 内置迁移，init 不隐式合并")
     identity = source_identity(args.source)
     data = read_state(sync) or {
         "template_source": None,
@@ -155,8 +156,10 @@ def cmd_init(args: argparse.Namespace) -> int:
 def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[str]:
     """迁移旧布局 state。默认 dry-run，仅在 write=True 时写盘与删除旧文件。"""
     legacy = legacy_state_path(sync)
-    if not legacy.exists():
+    if not legacy.exists() and not legacy.is_symlink():
         return []
+    if any(path.is_symlink() for path in (legacy, *legacy.parents) if path != sync.consumer and sync.consumer in path.parents):
+        raise ctx.SyncError("旧布局 state 路径含软链；拒绝沿软链修改事务范围外文件")
     try:
         legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -178,31 +181,11 @@ def migrate_legacy_state(sync: ctx.SyncContext, *, write: bool = False) -> list[
             f"{sync.rel(legacy)} 拟迁移至 {sync.rel(sync.state_path)}"
             + (f"（并入字段 {', '.join(sorted(set(merged)))}）" if merged else "")
         ]
-    old_state = sync.state_path.read_bytes() if sync.state_path.exists() else None
-    old_legacy = legacy.read_bytes()
-    try:
-        write_state(merged_data, sync)
-        expected = {
-            key: value for key, value in merged_data.items() if not key.startswith("_")
-        }
-        if json.loads(sync.state_path.read_text(encoding="utf-8")) != expected:
-            raise ctx.SyncError("迁移后回读新 state 与合并结果不一致")
-        legacy.unlink()
-    except Exception as error:
-        try:
-            if old_state is None:
-                sync.state_path.unlink(missing_ok=True)
-            else:
-                sync.state_path.parent.mkdir(parents=True, exist_ok=True)
-                sync.state_path.write_bytes(old_state)
-            legacy.parent.mkdir(parents=True, exist_ok=True)
-            legacy.write_bytes(old_legacy)
-        except Exception as rollback_error:  # noqa: BLE001 - 恢复失败必须显式报告
-            raise ctx.SyncError(
-                f"legacy-state 迁移失败（{error}）；自动回滚失败：{rollback_error}；"
-                f"备份文件：{sync.rel(legacy)}"
-            ) from error
-        raise ctx.SyncError(f"legacy-state 迁移失败，已回滚：{error}") from error
+    write_state(merged_data, sync)
+    expected = {key: value for key, value in merged_data.items() if not key.startswith("_")}
+    if json.loads(sync.state_path.read_text(encoding="utf-8")) != expected:
+        raise ctx.SyncError("迁移后回读新 state 与合并结果不一致")
+    legacy.unlink()
     return [
         f"已迁移旧布局 state：{sync.rel(legacy)} → {sync.rel(sync.state_path)}"
         + (f"；并入字段 {', '.join(sorted(set(merged)))}" if merged else "")
@@ -226,7 +209,7 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     if not isinstance(ts, dict) or not isinstance(ts.get("value"), str) or not ts.get("value", "").strip():
         raise ctx.SyncError(
             "state 未记录来源：先运行 init --source <path|url> 初始化来源；"
-            "如为旧布局 state，先单独迁移 legacy-state"
+            "如为旧布局 state，从固定来源运行 apply 内置迁移"
         )
     shared = getattr(args, "scope", "local") == "shared"
     policy_path = sync.consumer / ".repo_template/sync_policy.json"

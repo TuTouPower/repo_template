@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 from .documents import atomic_write_text
@@ -197,12 +198,18 @@ class FileTransaction:
         data["status"] = "applied"
         data["gates_verified"] = verified
         data["after"] = self.current_fingerprint(data)
+        data["state_after"] = fingerprint(self.root, (), data.get("state_paths", {}))
         self.save(data)
 
     def rollback(self, *, confirm_restore=False, automatic=False):
         data = self.read()
         if not data or data["status"] not in {"preparing", "applying", "applied", "restore_failed", "rolled_back"}:
             raise ValueError("没有可恢复文件事务")
+        if data.get("base_head"):
+            head = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, timeout=30)
+            if head.returncode or head.stdout.strip() != data["base_head"]:
+                raise ValueError("同步已提交或 HEAD 已变化；禁止文件回滚，请 git revert 同步 commit，common 状态须人工核对")
         if data["status"] == "rolled_back":
             return
         if data["status"] == "preparing":
@@ -223,7 +230,12 @@ class FileTransaction:
                 path = self.root / name
                 if path.is_dir() and not any(path.iterdir()):
                     path.rmdir()
-        except OSError:
+            if data.get("base_head"):
+                result = subprocess.run(["git", "-C", str(self.root), "reset", "-q", data["base_head"], "--", *data["paths"]],
+                                        capture_output=True, text=True, timeout=30)
+                if result.returncode:
+                    raise OSError(f"恢复同步 index 失败：{result.stderr.strip()}")
+        except (OSError, subprocess.SubprocessError):
             data["status"] = "restore_failed"
             self.save(data)
             raise
@@ -235,6 +247,8 @@ class FileTransaction:
         if not data or data["status"] != "applied":
             raise ValueError("只有 applied 事务可以 accept")
         current = self.current_fingerprint(data)
+        if data.get("state_after") != fingerprint(self.root, (), data.get("state_paths", {})):
+            raise ValueError("apply 后 common 状态发生变化，拒绝 accept")
         if data.get("after") != current and not verified:
             raise ValueError("apply 后资产发生变化；先验证并处理事务，不能静默 accept")
         data["after"] = current

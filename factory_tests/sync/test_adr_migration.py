@@ -23,7 +23,7 @@ if str(SCRIPTS) not in sys.path:
 
 from template_sync import context as ctx
 from template_sync.adr_migration import adr_migration_status, migrate_adr
-from template_sync.migrate import cmd_migrate
+from migration_support import exercise_migrations
 
 
 @pytest.fixture
@@ -430,7 +430,7 @@ def test_migrate_adr_command_rejects_body_h1_without_losing_source(consumer, wri
     source = _write_decisions(consumer, text)
     sync = ctx.SyncContext.for_consumer(consumer)
     with pytest.raises(ctx.SyncError, match="第 3 行.*H1"):
-        cmd_migrate(Namespace(kind="adr", write=write, sync=sync))
+        exercise_migrations(Namespace(kind="adr", write=write, sync=sync))
     _assert_stopped_before_write(consumer, source, text)
 
 

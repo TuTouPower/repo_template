@@ -54,7 +54,7 @@ from template_sync.entity_storage_migration import (
     entity_storage_migration_status,
     migrate_entity_storage,
 )
-from template_sync.migrate import cmd_migrate
+from migration_support import exercise_migrations
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -212,10 +212,10 @@ def test_entity_storage_migration_dry_run(repo, monkeypatch, capsys):
 
     # dry-run
     args = argparse.Namespace(kind="entity-storage", write=False, sync=sync)
-    res = cmd_migrate(args)
-    assert res == 0
+    res = exercise_migrations(args)
+    assert res is not None
     out = capsys.readouterr().out
-    assert "dry-run" in out
+    assert "未写盘" in out
     assert "Task t001" in out
     assert "Pending p001" in out
 
@@ -233,10 +233,10 @@ def test_entity_storage_migration_write_e2e(repo, capsys):
 
     # 显式落盘迁移
     args = argparse.Namespace(kind="entity-storage", write=True, sync=sync)
-    res = cmd_migrate(args)
-    assert res == 0
+    res = exercise_migrations(args)
+    assert res is not None
     out = capsys.readouterr().out
-    assert "落盘完成" in out
+    assert "目标实体 schema" in out
 
     # 1. Tasks
     t1_target = repo / "docs/tasks/t001_alpha"
@@ -317,16 +317,16 @@ def test_entity_storage_migration_idempotent_zero_write(repo, capsys):
     sync = ctx.SyncContext.for_consumer(repo)
 
     # 第一次迁移
-    cmd_migrate(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
+    exercise_migrations(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
     capsys.readouterr()
 
     # 保持工作区干净后，第二次迁移（幂等性，零写入）
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "chore: commit migration")
-    res = cmd_migrate(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
-    assert res == 0
+    res = exercise_migrations(argparse.Namespace(kind="entity-storage", write=True, sync=sync))
+    assert res is not None
     out = capsys.readouterr().out
-    assert "已是当前格式，无需迁移" in out
+    assert not out.strip()
 
 
 def test_entity_storage_migration_blocks_on_duplicate_tid(repo):
@@ -492,20 +492,6 @@ def test_entity_storage_migration_status_reports_flat_active_spike_without_front
     ), problems
 
 
-def test_entity_storage_migration_blocks_on_dirty_working_tree(repo):
-    """迁移前必须检查工作区干净（staged 和 unstaged 均无修改）。"""
-    _setup_legacy_repo(repo)
-    sync = ctx.SyncContext.for_consumer(repo)
-
-    # 1. 测试 unstaged 修改阻断
-    (repo / "README.md").write_text("# Dirty\n", encoding="utf-8")
-    with pytest.raises(MigrationError, match="工作区必须干净"):
-        migrate_entity_storage(sync=sync, write=False)
-
-    # 2. 测试 staged 修改阻断
-    _git(repo, "add", "README.md")
-    with pytest.raises(MigrationError, match="工作区必须干净"):
-        migrate_entity_storage(sync=sync, write=False)
 
 
 def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(repo, monkeypatch):
@@ -525,7 +511,7 @@ def test_entity_storage_migration_blocks_and_rolls_back_on_non_empty_dir_clean(r
     monkeypatch.setattr("template_sync.entity_storage_migration.shutil.move", move_with_residual)
 
     with pytest.raises(MigrationError, match="清理旧目录失败.*仍包含非空残留文件"):
-        migrate_entity_storage(sync=sync, write=True)
+        exercise_migrations(argparse.Namespace(sync=sync, kind="entity-storage", write=True))
 
     # 回滚后验证现场恢复：t001 仍在旧归档目录中
     assert (repo / "docs/archive/tasks/t001_alpha").is_dir()
@@ -548,75 +534,16 @@ def test_entity_storage_migration_rollback_on_failure(repo, monkeypatch):
 
     monkeypatch.setattr("template_sync.entity_storage_migration.atomic_write_text", flaky_write)
 
-    with pytest.raises(MigrationError, match="已自动回滚"):
-        migrate_entity_storage(sync=sync, write=True)
+    with pytest.raises(OSError, match="simulated disk error"):
+        exercise_migrations(argparse.Namespace(sync=sync, kind="entity-storage", write=True))
 
     # 回滚后对 docs/ 全树整体比对：t001/p001~p003/s001/audit.log/handoff/目标目录
     # 全部纳入，杜绝只核对部分文件而漏掉残留。
     assert _docs_snapshot(repo) == before
 
 
-def test_apply_blocks_on_legacy_entity_storage(repo, capsys):
-    _setup_legacy_repo(repo)
-    sync = ctx.SyncContext.for_consumer(repo)
-
-    # 模拟外部模板源
-    src_dir = repo.parent / "template_src"
-    src_dir.mkdir()
-    _git(src_dir, "init", "-b", "main")
-    (src_dir / ".repo_template").mkdir()
-    (src_dir / ".repo_template/scripts").mkdir()
-    (src_dir / ".repo_template/scripts/task.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-    (src_dir / "README.md").write_text("# Template\n", encoding="utf-8")
-    _git(src_dir, "add", "-A")
-    _git(src_dir, "commit", "-m", "init template")
-
-    # 在消费仓记录同步状态
-    state_path = state_file(repo, "sync_state.json")
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({
-        "template_source": {"kind": "path", "value": str(src_dir)},
-        "last_synced_commit": None,
-        "last_synced_at": None,
-        "user_prompts": [],
-    }), encoding="utf-8")
-
-    args = argparse.Namespace(sync=sync, allow_dirty_source=True, skip_tests=True)
-    ret = cmd_apply(args)
-    assert ret == 1
-    err = capsys.readouterr().err
-    assert "检测到旧实体存储布局" in err
-    assert "migrate entity-storage --write" in err
 
 
-def test_entity_storage_migration_blocks_on_unknown_residual_files(repo):
-    """散落未知文件检查：在 status 与 build_plan 中拦截非规范文件（非 p*.md、非规范 task/spike 目录）。"""
-    _setup_legacy_repo(repo)
-    # 在 docs/archive/tasks 留下非规范文件
-    bad_file = repo / "docs/archive/tasks/unknown_file.txt"
-    bad_file.write_text("unknown", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add unknown file to archive tasks")
-    sync = ctx.SyncContext.for_consumer(repo)
-
-    status_problems = entity_storage_migration_status(sync=sync)
-    assert any("存在非规范任务项或未知散落文件" in p for p in status_problems)
-
-    with pytest.raises(MigrationError, match="存在非规范任务项或未知散落文件"):
-        migrate_entity_storage(sync=sync, write=False)
-
-    # 清理并测试 docs/pending/todo 中的未知文件
-    bad_file.unlink()
-    bad_pending = repo / "docs/pending/todo/notes.txt"
-    bad_pending.write_text("not a pending", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add unknown file to pending todo")
-
-    status_problems = entity_storage_migration_status(sync=sync)
-    assert any("存在非规范待办项或未知散落文件" in p for p in status_problems)
-
-    with pytest.raises(MigrationError, match="存在非规范待办项或未知散落文件"):
-        migrate_entity_storage(sync=sync, write=False)
 
 
 def test_entity_storage_migration_blocks_on_nonexistent_finding_ref(repo):

@@ -1,5 +1,5 @@
 """pre-commit hook 测试。subprocess 真实跑 hook 脚本（git 调用场景），
-fake md_kx 经 PATH 注入，验证 staged .md 被格式化并重新暂存。"""
+fake md_kx 经 PATH 注入，验证 staged .md 只读检查，漂移拒绝且 index 与工作区均不变。"""
 
 import os
 import subprocess
@@ -50,8 +50,10 @@ def _fake_md_kx_failing_on(tmp_path, fail_name):
         "from pathlib import Path\n"
         "path = Path(sys.argv[-1])\n"
         f"if path.name == '{fail_name}':\n"
-        "    sys.exit(1)\n"
+        "    sys.exit(2)\n"
         "text = path.read_text(encoding='utf-8')\n"
+        "if '--check' in sys.argv:\n"
+        "    sys.exit(0 if '|------|------|' not in text else 1)\n"
         "path.write_text(text.replace('|------|------|', '|---|---|'), encoding='utf-8')\n"
     )
     bin_dir = tmp_path / "bin_fail"
@@ -98,15 +100,27 @@ def _stage_drifted_md(repo):
     _git(repo, "add", "a.md")
 
 
-def test_staged_md_formatted_and_readded(repo, tmp_path):
+def test_staged_md_drift_rejected_without_mutation(repo, tmp_path):
     _stage_drifted_md(repo)
+    before = (repo / "a.md").read_bytes()
+    index = _git(repo, "write-tree").stdout
     result = _run_hook(repo, tmp_path)
-    assert result.returncode == 0, result.stderr
-    # 文件已格式化
-    assert "|---|---|" in (repo / "a.md").read_text(encoding="utf-8")
-    # 重新暂存：cached 内容为格式化后
-    cached = _git(repo, "diff", "--cached", "--", "a.md").stdout
-    assert "|------|------|" not in cached
+    assert result.returncode == 1
+    assert "格式漂移" in result.stderr
+    assert (repo / "a.md").read_bytes() == before
+    assert _git(repo, "write-tree").stdout == index
+
+
+def test_reviewed_formatted_md_commits_unchanged(repo, tmp_path):
+    _stage_drifted_md(repo)
+    executable = _fake_md_kx(tmp_path)
+    subprocess.run([str(executable), str(repo / 'a.md')], check=True)
+    _git(repo, 'add', 'a.md')
+    index = _git(repo, 'write-tree').stdout
+    before = (repo / 'a.md').read_bytes()
+    assert _run_hook(repo, tmp_path).returncode == 0
+    assert (repo / 'a.md').read_bytes() == before
+    assert _git(repo, 'write-tree').stdout == index
 
 
 def test_no_staged_md_passes_unchanged(repo, tmp_path):
@@ -124,13 +138,13 @@ def test_no_staged_md_passes_without_md_kx(repo, tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_renamed_md_is_formatted(repo, tmp_path):
-    _git(repo, "mv", "a.md", "renamed.md")
-    (repo / "renamed.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
-    _git(repo, "add", "renamed.md")
-    result = _run_hook(repo, tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert "|---|---|" in (repo / "renamed.md").read_text(encoding="utf-8")
+def test_pure_rename_does_not_mutate_index_or_file(repo, tmp_path):
+    _git(repo, 'mv', 'a.md', 'renamed.md')
+    index = _git(repo, 'write-tree').stdout
+    before = (repo / 'renamed.md').read_bytes()
+    assert _run_hook(repo, tmp_path).returncode == 0
+    assert (repo / 'renamed.md').read_bytes() == before
+    assert _git(repo, 'write-tree').stdout == index
 
 
 def test_missing_md_kx_blocks(repo, tmp_path):
@@ -161,16 +175,17 @@ def test_blacklisted_md_skipped(repo, tmp_path):
     assert "|------|------|" in (repo / "docs/archive/keep.md").read_text(encoding="utf-8")
 
 
-def test_non_ascii_staged_md_formatted_and_readded(repo, tmp_path):
-    """中文文件名不再被引号化路径静默跳过：格式化并重新暂存。"""
+def test_non_ascii_staged_md_checked_without_mutation(repo, tmp_path):
     path = repo / "中文文档.md"
     path.write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")
     _git(repo, "add", "中文文档.md")
+    before = path.read_bytes()
+    index = _git(repo, 'write-tree').stdout
     result = _run_hook(repo, tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert "|---|---|" in path.read_text(encoding="utf-8")
-    cached = _git(repo, "diff", "--cached", "--", "中文文档.md").stdout
-    assert "|------|------|" not in cached
+    assert result.returncode == 1
+    assert "格式漂移" in result.stderr
+    assert path.read_bytes() == before
+    assert _git(repo, 'write-tree').stdout == index
 
 
 def test_format_failure_rolls_back_without_misleading_dirty_state(repo, tmp_path):
@@ -212,7 +227,8 @@ def test_precommit_hook_python39_compatibility(repo, tmp_path):
         timeout=30,
     )
     assert "TypeError: unsupported operand type(s) for |" not in result.stderr
-    assert result.returncode == 0
+    assert result.returncode == 1
+    assert "格式漂移" in result.stderr
 
 
 def test_review_retention_blocks_only_new_review_over_limit(repo, tmp_path):

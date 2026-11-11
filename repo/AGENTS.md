@@ -16,7 +16,7 @@
 |`docs/pending/pNNN_{slug}.md`|待办总账（一条目一文件，统一`pNNN`，原位表达 `todo / parked / closed`，不进 Archive）|条目创建与状态维护只经`.repo_template/scripts/pending.py`；skill 流程见`.repo_template/docs/usage.md`「skill 调用」|
 |`docs/findings/dNNN_{slug}.md`|已验证的技术发现（一条目一文件，跨 task 复用，`dNNN`）|条目创建只经`.repo_template/scripts/findings.py`；只新增与就地修订，不迁 archive；spike 收尾或日常验证出的事实写入|
 |`docs/blueprint/`|当前长期真相：架构、领域、约定、决策、测试|finalization 时更新；写代码或文档前读`conventions.md`，改跨模块行为前读 `architecture.md`，历史取舍读 `decisions/`。门禁命令在 `testing.md` 的 `## doctor_cmd` / `## test_cmd` / `## blackbox_verify` 章节。`architecture.md` / `domain.md` 是模板仓占位符，**消费项目复制后自行填充**，未填充前不视为权威。`conventions.md` / `testing.md` 是模板默认，复制后按技术栈修改，不是空壳|
-|`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；以最近 5 个为上限；超出一律由 `migrate reviews --write` 删除（含 `_meta/`、被引用或未跟踪目录），不因引用保留；Git 历史保留|
+|`docs/reviews/review_*/`|多路 review 会话产物（my-review 等外部评审生成）|报告`review_*.md` 入库；`_meta/` 过程文件已 gitignore；以最近 5 个为上限；超出一律由 apply 内置 reviews 迁移删除（含 `_meta/`、被引用或未跟踪目录），不因引用保留；Git 历史保留|
 |`docs/spikes/{sid}_{slug}/`|技术 spike（`report.md` 必需；有实验代码建 `code/`）|目录创建只经`.repo_template/scripts/spikes.py new`；流程见 `task-work`“实施”中的未知契约处理；结论入 `docs/findings/`；完结原位标 completed 或 superseded，不迁入 archive|
 |`docs/guides/`|给人看的使用指南|给人读，不写 agent 行为规则|
 |`docs/archive/`|消费仓自有历史（研究、蓝图、旧计划等）；模板不管理|日常只追加；模板迁移不删除|

@@ -9,22 +9,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_template import export_template, is_non_distributable
-from repo_task.file_transaction import FileTransaction, SYNC_TRANSACTION_DIR, state_transaction
+from repo_task.file_transaction import SYNC_TRANSACTION_DIR, open_transactions, state_transaction
 from repo_task.validation import load_policy
 
 from . import context as ctx
 from .assets import retired_template_warnings, sync_dir, sync_file
-from .common import _git, _now_iso, consumer_locked
+from .common import _git, _now_iso, consumer_locked, finished_legacy_transactions
 from .gates import _run_tests
 from .preflight import sync_preflight
+from .migrations import MIGRATIONS
+from .entity_storage_migration import validate_current_entities
 from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
-from .state import prompt_substrings, read_state, require_no_legacy_state, write_state
+from .state import missing_state_message, prompt_substrings, read_state, write_state
 
 
 def _assert_distributable_tree(src: Path) -> None:
@@ -53,11 +56,55 @@ def _assert_distributable_tree(src: Path) -> None:
             )
 
 
-def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
-    """用与 status/plan 相同的布局优先预检，在事务启动前拒绝同步。"""
+def _preflight(src: Path, sync: ctx.SyncContext):
+    status = _git(sync.consumer, "status", "--porcelain", "--untracked-files=all")
+    if status.returncode or status.stdout.strip():
+        raise ctx.SyncError("同步前工作区与暂存区必须完全干净（含未跟踪文件）；先处理现有改动")
+    unfinished = open_transactions(sync.consumer)
+    if unfinished:
+        raise ctx.SyncError(f"存在未结束或损坏文件事务：{unfinished}；先恢复或 accept")
+    finished_legacy_transactions(sync)
+    from md_format import find_md_kx
+    if not find_md_kx():
+        raise ctx.SyncError("找不到 md_kx；安装 md-kx 或修正 PATH 后重试")
     result = sync_preflight(src, sync)
     if result.error:
         raise ctx.SyncError(result.error)
+    return [migration for migration in MIGRATIONS if migration.kind in dict(result.migrations)]
+
+
+def _transaction_roots(paths):
+    roots = []
+    for path in sorted(set(paths), key=lambda value: (value.count("/"), value)):
+        if not any(path == root or path.startswith(root + "/") for root in roots):
+            roots.append(path)
+    return roots
+
+
+def _changed_markdown(sync, paths):
+    from md_format import collect_changed
+    from repo_task.context import RepoContext
+    return [rel for rel in collect_changed(repo=RepoContext.for_root(sync.consumer))
+            if any(rel == root or rel.startswith(root + "/") for root in paths)]
+
+
+def _format_markdown(sync, paths):
+    from md_format import format_paths
+    from repo_task.context import RepoContext
+    format_paths(_changed_markdown(sync, paths), repo=RepoContext.for_root(sync.consumer))
+
+
+def _validate_result(src, sync, paths):
+    from md_format import format_paths
+    from repo_task.context import RepoContext
+    result = sync_preflight(src, sync)
+    if result.error or result.migrations:
+        raise ctx.SyncError(f"同步后迁移或数据校验未通过：{result.error or result.migrations}")
+    validate_current_entities(sync)
+    load_policy(sync.consumer)
+    drift = format_paths(_changed_markdown(sync, paths), repo=RepoContext.for_root(sync.consumer), check=True)
+    if drift:
+        raise ctx.SyncError("Markdown 格式漂移：" + "、".join(drift))
 
 
 def _apply_sync_write(
@@ -112,10 +159,9 @@ def _print_changed(paths: set[Path], header: str, sync: ctx.SyncContext) -> None
 @consumer_locked
 def cmd_apply(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
-    require_no_legacy_state(sync)
     state = read_state(sync)
     if not state:
-        raise ctx.SyncError("未初始化：无同步来源；使用 --source 或 init --source <path|url>")
+        raise ctx.SyncError(missing_state_message(sync))
     src = resolve_src(state, sync=sync)
     assert_not_self(src, sync=sync)
     dirty = src_dirty(src)
@@ -129,45 +175,50 @@ def cmd_apply(args: argparse.Namespace) -> int:
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     changed: set[Path] = set()
     try:
-        _require_current_schema(src, sync=sync)
+        migrations = _preflight(src, sync)
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
     transaction = state_transaction(sync.consumer, SYNC_TRANSACTION_DIR)
-    # 事务范围收敛为 apply 实际写入集合：硬同步树、软链宿主、命令薄层、
-    # 可合并配置与裁定单元。不含 docs/tasks、conventions、specs、
-    # settings/hooks 等迁移专属或消费自有路径，避免用户 task 改动阻塞 accept、
-    # 回滚误删用户文档，以及每轮整树快照 docs/tasks。
     paths = [".repo_template", ".agents/skills", ".claude/skills",
              ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
              "AGENTS.md",
              *ctx.MCP_CANDIDATES]
+    paths = _transaction_roots(paths + [root for migration in migrations for root in migration.ROOTS])
+    state_paths = sorted({sync.state_path.name, *(root for migration in migrations for root in migration.STATE_ROOTS)})
     try:
-        transaction.begin(paths, state_paths=[sync.state_path.name])
-    except ValueError as error:
+        transaction.begin(paths, state_paths=state_paths)
+    except (ValueError, OSError) as error:
+        if transaction.read() and transaction.read()["status"] == "preparing":
+            transaction.rollback(automatic=True)
         raise ctx.SyncError(str(error)) from error
     try:
-        template_agents = None
+        data = transaction.read()
+        data["base_head"] = _git(sync.consumer, "rev-parse", "HEAD").stdout.strip()
+        transaction.save(data)
+        def write_snapshot(snapshot):
+            migration_sync = replace(sync, checkout_override=src)
+            for migration in migrations:
+                for report in migration.execute(migration_sync, snapshot):
+                    print(f"{migration.kind}: {report}")
+            migrated_state = read_state(sync) or state
+            _apply_sync_write(snapshot, getattr(args, "decisions", None) or {}, changed,
+                              prompt_substrings(migrated_state), sync=sync)
+            return migrated_state
+
         if dirty:
             _assert_distributable_tree(src)
-            if (src / "AGENTS.md").exists():
-                template_agents = (src / "AGENTS.md").read_text(encoding="utf-8")
-            _apply_sync_write(
-                src, getattr(args, "decisions", None) or {}, changed, prompt_substrings(state), sync=sync
-            )
+            state = write_snapshot(src)
+            _format_markdown(sync, paths)
+            _validate_result(src, sync, paths)
         else:
-            (sync.consumer / ".scratch").mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix="repo_sync_source_", dir=sync.consumer / ".scratch") as directory:
+            with tempfile.TemporaryDirectory(prefix="source_", dir=transaction.backup) as directory:
                 snapshot = Path(directory)
                 export_template(src, snapshot, source_commit)
-                _as_product(snapshot)  # Fail closed before writing if export is incomplete.
-                if (snapshot / "AGENTS.md").exists():
-                    template_agents = (snapshot / "AGENTS.md").read_text(encoding="utf-8")
-                _apply_sync_write(
-                    snapshot, getattr(args, "decisions", None) or {}, changed,
-                    prompt_substrings(state), sync=sync,
-                )
-        load_policy(sync.consumer)
+                _as_product(snapshot)
+                state = write_snapshot(snapshot)
+                _format_markdown(sync, paths)
+                _validate_result(snapshot, sync, paths)
         if not args.skip_tests:
             if not _run_tests(sync.consumer):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
@@ -196,10 +247,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state["resolved_checkout"] = str(src)
         write_state(state, sync=sync)
         transaction.applied(verified=not args.skip_tests)
-    except Exception as error:
-        # 任意异常（含 KeyError / AttributeError 等嵌套结构异常）都必须回滚，
-        # 绝不让 journal 停留在 applying。KeyboardInterrupt / SystemExit 属
-        # BaseException，不在此捕获。
+    except BaseException as error:
+        # 可捕获中断同样先恢复基线；随后重新抛出，保留原退出语义。
         rollback_ok = False
         try:
             transaction.rollback(automatic=True)
@@ -215,7 +264,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
             _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===", sync=sync)
             print(f"错误: {error}；自动回滚未完全成功，现场可能存在混合版本工具文件！"
                   f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
+        if not isinstance(error, Exception):
+            raise
         return 1
+    tracked = _git(sync.consumer, "diff", "--name-only", "-z", "HEAD")
+    untracked = _git(sync.consumer, "ls-files", "--others", "--exclude-standard", "-z")
+    changed.update(sync.consumer / rel for rel in (tracked.stdout + untracked.stdout).split("\0") if rel)
+    print(f"来源 SHA: {source_commit}")
     _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===", sync=sync)
     print("state 推进：last_synced_commit=" + ("已更新" if not dirty else "SRC dirty，未推进"))
     print("事务 applied；拒绝同步可 transaction rollback，提交并确认后 transaction accept")

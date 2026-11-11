@@ -127,7 +127,7 @@ AGENTS 保留长期不变量和写权；本文解释机制与取舍；usage 说�
 
 ## 实体协议与交付验证
 
-实体协议边界由 `.repo_template/entity_schema.json` 表达。运行期只理解当前布局；旧正文转换集中在 `template_sync.legacy_ledgers`，仅显式 migrate 导入。取号扫描当前协议的分支/worktree，合并入口验证协议与编号唯一性。版本标记不能替代源身份校验、目标模型验收或业务证据核验。
+实体协议边界由 `.repo_template/entity_schema.json` 表达。运行期只理解当前布局；旧正文转换集中在 `template_sync.legacy_ledgers`，仅 apply 内置迁移导入。取号扫描当前协议的分支/worktree，合并入口验证协议与编号唯一性。版本标记不能替代源身份校验、目标模型验收或业务证据核验。
 
 交付隐私检查使用同一 snapshot 比较器；完整 blob 解码后比较新增文本行，检查点的输入分别是 index、候选 worktree 覆盖或确定 tree/commit。全量审计与交付门禁分离。具体策略见本文「路径隐私」。
 

@@ -74,7 +74,7 @@ def _bind(monkeypatch, repo):
 
 
 def _migrate_ledger(repo, kind, *, write=False):
-    from template_sync.migrate import _migrate_ledger as migrate
+    from template_sync.migrations import _ledger as migrate
     from template_sync.context import SyncContext, SyncError
     from template_sync.entity_storage_migration import migrate_entity_storage
     from md_format import MdFormatError
@@ -82,7 +82,7 @@ def _migrate_ledger(repo, kind, *, write=False):
     try:
         reports = migrate(sync, "p" if kind == "pending" else "d", write=write)
         if write:
-            migrate_entity_storage(sync, write=True, require_clean=False)
+            migrate_entity_storage(sync, write=True)
         else:
             print("dry-run: " + "; ".join(reports), file=sys.stderr)
         return reports
@@ -707,10 +707,10 @@ def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkey
         text="# 待办\n\n### p047 cli 退出码（2026-07-01 发现）\n\n- 处理：未开\n",
     )
 
-    with pytest.raises(IdScanError, match="migrate"):
+    with pytest.raises(IdScanError, match="apply"):
         allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
                  slug="demo", body="# pNNN demo\n")
-    with pytest.raises(SystemExit, match="migrate"):
+    with pytest.raises(SystemExit, match="apply"):
         pending_mod.main(["new", "--slug", "demo"])
     assert scan_max_id(repo, "p", PENDING_DIRS) == 0
 
@@ -760,7 +760,7 @@ def test_pending_migrate_legacy_splits_and_unblocks_allocation(tmp_path, monkeyp
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "legacy pending")
 
-    with pytest.raises(SystemExit, match="migrate"):
+    with pytest.raises(SystemExit, match="apply"):
         pending_mod.main(["new", "--slug", "blocked"])
 
     _migrate_ledger(repo, "pending", write=True)
@@ -799,30 +799,22 @@ def test_migrate_legacy_rejects_same_number_occupied(tmp_path, monkeypatch):
         "# 发现\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
     )
 
-    with pytest.raises(SystemExit, match="已有条目文件"):
+    with pytest.raises(SystemExit, match="目标占用"):
         _migrate_ledger(repo, "findings", write=True)
     assert not (repo / "docs/findings/d012_uv_lock.md").exists()
     assert (repo / "docs/findings.md").is_file()
 
 
-def test_migrate_legacy_cleans_up_on_format_failure(tmp_path, monkeypatch):
-    """格式化失败时已写入 target 必须清理，避免重试永久中止（DS L253）。"""
-    from md_format import MdFormatError
-
+def test_ledger_executor_leaves_formatting_to_apply(tmp_path, monkeypatch):
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
-    (repo / "docs/findings.md").write_text(
-        "# 发现\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
-    )
-
+    (repo / "docs/findings.md").write_text("# 发现\n\n## d012 uv lock\n\n原始结论。\n")
     def fail_format(_path):
-        raise MdFormatError("simulated format failure")
-
-    monkeypatch.setattr(__import__("md_format"), "format_file", fail_format)
-    with pytest.raises(SystemExit, match="simulated format failure"):
-        _migrate_ledger(repo, "findings", write=True)
-    assert not (repo / "docs/findings/d012_uv_lock.md").exists()
-    assert (repo / "docs/findings.md").is_file()
+        raise AssertionError('per-migration formatting is forbidden')
+    monkeypatch.setattr(__import__('md_format'), 'format_file', fail_format)
+    _migrate_ledger(repo, 'findings', write=True)
+    assert not (repo / 'docs/findings.md').exists()
+    assert (repo / 'docs/findings/d012_uv_lock.md').is_file()
 
 
 def test_migrate_legacy_keeps_all_heading_levels(tmp_path, monkeypatch):
