@@ -8,23 +8,19 @@ from . import context as ctx
 from .agents_merge import agents_section_diagnosis, agents_section_status
 from .assets import hard_sync_status, retired_template_warnings
 from .common import _git, consumer_locked
-from .conventions_migration import conventions_migration_status
-from .migrate import KINDS, migrate_command, migration_findings
+from .migrate import migrate_command
+from .preflight import sync_preflight
 from .shared_files import shared_status
 from .skills_links import opencode_commands_status, skill_status, symlink_status
 from .source import assert_not_self, require_template_source, resolve_src, src_dirty
 from .state import active_prompts, prompt_substrings, read_state, require_no_legacy_state
-from .workflow_migration import workflow_migration_status
 
 
-def _migration_backlog(sync, src) -> list[tuple[str, list[str]]]:
-    """统一可处理集合：status / plan / apply / migrate 共用 migration_findings。"""
-    rows = []
-    for kind in KINDS:
-        findings = migration_findings(kind, sync, src=src)
-        if findings:
-            rows.append((kind, findings))
-    return rows
+def _print_preflight(sync: ctx.SyncContext, src) -> None:
+    result = sync_preflight(src, sync)
+    print(f"BLOCKED: {result.error}" if result.error else "同步预检通过")
+    for kind, _findings in result.migrations:
+        print(f"  {kind}: {migrate_command(src, sync, kind)}")
 
 
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -89,22 +85,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("\n裁定单元:")
     for item in shared_status(src, sync=sync):
         print(f"  {item['cls']:14s} {item['unit']}")
-    migrations, worktrees, migration_errors = workflow_migration_status(src, sync=sync)
-    conv_migrations = conventions_migration_status(sync=sync)
-    print("\nworkflow schema 强制迁移:")
-    if migration_errors:
-        for error in migration_errors:
-            print(f"  BLOCKED: {error}")
-    if worktrees:
-        print("  BLOCKED: 先完成或 rewind task worktree：" + ", ".join(branch for _, branch in worktrees))
-    if migrations:
-        for path in migrations:
-            print(f"  migrate {path}")
-    if conv_migrations:
-        for path in conv_migrations:
-            print(f"  migrate {path}（原子写约定）")
-    if not migration_errors and not worktrees and not migrations and not conv_migrations:
-        print("  无")
     print("\nformat 豁免 (.prettierignore):")
     dst = sync.consumer / ".prettierignore"
     existing = {ln.strip() for ln in dst.read_text(encoding="utf-8").splitlines()} if dst.exists() else set()
@@ -131,14 +111,8 @@ def cmd_status(args: argparse.Namespace) -> int:
                 print(f"  {item['state']:8s} /{item['name']}  ({item['desc']})")
     for warning in retired_template_warnings(sync=sync):
         print(f"  STALE: {warning}")
-    print("\n迁移待办（与 apply / migrate 同一可处理集合）:")
-    backlog = _migration_backlog(sync, src)
-    if not backlog:
-        print("  无")
-    for kind, findings in backlog:
-        print(f"  {kind}: {migrate_command(src, sync, kind)}")
-        for item in findings:
-            print(f"    - {item}")
+    print("\n迁移待办与契约预检（与 plan / apply 同一判定）:")
+    _print_preflight(sync, src)
     return 0
 
 
@@ -255,42 +229,11 @@ def cmd_plan(args: argparse.Namespace) -> int:
     for warning in retired_template_warnings(sync=sync):
         print(f"- STALE: {warning}")
 
-    print("\n### workflow schema 强制迁移")
-    migrations, worktrees, migration_errors = workflow_migration_status(src, sync=sync)
-    conv_migrations = conventions_migration_status(sync=sync)
-    if migration_errors:
-        print("BLOCKED：以下问题阻塞自动迁移：")
-        for error in migration_errors:
-            print(f"- {error}")
-    if worktrees:
-        print("BLOCKED：先完成或 rewind 已登记 task worktree：")
-        for root, branch in worktrees:
-            print(f"- {branch} @ {root}")
-    if migrations:
-        for path in migrations:
-            print(f"- {path}")
-    if conv_migrations:
-        for path in conv_migrations:
-            print(f"- {path}（更新原子写约定为 repo_task.documents.atomic_write_text，保留自定义内容）")
-    if not migration_errors and not worktrees and not migrations and not conv_migrations:
-        print("无")
-
     print("\n### state 推进预期")
     if dirty:
         print(f"SRC dirty，apply 可写盘但**不**推进 last_synced_commit")
     else:
         print(f"apply 通过后推进 last_synced_commit -> {head}")
-    print("\n### 迁移待办（与 apply / migrate 同一可处理集合）")
-    backlog = _migration_backlog(sync, src)
-    if not backlog:
-        print("无")
-    else:
-        rows = [
-            [kind, str(len(findings)), migrate_command(src, sync, kind)]
-            for kind, findings in backlog
-        ]
-        print(_md_table(["类型", "待处理项数", "可执行命令"], rows))
-        for kind, findings in backlog:
-            for item in findings:
-                print(f"- {kind}: {item}")
+    print("\n### 迁移待办与契约预检（与 status / apply 同一判定）")
+    _print_preflight(sync, src)
     return 0

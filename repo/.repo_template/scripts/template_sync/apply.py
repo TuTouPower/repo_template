@@ -20,12 +20,11 @@ from . import context as ctx
 from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked
 from .gates import _run_tests
-from .migrate import KINDS, migrate_command, migration_findings
+from .preflight import sync_preflight
 from .shared_files import _apply_shared_unit, merge_gitignore, merge_mcp, merge_prettierignore
 from .skills_links import repair_symlinks, sync_opencode_commands
 from .source import _as_product, assert_not_self, resolve_src, src_dirty
 from .state import prompt_substrings, read_state, require_no_legacy_state, write_state
-from repo_task.specs import validate_specs
 
 
 def _assert_distributable_tree(src: Path) -> None:
@@ -55,48 +54,10 @@ def _assert_distributable_tree(src: Path) -> None:
 
 
 def _require_current_schema(src: Path, sync: ctx.SyncContext) -> None:
-    """日常 apply 只接受当前 schema 与合法 spec 契约；旧布局必须先走显式 migrate（A10/R1）。
-
-    与 status / plan / migrate 共用 migration_findings 这一单一可处理集合，
-    消除「plan 显示一致但 apply 阻断」。引导命令基于固定来源 product 与消费仓身份，
-    不再指向旧消费仓本地脚本。entity 与其它旧布局并存时引导 `migrate all`，
-    避免先跑 entity-storage 再被 workflow-schema 的缺 progress.md 卡住。
-    """
-    specs_problems = validate_specs(sync.consumer)
-    if specs_problems:
-        raise ctx.SyncError(
-            "docs/specs front matter 契约违规（同步中止，尚未写盘）：\n- "
-            + "\n- ".join(specs_problems)
-        )
-    entity_problems = migration_findings("entity-storage", sync)
-    other_problems: list[str] = []
-    for kind in KINDS:
-        if kind == "entity-storage":
-            continue
-        other_problems.extend(
-            f"{kind} 旧布局：{item}"
-            for item in migration_findings(kind, sync, src=src)
-        )
-    if entity_problems and other_problems:
-        raise ctx.SyncError(
-            "检测到旧布局；apply 不再自动迁移。先运行 "
-            f"`{migrate_command(src, sync, 'all')}`：\n- "
-            + "\n- ".join(
-                [*(f"entity-storage 旧布局：{item}" for item in entity_problems), *other_problems]
-            )
-        )
-    if entity_problems:
-        raise ctx.SyncError(
-            "检测到旧实体存储布局；apply 不再自动迁移。先运行 "
-            f"`{migrate_command(src, sync, 'entity-storage')}`：\n- "
-            + "\n- ".join(entity_problems)
-        )
-    if other_problems:
-        raise ctx.SyncError(
-            "检测到旧布局；apply 不再自动迁移。先运行 "
-            f"`{migrate_command(src, sync, 'all')}`（或按类型单项迁移）：\n- "
-            + "\n- ".join(other_problems)
-        )
+    """用与 status/plan 相同的布局优先预检，在事务启动前拒绝同步。"""
+    result = sync_preflight(src, sync)
+    if result.error:
+        raise ctx.SyncError(result.error)
 
 
 def _apply_sync_write(

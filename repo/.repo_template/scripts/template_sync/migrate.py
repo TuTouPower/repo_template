@@ -52,7 +52,8 @@ def migration_findings(kind: str, sync: ctx.SyncContext, src: Path | None = None
     codec/validate_specs 单独校验，不以渲染后的字节或空白比较判定旧布局。
     reviews 是已裁定的动态保留策略例外，超过五个会再次要求显式清理；
     entity-storage 同时承担当前实体合法性校验，不承诺非法编辑仍为空。
-    各入口共用本集合，消除「plan 显示一致但 apply 阻断」的分叉。
+    同步 preflight 先汇总本集合，仅在无迁移待办时校验当前 spec 契约；
+    status/plan/apply 共用该预检结论，避免迁移指引被新布局契约提前遮蔽。
     """
     if kind in {"pending-ledger", "findings-ledger"}:
         rel = "docs/pending.md" if kind == "pending-ledger" else "docs/findings.md"
