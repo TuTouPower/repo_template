@@ -13,12 +13,16 @@ def _is_noise(name: str) -> bool:
 
 
 def _file_differs(a: Path, b: Path) -> bool:
+    """资产差异唯一比较器：软链比 readlink；普通文件依次比 size、执行位(0o111)、字节。"""
     a_link, b_link = a.is_symlink(), b.is_symlink()
     if a_link or b_link:
         if a_link != b_link:
             return True
         return a.readlink() != b.readlink()
-    if a.stat().st_size != b.stat().st_size:
+    a_stat, b_stat = a.stat(), b.stat()
+    if a_stat.st_size != b_stat.st_size:
+        return True
+    if a_stat.st_mode & 0o111 != b_stat.st_mode & 0o111:
         return True
     return a.read_bytes() != b.read_bytes()
 
