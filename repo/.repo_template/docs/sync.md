@@ -56,7 +56,7 @@
 
 `agents-zones`、`specs-layout`、`reviews`、`adr` 与 workflow-schema 一样在持久文件事务内执行，dry-run 零写入，`--write` 落盘且不修改 Git index。`specs-layout` 把 archive specs 迁回 `docs/specs`、写 front matter 并删除 `docs/specs_index.md`（清单改由 front matter 派生），写入前校验全部 slug、front matter 与 archive 同名冲突，任一失败不落盘。`reviews` 合并 archive 后以最近 5 个为上限，超出的旧目录一律删除（含 `_meta/`），不再因被引用或未跟踪而保留；删除一律由显式 `migrate reviews --write` 执行，dry-run 逐目录列出将删除项。`adr` 把 `decisions.md` 拆成一条一文件，按围栏外 `## NNN` 条目拆分，代码块内示例不算条目；围栏外出现非 `## NNN` 的 H2 一律停止并报告；纯文本前言不生成 ADR，只进迁移报告，迁移后随 `decisions.md` 从仓库移除，请据报告复核。前言只许 H1 与正文；零条目时只移除文件。迁移产物文件名为 `YYYYMMDD_<slug>.md`（与新建 ADR 同一语法；同名冲突追加 `_2`、`_3`…），旧编号只保留在正文 H1（`# NNN 标题`），不进文件名。
 
-state-root 迁移把 `docs/runtime/`、`.repo_template/sync_state.json`、`.scratch` 事务目录与旧状态行迁入 `$GIT_COMMON_DIR/repo_template/`；清理 `docs/runtime/dispatch_ledger.lock`，旧状态行从 `.scratch/statusline_workdir.jsonl` 或 `docs/runtime/statusline_workdir.jsonl` 择一迁移，两处并存或 `docs/runtime` 存在未知残留时停止；要求无登记 worktree，在 entity-storage 之后执行。复制或恢复失败按项回滚：清理残缺目标、恢复源文件并保留备份；恢复未完成时报告人工处理。
+state-root 迁移把 `docs/runtime/` 中已识别的状态文件、`.repo_template/sync_state.json` 与旧状态行迁入 `$GIT_COMMON_DIR/repo_template/`；清理 `docs/runtime/dispatch_ledger.lock`，旧状态行从 `.scratch/statusline_workdir.jsonl` 或 `docs/runtime/statusline_workdir.jsonl` 择一迁移，两处并存或 `docs/runtime` 存在未知残留时停止；要求无登记 worktree，在 entity-storage 之后执行。旧路径与新状态路径纳入同一个 `FileTransaction`，已结束的旧 `.scratch` 同步及图事务目录直接删除，不迁入 common；失败自动回滚，中断或恢复失败统一按下文「同步准备与 apply 事务」查询和恢复。
 
 自定义 `test_cmd` 的消费仓须先把 `verification_policy` 改为 `project_configured` 并填写 `verification_notes`。
 
@@ -92,9 +92,7 @@ state-root 迁移把 `docs/runtime/`、`.repo_template/sync_state.json`、`.scra
 
 同步准备仅改 `.scratch/` 来源缓存；同步器不自覆盖，也不执行 prep。status/plan 直接运行来源脚本并指定 `--consumer`、canonical `--source` 和固定 `--checkout`；apply 携 `--expected-commit` 核对 plan 的完整 SHA，从该 commit 的 Git archive 快照写入，才开始消费资产事务。文件、入口、schema 和 state 同一基线；内置 contract、项目验证策略校验或写盘失败时尝试自动回滚，备份保留；回滚也可能失败，须核对事务状态与实际 diff，未完整恢复时停止提交并保留现场。进程中断先 `transaction status`，保存中断后新增改动，再 `transaction rollback --confirm-restore`。成功 apply 后仍可 rollback；现场有后续改动时拒绝静默覆盖。批准并提交同步后 `transaction accept`，再开始下一轮。
 
-apply 成功到 `transaction accept` 之前，`.scratch/` 保留 applied 事务；事务记录在 Git common 目录，`repo-cleanup` 不读取也不清理。同步命令或其它控制面命令持有控制面锁时，带 scratch 的 cleanup 立即失败、零删除。
-
-旧版 `.scratch/repo_sync_rollback` 记录为 preparing/applying/applied/restore_failed 或损坏时，迁移与 `transaction status` 都会阻断并提示先用升级前消费仓脚本 `transaction accept`/`transaction rollback` 处理；新 transaction 只读 Git common 目录，不自动接管或清理旧事务。
+事务与清理边界以本节为准：同步及迁移事务记录、备份位于 `$GIT_COMMON_DIR/repo_template/sync_transaction/`，图事务位于同级 `graph_transaction/`；`repo-cleanup` 不读取也不清理这些记录。apply 成功到 `transaction accept` 之前，事务保持 applied；存在未结束或损坏事务时，先用 `transaction status` 核对，再按现场执行 `accept` 或 `rollback`；图事务使用 `task.py graph-transaction status` / `rollback`。恢复前保存新增改动，中断或现场变化时 rollback 须加 `--confirm-restore`。旧 `.scratch` 同步或图事务未结束、记录损坏时阻断升级，须先完成旧事务或核验恢复，禁止删除未完成备份；当前 `transaction` 恢复入口只处理 common 中的事务。同步或其它控制面命令持锁时，带 scratch 的 cleanup 立即失败、零删除。
 
 同步只执行模板工具链契约测试，不执行消费仓 doctor/test/blackbox。apply 始终校验 `testing.md` 存在性、业务策略配置和命令格式；`--skip-tests` 只跳过模板契约测试，策略非法仍失败并回滚。跳过的契约测试必须在 accept 前补验。
 

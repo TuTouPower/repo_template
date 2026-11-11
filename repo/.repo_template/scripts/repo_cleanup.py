@@ -267,7 +267,7 @@ def _scratch_reason(
 def _scratch_policy(
     repo: Path,
 ) -> tuple[dict[str, dict], dict[str, str], str | None]:
-    """返回 (owners, unowned, skip_note)；事务已移出 scratch，不再参与清理判定。"""
+    """返回草稿归属、无主草稿与跳过原因。"""
     try:
         owners, unowned = _scratch_metadata(repo)
     except Exception as error:
@@ -276,7 +276,7 @@ def _scratch_policy(
 
 
 def scan_repository(repo: Path, categories: list[str], keeps: list[str]) -> ScanResult:
-    """扫描并判定删除候选。事务数据不在 `.scratch/`、记录在 Git common 目录，`repo-cleanup` 不读取也不清理事务记录；带 scratch 时保护在用草稿（3 天内有主草稿）；控制面锁被占用时带 scratch 的 cleanup 整次立即失败、零删除。"""
+    """按类别、keep 规则与草稿保留期扫描删除候选，不执行删除。"""
     cats = set(categories)
     hits: list[dict] = []
     skipped: list[str] = []
