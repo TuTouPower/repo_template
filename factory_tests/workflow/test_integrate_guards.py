@@ -1,54 +1,17 @@
-"""集成前门禁回归：P1-3 隐私闭环、DS L218 merge 血缘认领、DS L219 主干独立改写。
+"""集成前门禁回归：DS L218 merge 血缘认领、DS L219 主干独立改写。
 
 真实 Git 仓库，触达 verify_integrate_ready / cmd_integrate / integrate-chain 生产链路。
 """
 import pytest
 
 from test_dispatch_integration import (
-    git_repo, _git, _task_cli, _prepare_done, _cleanup, _identity_args, _verify,
+    git_repo, _git, _task_cli, _prepare_done, _cleanup, _identity_args,
     _read_ledger,
 )
-from repo_task import attempts, integration
+from repo_task import integration
 from repo_task.context import RepoContext, TaskDataError
 
 ACTIVE = "docs/tasks/t001_alpha"
-
-
-def _leaking_branch(repo):
-    def leak(worktree):
-        (worktree / "leak.txt").write_text(
-            "file:///Users/alice/secret\n", encoding="utf-8"
-        )
-    return _prepare_done(repo, "t001", "alpha", mutate=leak, terminal=False)
-
-
-def test_verify_integrate_ready_reports_privacy_kind_on_tip_leak(git_repo):
-    """P1-3：分支 tip 提交快照泄漏 → 统一 failure kind=privacy，不静默放行。"""
-    identity, _, _ = _leaking_branch(git_repo)
-    verdict, kind, detail = _verify(
-        git_repo, "t001", identity["attempt"], identity["execution_id"]
-    )
-    assert verdict == "contract"
-    assert kind == "privacy"
-    assert "泄漏" in detail and "file:///Users/alice" in detail
-
-
-def test_integrate_rejects_leaking_tip_before_merge(git_repo):
-    """P1-3：合入前至少校验 tip tree，泄漏提交不得进入主干。"""
-    identity, _, head = _leaking_branch(git_repo)
-    context = RepoContext.for_root(git_repo)
-    attempts.terminal_attempt(
-        "t001", identity["attempt"], identity["execution_id"], "completed", repo=context
-    )
-    attempts.report_attempt(
-        "t001", identity["attempt"], identity["execution_id"], "done",
-        sha=head, repo=context,
-    )
-    result = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
-    assert result.returncode != 0
-    assert "泄漏提交不得合入主干" in result.stderr
-    assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
-    assert _git(git_repo, "rev-parse", "--verify", "MERGE_HEAD", check=False).returncode != 0
 
 
 def test_claimed_merge_commit_rejects_forged_core_asset_tampering(git_repo):

@@ -976,96 +976,11 @@ def test_prompt_output_examples_parse_with_the_gate(name):
 
 
 @pytest.mark.parametrize("name", ["code_prompt.txt", "test_prompt.txt", "general_prompt.txt"])
-def test_prompt_output_format_forbids_absolute_repo_root_and_home_paths(name):
-    """输出格式模板不得写入 {repo_root} 或 {task_dir}，且须明确禁止开发者家目录绝对路径（Issue #89）。"""
+def test_prompt_output_format_forbids_absolute_repo_root(name):
+    """输出格式模板不得写入 {repo_root} 或 {task_dir}（Issue #89）。"""
     text = (SCRIPTS_DIR.parent / "docs/review_prompts" / name).read_text(encoding="utf-8")
     assert "- target：`git diff {diff_anchor}`" in text
     assert "- target：`git -C '{repo_root}' diff {diff_anchor}`" not in text
-    assert "开发者家目录绝对路径" in text
-
-
-def test_share_prompt_declares_privacy_gate():
-    text = (SCRIPTS_DIR.parent / "docs/review_prompts/share_prompt.txt").read_text(encoding="utf-8")
-    assert "路径隐私边界" in text
-    assert "sanitize_review_paths" in text
-
-
-@pytest.mark.parametrize(
-    "leak_fragment",
-    [
-        "/".join(("", "Users", "alice", "worktree")),
-        "/".join(("", "home", "bob", "worktree")),
-        "C:\\" + "\\".join(("Users", "carol", "worktree")) + "\\",
-        "C:" + "/".join(("", "Users", "dave", "worktree")),
-        "/".join(("", "root", "work", "repo")),
-    ],
-)
-def test_privacy_gate_blocks_developer_home_paths_in_review_reports(
-    tmp_path, monkeypatch, capsys, leak_fragment
-):
-    report = f"- target：`git -C '{leak_fragment}' diff abc`\n\n" + _report([ROW_1, ROW_2])
-    task_dir = _ac_task(tmp_path, monkeypatch, report)
-    out = _check(task_dir, monkeypatch, capsys)
-    assert out["overall"] == "INCOMPLETE"
-    assert out["privacy_review"] == "leak"
-    assert "review_general.md:1:" in out["privacy_review_detail"]
-    assert out["next_action"] == "sanitize_review_paths"
-
-
-def test_privacy_gate_allows_windows_system_profiles_only(tmp_path, monkeypatch, capsys):
-    """A08：仅 Windows 系统配置目录（Public 等）免检；容器用户名不再全局豁免。"""
-    public_win = "C:\\" + "\\".join(("Users", "Public", "shared"))
-    report = (
-        f"- target：`git diff abc`\n- 证据：`{public_win}`\n\n"
-        + _report([ROW_1, ROW_2])
-    )
-    task_dir = _ac_task(tmp_path, monkeypatch, report)
-    out = _check(task_dir, monkeypatch, capsys)
-    assert out["overall"] == "PASS"
-    assert out["privacy_review"] == "ok"
-    assert out["next_action"] == "finalize"
-
-
-@pytest.mark.parametrize(
-    "container_path",
-    [
-        "/".join(("", "home", "cbrowser", "app")),
-        "/".join(("", "home", "runner", "work")),
-        "/".join(("", "root", ".config", "google-chrome", "Default")),
-    ],
-)
-def test_privacy_gate_no_longer_exempts_container_usernames(
-    tmp_path, monkeypatch, capsys, container_path
-):
-    """A08：取消仅凭用户名认定容器路径的全局放行。"""
-    report = f"- target：`git diff abc`\n- 证据：`{container_path}`\n\n" + _report([ROW_1, ROW_2])
-    task_dir = _ac_task(tmp_path, monkeypatch, report)
-    out = _check(task_dir, monkeypatch, capsys)
-    assert out["overall"] == "INCOMPLETE"
-    assert out["privacy_review"] == "leak"
-    assert out["next_action"] == "sanitize_review_paths"
-
-
-@pytest.mark.parametrize(
-    "boundary_path",
-    [
-        "/".join(("", "Users", "alice")),                      # 裸家目录（无尾随分隔符）
-        "/".join(("", "home", "bob")),                         # 裸 Linux 家目录
-        "C:" + "/".join(("", "Users", "carol")),               # Windows 正斜杠裸家目录
-        "C:\\" + "\\".join(("Users", "dave")),                 # Windows 反斜杠裸家目录
-        "/".join(("", "root")),                                # 裸 root 家目录
-        "/".join(("", "Users", "alice", "proj")),              # 子路径
-    ],
-)
-def test_privacy_gate_detects_bare_and_subpath_home_tokens(
-    tmp_path, monkeypatch, capsys, boundary_path
-):
-    """A08：裸家目录、子路径、单双斜杠形式均得到确定结果。"""
-    report = f"- 证据：`{boundary_path}`。\n\n" + _report([ROW_1, ROW_2])
-    task_dir = _ac_task(tmp_path, monkeypatch, report)
-    out = _check(task_dir, monkeypatch, capsys)
-    assert out["privacy_review"] == "leak"
-    assert out["next_action"] == "sanitize_review_paths"
 
 
 def test_review_parse_front_matter_raises_on_missing_or_corrupt_file(tmp_path):

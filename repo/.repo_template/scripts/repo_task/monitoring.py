@@ -566,9 +566,8 @@ def verify_integrate_ready(
     finish-unwind）按 kind 分流，不得匹配 detail 自然语言：
     ready（通过）、incomplete（条件未齐）、identity（参数非法）、branch（分支异常）、
     handoff（执行回执异常）、spec（验收标准异常）、provenance（血缘异常）、
-    privacy（分支 tip 引入变更的隐私泄漏或扫描失败）、
     review_scope_mismatch（提交内容偏离 review 内容）、review_gate（review 门禁失败）。
-    集成前校验收敛于此单一入口：tip 引入变更隐私、review scope、实现血缘、核心资产守卫
+    集成前校验收敛于此单一入口：review scope、实现血缘、核心资产守卫
     一次判定；失败均返回机器可判 kind，绝不静默放行。
     """
     if (
@@ -702,21 +701,6 @@ def verify_integrate_ready(
             f"{handoff_path} base_sha={handoff['base_sha']!r}、task diff_anchor="
             f"{diff_anchor!r} 与实现 commit 的 first parent {base!r} 不一致；{shape}"
         )
-    # 集成前对分支 tip 引入的新增行复用隐私门禁（提交隐私闭环）：历史存量泄漏
-    # 不阻断本次合入，由显式审计入口另行覆盖；泄漏提交不得合入主干。
-    try:
-        from .privacy import PrivacyScanError, scan_commit_introduced_privacy
-        leaks = scan_commit_introduced_privacy(repo.root, tip)
-    except PrivacyScanError as error:
-        return "contract", "privacy", (
-            f"分支 {branch!r} tip 引入变更隐私扫描失败（fail-closed）：{error}；合入前必须重扫"
-        )
-    if leaks:
-        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
-        return "contract", "privacy", (
-            f"分支 {branch!r} tip 引入的变更检测到开发者家目录绝对路径泄漏（{shown}）；"
-            "泄漏提交不得合入主干，请按 recovery 处理"
-        )
     try:
         scope = review_scope_fingerprint(base, task["dir"], ref=tip, repo=repo)
     except ctx.TaskDataError as error:
@@ -744,18 +728,12 @@ def verify_integrate_ready(
                     (target / name).write_text(text, encoding="utf-8")
                 result = evaluate_review(target, fm, scope)
             if result["overall"] != "PASS":
-                privacy_info = (
-                    f" privacy_review={result.get('privacy_review', '')} "
-                    f"privacy_review_detail={result.get('privacy_review_detail', '')}"
-                    if result.get("privacy_review") == "leak" else ""
-                )
                 return "contract", "review_gate", (
                     f"review gate：overall={result['overall']} "
                     f"review_scope={result['review_scope']} "
                     f"missing_disposition={result['missing_disposition']} "
                     f"ac_review={result['ac_review']} "
-                    f"ac_review_detail={result['ac_review_detail']}"
-                    f"{privacy_info}；"
+                    f"ac_review_detail={result['ac_review_detail']}；"
                     "最终提交须有同内容的 PASS 证据"
                 )
         except (ctx.TaskDataError, ReviewDataError, OSError) as error:

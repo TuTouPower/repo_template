@@ -245,7 +245,7 @@ def build_full_product_tree_repo(dst: Path) -> Path:
 
     既有种子仓只复制 ``scripts/`` + ``docs/task_template``，不含
     ``.repo_template/tests/``、``hooks/``、``docs/``、``AGENTS.md`` 等随硬同步
-    分发并被 Git 跟踪的文件，因而无法暴露「模板自带测试夹具命中隐私门禁」。
+    分发并被 Git 跟踪的文件，因而无法暴露依赖完整产物树布局的问题。
     本 helper 显式提供完整产物树布局；不改变任何既有种子仓的默认行为，
     也不注册 session fixture，故不拖慢全量测试。
     """

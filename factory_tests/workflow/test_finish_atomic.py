@@ -734,44 +734,6 @@ def test_finish_rejects_message_file_inside_task_directory(git_repo):
     assert _snapshot(git_repo, worktree) == before
 
 
-def test_finish_rejects_developer_home_path_in_review_report_and_task_docs(git_repo):
-    """Issue #89：review_*.md 或 task/docs 文档含开发者家目录绝对路径时，finish 零写入阻断。"""
-    _, worktree, message = _ready(git_repo)
-    task_dir = _task_dir(worktree)
-    leak = "/".join(("", "Users", "devuser", "project_t001"))
-    report = task_dir / "review_code.md"
-    clean_report = report.read_text(encoding="utf-8")
-    report.write_text(f"- target：`git -C '{leak}' diff abc`\n\n" + clean_report, encoding="utf-8")
-    before = _snapshot(git_repo, worktree)
-
-    first = finish_cli(worktree, "t001", OWNER, message)
-
-    assert first.returncode != 0
-    assert "privacy_review=leak" in first.stderr
-    assert "review_code.md:1:" in first.stderr
-    assert "next_action=sanitize_review_paths" in first.stderr
-    assert _snapshot(git_repo, worktree) == before
-
-    # 修复 review_code.md 后，若 progress.md 仍含家目录绝对路径，同样被 _check_privacy_leaks 拦截
-    report.write_text(clean_report, encoding="utf-8")
-    note_path = task_dir / "progress.md"
-    clean_note = note_path.read_text(encoding="utf-8")
-    note_path.write_text(clean_note + f"\n临时路径：{leak}/out\n", encoding="utf-8")
-    before_note = _snapshot(git_repo, worktree)
-
-    second = finish_cli(worktree, "t001", OWNER, message)
-
-    assert second.returncode != 0
-    assert "检测到开发者家目录绝对路径泄漏" in second.stderr
-    assert "docs/tasks/t001_alpha/progress.md" in second.stderr
-    assert _snapshot(git_repo, worktree) == before_note
-
-    # 清理绝对路径后，finish 正常成功
-    note_path.write_text(clean_note, encoding="utf-8")
-    third = finish_cli(worktree, "t001", OWNER, message)
-    assert third.returncode == 0, third.stdout + third.stderr
-
-
 # --------------------------------------------------------------------------
 # P1-1 / P1-2 / P1-13 / DS L210 / DS L213 / DS L284 补覆盖
 # --------------------------------------------------------------------------
@@ -880,41 +842,6 @@ def test_finish_blocks_leftover_unknown_transaction_after_manual_repair(git_repo
     assert commit_txn.load(worktree) is not None
     state = json.loads(_task_cli(git_repo, "recovery", "t001").stdout)
     assert state["phase"] == "finish_txn_unknown"
-
-
-def test_finish_reports_privacy_leak_written_by_commit_hook(git_repo):
-    """DS L284：提交阶段 hook 写入家目录路径，finish 报提交后泄漏且 HEAD 已前移不回滚。"""
-    _, worktree, message = _ready(git_repo)
-    before_head = _git(worktree, "rev-parse", "HEAD").stdout.strip()
-    leak = "/".join(("", "Users", "leakuser", "secret"))
-    matched = "/".join(("", "Users", "leakuser"))
-    _install_hook(
-        git_repo,
-        f"printf '\\n{leak}\\n' >> docs/tasks/t001_alpha/review_code.md\n"
-        "git add docs/tasks/t001_alpha/review_code.md",
-    )
-
-    result = finish_cli(worktree, "t001", OWNER, message)
-
-    assert result.returncode != 0
-    assert "提交快照检测到开发者家目录绝对路径泄漏" in result.stderr
-    assert matched in result.stderr
-    assert _git(worktree, "rev-parse", "HEAD").stdout.strip() != before_head
-
-
-def test_finish_rejects_commit_message_with_home_path(git_repo):
-    """DS L213：commit message 含家目录路径，前置零写入阻断。"""
-    _, worktree, message = _ready(git_repo)
-    leak = "/".join(("", "Users", "msguser", "proj"))
-    message.write_text(f"feat: 完成 task\n\n路径 {leak}\n", encoding="utf-8")
-    before = _snapshot(git_repo, worktree)
-
-    result = finish_cli(worktree, "t001", OWNER, message)
-
-    assert result.returncode != 0
-    assert "检测到开发者家目录绝对路径泄漏" in result.stderr
-    assert "commit message" in result.stderr
-    assert _snapshot(git_repo, worktree) == before
 
 
 def test_finish_rejects_symlink_message_file(git_repo):

@@ -7,8 +7,8 @@ from pathlib import Path
 
 from . import context as ctx
 
-SECTION_HEADINGS = ("## 原子写", "## 路径隐私")
-POINTER = "模板内部实现（原子写、路径隐私）见 `.repo_template/docs/architecture.md`；本文只写项目约定。"
+SECTION_HEADINGS = ("## 原子写",)
+POINTER = "模板内部实现（原子写）见 `.repo_template/docs/architecture.md`；本文只写项目约定。"
 
 
 def _known_template_lines() -> set[str]:

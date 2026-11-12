@@ -1,8 +1,7 @@
-"""finish 提交事务与隐私候选的契约级单测（W2 主题）。
+"""finish 提交事务的契约级单测（W2 主题）。
 
 覆盖：journal 结构/路径校验（DS L208）、O_EXCL 创建（DS L209）、全阶段哈希比对
-（P1-1）、软链 lstat（DS L211）、忽略文件排除（DS L212）、commit message 扫描
-（DS L213）、消除进程级缓存（DS L214）、死分支/死代码（DS L215/L217）、
+（P1-1）、消除进程级缓存（DS L214）、死分支/死代码（DS L215/L217）、
 _tip_has_successor fail-closed（DS L224）、bind 诊断降级（P1-12/DS L267/L268）。
 
 Git 操作统一走 git_repo_support 的受控 env（DS L286），不裸用宿主配置。
@@ -18,15 +17,10 @@ from pathlib import Path
 import pytest
 
 from git_repo_support import get_controlled_git_env, git_run
-from repo_task import commit_txn, context as ctx, control, lifecycle, recovery, statusline, store
+from repo_task import commit_txn, context as ctx, control, recovery, statusline, store
 
 TID = "t001"
 TASK_REL = "docs/tasks/t001_alpha"
-
-
-def _home(user: str, *tail: str) -> str:
-    """运行期拼接家目录路径，避免测试源码自身成为隐私门禁命中样本。"""
-    return "/".join(("", "Users", user, *tail))
 
 
 def _valid_journal() -> dict:
@@ -156,33 +150,6 @@ def test_judge_unknown_when_prepared_site_modified(txn_repo, controlled_env):
     assert "task 目录内容与提交事务期望不一致" in detail
 
 
-# --- DS L211/L212/L213：候选枚举与文本扫描 --------------------------------
-
-
-def test_symlink_candidate_scans_readlink_text_only(txn_repo, controlled_env):
-    (txn_repo / TASK_REL / "leak_link").symlink_to(_home("leakuser", "secret"))
-    repo = ctx.RepoContext.for_root(txn_repo)
-    leaks = lifecycle._scan_finish_candidates(TASK_REL, "clean message\n", repo=repo)
-    assert any(_home("leakuser") in item for item in leaks)
-
-
-def test_gitignored_candidate_is_not_scanned(txn_repo, controlled_env):
-    (txn_repo / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    (txn_repo / TASK_REL / "draft.log").write_text(
-        f"{_home('leakuser', 'draft')}\n", encoding="utf-8"
-    )
-    repo = ctx.RepoContext.for_root(txn_repo)
-    assert lifecycle._scan_finish_candidates(TASK_REL, "clean message\n", repo=repo) == []
-
-
-def test_commit_message_is_scanned(txn_repo, controlled_env):
-    repo = ctx.RepoContext.for_root(txn_repo)
-    leaks = lifecycle._scan_finish_candidates(
-        TASK_REL, f"see {_home('leakuser', 'proj')}\n", repo=repo
-    )
-    assert any("commit message" in item and _home("leakuser") in item for item in leaks)
-
-
 # --- DS L214/L215/L217：消除全局缓存与死代码 ------------------------------
 
 
@@ -247,14 +214,3 @@ def test_bind_statusline_degrades_exception(capfd, monkeypatch):
     assert "状态行绑定" in err and "has no attribute" in err
 
 
-# --- P1-3：tip commit 隐私核对边界 ----------------------------------------
-
-
-def test_verify_tip_privacy_blocks_leaking_commit(txn_repo, controlled_env):
-    (txn_repo / "leak.txt").write_text(f"path {_home('leakuser', 'proj')}\n", encoding="utf-8")
-    git_run(txn_repo, "add", "-A")
-    git_run(txn_repo, "commit", "-m", "leak")
-    repo = ctx.RepoContext.for_root(txn_repo)
-    with pytest.raises(SystemExit) as exc:
-        lifecycle.verify_tip_privacy("HEAD", repo=repo)
-    assert "分支 tip" in str(exc.value) and _home("leakuser") in str(exc.value)

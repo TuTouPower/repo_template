@@ -231,13 +231,6 @@ def require_report_done_ready(
         verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
     except ctx.TaskDataError as error:
         sys.exit(f"report=done 拒绝：{error}{suffix}")
-    if verdict != "ready" and kind == "privacy":
-        sys.exit(
-            f"report=done 拒绝：{detail}；用 `git log -S <泄漏路径片段> --oneline` "
-            "定位引入提交：确属非个人环境固定路径，在 repo_task/privacy.py "
-            "FIXED_PATH_EXCEPTIONS 显式豁免，否则移除泄漏内容后重新 review；"
-            "先按 recovery 判定处理后重跑 run-close"
-        )
     if verdict != "ready":
         sys.exit(f"report=done 拒绝：{detail}{suffix}")
 
@@ -384,9 +377,6 @@ def cmd_run_close(args):
         except ctx.TaskDataError as error:
             sys.exit(f"report=done 拒绝：{error}；先在 worktree 执行 finish")
         require_report_done_ready(tid, attempt, execution_id, repo=repo)
-        # P1-3：run-close 边界统一校验 tip commit 隐私，泄漏提交不得闭环。
-        from .lifecycle import verify_tip_privacy
-        verify_tip_privacy(sha, repo=repo)
     written = []
     step = "terminal"
     try:

@@ -10,7 +10,7 @@ import pytest
 
 from git_repo_support import get_controlled_git_env, git_run
 from git_repo_support import state_file
-from repo_task import commit_txn, privacy, statusline
+from repo_task import commit_txn, statusline
 from repo_task.context import RepoContext, TaskDataError
 from repo_task.monitoring import git_tree_entries, git_worktree_entries, review_scope_fingerprint, validate_task_core_asset_changes
 from template_sync.context import SyncContext
@@ -42,42 +42,6 @@ def consumer(tmp_path, monkeypatch):
     git_run(root, "add", "-A")
     git_run(root, "commit", "-m", "initial")
     return root
-
-
-@pytest.mark.parametrize("encoding", ["utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be", "utf-16", "utf-32"])
-def test_staged_and_commit_use_identical_multiline_privacy_policy(consumer, encoding):
-    token = "/".join(("", "Users", "private_user", "project"))
-    (consumer / "wide.txt").write_bytes(("header\n" + token + "\n").encode(encoding))
-    git_run(consumer, "add", "wide.txt")
-    staged = privacy.scan_privacy_changes(consumer)
-    assert any("wide.txt:2:" in item for item in staged)
-    git_run(consumer, "commit", "-m", "wide text")
-    assert privacy.scan_commit_introduced_privacy(consumer, "HEAD") == staged
-    assert privacy.scan_privacy_changes(consumer, base="HEAD^", target="HEAD^{tree}") == staged
-
-
-def test_real_precommit_allows_unchanged_historical_leak(consumer):
-    token = "/".join(("", "home", "old_user", "project"))
-    path = consumer / "document.txt"
-    path.write_text(token + "\nold line\n")
-    git_run(consumer, "add", "document.txt")
-    git_run(consumer, "commit", "-m", "historical content")
-    git_run(consumer, "config", "core.hooksPath", str(SCRIPTS.parent / "hooks"))
-    path.write_text(token + "\nnew clean line\n")
-    git_run(consumer, "add", "document.txt")
-    assert privacy.scan_privacy_changes(consumer) == []
-    git_run(consumer, "commit", "-m", "unrelated maintenance")
-    assert privacy.scan_commit_introduced_privacy(consumer, "HEAD") == []
-    assert privacy.scan_git_tree_privacy(consumer, "HEAD")
-
-
-def test_unknown_binary_uses_same_policy_for_index_tree_and_tip(consumer):
-    (consumer / "payload.npy").write_bytes(bytes(range(256)) * 4)
-    git_run(consumer, "add", "payload.npy")
-    assert privacy.scan_privacy_changes(consumer) == []
-    git_run(consumer, "commit", "-m", "binary data")
-    assert privacy.scan_commit_introduced_privacy(consumer, "HEAD") == []
-    assert privacy.scan_privacy_changes(consumer, base="HEAD^", target="HEAD^{tree}") == []
 
 
 def test_old_active_spike_alone_requires_and_completes_migration(consumer):

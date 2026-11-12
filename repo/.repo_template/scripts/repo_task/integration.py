@@ -685,19 +685,6 @@ def _validate_entry_snapshot(ref: str, *, repo: "ctx.RepoContext") -> None:
         raise ctx.TaskDataError(f"合并条目编号校验失败：{error}") from error
 
 
-def _verify_merge_privacy(base: str, target: str, *, repo: "ctx.RepoContext") -> None:
-    from .privacy import PrivacyScanError, scan_privacy_changes
-
-    try:
-        violations = scan_privacy_changes(repo.root, base=base, target=target)
-    except PrivacyScanError as error:
-        raise ctx.TaskDataError(f"merge 隐私扫描失败（fail-closed）：{error}") from error
-    if violations:
-        raise ctx.TaskDataError(
-            "merge 新增内容含开发者家目录绝对路径泄漏：" + "；".join(violations[:8])
-        )
-
-
 def _validate_automated_merge_result(
     divergence: set[str],
     conflict_paths: set[str],
@@ -728,7 +715,7 @@ def _validate_claimed_merge_commit(
     names: list[str] | None = None,
     member_tips: dict[str, str] | None = None,
 ) -> None:
-    """认领既有 merge commit 前复验血缘、自动合并一致性、核心资产与隐私（防伪造 merge 绕过门禁）。
+    """认领既有 merge commit 前复验血缘、自动合并一致性、核心资产（防伪造 merge 绕过门禁）。
 
     根因修正：期望合并结果必须用 ``git merge-tree --write-tree`` 重算，而非
     ``base..tip`` 差异冒充。分支与主干重叠修改同一文件不同行时，Git 干净合并
@@ -736,7 +723,7 @@ def _validate_claimed_merge_commit(
     合法 clean merge，导致 --continue 重入与幂等清理不可重入（恢复阻断）。
     自动合并结果与实际结果的差异由共用验证器判定：冲突解决路径与主干独立
     改写的成员路径（A06 取分支 tip）均显式放行，叠加核心资产（成员核心资产
-    必须等于已验证 tip）与变更集隐私校验。
+    必须等于已验证 tip）校验。
     """
     first_parent = _validate_merge_lineage(merge_sha, second_parent, repo=repo)
     auto_tree_oid, conflict_paths = _merge_tree_result(first_parent, second_parent, repo=repo)
@@ -763,7 +750,6 @@ def _validate_claimed_merge_commit(
         )
         _validate_member_core_from_tips(merge_entries, resolved_names, tips, repo=repo)
     _validate_entry_snapshot(merge_sha, repo=repo)
-    _verify_merge_privacy(first_parent, merge_sha, repo=repo)
     LOGGER.debug(
         "claimed merge validated: merge=%s first=%s second=%s conflicts=%d",
         merge_sha[:12], first_parent[:12], second_parent[:12], len(conflict_paths),
@@ -1155,7 +1141,7 @@ def _validate_merge_staged_scope(
     member_tips: dict[str, str] | None = None,
     repo: "ctx.RepoContext",
 ) -> str:
-    """校验进行中 merge 的 staged 范围/内容/核心资产/隐私，返回已校验的 staged tree oid。"""
+    """校验进行中 merge 的 staged 范围/内容/核心资产，返回已校验的 staged tree oid。"""
     merge_base = _git(["merge-base", "HEAD", expected_head], repo=repo)
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
         raise ctx.TaskDataError("无法解析 merge-base，不能校验 staged 范围")
@@ -1205,7 +1191,6 @@ def _validate_merge_staged_scope(
     )
     _validate_core_assets(head_entries, staged_entries, names, tips, repo=repo)
     _validate_entry_snapshot(current_tree_oid, repo=repo)
-    _verify_merge_privacy("HEAD", current_tree_oid, repo=repo)
     return current_tree_oid
 
 

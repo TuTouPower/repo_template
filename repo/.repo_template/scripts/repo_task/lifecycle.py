@@ -670,113 +670,10 @@ def _check_markdown_format(task_dir: Path, *, repo) -> None:
         )
 
 
-def _finish_candidate_rels(task_rel: str, *, repo) -> tuple[list[str], list[str]]:
-    """本次 finish 会写入 Git 的候选：task 目录文件 + 其它已暂存变更。
-
-    task 目录用 ``git ls-files --cached --others --exclude-standard`` 枚举，
-    含 rglob 遗漏的被忽略草稿、也不误收它们（DS L212）；其它路径只取已暂存的
-    变更（``diff --cached``），不再扫描整个 index 的历史存量（P0-1 根因、P1-4）。
-    类型变更（T）同样会引入新内容，必须纳入候选。
-    """
-    staged = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], repo=repo)
-    if staged.returncode != 0:
-        raise ctx.TaskDataError(f"无法列出已暂存变更：{staged.stderr.strip()}")
-    staged_rels = [item for item in staged.stdout.split("\0") if item]
-    listed = _git(
-        ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", task_rel],
-        repo=repo,
-    )
-    if listed.returncode != 0:
-        raise ctx.TaskDataError(f"无法枚举 task 目录候选：{listed.stderr.strip()}")
-    task_rels = [item for item in listed.stdout.split("\0") if item]
-    prefix = task_rel + "/"
-    others = [rel for rel in staged_rels if rel != task_rel and not rel.startswith(prefix)]
-    return task_rels, others
-
-
-def _scan_finish_candidates(task_rel: str, message: str, *, repo) -> list[str]:
-    """扫描本次提交候选内容 + commit message，统一复用 privacy 单一扫描入口。
-
-    已暂存侧读 index blob（软链 blob 天然是 link 文本），二进制后缀、gitlink
-    与超大对象由 privacy 入口预过滤；task 目录侧走 worktree 扫描（软链只扫
-    链接文本，不跟随目标；已删除文件跳过，删文件不引入新内容）。
-    """
-    from .privacy import scan_privacy_changes
-
-    task_rels, _other_rels = _finish_candidate_rels(task_rel, repo=repo)
-    return scan_privacy_changes(repo.root, worktree_paths=task_rels, message=message)
-
-
-def _check_privacy_leaks(task_dir: Path, *, repo, message: str) -> None:
-    """扫描本次 finish 会提交的内容与 commit message，fail-closed（A07）。"""
-    from .privacy import PrivacyScanError
-
-    task_rel = task_dir.relative_to(repo.root).as_posix()
-    try:
-        leaks = _scan_finish_candidates(task_rel, message, repo=repo)
-    except (PrivacyScanError, ctx.TaskDataError) as error:
-        sys.exit(f"finish=FAIL：隐私扫描失败（fail-closed）：{error}；零写入退出")
-    if leaks:
-        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
-        sys.exit(
-            f"finish=FAIL：检测到开发者家目录绝对路径泄漏（{shown}）。"
-            "请改为仓库相对路径或 <worktree> 占位符后再 finish。零写入退出"
-        )
-
-
-def _scan_commit_privacy_leaks(ref: str, *, repo) -> list[str]:
-    """扫描 ref 相对第一父提交新增的行（变更集扫描），fail-closed。
-
-    只看本次引入的新增内容，不翻历史存量：历史泄漏不阻断本次收尾/合入，
-    由显式审计入口另行覆盖。finish、run-close、integrate、recovery 的 tip
-    核对统一走此口径（P1-3）。
-    """
-    from .privacy import scan_commit_introduced_privacy
-
-    return scan_commit_introduced_privacy(repo.root, ref)
-
-
-def scan_tip_privacy_leaks(ref: str, *, repo) -> list[str]:
-    """只读：ref commit 的隐私泄漏清单；扫描失败统一 TaskDataError（fail-closed）。"""
-    from .privacy import PrivacyScanError
-
-    try:
-        return _scan_commit_privacy_leaks(ref, repo=repo)
-    except (PrivacyScanError, ctx.TaskDataError) as error:
-        raise ctx.TaskDataError(f"分支 tip 隐私核对失败（fail-closed）：{error}") from error
-
-
-def verify_tip_privacy(ref: str, *, repo) -> None:
-    """写操作边界：tip commit 存在泄漏则阻断收尾（P1-3）。"""
-    leaks = scan_tip_privacy_leaks(ref, repo=repo)
-    if leaks:
-        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
-        sys.exit(
-            f"finish=FAIL：分支 tip {ref[:12]} 检测到开发者家目录绝对路径泄漏（{shown}）；"
-            "拒绝收尾或合入，请修正后按 recovery 处理"
-        )
-
-
-def _verify_committed_privacy(*, repo) -> None:
-    """提交后核对实际引入的快照，防止 hook 或外部改写引入泄漏（A07）。"""
-    from .privacy import PrivacyScanError
-
-    try:
-        leaks = _scan_commit_privacy_leaks("HEAD", repo=repo)
-    except (PrivacyScanError, ctx.TaskDataError) as error:
-        sys.exit(f"finish=FAIL：提交后隐私核对失败（fail-closed）：{error}")
-    if leaks:
-        shown = "；".join(leaks[:8]) + (f" 等共 {len(leaks)} 处" if len(leaks) > 8 else "")
-        sys.exit(
-            f"finish=FAIL：提交快照检测到开发者家目录绝对路径泄漏（{shown}）；"
-            "HEAD 已前移不回滚，请修正后按 recovery 处理"
-        )
-
-
 def _verify_post_commit_scope(
     review_scope: str, diff_anchor: str, task_rel: str, tid: str, *, repo
 ) -> None:
-    """提交后统一核对：scope 重算 + 隐私（正常路径与所有 committed 分支共用，P1-2）。
+    """提交后统一核对 review scope 重算（正常路径与所有 committed 分支共用，P1-2）。
 
     指纹重算失败同样 fail-closed：不回滚已产生的实现 commit，按 recovery 继续收尾。
     """
@@ -797,7 +694,6 @@ def _verify_post_commit_scope(
             f"运行 `python3 .repo_template/scripts/task.py recovery {tid}`："
             "判为 review_mismatch 后用 finish-unwind 撤销实现 commit"
         )
-    _verify_committed_privacy(repo=repo)
 
 
 def _finish_prechecks(args) -> dict:
@@ -910,21 +806,14 @@ def _finish_prechecks(args) -> dict:
     except (ReviewDataError, ctx.TaskDataError) as error:
         sys.exit(f"finish=FAIL：review 门禁无法评估：{error}")
     if review["overall"] != "PASS":
-        privacy_info = (
-            f" privacy_review={review.get('privacy_review', '')} "
-            f"privacy_review_detail={review.get('privacy_review_detail', '')}"
-            if review.get("privacy_review") == "leak" else ""
-        )
         sys.exit(
             f"finish=FAIL：review 门禁未通过 overall={review['overall']} "
             f"review_scope={review['review_scope']} "
             f"missing_disposition={review['missing_disposition'] or '-'} "
             f"ac_review={review['ac_review']} "
-            f"ac_review_detail={review['ac_review_detail']}"
-            f"{privacy_info} "
+            f"ac_review_detail={review['ac_review_detail']} "
             f"next_action={review['next_action']}；零写入退出"
         )
-    _check_privacy_leaks(task_dir, repo=repo, message=message)
 
     # 7. 身份与执行权：execution_context 与主仓 ledger 一致，且 owner 持有 running attempt
     try:
@@ -988,7 +877,7 @@ def _settle_stale_finish_txn(tid: str, *, repo) -> None:
         )
     verdict, detail = judge(worktree, existing)
     if verdict == "committed":
-        # committed 统一完成 scope 重算与提交后隐私核对，再给出收尾/清理出口（P1-2）。
+        # committed 统一完成 scope 重算，再给出收尾/清理出口（P1-2）。
         _accept_finish_txn(worktree, existing)
         sys.exit(
             f"finish=FAIL：上次提交已产生并验证、事务已清理（{detail}）；不重复提交，"
@@ -1039,8 +928,8 @@ def cmd_finish(args):
             """依据 Git 实际状态决定恢复或保留现场；禁止在结果未知时自动回滚。"""
             verdict, detail = judge(worktree, txn)
             if verdict == "committed":
-                # committed 退出前统一完成 scope 重算与提交后隐私核对，并清理已完成
-                # 事务，避免 journal 残留形成 recovery/run-close 互锁（P1-2）。
+                # committed 退出前统一完成 scope 重算，并清理已完成事务，
+                # 避免 journal 残留形成 recovery/run-close 互锁（P1-2）。
                 mark_phase(worktree, txn, "committed")
                 try:
                     _accept_finish_txn(worktree, txn)
@@ -1327,7 +1216,7 @@ def cmd_finish_unwind(args):
         verdict, kind, detail = verify_integrate_ready(tid, attempt, execution_id, repo=repo)
         if verdict == "ready":
             sys.exit(f"{tid} 门禁已通过，无需撤销；按正常流程 run-close")
-        if kind not in {"review_scope_mismatch", "finish_tree_mismatch", "privacy"}:
+        if kind not in {"review_scope_mismatch", "finish_tree_mismatch"}:
             sys.exit(f"{tid} 当前失败不是内容不一致（{detail}）；按 recovery 判定处理，不撤销")
         listing = _git(["branch", "--format=%(refname:short)"], repo=repo)
         if listing.returncode != 0:

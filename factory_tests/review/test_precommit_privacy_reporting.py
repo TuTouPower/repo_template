@@ -1,4 +1,4 @@
-"""2026-11-10 审阅 F14 回归：token 尾点、比较器重命名与 pre-commit 文案分离。"""
+"""2026-11-10 审阅 F14 回归：pre-commit 编号校验 fail-closed。"""
 
 from __future__ import annotations
 
@@ -12,13 +12,8 @@ from factory_paths import FACTORY_ROOT
 import pytest
 
 from git_repo_support import get_controlled_git_env, git_run
-from repo_task import privacy
 
 HOOK = FACTORY_ROOT / "repo/.repo_template/hooks/pre-commit"
-
-
-def _home(*parts: str) -> str:
-    return "/".join(("", *parts))
 
 
 @pytest.fixture
@@ -48,30 +43,6 @@ def _run_hook(root: Path) -> subprocess.CompletedProcess:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=60,
     )
-
-
-def test_reported_token_trims_trailing_sentence_dot():
-    token = _home("Users", "alice")
-    assert privacy.find_developer_path_leaks(token + ".") == [token]
-    assert privacy.find_developer_path_leaks("见 " + token + ". 结束") == [token]
-
-
-def test_renamed_file_content_is_scanned_as_new_path(consumer):
-    token = _home("Users", "renameuser")
-    (consumer / "old.md").write_text("clean\n", encoding="utf-8")
-    git_run(consumer, "add", "old.md")
-    git_run(consumer, "commit", "-m", "clean old path")
-    (consumer / "old.md").write_text(token + "/proj\n", encoding="utf-8")
-    git_run(consumer, "add", "old.md")
-    git_run(consumer, "commit", "-m", "leak in old path")
-    git_run(consumer, "mv", "old.md", "new.md")
-
-    # rename-aware：纯移动不把旧内容当新增；历史泄漏不阻断本次移动。
-    assert privacy.scan_privacy_changes(consumer) == []
-
-    (consumer / "new.md").write_text("clean\n" + token + "/added\n", encoding="utf-8")
-    git_run(consumer, "add", "new.md")
-    assert privacy.scan_privacy_changes(consumer) == [f"new.md:2: {token}"]
 
 
 def test_precommit_reports_id_failure_fail_closed(consumer):

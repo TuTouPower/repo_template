@@ -169,16 +169,6 @@ def retired_spec_paths(root: Path | str) -> set[str]:
     }
 
 
-def retired_spec_paths_at_ref(
-    ref: str, *, root: Path | None = None, repo: ctx.RepoContext,
-) -> set[str]:
-    return {
-        spec["path"].as_posix()
-        for spec in load_specs_at_ref(ref, root=root, repo=repo)
-        if spec["status"] == "retired"
-    }
-
-
 def validate_specs(root: Path | str) -> list[str]:
     try:
         load_specs(root)

@@ -165,7 +165,3 @@ python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求�
 `docs/reviews/review_*` 以最近 5 个为上限，超出的旧目录一律删除（含 `_meta/`、被引用或未跟踪目录），不因引用保留；删除由 apply 内置 reviews 迁移执行，Git 历史保留。pre-commit 只在本次提交新增 review 顶层目录时检查；按 index 计数，超过 5 个即阻断并列出可删除旧目录；merge 提交跳过该检查。项目交接固定在 `docs/handoff.md` 单文件快照；task、spec、spike、pending 均终生在规范路径原位流转，不归档。
 
 Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
-
-## 路径隐私审计
-
-隐私策略与各检查点定义见 `.repo_template/docs/architecture.md`「路径隐私」。日常门禁比较新增文本行；全量审计在消费仓根运行 `python3 .repo_template/scripts/task.py privacy-audit --ref HEAD`，`--ref` 可指定审计的 ref，done/dropped task 与 retired spec 排除项按该 ref 的 tree 计算，不读当前工作区。命令只读，退出 1 表示存在泄漏，读取或解码失败非零退出；先核对诊断，不以空输出代替通过。

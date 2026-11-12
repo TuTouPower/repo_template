@@ -1,9 +1,9 @@
-"""P2 commit_txn/lifecycle/recovery/control 修补回归 + P1-3 口径统一与死循环消除。
+"""P2 commit_txn/lifecycle/recovery/control 修补回归。
 
 覆盖：judge 血缘判定（偏离判 unknown）、prepared/writing 暂存区比对与回滚拒绝、
 journal 占位优先与非常规 journal、finalize 实际消失校验、finish-txn-clear 共用
 txn 锁与实现 commit 对应性核对、message-file 解析后包含检查、recovery FM/后继
-判定 fail-closed、privacy kind 专用映射、历史泄漏下 finish→run-close→ready 全链路。
+判定 fail-closed。
 """
 
 import argparse
@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import pytest
 
 from git_repo_support import git_run
-from task_flow_support import finish_cli, prepare_finish
+from task_flow_support import finish_cli
 from test_dispatch_integration import _git, _task_cli, _worktree, git_repo
 from test_finish_atomic import _committed_journal, _snapshot
 from test_finish_txn_contract import TID, TASK_REL, _begin, controlled_env, txn_repo
@@ -23,10 +23,6 @@ from repo_task import commit_txn, context as ctx, control, lifecycle, monitoring
 from repo_task import locks
 
 OWNER = "owner-repair"
-
-
-def _home(user: str, *tail: str) -> str:
-    return "/".join(("", "Users", user, *tail))
 
 
 def _begin_flow(repo, tid="t001", owner=OWNER):
@@ -219,18 +215,6 @@ def test_verify_post_commit_scope_fingerprint_failure_is_diagnostic(git_repo, mo
     assert "指纹重算失败" in str(exc.value)
 
 
-def test_require_report_done_ready_privacy_kind_has_guidance():
-    from unittest import mock
-
-    with mock.patch.object(
-        control, "verify_integrate_ready",
-        return_value=("contract", "privacy", "分支 tip 引入泄漏"),
-    ):
-        with pytest.raises(SystemExit) as exc:
-            control.require_report_done_ready("t001", 1, "e" * 32, repo=object())
-    assert "定位引入提交" in str(exc.value)
-
-
 # --- P2 recovery：FM/后继判定 fail-closed ---------------------------------------------
 
 
@@ -284,40 +268,3 @@ def test_recovery_successor_failure_maps_to_needs_attention(git_repo, monkeypatc
     assert "后继分支判定失败" in state["action"]
 
 
-def test_recovery_maps_privacy_kind_to_dedicated_phase(git_repo, monkeypatch):
-    worktree = _finish_without_close(git_repo)
-    _amend_to_scope_mismatch(worktree)
-    monkeypatch.setattr(lifecycle, "scan_tip_privacy_leaks", lambda *args, **kwargs: [])
-    monkeypatch.setattr(
-        recovery, "verify_integrate_ready",
-        lambda *args, **kwargs: ("contract", "privacy", "分支 tip 引入泄漏X"),
-    )
-    state = recovery.recovery_state("t001", repo=ctx.RepoContext.for_root(git_repo))
-    assert state["phase"] == "committed_privacy_leak"
-    assert "定位引入提交" in state["action"]
-
-
-# --- P1-3：历史泄漏不阻断 finish→run-close→ready ----------------------------------------
-
-
-def test_historical_leak_does_not_block_finish_close_ready(git_repo):
-    """死循环回归：base 历史含家目录路径、tip 无新增泄漏时，全链路放行。"""
-    leak = _home("histuser", "legacy")
-    (git_repo / "legacy.txt").write_text("path " + leak + "\n", encoding="utf-8")
-    _git(git_repo, "add", "-A")
-    _git(git_repo, "commit", "-m", "seed historical leak")
-
-    identity = _begin_flow(git_repo)
-    worktree = _worktree(git_repo, "t001")
-    message = prepare_finish(worktree, "t001", "alpha")
-
-    finished = finish_cli(worktree, "t001", OWNER, message)
-    assert finished.returncode == 0, finished.stdout + finished.stderr
-    closed = _task_cli(git_repo, "run-close", "t001", "--owner-id", OWNER, "--result", "done")
-    assert closed.returncode == 0, closed.stderr
-
-    repo = ctx.RepoContext.for_root(git_repo)
-    verdict, kind, _ = monitoring.verify_integrate_ready(
-        "t001", identity["attempt"], identity["execution_id"], repo=repo
-    )
-    assert (verdict, kind) == ("ready", "ready")

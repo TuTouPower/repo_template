@@ -23,4 +23,4 @@
 - 数据库 schema 跟 migration 工具走，工具约定优先于本文件。
 - 多种类型并存时，按主消费方归类；归属不清记入 `docs/blueprint/decisions/`。
 
-模板内部实现（原子写、路径隐私）见 `.repo_template/docs/architecture.md`；本文只写项目约定。
+模板内部实现（原子写）见 `.repo_template/docs/architecture.md`；本文只写项目约定。

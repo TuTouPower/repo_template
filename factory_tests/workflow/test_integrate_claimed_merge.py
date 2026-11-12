@@ -1,4 +1,4 @@
-"""P1-2/P2 integrate 回归：重叠 clean merge 认领、merge 隐私门禁、落盘复验、A06 引用与 fail-closed。
+"""P1-2/P2 integrate 回归：重叠 clean merge 认领、落盘复验、A06 引用与 fail-closed。
 
 真实 Git 仓库，触达 _validate_claimed_merge_commit / _commit_native_merge 生产链路。
 """
@@ -86,32 +86,6 @@ def test_overlapping_clean_merge_continue_reentry_accepted(git_repo):
     assert len([e for e in _read_ledger(git_repo) if e["event"] == "integrated"]) == 1
 
 
-def test_merge_changeset_privacy_leak_rejected_before_commit(git_repo):
-    """P2：冲突解决内容带家目录泄漏，--continue 提交前须由变更集隐私门禁拒绝。"""
-    shared = git_repo / SHARED
-    shared.write_text("line1\nline2\n", encoding="utf-8")
-    _git(git_repo, "add", SHARED)
-    _git(git_repo, "commit", "-m", "test: add shared")
-
-    def mutate(worktree):
-        (worktree / SHARED).write_text("line1 branch\nline2\n", encoding="utf-8")
-
-    identity, branch, _ = _prepare_done(git_repo, "t001", "alpha", mutate=mutate)
-    _cleanup(git_repo, "t001", identity)
-    shared.write_text("line1 main\nline2\n", encoding="utf-8")
-    _git(git_repo, "add", SHARED)
-    _git(git_repo, "commit", "-m", "test: main conflicting edit")
-
-    prepared = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity))
-    assert prepared.returncode != 0
-    assert "原生冲突" in prepared.stderr
-
-    shared.write_text("leak /Users/alice/secret\n", encoding="utf-8")
-    _git(git_repo, "add", SHARED)
-    finished = _task_cli(git_repo, "integrate", "t001", *_identity_args(identity), "--continue")
-    assert finished.returncode != 0
-    assert "泄漏" in finished.stderr
-    assert not [e for e in _read_ledger(git_repo) if e["event"] == "integrated"]
     _git(git_repo, "merge", "--abort", check=False)
 
 

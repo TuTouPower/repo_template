@@ -16,7 +16,7 @@ reviewer 不再自行去读 task：契约区与上下文区正文直接注入 pr
  可选：spec_path（默认 <task_dir>/task.md）、review_level
  默认 stdout；--out-dir 时 full 写入 code_review_prompt.md 与 test_review_prompt.md，single 写入 general_review_prompt.md
  --out-dir 必须在仓库内且不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root
- 绝对路径，落进 task 目录会被 finish 隐私扫描误阻断；请用 .scratch/review_prompts）
+  绝对路径，落进 task 目录会被一并提交；请用 .scratch/review_prompts）
 """
 
 from __future__ import annotations
@@ -103,8 +103,8 @@ def resolve_repo_path(path: Path, *, label: str, require_file: bool = False) -> 
 def resolve_out_dir(raw: str) -> Path:
     """解析 --out-dir 并统一校验输出落点，返回绝对路径。
 
-    prompt 内含 task_dir/repo_root 本机绝对路径：落进 docs/tasks/ 会被 finish
-    隐私扫描误阻断（DS L221），故该落点直接拒绝并给出可执行替代。
+    prompt 内含 task_dir/repo_root 本机绝对路径：落进 docs/tasks/ 会被一并提交，
+    故该落点直接拒绝并给出可执行替代。
     """
     out_dir = Path(raw)
     if not out_dir.is_absolute():
@@ -120,7 +120,7 @@ def resolve_out_dir(raw: str) -> Path:
     if rel.parts[:2] == ("docs", "tasks"):
         sys.exit(
             "--out-dir 不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root 绝对路径，"
-            "会被 finish 隐私扫描误阻断）；请改用 --out-dir .scratch/review_prompts "
+            "会被一并提交）；请改用 --out-dir .scratch/review_prompts "
             "或保持默认 stdout 输出"
         )
     return resolved

@@ -160,25 +160,6 @@ def recovery_state(tid: str, *, repo) -> dict:
         state["action"] = f"停止：{error}"
         return state
     tip_sha = head.stdout.strip()
-    # P1-3：recovery 边界统一校验 tip commit 引入的新增行隐私，泄漏则给出专用
-    # phase，不再让泄漏提交经 committed_unreported / run-close 一路合入主干。
-    try:
-        from .lifecycle import scan_tip_privacy_leaks
-        tip_leaks = scan_tip_privacy_leaks(tip_sha, repo=repo)
-    except ctx.TaskDataError as error:
-        state["action"] = f"停止：{error}"
-        return state
-    if tip_leaks:
-        shown = "；".join(tip_leaks[:8])
-        return phase(
-            "committed_privacy_leak",
-            f"实现 commit {tip_sha[:12]} 引入开发者家目录绝对路径泄漏（{shown}）；"
-            "HEAD 已前移不回滚，停止收尾/合入。用 "
-            f"`git log -S <泄漏路径片段> --oneline -- {branch}` 定位引入提交："
-            "确属非个人环境固定路径，在 repo_task/privacy.py FIXED_PATH_EXCEPTIONS "
-            "显式豁免；否则移除泄漏内容后重新 review，report 未 done 且无后继分支时"
-            "可用 finish-unwind 退回重做，人工修正后重跑 finish",
-        )
     diff_anchor = fm.get("diff_anchor", "")
     report = record.get("report") or {}
     report_done = report.get("status") == "done"
@@ -240,26 +221,6 @@ def recovery_state(tid: str, *, repo) -> dict:
                 state["action"] = f"停止：review 修复判定失败（{error}）；人工核查"
                 return state
             return phase("review_repair", action)
-        if verdict != "ready" and kind == "privacy":
-            # tip 引入隐私泄漏：与 committed_privacy_leak 同源（变更集口径），这里是
-            # 门禁视角的显式映射，不再落到 committed_unreported 让 run-close 补 report。
-            locate = (
-                f"用 `git log -S <泄漏路径片段> --oneline -- {branch}` 定位引入提交："
-                "确属非个人环境固定路径，在 repo_task/privacy.py FIXED_PATH_EXCEPTIONS "
-                "显式豁免；否则移除泄漏内容后重新 review 再收尾"
-            )
-            if report_done:
-                state["action"] = (
-                    f"停止：report 已写入 done，但实现 commit 引入隐私泄漏（{gate_detail}）；"
-                    f"不可撤销、不可 amend，人工核查。{locate}"
-                )
-                return state
-            return phase(
-                "committed_privacy_leak",
-                f"实现 commit {tip_sha[:12]} 引入隐私泄漏（{gate_detail}）；"
-                f"HEAD 已前移不回滚。{locate}；report 未 done 且无后继分支时"
-                "可用 finish-unwind 退回重做",
-            )
     if not record.get("report"):
         return phase("committed_unreported", "验证最终提交和 review gate；按原 identity 补缺失的 terminal/report，不重复写已有事件")
     if record.get("terminal_status") == "completed" and report_done:
@@ -352,8 +313,8 @@ def cmd_ledger_import(args):
 def cmd_finish_txn_clear(args):
     """显式清理已完成（committed）的 finish 提交事务（P1-2 出口）。
 
-    unknown 保留现场、rollback_safe 交给重跑 finish 幂等回滚、committed 且 tip
-    隐私核对通过才 finalize，避免清理掉一个泄漏提交的唯一现场证据。与 finish
+    unknown 保留现场、rollback_safe 交给重跑 finish 幂等回滚、committed 才
+    finalize，避免清理掉唯一现场证据。与 finish
     共用同一 txn 锁，防止清理与提交并发交错。
     """
     from .commit_txn import judge, load, txn_lock_path

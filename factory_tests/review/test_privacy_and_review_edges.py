@@ -1,4 +1,4 @@
-"""WP3 边界：隐私 rename-aware、全量审计排除项与 review 保留边界。"""
+"""WP3 边界：review 保留与 spec 迁移边界。"""
 
 from __future__ import annotations
 
@@ -12,137 +12,15 @@ from factory_paths import FACTORY_ROOT
 import pytest
 
 from git_repo_support import (
-    build_full_product_tree_repo,
     get_controlled_git_env,
     git_run,
     install_fake_md_kx,
 )
-from repo_task import privacy
-from repo_task.documents import dump_front_matter
 from repo_task.specs import render_spec_text
 from template_sync import context as sync_context
 from template_sync.specs_migration import migrate_specs_layout
 
 HOOK = FACTORY_ROOT / "repo/.repo_template/hooks/pre-commit"
-
-
-def _home(*parts: str) -> str:
-    return "/".join(("", *parts))
-
-
-@pytest.fixture
-def privacy_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    for key in list(os.environ):
-        if key.startswith("GIT_"):
-            monkeypatch.delenv(key, raising=False)
-    for key, value in get_controlled_git_env().items():
-        if key.startswith("GIT_"):
-            monkeypatch.setenv(key, value)
-    root = tmp_path / "privacy_repo"
-    root.mkdir()
-    git_run(root, "init", "-b", "main")
-    git_run(root, "config", "user.email", "test@example.com")
-    git_run(root, "config", "user.name", "test")
-    (root / "init.txt").write_text("init\n", encoding="utf-8")
-    git_run(root, "add", "-A")
-    git_run(root, "commit", "-m", "init")
-    return root
-
-
-def test_pure_rename_ignores_historical_leak(privacy_repo: Path):
-    token = _home("Users", "renameuser")
-    (privacy_repo / "old.md").write_text("clean\n" + token + "/old\n", encoding="utf-8")
-    git_run(privacy_repo, "add", "old.md")
-    git_run(privacy_repo, "commit", "-m", "historical leak")
-    git_run(privacy_repo, "mv", "old.md", "new.md")
-
-    assert privacy.scan_privacy_changes(privacy_repo) == []
-
-
-def test_rename_with_added_front_matter_reports_only_added_lines(privacy_repo: Path):
-    old_token = _home("Users", "historical")
-    new_token = _home("Users", "frontmatter")
-    body_lines = ["# Title", ""] + [f"body line {index:02d}" for index in range(40)]
-    body_lines.append("body " + old_token + "/old")
-    body = "\n".join(body_lines) + "\n"
-    (privacy_repo / "old.md").write_text(body, encoding="utf-8")
-    git_run(privacy_repo, "add", "old.md")
-    git_run(privacy_repo, "commit", "-m", "historical body")
-    git_run(privacy_repo, "mv", "old.md", "new.md")
-    (privacy_repo / "new.md").write_text(
-        "---\ntitle: demo\nnote: " + new_token + "/proj\n---\n" + body,
-        encoding="utf-8",
-    )
-    git_run(privacy_repo, "add", "new.md")
-
-    assert privacy.scan_privacy_changes(privacy_repo) == [f"new.md:3: {new_token}"]
-
-
-def test_low_similarity_rename_is_scanned_as_new_file(privacy_repo: Path):
-    token = _home("Users", "rewriteuser")
-    old_lines = [f"alpha section {index:02d}" for index in range(40)] + [
-        "historical " + token + "/old",
-    ]
-    new_lines = [f"beta rewrite {index:02d}" for index in range(40)] + [
-        "historical " + token + "/old",
-        "tail",
-    ]
-    (privacy_repo / "old.md").write_text("\n".join(old_lines) + "\n", encoding="utf-8")
-    git_run(privacy_repo, "add", "old.md")
-    git_run(privacy_repo, "commit", "-m", "old content")
-    git_run(privacy_repo, "mv", "old.md", "new.md")
-    (privacy_repo / "new.md").write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    git_run(privacy_repo, "add", "new.md")
-
-    status = git_run(privacy_repo, "diff", "--cached", "--name-status", "-M").stdout
-    assert not any(line.startswith("R") for line in status.splitlines())
-    assert privacy.scan_privacy_changes(privacy_repo) == [f"new.md:41: {token}"]
-
-
-def _write_task(root: Path, tid: str, slug: str, status: str, token: str) -> None:
-    directory = root / "docs/tasks" / f"{tid}_{slug}"
-    directory.mkdir(parents=True)
-    fm = {
-        "tid": tid, "slug": slug, "title": slug, "status": status,
-        "branch": "", "worktree": "", "review_level": "full",
-        "diff_anchor": "", "note": "",
-    }
-    (directory / "progress.md").write_text(
-        dump_front_matter(fm) + "\n# Task\n", encoding="utf-8",
-    )
-    (directory / "notes.md").write_text("clean\n" + token + "/proj\n", encoding="utf-8")
-
-
-def test_full_audit_excludes_terminal_tasks_and_retired_specs_but_scans_src(tmp_path: Path):
-    root = build_full_product_tree_repo(tmp_path / "full_tree")
-    token = _home("Users", "audituser")
-    _write_task(root, "t002", "done_task", "done", token)
-    _write_task(root, "t003", "dropped_task", "dropped", token)
-    (root / "docs/specs").mkdir(exist_ok=True)
-    (root / "docs/specs/retired_feature.md").write_text(
-        render_spec_text(
-            "retired_feature", "retired", ["baseline"],
-            "\n# Retired\n\n" + token + "/old\n",
-        ),
-        encoding="utf-8",
-    )
-    (root / "src").mkdir(exist_ok=True)
-    (root / "src/app.txt").write_text("clean\n" + token + "/app\n", encoding="utf-8")
-    git_run(root, "add", "-A")
-    git_run(root, "commit", "-m", "audit fixtures")
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(root / ".repo_template/scripts/task.py"),
-            "privacy-audit", "--ref", "HEAD",
-        ],
-        cwd=str(root), env=get_controlled_git_env(),
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-    )
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert result.stdout.splitlines() == [f"src/app.txt:2: {token}"]
 
 
 def _write_review_dir(root: Path, day: int) -> Path:

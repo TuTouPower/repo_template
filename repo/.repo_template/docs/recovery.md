@@ -27,7 +27,7 @@
 - **HEAD 未前进且现场与事务期望一致**：精确回滚 finish 自身写入（front matter、`handoff.json`、index），调用方原有暂存与未暂存内容保持；修复原因后可直接重跑 `finish`。
 - **结果未知**（存在 `index.lock` / `HEAD.lock` 等 Git 锁、HEAD 不可读、暂存区或 task 目录已被外部修改）：保留 journal 与现场，输出「提交结果未知」，禁止自动回滚与盲目重试。
 
-遗留 journal 由 `task.py recovery {tid}` 以同一判定逻辑报告 `finish_txn_committed` / `finish_txn_rollback_safe` / `finish_txn_unknown`。重跑 `finish` 会先幂等处理遗留事务：`committed` 拒绝重复提交，`rollback_safe` 先回滚再继续，`unknown` 阻断并要求人工核查。收尾完成后运行 `task.py finish-txn-clear {tid}` 清理已完成事务：仅当 journal 对应实现 commit（tip 为事务起点后继）且 tip 引入变更隐私核对通过时才清理。进程被杀等中断同样由该 journal 与 recovery 兜底。
+遗留 journal 由 `task.py recovery {tid}` 以同一判定逻辑报告 `finish_txn_committed` / `finish_txn_rollback_safe` / `finish_txn_unknown`。重跑 `finish` 会先幂等处理遗留事务：`committed` 拒绝重复提交，`rollback_safe` 先回滚再继续，`unknown` 阻断并要求人工核查。收尾完成后运行 `task.py finish-txn-clear {tid}` 清理已完成事务：仅当 journal 对应实现 commit（tip 为事务起点后继）时才清理。进程被杀等中断同样由该 journal 与 recovery 兜底。
 
 无 journal 的历史现场仍按既有阶段检测：`finish_interrupted`（已 done、无 `handoff.json`、无实现 commit）停止并报告用户，不重复 finish；`finished_uncommitted`（已有 `handoff.json`、尚无实现 commit）核验后暂存并提交实现 commit；`committed_unreported` 及之后补缺失的 terminal/report 并 cleanup，可由 `run-close` 完成（重入安全；owner_id 须与 claim 一致，跨会话先按上节接管规程 claim）。已提交但 review 门禁失败时，recovery 判 `review_repair`，按「review 门禁失败后的修复」补审后重跑同一 `run-close`，不要按 `committed_unreported` 只补 terminal/report。
 
@@ -57,7 +57,7 @@ ledger 丢失但 done 分支和已入库的执行回执完整时，运行 `task.
 
 journal v3 记录每一步原子业务写入的前后指纹；写 index 前先在私有 index 计算目标 tree。HEAD 未前进且文件/index 匹配已记录中间状态时，重跑 finish 可精确回滚自身写入，再重新检查。未记录的外部修改一律保留现场，不自动覆盖。
 
-prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committing/committed 阶段还须核对唯一父提交与 handoff 执行身份；清理快照之前必须验证实际 tree、review scope 与隐私。hook 改写导致 tree 不匹配时保留 journal；recovery 按 finish_tree_mismatch 诊断，满足原 finish-unwind 写权、running、无 done report、无后继约束后才可撤销重做。成功 unwind 后清理已认领事务，避免新 finish 被旧 journal 锁死。
+prepared/writing/staging 阶段 HEAD 前进不能视为本事务提交。committing/committed 阶段还须核对唯一父提交与 handoff 执行身份；清理快照之前必须验证实际 tree、review scope。hook 改写导致 tree 不匹配时保留 journal；recovery 按 finish_tree_mismatch 诊断，满足原 finish-unwind 写权、running、无 done report、无后继约束后才可撤销重做。成功 unwind 后清理已认领事务，避免新 finish 被旧 journal 锁死。
 
 旧 journal 不自动升级；存在旧事务时先按原版本恢复或人工核验，禁止直接删除备份后升级。故障注入与真实迁移演练须在目标仓按恢复预案执行；模板发布验证不替代目标仓演练。
 
