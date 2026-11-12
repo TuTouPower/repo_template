@@ -86,6 +86,7 @@
 | L69 | A06 自动解冲突以 note 子串认定上限调大「已授权」 | 2026-11-10 四线合并审阅第 8 项、用户裁定 | 维持现状，只修措辞：合并检查是一致性检查，不是授权证明；「用户批准后调大轮次上限」是 agent 必须遵守的流程约束，代码不核验批准来源；不做 TTY 确认或主仓审计日志等机械强制 | `repo_task/integration.py` docstring、`.repo_template/docs/{architecture,recovery}.md`；方案见 `reviews/review_20261110/adoption.md` F12 | 已实施 |
 | L70 | 隐私门禁不阻断存量泄漏，与 review_20261107 A07 验收冲突 | 2026-11-10 四线合并审阅第 14 项、用户裁定 | 以 `conventions.md` 为准：门禁只阻断本次新增文本行，存量由显式 `privacy-audit` 处理；不加自动存量审计门禁；A07 追加后续修订说明 | `repo/docs/blueprint/conventions.md`、`reviews/review_20261107/adoption.md` A07 | 已落地 |
 | L71 | 迁移备份恢复缺隔离消费仓真实演练 | 2026-11-10 四线合并审阅第 33 项、review_20261109 | 用户裁定不做；迁移恢复的证据边界为代码路径与工厂 rollback 用例，引用「迁移已验收」时保留该限定 | `reviews/review_20261110/adoption.md` | 已否决 |
+| L72 | `task.py finish` 隐私门禁误报测试 fixture 合成家目录路径（Issue #93） | Issue #93、用户裁定（2026-11-12） | 不再修 false positive，整体移除路径隐私检查机制：删 `repo_task/privacy.py` 与 `privacy-audit` 命令，摘除 finish / merge / tip / review / run-close / recovery 各门禁调用与状态字段，清理文档、契约测试与连带孤儿代码；`factory_docs` 历史笔记保留。零兼容性负担：不为旧消费仓 `conventions.md` 残留的过时段落保留迁移逻辑，由消费仓自行删除，新 bootstrap 不受影响 | `repo/.repo_template/`、`repo/docs/blueprint/conventions.md`、`factory_tests/` | 已落地（commit `fda80eb`） |
 
 
 ## 未闭环
