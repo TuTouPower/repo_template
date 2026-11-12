@@ -44,6 +44,11 @@ def cmd_transaction(args):
             elif args.action == "rollback":
                 transaction.rollback(confirm_restore=args.confirm_restore)
                 print("同步事务已回滚；备份保留")
+            elif args.action == "cancel":
+                if not getattr(args, "confirm_post_commit", False):
+                    raise ctx.SyncError("提交后取消须显式 --confirm-post-commit 确认；事务保持原状态")
+                transaction.cancel_post_commit()
+                print("同步事务已标记为提交后取消；备份与审计字段保留")
             else:
                 data = transaction.read()
                 if not data or data["status"] != "applied":

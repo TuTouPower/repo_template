@@ -6,6 +6,7 @@ consumed, and a failed restore remains visible as an unfinished transaction.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import shutil
@@ -18,7 +19,7 @@ SYNC_TRANSACTION_DIR = "sync_transaction"
 GRAPH_TRANSACTION_DIR = "graph_transaction"
 TRANSACTION_DIRS = (SYNC_TRANSACTION_DIR, GRAPH_TRANSACTION_DIR)
 OPEN_STATUSES = frozenset({"preparing", "applying", "applied", "restore_failed"})
-FINISHED_STATUSES = frozenset({"accepted", "rolled_back"})
+FINISHED_STATUSES = frozenset({"accepted", "rolled_back", "cancelled", "no_op"})
 
 
 def open_transactions(root) -> list[tuple[str, str]]:
@@ -101,7 +102,7 @@ def _snapshot_asset(base, name, backup, absent_parents=None):
     return exists
 
 
-def fingerprint(root, paths, state_paths=()):
+def fingerprint(root, paths, state_paths=(), *, state_base=None):
     digest = hashlib.sha256()
 
     def feed(logical, path):
@@ -127,9 +128,10 @@ def fingerprint(root, paths, state_paths=()):
                 continue
             feed(rel.as_posix(), path)
     if state_paths:
-        from .context import common_state_dir
+        if state_base is None:
+            from .context import common_state_dir
 
-        state_base = common_state_dir(root)
+            state_base = common_state_dir(root)
         for name in state_paths:
             feed("@state/" + name, state_base / name)
     return digest.hexdigest()
@@ -254,3 +256,85 @@ class FileTransaction:
         data["after"] = current
         data["status"] = "accepted"
         self.save(data)
+
+    def no_op(self):
+        data = self.read()
+        if not data or data["status"] not in {"preparing", "applying"}:
+            raise ValueError("只有进行中事务可以标记 no_op")
+        self.rollback(automatic=True)
+        data = self.read()
+        data["status"] = "no_op"
+        self.save(data)
+
+    def _sync_commit(self, base_head):
+        result = subprocess.run(
+            ["git", "-C", str(self.root), "rev-list", "--ancestry-path", "--parents",
+             f"{base_head}..HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode:
+            raise ValueError("无法解析同步提交链：" + result.stderr.strip())
+        children = []
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and base_head in parts[1:]:
+                children.append(parts[0])
+        if len(children) != 1:
+            raise ValueError(
+                "找不到唯一的同步 commit（base_head 直接子提交）；"
+                f"候选 {len(children)} 个，须确认 revert 方式"
+            )
+        return children[0]
+
+    def cancel_post_commit(self):
+        data = self.read()
+        if not data or data["status"] != "applied":
+            raise ValueError("只有 applied 事务可以提交后取消")
+        base_head = data.get("base_head")
+        if not base_head:
+            raise ValueError("事务未记录同步前 base_head；请用 transaction rollback")
+        head = subprocess.run(
+            ["git", "-C", str(self.root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if head.returncode:
+            raise ValueError("无法读取当前 HEAD：" + head.stderr.strip())
+        if head.stdout.strip() == base_head:
+            raise ValueError("HEAD 仍为同步前 base_head（尚未提交）；请用 transaction rollback")
+        paths = list(data["paths"])
+        status = subprocess.run(
+            ["git", "-C", str(self.root), "status", "--porcelain", "--", *paths],
+            capture_output=True, text=True, timeout=30,
+        )
+        if status.returncode or status.stdout.strip():
+            raise ValueError(
+                "提交后取消核验未通过：事务路径工作区不干净；"
+                "先提交或清理本轮改动，只读核验不覆盖文件"
+            )
+        diff = subprocess.run(
+            ["git", "-C", str(self.root), "diff", "--quiet", base_head, "HEAD", "--", *paths],
+            capture_output=True, text=True, timeout=30,
+        )
+        if diff.returncode not in (0, 1):
+            raise ValueError("无法比较 base_head 与 HEAD 的受管路径：" + diff.stderr.strip())
+        if diff.returncode == 1:
+            raise ValueError(
+                "受管路径在 HEAD 与 base_head 内容不一致；"
+                "请先 git revert 同步 commit，只读核验不覆盖文件"
+            )
+        state_paths = data.get("state_paths", {})
+        baseline = fingerprint(self.root, (), state_paths, state_base=self.backup / "__state__")
+        current = fingerprint(self.root, (), state_paths)
+        if baseline != current:
+            raise ValueError(
+                "common 状态未恢复基线；git revert 不自动恢复 common 状态，"
+                "请从备份人工恢复 sync_state/ledger 等后重试"
+            )
+        cancelled_commit = self._sync_commit(base_head)
+        data["status"] = "cancelled"
+        data["cancelled_commit"] = cancelled_commit
+        data["cancelled_at"] = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=8))
+        ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        self.save(data)
+        return cancelled_commit

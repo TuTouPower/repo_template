@@ -53,8 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--fetch", action="store_true", help="URL 源联网刷新缓存（默认离线只读）")
     plan_parser.set_defaults(func=cmd_plan)
     transaction = sub.add_parser("transaction", help="持久同步事务的查询、恢复与接受")
-    transaction.add_argument("action", choices=("status", "rollback", "accept"))
+    transaction.add_argument("action", choices=("status", "rollback", "accept", "cancel"))
     transaction.add_argument("--confirm-restore", action="store_true")
+    transaction.add_argument("--confirm-post-commit", action="store_true")
     transaction.set_defaults(func=cmd_transaction)
 
     apply = sub.add_parser("apply", help="执行对齐写盘")
