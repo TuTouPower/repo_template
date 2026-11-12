@@ -114,3 +114,40 @@ def test_success_preserves_indent_and_leaves_no_temp(env):
         {"type": "command", "command": "python3 scripts/custom_guard.py"}
     ]
     assert '\n    "hooks"' in rewritten
+
+
+def test_cleanup_failure_reports_incomplete_restore(env, tmp_path, monkeypatch, capsys):
+    """R05：临时文件清理失败时不得宣称完整回滚，事务须保留恢复未完成状态与残留路径。"""
+    args = _prepare(env, tmp_path, monkeypatch)
+    settings, original = _scenario(env)
+    claude = settings.parent
+    real_replace = documents.os.replace
+    real_unlink = Path.unlink
+
+    def failing_replace(src, dst, *a, **kw):
+        if Path(dst).name == "settings.json":
+            raise OSError("injected rename failure")
+        return real_replace(src, dst, *a, **kw)
+
+    def failing_unlink(self, *a, **kw):
+        if self.name.startswith(".settings.json.") and self.name.endswith(".tmp"):
+            raise OSError("injected cleanup failure")
+        return real_unlink(self, *a, **kw)
+
+    with monkeypatch.context() as injected:
+        injected.setattr(documents.os, "replace", failing_replace)
+        injected.setattr(Path, "unlink", failing_unlink)
+        assert cmd_apply(args) == 1
+
+    err = capsys.readouterr().err
+    assert "已完整回滚" not in err
+    assert "残留路径" in err
+    assert ".settings.json." in err
+    tx = state_transaction(env["consumer"], SYNC_TRANSACTION_DIR).read()
+    assert tx["status"] == "restore_failed"
+    assert any(".settings.json." in path for path in tx["restore_leftovers"])
+    assert settings.read_bytes() == original
+    assert list(claude.glob(".settings.json.*.tmp"))
+    assert "?? .claude/" in _git(
+        env["consumer"], "status", "--porcelain", "--untracked-files=all"
+    ).stdout

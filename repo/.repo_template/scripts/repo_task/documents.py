@@ -176,11 +176,15 @@ def atomic_write_text(path: Path | str, content: str, *, encoding: str = "utf-8"
             except OSError:
                 pass
         os.replace(temporary, path)
-    except BaseException:
+    except BaseException as write_error:
         try:
             temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as cleanup_error:
+            error = DocumentWriteError(
+                f"写入失败（{write_error}）且临时文件清理失败：{temporary}；请人工删除后重试"
+            )
+            error.leftover = str(temporary)
+            raise error from cleanup_error
         raise
 
 

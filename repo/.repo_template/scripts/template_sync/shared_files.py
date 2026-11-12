@@ -95,6 +95,12 @@ _PRETTIERIGNORE_HEADER = (
 
 _NESTED_PROBES = ("src/.repo_template/probe.json", "tests/fixtures/.repo_template/probe.json")
 
+# 0b112d0 写入的未锚定规则：根锚定升级时必须回收，否则嵌套同名目录继续被误豁免。
+_RETIRED_PRETTIERIGNORE_RULES = (".repo_template/",)
+
+# 模板会写入、但位于工具链目录之外、仍受消费仓自身 format 门禁管理的配置。
+DIRECTORY_OUTSIDE_TOOLKIT = (*ctx.MCP_CANDIDATES, ".claude/settings.json")
+
 
 def _prettierignore_rules(path: Path) -> set[str]:
     """读取 .prettierignore 现有规则（去空行与注释、去首尾空白）。"""
@@ -141,35 +147,73 @@ def _git_ignored(rules_text: str, rels: list[str]) -> set[str]:
 def assert_format_exempt(consumer: Path) -> None:
     """模板自有机器资产必须被 .prettierignore 有效豁免；未豁免即在提交前整体回滚。
 
-    用真实 gitignore 引擎判定，保留规则顺序、否定、目录与根锚定语义；不执行消费仓
-    formatter，也不复刻 ignore 语法。提交 hook 因豁免恒为 no-op，审批 diff 与提交
-    内容一致，accept 的指纹校验才能通过。
+    用真实 gitignore 引擎判定（消费仓实际规则原文与嵌套目录范围都参与），保留规则
+    顺序、否定、目录与根锚定语义；不执行消费仓 formatter，也不复刻 ignore 语法。
     """
     consumer = consumer.resolve()
     ignore = consumer / ".prettierignore"
+    rules_text = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     rules = _prettierignore_rules(ignore)
     missing = [rule for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES if rule not in rules]
     if missing:
         raise ctx.SyncError("format 豁免规则缺失：" + "、".join(missing))
-    nested = _git_ignored(
-        "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n", list(_NESTED_PROBES)
-    )
+    nested = _git_ignored(rules_text, list(_NESTED_PROBES))
     if nested:
-        raise ctx.SyncError("根锚定失效，嵌套同名目录被误豁免：" + "、".join(sorted(nested)))
+        raise ctx.SyncError(
+            "根锚定失效或消费规则过宽，嵌套同名目录被误豁免：" + "、".join(sorted(nested))
+        )
     owned = consumer / ".repo_template"
     candidates = sorted(owned.rglob("*.json")) if owned.is_dir() else []
     toolkit = [path.relative_to(consumer).as_posix() for path in candidates if path.is_file()]
-    rules_text = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     ignored = _git_ignored(rules_text, toolkit)
     uncovered = [rel for rel in toolkit if rel not in ignored]
     if uncovered:
         raise ctx.SyncError("模板自有 JSON 未被 format 豁免覆盖：" + "、".join(uncovered))
 
 
+def assert_commit_stability(consumer: Path, changed: set[Path]) -> None:
+    """本轮写入的目录外配置必须被消费仓 .prettierignore 豁免，否则提交前阻断。
+
+    模板沿用消费仓原缩进，但不宣称其字节与消费仓 formatter 输出逐字节一致；这些
+    路径若仍受消费仓 format 门禁管理，提交 hook 可能改写并使 accept 指纹拒绝。
+    受支持流程：消费仓把这些路径纳入自己的 .prettierignore，或把提交 hook 改为只读检查。
+    """
+    consumer = consumer.resolve()
+    touched = []
+    for path in sorted(changed):
+        try:
+            rel = path.relative_to(consumer).as_posix()
+        except ValueError:
+            continue
+        if rel in DIRECTORY_OUTSIDE_TOOLKIT:
+            touched.append(rel)
+    if not touched:
+        return
+    ignore = consumer / ".prettierignore"
+    rules_text = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    ignored = _git_ignored(rules_text, touched)
+    conflicts = [rel for rel in touched if rel not in ignored]
+    if conflicts:
+        raise ctx.SyncError(
+            "本轮同步写入了目录外配置，且未被消费仓 .prettierignore 豁免："
+            + "、".join(conflicts)
+            + "；消费仓提交 hook 的 formatter 可能改写这些文件，使提交内容偏离审批指纹。"
+            + "请把这些路径纳入消费仓自己的 .prettierignore，或把提交 hook 改为只读检查后重试。"
+        )
+
+
 def merge_prettierignore(changed: set[Path], sync: ctx.SyncContext) -> dict:
-    """机械合并 .prettierignore：模板自有路径去重追加，消费独有规则保留。"""
+    """机械合并 .prettierignore：回收已下线模板规则，必需规则去重追加，消费独有规则保留。"""
     dst = sync.consumer / ".prettierignore"
     dst_lines = dst.read_text(encoding="utf-8").splitlines() if dst.exists() else []
+    removed = [
+        line.strip() for line in dst_lines
+        if line.strip() in _RETIRED_PRETTIERIGNORE_RULES
+    ]
+    dst_lines = [
+        line for line in dst_lines
+        if line.strip() not in _RETIRED_PRETTIERIGNORE_RULES
+    ]
     dst_set = {ln.strip() for ln in dst_lines}
     added: list[str] = []
     for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES:
@@ -181,7 +225,7 @@ def merge_prettierignore(changed: set[Path], sync: ctx.SyncContext) -> dict:
             dst_lines[index:index + 1] = list(_PRETTIERIGNORE_HEADER)
             header_changed = True
             break
-    if added or header_changed:
+    if added or header_changed or removed:
         if added:
             if dst_lines and dst_lines[-1].strip():
                 dst_lines.append("")
@@ -194,7 +238,7 @@ def merge_prettierignore(changed: set[Path], sync: ctx.SyncContext) -> dict:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(text.encode("utf-8"))
         changed.add(dst)
-    return {"added": added, "dst": sync.rel(dst)}
+    return {"added": added, "removed": removed, "dst": sync.rel(dst)}
 
 
 _SECRET_KEY_RE = re.compile(

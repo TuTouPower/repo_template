@@ -26,6 +26,7 @@ from .migrations import MIGRATIONS
 from .entity_storage_migration import validate_current_entities
 from .shared_files import (
     _apply_shared_unit,
+    assert_commit_stability,
     assert_format_exempt,
     merge_gitignore,
     merge_mcp,
@@ -100,7 +101,7 @@ def _format_markdown(sync, paths):
     format_paths(_changed_markdown(sync, paths), repo=RepoContext.for_root(sync.consumer))
 
 
-def _validate_result(src, sync, paths):
+def _validate_result(src, sync, paths, changed):
     from md_format import format_paths
     from repo_task.context import RepoContext
     result = sync_preflight(src, sync)
@@ -112,6 +113,7 @@ def _validate_result(src, sync, paths):
     if drift:
         raise ctx.SyncError("Markdown 格式漂移：" + "、".join(drift))
     assert_format_exempt(sync.consumer)
+    assert_commit_stability(sync.consumer, changed)
 
 
 def _apply_sync_write(
@@ -224,7 +226,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             _assert_distributable_tree(src)
             state = write_snapshot(src)
             _format_markdown(sync, paths)
-            _validate_result(src, sync, paths)
+            _validate_result(src, sync, paths, changed)
         else:
             with tempfile.TemporaryDirectory(prefix="source_", dir=transaction.backup) as directory:
                 snapshot = Path(directory)
@@ -232,7 +234,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 _as_product(snapshot)
                 state = write_snapshot(snapshot)
                 _format_markdown(sync, paths)
-                _validate_result(snapshot, sync, paths)
+                _validate_result(snapshot, sync, paths, changed)
         if not args.skip_tests:
             if not _run_tests(sync.consumer):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
@@ -268,11 +270,25 @@ def cmd_apply(args: argparse.Namespace) -> int:
     except BaseException as error:
         # 可捕获中断同样先恢复基线；随后重新抛出，保留原退出语义。
         rollback_ok = False
+        leftovers: list[str] = []
         try:
             transaction.rollback(automatic=True)
             rollback_ok = True
         except Exception as rb_err:
             print(f"WARNING: 事务自动回滚失败（{rb_err}），现场可能残留未恢复文件", file=sys.stderr)
+
+        cleanup_leftover = None
+        cursor: BaseException | None = error
+        while cursor is not None and cleanup_leftover is None:
+            cleanup_leftover = getattr(cursor, "leftover", None)
+            cursor = cursor.__cause__ or cursor.__context__
+        if cleanup_leftover:
+            data = transaction.read()
+            data["status"] = "restore_failed"
+            data["restore_leftovers"] = [cleanup_leftover]
+            transaction.save(data)
+            leftovers = [cleanup_leftover]
+            rollback_ok = False
 
         if rollback_ok:
             _print_changed(changed, "\n=== 本次写入清单（失败，已回滚，仅供排查）===", sync=sync)
@@ -280,6 +296,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
                   f"回滚备份保留在 {SYNC_TRANSACTION_DIR}", file=sys.stderr)
         else:
             _print_changed(changed, "\n=== 本次写入清单（失败且回滚未完成，现场可能残留混合状态）===", sync=sync)
+            if leftovers:
+                print("残留路径：" + "、".join(leftovers), file=sys.stderr)
             print(f"错误: {error}；自动回滚未完全成功，现场可能存在混合版本工具文件！"
                   f"备份保留在 {SYNC_TRANSACTION_DIR}，请人工执行 python3 ... repo_sync transaction rollback --confirm-restore 恢复基线", file=sys.stderr)
         if not isinstance(error, Exception):

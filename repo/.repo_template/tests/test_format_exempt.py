@@ -80,3 +80,14 @@ def test_missing_rules_fail_closed(tmp_path):
     (tmp_path / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
     with pytest.raises(ctx.SyncError, match="format 豁免规则缺失"):
         assert_format_exempt(tmp_path)
+
+
+def test_actual_consumer_rules_with_old_unanchored_rule_are_blocked(tmp_path):
+    """消费仓实际 .prettierignore 残留旧未锚定规则时，嵌套目录范围核验必须阻断。"""
+    (tmp_path / ".repo_template").mkdir()
+    (tmp_path / ".repo_template/entity_schema.json").write_text('{"version": 1}\n')
+    (tmp_path / ".prettierignore").write_text(
+        ".repo_template/\n" + "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n"
+    )
+    with pytest.raises(ctx.SyncError, match="嵌套同名目录被误豁免"):
+        assert_format_exempt(tmp_path)

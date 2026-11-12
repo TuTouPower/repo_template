@@ -211,6 +211,22 @@ def test_preexisting_full_ruleset_merge_is_noop(env):
     assert pi.read_text() == text
 
 
+def test_retired_unanchored_rule_is_migrated(env):
+    """0b112d0 写入的 .repo_template/ 必须在根锚定升级时回收。"""
+    pi = env["consumer"] / ".prettierignore"
+    pi.write_text(
+        ".repo_template/\ndocs/**/handoff.json\n.opencode/package.json\n.opencode/package-lock.json\n",
+        encoding="utf-8",
+    )
+    changed: set[Path] = set()
+    info = merge_prettierignore(changed, env["sync"])
+    lines = pi.read_text().splitlines()
+    assert ".repo_template/" in info["removed"]
+    assert ".repo_template/" not in lines
+    assert "/.repo_template/" in lines
+    assert pi in changed
+
+
 def test_detect_json_indent(env):
     assert _detect_json_indent('{\n  "a": 1\n}\n') == 2
     assert _detect_json_indent('{\n    "a": 1\n}\n') == 4
