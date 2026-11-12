@@ -101,6 +101,19 @@ _RETIRED_PRETTIERIGNORE_RULES = (".repo_template/",)
 # 模板会写入、但位于工具链目录之外、仍受消费仓自身 format 门禁管理的配置。
 DIRECTORY_OUTSIDE_TOOLKIT = (*ctx.MCP_CANDIDATES, ".claude/settings.json")
 
+# 模板声明过的规则行（含已下线旧规则）：用于把消费仓自有忽略意图从实际配置中剥离。
+_TEMPLATE_RULE_LINES = frozenset(ctx.PRETTIERIGNORE_TEMPLATE_RULES) | frozenset(
+    _RETIRED_PRETTIERIGNORE_RULES
+)
+
+
+def _consumer_only_rules(rules_text: str) -> str:
+    """剥离模板声明规则，保留消费仓自有忽略意图用于范围对照。"""
+    return "\n".join(
+        line for line in rules_text.splitlines()
+        if line.strip() not in _TEMPLATE_RULE_LINES
+    ) + "\n"
+
 
 def _prettierignore_rules(path: Path) -> set[str]:
     """读取 .prettierignore 现有规则（去空行与注释、去首尾空白）。"""
@@ -157,10 +170,12 @@ def assert_format_exempt(consumer: Path) -> None:
     missing = [rule for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES if rule not in rules]
     if missing:
         raise ctx.SyncError("format 豁免规则缺失：" + "、".join(missing))
-    nested = _git_ignored(rules_text, list(_NESTED_PROBES))
-    if nested:
+    baseline = _git_ignored(_consumer_only_rules(rules_text), list(_NESTED_PROBES))
+    actual = _git_ignored(rules_text, list(_NESTED_PROBES))
+    template_caused = actual - baseline
+    if template_caused:
         raise ctx.SyncError(
-            "根锚定失效或消费规则过宽，嵌套同名目录被误豁免：" + "、".join(sorted(nested))
+            "模板规则造成嵌套同名目录被误豁免：" + "、".join(sorted(template_caused))
         )
     owned = consumer / ".repo_template"
     candidates = sorted(owned.rglob("*.json")) if owned.is_dir() else []
@@ -176,7 +191,8 @@ def assert_commit_stability(consumer: Path, changed: set[Path]) -> None:
 
     模板沿用消费仓原缩进，但不宣称其字节与消费仓 formatter 输出逐字节一致；这些
     路径若仍受消费仓 format 门禁管理，提交 hook 可能改写并使 accept 指纹拒绝。
-    受支持流程：消费仓把这些路径纳入自己的 .prettierignore，或把提交 hook 改为只读检查。
+    脚本只核验 .prettierignore 豁免，受支持流程仅此一条：消费仓把这些路径纳入自己的
+    .prettierignore 后重试（提交 hook 是否只读不在本检查范围内）。
     """
     consumer = consumer.resolve()
     touched = []
@@ -198,7 +214,7 @@ def assert_commit_stability(consumer: Path, changed: set[Path]) -> None:
             "本轮同步写入了目录外配置，且未被消费仓 .prettierignore 豁免："
             + "、".join(conflicts)
             + "；消费仓提交 hook 的 formatter 可能改写这些文件，使提交内容偏离审批指纹。"
-            + "请把这些路径纳入消费仓自己的 .prettierignore，或把提交 hook 改为只读检查后重试。"
+            + "请把这些路径纳入消费仓自己的 .prettierignore 后重试（脚本只核验豁免，不读取 hook 模式）。"
         )
 
 

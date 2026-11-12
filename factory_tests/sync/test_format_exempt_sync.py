@@ -272,3 +272,22 @@ def test_old_unanchored_rule_is_migrated_during_apply(env, tmp_path, monkeypatch
         (consumer / ".prettierignore").read_text(encoding="utf-8"),
         ["src/.repo_template/app.json"],
     ) == set()
+
+
+def test_consumer_fixtures_ignore_does_not_block_sync(env, tmp_path, monkeypatch):
+    """N01：消费仓合法忽略 tests/fixtures/ 不应被误判成模板规则范围扩张。"""
+    args = _prepare(env, tmp_path, monkeypatch)
+    consumer = env["consumer"]
+    fixtures = consumer / "tests/fixtures/payload.json"
+    fixtures.parent.mkdir(parents=True, exist_ok=True)
+    fixtures.write_text('{"payload": 1}\n', encoding="utf-8")
+    (consumer / ".prettierignore").write_text(
+        "tests/fixtures/\n" + "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n",
+        encoding="utf-8",
+    )
+    _git(consumer, "add", "-A")
+    _git(consumer, "commit", "-m", "consumer ignores fixtures")
+    assert cmd_apply(args) == 0
+    lines = (consumer / ".prettierignore").read_text().splitlines()
+    assert "tests/fixtures/" in lines
+    assert "/.repo_template/" in lines

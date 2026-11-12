@@ -241,7 +241,15 @@ class FileTransaction:
             data["status"] = "restore_failed"
             self.save(data)
             raise
+        leftovers = [Path(item) for item in data.get("restore_leftovers", [])]
+        remaining = [str(path) for path in leftovers if path.exists() or path.is_symlink()]
+        if remaining:
+            data["status"] = "restore_failed"
+            data["restore_leftovers"] = remaining
+            self.save(data)
+            raise ValueError("残留文件未清除，事务保持 restore_failed：" + "、".join(remaining))
         data["status"] = "rolled_back"
+        data.pop("restore_leftovers", None)
         self.save(data)
 
     def accept(self, *, verified=False):

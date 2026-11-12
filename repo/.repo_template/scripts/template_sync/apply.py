@@ -172,6 +172,17 @@ def _has_delivery_diff(sync: ctx.SyncContext) -> bool:
     return bool(status.stdout.strip())
 
 
+def _collect_delivery_paths(sync: ctx.SyncContext) -> set[Path]:
+    """以真实工作区为准统一收集本轮写入集（含迁移器局部 changed 未回传的路径）。"""
+    tracked = _git(sync.consumer, "diff", "--name-only", "-z", "HEAD")
+    untracked = _git(sync.consumer, "ls-files", "--others", "--exclude-standard", "-z")
+    return {
+        sync.consumer / rel
+        for rel in (tracked.stdout + untracked.stdout).split("\0")
+        if rel
+    }
+
+
 @consumer_locked
 def cmd_apply(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
@@ -220,6 +231,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             migrated_state = read_state(sync) or state
             _apply_sync_write(snapshot, getattr(args, "decisions", None) or {}, changed,
                               prompt_substrings(migrated_state), sync=sync)
+            changed.update(_collect_delivery_paths(sync))
             return migrated_state
 
         if dirty:
@@ -303,9 +315,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if not isinstance(error, Exception):
             raise
         return 1
-    tracked = _git(sync.consumer, "diff", "--name-only", "-z", "HEAD")
-    untracked = _git(sync.consumer, "ls-files", "--others", "--exclude-standard", "-z")
-    changed.update(sync.consumer / rel for rel in (tracked.stdout + untracked.stdout).split("\0") if rel)
+    changed.update(_collect_delivery_paths(sync))
     print(f"来源 SHA: {source_commit}")
     _print_changed(changed, "\n=== 改动路径清单（commit 门禁点名 add）===", sync=sync)
     print("state 推进：last_synced_commit=" + ("已更新" if not dirty else "SRC dirty，未推进"))
