@@ -184,8 +184,13 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     shutil.rmtree(source / "repo")
     shutil.copytree(PRODUCT, source / "repo", symlinks=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"))
-    _git(source, "add", "-A")
-    _git(source, "commit", "-m", "test: current template snapshot")
+    # 固定来源：clone 的 HEAD 已含当前产物，pin 取 source 的 HEAD。无产物差异时
+    # 工作区与 HEAD 一致（同步器按 --checkout 读工作区），直接复用 HEAD，避免对干净
+    # 树做空提交触发 "nothing to commit" 失败；仅当开发工作区有待审产物改动时，才把
+    # copytree 快照落成快照提交，使来源重新干净并通过 apply 的 dirty 来源校验。
+    if _git(source, "status", "--porcelain").stdout.strip():
+        _git(source, "add", "-A")
+        _git(source, "commit", "-m", "test: current template snapshot")
     pin = _git(source, "rev-parse", "HEAD").stdout.strip()
     fake_bin = install_fake_md_kx(tmp_path, monkeypatch)
     before = _git(consumer, "rev-parse", "HEAD").stdout.strip()
