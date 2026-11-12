@@ -100,7 +100,7 @@ agent 报告来源完整 SHA、全部变更路径、迁移报告、校验结果�
 
 `repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径以根锚定 `/.repo_template/` 整目录为边界，清单见 `usage.md`「命名与格式」。apply 在提交前用 git 的真实 gitignore 引擎校验模板自有 JSON 全部被有效忽略（保留规则顺序、否定、目录与根锚定语义，不复刻语法）：必需规则缺失、被消费仓否定规则抵消、或根锚定失效导致嵌套同名目录被误豁免，均整体回滚（此时尚未提交，可回滚）。模板自有资产不受消费仓 prettier 重排，审批 diff 与提交内容一致。
 
-**边界**：上述校验只覆盖 `.repo_template/` 内模板自有资产。目录外的同步写入（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json`、`.claude/settings.json`、Markdown）仍受消费仓自身 formatter 管理；模板沿用消费仓原缩进，但不宣称其字节与消费仓 formatter 输出逐字节一致。若消费仓 commit hook 会改写这些文件，提交内容仍可能偏离 apply 指纹，`transaction accept` 会拒绝。根治需产品裁决：允许同步在事务内执行消费仓 formatter 做格式化与只读复验，或要求消费仓把提交 hook 改为只读检查、自行把这些路径纳入 `.prettierignore`。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
+**边界与责任**：上述校验只覆盖 `.repo_template/` 内模板自有资产。目录外的同步写入（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json`、`.claude/settings.json`、Markdown）仍受消费仓自身 formatter 管理；模板沿用消费仓原缩进，但不宣称其字节与消费仓 formatter 输出逐字节一致。同步契约要求提交阶段不改写受管文件（审批内容即提交内容，`transaction accept` 校验指纹）；消费仓若配置了会改写这些文件的 commit hook（如 lint-staged `prettier --write`），须由消费仓自行收敛：把提交 hook 改为只读检查，或把这些路径纳入消费仓自己的 `.prettierignore`。这是消费仓配置问题，模板仓不代管、不为此执行消费仓 formatter。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 
 ## 实体协议切换验收
 
