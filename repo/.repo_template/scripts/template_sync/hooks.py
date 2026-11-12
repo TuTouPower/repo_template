@@ -12,6 +12,8 @@ import os
 import sys
 from pathlib import Path
 
+from repo_task.documents import atomic_write_text
+
 from . import context as ctx
 from .common import _detect_json_indent, _git, consumer_locked
 
@@ -106,12 +108,10 @@ def _remove_retired_merge_guard_setting(
     if not hooks:
         data.pop("hooks", None)
     settings = sync.consumer / ".claude/settings.json"
-    temporary = settings.with_name(settings.name + ".tmp")
-    temporary.write_text(
+    atomic_write_text(
+        settings,
         json.dumps(data, ensure_ascii=False, indent=_detect_json_indent(raw)) + "\n",
-        encoding="utf-8",
     )
-    temporary.replace(settings)
     changed.add(settings)
     reports.append(f"{sync.rel(settings)} 已移除退役 merge guard PreToolUse")
 
