@@ -163,6 +163,13 @@ def _print_changed(paths: set[Path], header: str, sync: ctx.SyncContext) -> None
         print("（无改动）")
 
 
+def _has_delivery_diff(sync: ctx.SyncContext) -> bool:
+    status = _git(sync.consumer, "status", "--porcelain", "--untracked-files=all")
+    if status.returncode:
+        raise ctx.SyncError("无法读取本轮交付差异：" + status.stderr.strip())
+    return bool(status.stdout.strip())
+
+
 @consumer_locked
 def cmd_apply(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
@@ -253,6 +260,10 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state["last_synced_at"] = _now_iso()
         state["resolved_checkout"] = str(src)
         write_state(state, sync=sync)
+        if not _has_delivery_diff(sync):
+            transaction.no_op()
+            print("无变更，事务已收尾")
+            return 0
         transaction.applied(verified=not args.skip_tests)
     except BaseException as error:
         # 可捕获中断同样先恢复基线；随后重新抛出，保留原退出语义。
