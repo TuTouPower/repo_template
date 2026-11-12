@@ -26,7 +26,7 @@
 |`scripts/`|用户项目脚本|仅在 task 执行期按 spec 修改，或经授权由 `pending-fix` 在 main 直修；debug 复现不得写入|
 |`.repo_template/`|模板工具链（skills、scripts、docs、hooks）|仅模板演进时修改；细目与写权见`.repo_template/docs/usage.md`|
 |`artifacts/` `data/` `.scratch/`|产物、项目程序运行数据、一次性草稿|运行与草稿；`artifacts/` `data/` 须点名才清；`.scratch/` 默认由 `repo-cleanup` 清理，无主随时清，有主超过 3 天未修改也清，不放需长期保留的文件，长期保留放 `local/`；debug 复现和临时实验只写`.scratch/`（已 gitignore）；需保留的 spike 验证材料写 `docs/spikes/{sid}_{slug}/code/`|
-|`local/`|用户私有本地文件：备份、大文件、参考资料等不入库内容（已 gitignore）|只属于用户：工具链不扫描、不清理、不链接；agent 未经用户点名不读写；task worktree 需要时在 `.worktreeinclude` 声明 `/local/`|
+|`local/`|用户私有本地文件：备份、大文件、参考资料等不入库内容（已 gitignore；目录随模板存在，`.gitkeep` 占位）|只属于用户：工具链不扫描、不清理、不链接；agent 未经用户点名不读写；task worktree 需要时在 `.worktreeinclude` 声明 `/local/`|
 
 ## 开发原则
 

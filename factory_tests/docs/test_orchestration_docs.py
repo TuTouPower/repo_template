@@ -1,5 +1,7 @@
 """C/J1/A3：skill 与文档与新编排接口一致（run-begin / run-close / finish / 身份默认解析）。"""
 
+import subprocess
+import tempfile
 from pathlib import Path
 
 from factory_paths import FACTORY_ROOT
@@ -86,11 +88,34 @@ def test_task_dirs_stay_in_tasks_and_agents_has_no_archive_exception():
 
 
 def test_private_local_dir_is_declared_and_ignored():
-    """local/ 是用户私有不入库目录，与项目运行数据 data/ 分离。"""
+    """local/ 是用户私有不入库目录，目录随模板存在，与项目运行数据 data/ 分离。"""
     local_row = _agents_row("|`local/`|")
     assert "不入库" in local_row and "不清理" in local_row and ".worktreeinclude" in local_row
     assert "不放需长期保留的文件" in _agents_row("|`artifacts/` `data/` `.scratch/`|")
-    assert "/local/" in _text(PRODUCT / ".gitignore").splitlines()
+    lines = _text(PRODUCT / ".gitignore").splitlines()
+    assert "/local/*" in lines and "!/local/.gitkeep" in lines
+
+
+def test_local_dir_is_present_but_contents_ignored():
+    """目录必须随模板存在；用户放入的内容不入库，占位文件除外。"""
+    assert (PRODUCT / "local/.gitkeep").is_file()
+    with tempfile.TemporaryDirectory(prefix="local_ignore_") as directory:
+        root = Path(directory)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / ".gitignore").write_text(_text(PRODUCT / ".gitignore"), encoding="utf-8")
+        (root / "local").mkdir()
+        (root / "local/.gitkeep").write_bytes((PRODUCT / "local/.gitkeep").read_bytes())
+        (root / "local/notes.txt").write_text("private\n", encoding="utf-8")
+
+        def ignored(rel):
+            return subprocess.run(
+                ["git", "-C", str(root), "-c", "core.excludesFile=/dev/null",
+                 "check-ignore", "--no-index", "-q", "--", rel],
+                capture_output=True, text=True,
+            ).returncode == 0
+
+        assert not ignored("local/.gitkeep")
+        assert ignored("local/notes.txt")
 
 
 def test_evidence_commit_removed_and_amend_only_in_recovery_repair_section():
