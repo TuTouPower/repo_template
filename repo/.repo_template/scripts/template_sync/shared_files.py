@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -89,8 +90,10 @@ def merge_gitignore(src: Path, blocked: list[str], changed: set[Path], sync: ctx
 _PRETTIERIGNORE_OLD_HEADER = "# 同步自模板（repo-template-sync）：模板自有路径不受消费仓 format 门禁约束"
 _PRETTIERIGNORE_HEADER = (
     "# 同步自模板（repo-template-sync）：模板自有/本地生成路径不受消费仓 format 门禁约束；",
-    "# .repo_template/ 整目录归模板所有；目录外生成点（handoff.json / .opencode/package*.json）按需生成，不存在时仅为预留",
+    "# /.repo_template/ 根锚定整目录归模板所有；目录外生成点（handoff.json / .opencode/package*.json）按需生成，不存在时仅为预留",
 )
+
+_NESTED_PROBES = ("src/.repo_template/probe.json", "tests/fixtures/.repo_template/probe.json")
 
 
 def _prettierignore_rules(path: Path) -> set[str]:
@@ -104,33 +107,61 @@ def _prettierignore_rules(path: Path) -> set[str]:
     }
 
 
-def _rule_covers(rule: str, rel: str) -> bool:
-    """目录规则按前缀、其余按 glob 判定，与 prettier 的 .prettierignore 语义一致。"""
-    if rule.endswith("/"):
-        return rel.startswith(rule)
-    return fnmatch.fnmatch(rel, rule)
+def _git_ignored(rules_text: str, rels: list[str]) -> set[str]:
+    """用 git 的真实 gitignore 引擎判定 rels 中哪些路径被规则忽略。
+
+    .prettierignore 采用 gitignore 语法，规则顺序、否定、目录与根锚定必须由真实
+    引擎解释；在临时空仓里以 .gitignore 承载规则，排除全局 excludesFile 干扰。
+    """
+    if not rels:
+        return set()
+    ignored: set[str] = set()
+    with tempfile.TemporaryDirectory(prefix="prettier_ignore_") as directory:
+        engine = Path(directory)
+        init = subprocess.run(
+            ["git", "init", "-q"], cwd=engine,
+            capture_output=True, text=True, timeout=30,
+        )
+        if init.returncode:
+            raise ctx.SyncError("无法初始化 ignore 判定引擎：" + init.stderr.strip())
+        (engine / ".gitignore").write_text(rules_text, encoding="utf-8")
+        for rel in rels:
+            result = subprocess.run(
+                ["git", "-C", str(engine), "-c", "core.excludesFile=/dev/null",
+                 "check-ignore", "--no-index", "-q", "--", rel],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                ignored.add(rel)
+            elif result.returncode != 1:
+                raise ctx.SyncError(f"ignore 判定失败（{rel}）：" + result.stderr.strip())
+    return ignored
 
 
 def assert_format_exempt(consumer: Path) -> None:
-    """模板自有机器资产必须被 .prettierignore 覆盖；未覆盖即在提交前整体回滚。
+    """模板自有机器资产必须被 .prettierignore 有效豁免；未豁免即在提交前整体回滚。
 
-    只按声明做静态覆盖判定，不执行消费仓 formatter。commit hook 因豁免恒为 no-op，
-    审批 diff 与提交内容一致，accept 的指纹校验才能通过。
+    用真实 gitignore 引擎判定，保留规则顺序、否定、目录与根锚定语义；不执行消费仓
+    formatter，也不复刻 ignore 语法。提交 hook 因豁免恒为 no-op，审批 diff 与提交
+    内容一致，accept 的指纹校验才能通过。
     """
-    rules = _prettierignore_rules(consumer / ".prettierignore")
+    consumer = consumer.resolve()
+    ignore = consumer / ".prettierignore"
+    rules = _prettierignore_rules(ignore)
     missing = [rule for rule in ctx.PRETTIERIGNORE_TEMPLATE_RULES if rule not in rules]
     if missing:
         raise ctx.SyncError("format 豁免规则缺失：" + "、".join(missing))
+    nested = _git_ignored(
+        "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n", list(_NESTED_PROBES)
+    )
+    if nested:
+        raise ctx.SyncError("根锚定失效，嵌套同名目录被误豁免：" + "、".join(sorted(nested)))
     owned = consumer / ".repo_template"
     candidates = sorted(owned.rglob("*.json")) if owned.is_dir() else []
-    uncovered = [
-        path.relative_to(consumer).as_posix()
-        for path in candidates
-        if path.is_file()
-        and not any(
-            _rule_covers(rule, path.relative_to(consumer).as_posix()) for rule in rules
-        )
-    ]
+    toolkit = [path.relative_to(consumer).as_posix() for path in candidates if path.is_file()]
+    rules_text = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    ignored = _git_ignored(rules_text, toolkit)
+    uncovered = [rel for rel in toolkit if rel not in ignored]
     if uncovered:
         raise ctx.SyncError("模板自有 JSON 未被 format 豁免覆盖：" + "、".join(uncovered))
 

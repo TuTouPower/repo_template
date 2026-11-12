@@ -1,8 +1,12 @@
-"""模板自有资产 format 豁免：lint-staged hook 端到端回归与提交前 fail-closed。"""
+"""模板自有资产 format 豁免：可观测的 lint-staged 替身与提交稳定性回归。"""
 
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,40 +22,66 @@ python3 "$(dirname "$0")/lint_staged.py"
 '''
 
 _LINT_STAGED = '''\
-import fnmatch
+import json
 import subprocess
+import tempfile
 from pathlib import Path
 
 root = Path(subprocess.run(
     ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
 ).stdout.strip())
 pi = root / ".prettierignore"
-rules = (
-    {line.strip() for line in pi.read_text().splitlines()
-     if line.strip() and not line.lstrip().startswith("#")}
-    if pi.exists() else set()
-)
+rules = pi.read_text(encoding="utf-8") if pi.exists() else ""
 staged = subprocess.run(
     ["git", "diff", "--cached", "--name-only"], capture_output=True, text=True, check=True
 ).stdout.splitlines()
-for rel in staged:
-    if not rel.endswith(".json"):
-        continue
-    if any(
-        rel.startswith(rule[:-1] + "/") if rule.endswith("/") else fnmatch.fnmatch(rel, rule)
-        for rule in rules
-    ):
-        continue
-    path = root / rel
-    if path.read_text().strip() == '{"version": 1}':
-        path.write_text('{ "version": 1 }\\n')
-        subprocess.run(["git", "add", rel], check=True)
+state = {"scanned": [], "rewritten": []}
+with tempfile.TemporaryDirectory(prefix="fake_lint_staged_") as directory:
+    engine = Path(directory)
+    subprocess.run(["git", "init", "-q"], cwd=engine, check=True)
+    (engine / ".gitignore").write_text(rules, encoding="utf-8")
+    for rel in staged:
+        if not rel.endswith(".json"):
+            continue
+        state["scanned"].append(rel)
+        ignored = subprocess.run(
+            ["git", "-C", str(engine), "-c", "core.excludesFile=/dev/null",
+             "check-ignore", "--no-index", "-q", "--", rel],
+            capture_output=True, text=True,
+        )
+        if ignored.returncode == 0:
+            continue
+        path = root / rel
+        if path.read_text(encoding="utf-8").strip() == '{"version": 1}':
+            path.write_text('{ "version": 1 }\\n', encoding="utf-8")
+            subprocess.run(["git", "add", rel], check=True)
+            state["rewritten"].append(rel)
+scratch = root / ".scratch"
+scratch.mkdir(exist_ok=True)
+(scratch / "fake_hook_state.json").write_text(json.dumps(state), encoding="utf-8")
 '''
+
+_PROBE = ".repo_template/format_probe.json"
+_COMPACT = b'{"version": 1}\n'
+_EXPANDED = b'{ "version": 1 }\n'
 
 
 def _prepare(env, tmp_path, monkeypatch):
     install_fake_md_kx(tmp_path, monkeypatch)
     return argparse.Namespace(sync=env["sync"], skip_tests=True, decisions={})
+
+
+def _add_format_probe(env):
+    """让被测 JSON 在本轮同步中真实新增，而不是沿用已提交基线字节。"""
+    probe = env["src"] / _PROBE
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_bytes(_COMPACT)
+    _git(env["src"], "add", "-A")
+    _git(env["src"], "commit", "-m", "add format probe")
+
+
+def _hook_script(tmp_path):
+    return tmp_path / "fake_hooks" / "lint_staged.py"
 
 
 def _install_fake_lint_staged(env, tmp_path):
@@ -63,27 +93,81 @@ def _install_fake_lint_staged(env, tmp_path):
     _git(env["consumer"], "config", "core.hooksPath", str(hooks))
 
 
-def test_exempt_hook_is_noop_and_accept_passes(env, tmp_path, monkeypatch):
+def _hook_state(consumer):
+    return json.loads((consumer / ".scratch/fake_hook_state.json").read_text(encoding="utf-8"))
+
+
+def _run_hook_directly(consumer, tmp_path):
+    subprocess.run(
+        [sys.executable, str(_hook_script(tmp_path))],
+        cwd=consumer, capture_output=True, text=True, check=True,
+    )
+
+
+def test_probe_is_staged_and_exempt_hook_is_noop(env, tmp_path, monkeypatch):
     args = _prepare(env, tmp_path, monkeypatch)
+    _add_format_probe(env)
     _install_fake_lint_staged(env, tmp_path)
+    consumer = env["consumer"]
     assert cmd_apply(args) == 0
-    assert ".repo_template/" in (env["consumer"] / ".prettierignore").read_text().splitlines()
-    _git(env["consumer"], "add", "-A")
-    _git(env["consumer"], "commit", "-m", "sync")
-    shown = _git(env["consumer"], "show", "HEAD:.repo_template/entity_schema.json").stdout
-    assert shown == '{"version": 1}\n'
+    assert (consumer / _PROBE).read_bytes() == _COMPACT
+    assert "/.repo_template/" in (consumer / ".prettierignore").read_text().splitlines()
+
+    _git(consumer, "add", "-A")
+    assert _PROBE in _git(consumer, "diff", "--cached", "--name-only").stdout.splitlines()
+    _git(consumer, "commit", "-m", "sync")
+    state = _hook_state(consumer)
+    assert _PROBE in state["scanned"]
+    assert state["rewritten"] == []
+    assert _git(consumer, "show", f"HEAD:{_PROBE}").stdout == _COMPACT.decode()
+
     monkeypatch.setattr(txn_module, "_run_tests", lambda root: True)
     action = argparse.Namespace(sync=env["sync"], action="accept", confirm_restore=False)
     assert txn_module.cmd_transaction(action) == 0
-    assert state_transaction(env["consumer"], SYNC_TRANSACTION_DIR).read()["status"] == "accepted"
+    assert state_transaction(consumer, SYNC_TRANSACTION_DIR).read()["status"] == "accepted"
 
 
-def test_enum_style_rules_fail_closed_before_commit(env, tmp_path, monkeypatch, capsys):
+def test_negation_rules_block_apply_before_commit(env, tmp_path, monkeypatch, capsys):
     args = _prepare(env, tmp_path, monkeypatch)
-    monkeypatch.setattr(ctx, "PRETTIERIGNORE_TEMPLATE_RULES", (".repo_template/sync_manifest.json",))
-    before = (env["consumer"] / ".repo_template/entity_schema.json").read_bytes()
+    _add_format_probe(env)
+    consumer = env["consumer"]
+    rules = "\n".join(ctx.PRETTIERIGNORE_TEMPLATE_RULES) + "\n"
+    (consumer / ".prettierignore").write_text(
+        rules + "!.repo_template/\n!.repo_template/format_probe.json\n", encoding="utf-8"
+    )
+    _git(consumer, "add", "-A")
+    _git(consumer, "commit", "-m", "consumer negation rules")
+
     assert cmd_apply(args) == 1
     assert "未被 format 豁免覆盖" in capsys.readouterr().err
-    assert state_transaction(env["consumer"], SYNC_TRANSACTION_DIR).read()["status"] == "rolled_back"
-    assert (env["consumer"] / ".repo_template/entity_schema.json").read_bytes() == before
-    assert not (env["consumer"] / ".prettierignore").exists()
+    assert state_transaction(consumer, SYNC_TRANSACTION_DIR).read()["status"] == "rolled_back"
+    assert not (consumer / _PROBE).exists()
+    assert "!.repo_template/" in (consumer / ".prettierignore").read_text().splitlines()
+
+
+def test_fake_formatter_rewrites_when_exemption_is_off(env, tmp_path, monkeypatch):
+    """正反对照：替身不是空壳，关闭豁免后确实改写 staged JSON。"""
+    args = _prepare(env, tmp_path, monkeypatch)
+    _add_format_probe(env)
+    _install_fake_lint_staged(env, tmp_path)
+    consumer = env["consumer"]
+    assert cmd_apply(args) == 0
+    (consumer / ".prettierignore").write_text("# no exemption\n", encoding="utf-8")
+    _git(consumer, "add", "-A")
+    _run_hook_directly(consumer, tmp_path)
+    state = _hook_state(consumer)
+    assert _PROBE in state["scanned"]
+    assert _PROBE in state["rewritten"]
+    assert (consumer / _PROBE).read_bytes() == _EXPANDED
+
+
+def test_directory_outside_toolkit_remains_formatter_managed(env, tmp_path, monkeypatch):
+    """R01 边界：目录外同步 JSON 不受模板豁免，仍由消费仓 formatter 管理。"""
+    _prepare(env, tmp_path, monkeypatch)
+    _install_fake_lint_staged(env, tmp_path)
+    consumer = env["consumer"]
+    (consumer / ".mcp.json").write_bytes(_COMPACT)
+    _git(consumer, "add", "-A")
+    _run_hook_directly(consumer, tmp_path)
+    assert ".mcp.json" in _hook_state(consumer)["rewritten"]
+    assert (consumer / ".mcp.json").read_bytes() == _EXPANDED

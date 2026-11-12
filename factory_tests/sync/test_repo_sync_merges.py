@@ -188,13 +188,13 @@ def test_prettierignore_uses_owned_directory_boundary(env):
         ".repo_template/skills/registry.json",
     )
     rules = set(ctx.PRETTIERIGNORE_TEMPLATE_RULES)
-    assert ".repo_template/" in rules
+    assert "/.repo_template/" in rules
     assert "docs/**/handoff.json" in rules
-    assert not any(rule != ".repo_template/" and rule.startswith(".repo_template/") for rule in rules)
+    assert not any(rule != "/.repo_template/" and rule.lstrip("/").startswith(".repo_template/") for rule in rules)
     pi = env["consumer"] / ".prettierignore"
     merge_prettierignore(set(), env["sync"])
     lines = pi.read_text().splitlines()
-    assert ".repo_template/" in lines
+    assert "/.repo_template/" in lines
     for rule in retired:
         assert rule not in lines
 

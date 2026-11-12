@@ -80,9 +80,9 @@ state-root 在 entity-storage 之后，将 `docs/runtime/` 已识别状态、`.r
 
 status/plan 直接运行固定来源脚本，不提前覆盖本地同步器。apply 从固定 commit 的 Git archive 快照读取，来源、文件、入口、schema 与 state 共享同一版本。同步脚本不 commit，也不自行 accept；成功后事务保持 applied，保留完整未提交 diff 待用户审阅。
 
-agent 报告来源完整 SHA、全部变更路径、迁移报告、校验结果及 state/manifest；删除旧归档非实体项必须逐个单列，目录附内部文件，不能并入汇总。每次同步须用户单独明确批准 commit，不复用批量授权。批准后 `git add -A`，单个 commit 包含迁移与同步全部结果；hooks 正常运行，禁止 `--no-verify`。pre-commit 只读检查 Markdown，格式化已在 apply 审阅前完成，审批 diff 与最终提交内容一致。提交后立即 `transaction accept`；要求事务路径已提交、父提交等于同步前 HEAD，文件与 common 状态指纹不变。
+agent 报告来源完整 SHA、全部变更路径、迁移报告、校验结果及 state/manifest；删除旧归档非实体项必须逐个单列，目录附内部文件，不能并入汇总。每次同步须用户单独明确批准 commit，不复用批量授权。批准后 `git add -A`，单个 commit 包含迁移与同步全部结果；hooks 正常运行，禁止 `--no-verify`。pre-commit 只读检查 Markdown，格式化已在 apply 审阅前完成，审批 diff 与最终提交内容一致。提交后立即 `transaction accept`；要求事务路径已提交、父提交等于同步前 HEAD，文件与 common 状态指纹不变。同一来源重复 apply 若工作树相对 HEAD 无交付差异（common state 的 `last_synced_at` 变化不算），脚本恢复本轮 common state 写入并把事务收尾为 `no_op` 终态，打印「无变更，事务已收尾」并返回 0，不产生 commit、不要求 accept，下一轮同步不被阻断。
 
-**回滚窗口仅限提交前。** 用户拒绝时 `transaction rollback` 整体恢复工作区、index 与 common 状态；applied 后现场发生变化，须先备份新增改动，再 `transaction rollback --confirm-restore`。已产生同步 commit 后禁止文件 rollback，只能按下节 revert；common 状态不会随 revert 恢复，须明确告知用户并人工核对。
+**回滚窗口仅限提交前。** 用户拒绝时 `transaction rollback` 整体恢复工作区、index 与 common 状态；applied 后现场发生变化，须先备份新增改动，再 `transaction rollback --confirm-restore`。已产生同步 commit 后禁止文件 rollback，只能按下节 revert；common 状态不会随 revert 恢复，须明确告知用户并人工核对。提交后 accept 失败或用户放弃、已 revert 同步 commit 并人工从备份恢复 common 状态到基线后，用 `transaction cancel --confirm-post-commit` 把 applied 事务收尾为 `cancelled` 终态：只读核验事务路径工作区干净、受管路径在 HEAD 与 `base_head` 内容一致、common 状态等于备份基线，并记录同步 commit 与时间；`--confirm-post-commit` 必填。cancel 不覆盖文件、不删 journal、不放宽指纹、不自动接受改写结果。`cancelled` 与 `no_op` 均为已结束终态，不阻断下一轮同步。
 
 文件事务记录与备份在 `$GIT_COMMON_DIR/repo_template/sync_transaction/`，图事务在同级 `graph_transaction/`。未结束或损坏事务阻断新同步；进程中断先 `transaction status`，备份新增改动后恢复。恢复失败标记 `restore_failed`、保留备份并报告人工恢复条件，不能据退出码宣称完整恢复。accept 后备份可在下轮同步清除；repo-cleanup 不读取或清理这些记录。图事务由 `task.py graph-transaction status` / `rollback` 管理。
 
@@ -98,7 +98,9 @@ agent 报告来源完整 SHA、全部变更路径、迁移报告、校验结果�
 
 ## .prettierignore 机械追加
 
-`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径以 `.repo_template/` 整目录为边界，清单见 `usage.md`「命名与格式」。apply 在提交前静态校验模板自有 JSON 全部被覆盖，未覆盖即整体回滚（此时尚未提交，可回滚）；commit hook 因豁免恒为 no-op，审批 diff 与提交内容一致，`transaction accept` 的指纹校验才能通过。同步改写消费仓自有 JSON（`.claude/settings.json`、MCP）时沿用原缩进，不弄红门禁。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
+`repo_sync.py apply` 机械追加到消费仓 `.prettierignore`（消费独有规则保留，去重），`status` / `plan` 展示缺失项；豁免路径以根锚定 `/.repo_template/` 整目录为边界，清单见 `usage.md`「命名与格式」。apply 在提交前用 git 的真实 gitignore 引擎校验模板自有 JSON 全部被有效忽略（保留规则顺序、否定、目录与根锚定语义，不复刻语法）：必需规则缺失、被消费仓否定规则抵消、或根锚定失效导致嵌套同名目录被误豁免，均整体回滚（此时尚未提交，可回滚）。模板自有资产不受消费仓 prettier 重排，审批 diff 与提交内容一致。
+
+**边界**：上述校验只覆盖 `.repo_template/` 内模板自有资产。目录外的同步写入（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json`、`.claude/settings.json`、Markdown）仍受消费仓自身 formatter 管理；模板沿用消费仓原缩进，但不宣称其字节与消费仓 formatter 输出逐字节一致。若消费仓 commit hook 会改写这些文件，提交内容仍可能偏离 apply 指纹，`transaction accept` 会拒绝。根治需产品裁决：允许同步在事务内执行消费仓 formatter 做格式化与只读复验，或要求消费仓把提交 hook 改为只读检查、自行把这些路径纳入 `.prettierignore`。模板不分发 `.github/workflows/repo-template-ci.yml`；残留时 `status` / `plan` / `apply` 警告，确认无消费定制后手动删除。
 
 ## 实体协议切换验收
 
