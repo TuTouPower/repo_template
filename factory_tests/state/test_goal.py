@@ -393,6 +393,50 @@ def test_goal_no_args_does_not_reset_corrupt_snapshot(git_repo):
     assert _snapshot(git_repo)["queue"] == ["t001", "t002"]
 
 
+def test_goal_writes_version_2_snapshot(git_repo):
+    result = _cli(git_repo, "goal")
+    assert result.returncode == 0, result.stderr
+    assert _snapshot(git_repo)["version"] == 2
+
+
+@pytest.mark.parametrize("payload", [
+    {"version": 1, "created_at": "2026-09-17T08:03:47+08:00", "queue": ["t001", "t002"]},
+    {"version": 1, "created_at": "2026-09-17T08:03:47+08:00", "queue": ["t001", "t002"], "edges": []},
+    {"created_at": "2026-09-17T08:03:47+08:00", "queue": ["t001"]},
+])
+def test_goal_and_goal_check_strictly_reject_v1_snapshots(git_repo, payload):
+    assert _cli(git_repo, "goal").returncode == 0
+    path = state_file(git_repo, "goal_queue.json")
+    raw = json.dumps(payload, ensure_ascii=False)
+    path.write_text(raw, encoding="utf-8")
+
+    for args in (("goal",), ("goal-check",), ("goal", "t001")):
+        res = _cli(git_repo, *args)
+        assert res.returncode == 1
+        assert "版本不受支持" in res.stderr
+        assert "repo_sync.py apply" in res.stderr
+        assert "--clear" in res.stderr
+        assert path.read_text(encoding="utf-8") == raw
+
+
+def test_goal_clear_removes_snapshot_without_rebuilding(git_repo):
+    assert _cli(git_repo, "goal").returncode == 0
+    path = state_file(git_repo, "goal_queue.json")
+    assert path.is_file()
+
+    cleared = _cli(git_repo, "goal", "--clear")
+    assert cleared.returncode == 0, cleared.stderr
+    assert "队列快照已清除" in cleared.stdout
+    assert not path.exists()
+
+    again = _cli(git_repo, "goal", "--clear")
+    assert again.returncode == 0, again.stderr
+    assert "不存在，无需清除" in again.stdout
+
+    assert _cli(git_repo, "goal", "--clear", "--reset").returncode != 0
+    assert _cli(git_repo, "goal", "--clear", "t001").returncode != 0
+
+
 def test_goal_no_args_reports_binary_snapshot_as_corrupt(git_repo):
     assert _cli(git_repo, "goal").returncode == 0
     path = state_file(git_repo, "goal_queue.json")

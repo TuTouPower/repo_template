@@ -17,7 +17,7 @@
 |`.repo_template/docs/task_template/`|task 文件模板（非工作项）|只改模板本身|
 |`$GIT_COMMON_DIR/repo_template/tasks_audit.log`|状态回退审计（append-only）|`task.py rewind` / `purge` / `finish-unwind` 与 `rewind_failed` 恢复分支经 `append_audit` 独占 append，禁止 agent 手动修改|
 |`$GIT_COMMON_DIR/repo_template/ledger.jsonl`|attempt 控制面（append-only；仅主仓）|`run-begin` / `run-close` 记录执行，`integrate` / `integrate-chain` 写 `integrated`；`ledger tail` 只读；禁止手工编辑。身份解析与恢复命令见 `recovery.md`|
-|`$GIT_COMMON_DIR/repo_template/goal_queue.json`|goal 模式冻结队列快照（仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
+|`$GIT_COMMON_DIR/repo_template/goal_queue.json`|goal 模式冻结队列快照（仅主仓）|仅 `task.py goal` 写入（首次冻结，或显式 tid / `--reset` 覆盖；`--clear` 清除；无参已有快照只读）；`task.py goal-check` 只读；禁止手工编辑|
 |`.repo_template/docs/review_prompts/`|review prompt 模板|改审查标准时更新|
 |`.repo_template/docs/spike_report_template.md`|spike 报告模板|只改模板本身|
 |`.repo_template/skills/`|skill 正文|改 skill 走文档纪律；不放业务代码|
@@ -115,7 +115,7 @@ Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-o
 
 `/task-integrate` 是公开入口：无参运行 `task.py integrate` 只列待合单体/链尾候选并等待授权；显式 tid 用 `integrate {tid}`，多成员链用 `integrate-chain {tail_tid}`，只授权该范围。`/task-combine` 合并范围重叠或拆得过细的 backlog task；未点名时只提出候选等待确认，不自行决定合并范围。两者都不自动执行 Git merge、不 push；`task-combine` 的 backlog 图改写只在用户确认来源范围后执行。
 
-goal 快照是主仓级单份文件；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列分链、base 与阻塞规则见[执行拓扑](architecture.md#%E6%89%A7%E8%A1%8C%E6%8B%93%E6%89%91)。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
+goal 快照是主仓级单份文件（现行 schema `version: 2`，含 `edges` 冻结拓扑；旧版快照由 `repo_sync.py apply` 升版，运行期不兼容旧版）；多会话不要互相覆盖队列。无参已有快照只展示；`--reset` 直接重建并覆盖，`--clear` 仅清除快照，显式 tid 改变队列时需确认（`--yes` 表示已确认）。覆盖前保存需要保留的队列，成员与顺序无法确认时停止。默认新队列复用 `plan --serial` 的依赖拓扑；显式 tid 保留输入顺序。队列分链、base 与阻塞规则见[执行拓扑](architecture.md#%E6%89%A7%E8%A1%8C%E6%8B%93%E6%89%91)。`goal-check` 输出 execution_complete、integrated 和 awaiting_merge tid；COMPLETE 仅表示执行闭环，不表示已合主干。`goal-check` 的退出码为 COMPLETE=0、STOPPED=3、INCOMPLETE=2，快照错误为 1；合法停止不等于全部完成。
 
 项目验证命令及执行边界见 [testing.md](../../docs/blueprint/testing.md)；图合并中断后的 `graph-transaction` 恢复见 `recovery.md`。
 

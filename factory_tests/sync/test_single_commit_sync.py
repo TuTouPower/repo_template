@@ -33,6 +33,11 @@ def _legacy(env):
         'docs/specs/feature.md': '# Feature\n\n原始需求。\n',
         'docs/blueprint/conventions.md': '### 原子写\n- from task import _atomic_write_text 旧写法\n',
         'docs/runtime/dispatch_ledger.jsonl': '{"event":"old"}\n',
+        'docs/runtime/goal_queue.json': '{"queue": ["t001"]}\n',
+        'docs/pending/README.md': (
+            '# 待办与不办总账\n\n|目录|语义|\n|---|---|\n'
+            '|`docs/pending/todo/`|未闭环、待启动|\n'
+        ),
         'docs/archive/spikes/s001_old/report.md': '# Spike\n\n## 结论\n\n采纳 d001。\n',
     }.items():
         path = root / rel

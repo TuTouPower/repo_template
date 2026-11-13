@@ -22,6 +22,8 @@ goal 模式的提示词必须是可机器判定的终态，而不是过程指令
 合并授权不在判定范围：merge 是 goal 结束后的人工步骤。
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 import os
@@ -42,6 +44,7 @@ from .store import discover_effective_tasks, scan_tasks
 def queue_path(repo) -> Path:
     return repo.goal_path
 
+SNAPSHOT_VERSION = 2
 CLOSED_STATES = {"closed", "integrated"}
 STOP_STATES = {"blocked", "failed", "dropped"}
 
@@ -123,7 +126,7 @@ def _show_snapshot(snapshot: dict, repo) -> None:
 
 def _write_snapshot(queue: list[str], edges: list[dict], repo) -> dict:
     snapshot = {
-        "version": 1,
+        "version": SNAPSHOT_VERSION,
         "created_at": datetime.now(ctx.TZ_CN).isoformat(timespec="seconds"),
         "queue": queue,
         "edges": edges,
@@ -175,18 +178,31 @@ def _clear_snapshot(repo) -> None:
 def cmd_goal(args) -> None:
     repo = args.repo
     require_primary_worktree(repo=repo)
+    clear = bool(getattr(args, "clear", False))
     reset = bool(getattr(args, "reset", False))
     yes = bool(getattr(args, "yes", False))
     explicit = bool(args.tids)
-    if reset and explicit:
-        sys.exit("goal --reset 与显式 tid 互斥")
+    if sum([clear, reset, explicit]) > 1:
+        sys.exit("goal --reset、--clear 与显式 tid 互斥")
+    if clear:
+        path = queue_path(repo)
+        if path.is_symlink():
+            sys.exit(f"队列快照 {repo.rel(path)} 是软链，拒绝删除")
+        if path.is_dir():
+            sys.exit(f"队列快照 {repo.rel(path)} 是目录，拒绝删除")
+        if path.exists():
+            path.unlink()
+            print("队列快照已清除。")
+        else:
+            print("队列快照不存在，无需清除。")
+        return
 
     existing = None
-    if queue_path(repo).is_file():
+    if queue_path(repo).exists() or queue_path(repo).is_symlink():
         try:
             existing = _read_snapshot(repo)
         except ctx.TaskDataError as error:
-            if not reset and not explicit:
+            if not reset:
                 sys.exit(str(error))
             existing = None
 
@@ -224,7 +240,7 @@ def cmd_goal(args) -> None:
 def _snapshot_error(detail: str, repo) -> ctx.TaskDataError:
     return ctx.TaskDataError(
         f"队列快照 {repo.rel(queue_path(repo))} 结构非法（{detail}）；"
-        "重新运行 task.py goal --reset"
+        "若为旧版快照请运行 repo_sync.py apply 迁移，或重新运行 task.py goal --reset / --clear"
     )
 
 
@@ -254,18 +270,24 @@ def _parse_edges(value: object, queue: list[str], repo) -> list[dict]:
 def _parse_snapshot(data: object, repo) -> dict:
     if not isinstance(data, dict):
         raise _snapshot_error("快照须为对象", repo)
+    version = data.get("version")
+    if type(version) is not int or version != SNAPSHOT_VERSION:
+        raise _snapshot_error(
+            f"版本不受支持（{version!r}，当前要求 {SNAPSHOT_VERSION}）", repo
+        )
     queue = data.get("queue")
     if (
         not isinstance(queue, list)
         or not queue
         or not all(isinstance(tid, str) and ctx.TID_RE.fullmatch(tid) for tid in queue)
+        or len(set(queue)) != len(queue)
     ):
         raise _snapshot_error("queue 非法", repo)
     created_at = data.get("created_at")
     if created_at is not None and not isinstance(created_at, str):
         created_at = None
     return {
-        "version": data.get("version", 1),
+        "version": SNAPSHOT_VERSION,
         "created_at": created_at or "",
         "queue": queue,
         "edges": _parse_edges(data.get("edges"), queue, repo),
@@ -273,23 +295,27 @@ def _parse_snapshot(data: object, repo) -> dict:
 
 
 def _read_snapshot(repo) -> dict:
+    path = queue_path(repo)
+    if path.is_symlink():
+        raise _snapshot_error("快照路径不得为软链", repo)
     try:
-        data = json.loads(queue_path(repo).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ctx.TaskDataError(
-            f"队列快照 {repo.rel(queue_path(repo))} 不存在；先运行 task.py goal 冻结队列"
+            f"队列快照 {repo.rel(path)} 不存在；先运行 task.py goal 冻结队列"
         ) from None
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
         raise ctx.TaskDataError(
-            f"队列快照 {repo.rel(queue_path(repo))} 损坏（{error}）；重新运行 task.py goal --reset"
+            f"队列快照 {repo.rel(path)} 损坏（{error}）；重新运行 task.py goal --reset / --clear"
         ) from None
     return _parse_snapshot(data, repo)
 
 
 def _load_snapshot(repo) -> dict:
-    if not queue_path(repo).is_file():
+    path = queue_path(repo)
+    if not (path.exists() or path.is_symlink()):
         raise ctx.TaskDataError(
-            f"队列快照 {repo.rel(queue_path(repo))} 不存在；先运行 task.py goal 冻结队列"
+            f"队列快照 {repo.rel(path)} 不存在；先运行 task.py goal 冻结队列"
         )
     return _read_snapshot(repo)
 

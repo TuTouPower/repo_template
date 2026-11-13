@@ -234,3 +234,8 @@ def test_consumer_migration_chain_from_988fd06_layout(tmp_path: Path, monkeypatc
     assert cmd_transaction(argparse.Namespace(sync=ctx.SyncContext.for_consumer(consumer), action="accept")) == 0
     assert json.loads((state / "sync_transaction/transaction.json").read_text())["status"] == "accepted"
     assert run_healthcheck(ctx.SyncContext.for_consumer(consumer)) == []
+    goal_snap = json.loads((state / "goal_queue.json").read_text(encoding="utf-8"))
+    assert goal_snap == {"version": 2, "created_at": "", "queue": ["t001"], "edges": []}
+    goal_view = _run([sys.executable, str(consumer / ".repo_template/scripts/task.py"), "goal"])
+    assert goal_view.returncode == 0, goal_view.stdout + goal_view.stderr
+    assert "t001" in goal_view.stdout

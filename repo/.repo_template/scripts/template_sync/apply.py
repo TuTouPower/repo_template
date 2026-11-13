@@ -172,6 +172,20 @@ def _has_delivery_diff(sync: ctx.SyncContext) -> bool:
     return bool(status.stdout.strip())
 
 
+def _has_non_sync_state_diff(sync: ctx.SyncContext, transaction) -> bool:
+    data = transaction.read() or {}
+    other_paths = {
+        name: existed for name, existed in (data.get("state_paths") or {}).items()
+        if name != sync.state_path.name
+    }
+    if not other_paths:
+        return False
+    from repo_task.file_transaction import fingerprint
+    baseline = fingerprint(sync.consumer, (), other_paths, state_base=transaction.backup / "__state__")
+    current = fingerprint(sync.consumer, (), other_paths)
+    return baseline != current
+
+
 def _collect_delivery_paths(sync: ctx.SyncContext) -> set[Path]:
     """以真实工作区为准统一收集本轮写入集（含迁移器局部 changed 未回传的路径）。"""
     tracked = _git(sync.consumer, "diff", "--name-only", "-z", "HEAD")
@@ -275,6 +289,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
         state["resolved_checkout"] = str(src)
         write_state(state, sync=sync)
         if not _has_delivery_diff(sync):
+            if _has_non_sync_state_diff(sync, transaction):
+                transaction.applied(verified=not args.skip_tests)
+                transaction.accept(verified=not args.skip_tests)
+                print(f"来源 SHA: {source_commit}")
+                print("无工作区变更；common 状态迁移已落盘并收尾（无需 commit）")
+                return 0
             transaction.no_op()
             print("无变更，事务已收尾")
             return 0

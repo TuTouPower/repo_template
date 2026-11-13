@@ -311,12 +311,17 @@ def main():
     goal.add_argument(
         "tids",
         nargs="*",
-        help="显式队列（严格按输入顺序）；与 --reset 互斥",
+        help="显式队列（严格按输入顺序）；与 --reset / --clear 互斥",
     )
     goal.add_argument(
         "--reset",
         action="store_true",
-        help="按依赖拓扑重建 backlog ∪ active 默认队列并覆盖已有快照",
+        help="按依赖拓扑重建 backlog ∪ active 默认队列并覆盖已有快照（与显式 tid / --clear 互斥）",
+    )
+    goal.add_argument(
+        "--clear",
+        action="store_true",
+        help="清除当前队列快照（不重建默认队列；与 --reset / 显式 tid 互斥）",
     )
     goal.add_argument(
         "--yes",

@@ -13,8 +13,10 @@ from .adr_migration import adr_migration_status, migrate_adr
 from .agents_zone_migration import agents_zone_migration_status, migrate_agents_zones
 from .conventions_migration import conventions_migration_status, migrate_conventions
 from .entity_storage_migration import build_migration_plan, entity_storage_migration_status, migrate_entity_storage
+from .goal_snapshot_migration import goal_snapshot_migration_status, migrate_goal_snapshot
 from .hooks import migrate_retired_hooks, retired_hooks_status
 from .legacy_ledgers import apply_legacy_migration, plan_legacy_migration
+from .retired_docs_migration import migrate_retired_docs, retired_docs_migration_status
 from .reviews_migration import migrate_reviews, reviews_migration_status
 from .specs_migration import migrate_specs_layout, specs_migration_status
 from .state import migrate_legacy_state
@@ -124,6 +126,8 @@ class Migration:
             return migrate_conventions(set(), sync=sync) if write else self.findings(sync, src)
         if self.kind == "agents-zones":
             return migrate_agents_zones(sync, src, write=write)
+        if self.kind == "goal-snapshot":
+            return migrate_goal_snapshot(sync, src, write=write)
         if self.kind == "retired-hooks":
             return migrate_retired_hooks(sync=sync) if write else retired_hooks_status(sync)
         return _EXECUTORS[self.kind](sync, write=write)
@@ -134,13 +138,16 @@ class Migration:
 
 _FINDINGS = {
     "entity-storage": entity_storage_migration_status, "state-root": state_root_migration_status,
+    "goal-snapshot": goal_snapshot_migration_status,
     "conventions": conventions_migration_status, "agents-zones": agents_zone_migration_status,
     "specs-layout": specs_migration_status, "reviews": reviews_migration_status,
     "adr": adr_migration_status, "retired-hooks": retired_hooks_status,
+    "retired-docs": retired_docs_migration_status,
 }
 _EXECUTORS = {
     "entity-storage": migrate_entity_storage, "state-root": migrate_state_root,
     "specs-layout": migrate_specs_layout, "reviews": migrate_reviews, "adr": migrate_adr,
+    "retired-docs": migrate_retired_docs,
 }
 
 MIGRATIONS = (
@@ -156,10 +163,12 @@ MIGRATIONS = (
     Migration("state-root", ("docs/runtime", ".repo_template/sync_state.json", ".scratch/statusline_workdir.jsonl",
                              ".scratch/repo_sync_rollback", ".scratch/task_graph_transaction"),
               ("ledger.jsonl", "tasks_audit.log", "goal_queue.json", "statusline_workdir.jsonl", "sync_state.json")),
+    Migration("goal-snapshot", (), ("goal_queue.json",)),
     Migration("conventions", ("docs/blueprint/conventions.md",)),
     Migration("agents-zones", ("AGENTS.md",)),
     Migration("specs-layout", ("docs/specs", "docs/archive/specs", "docs/specs_index.md")),
     Migration("reviews", ("docs/reviews", "docs/archive/reviews")),
     Migration("adr", ("docs/blueprint/decisions.md", "docs/blueprint/decisions")),
     Migration("retired-hooks", (".claude/hooks", ".claude/settings.json")),
+    Migration("retired-docs", ("docs/pending/README.md", "docs/findings/README.md")),
 )
