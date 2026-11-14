@@ -121,3 +121,47 @@ def test_1_archived_task_extra_md_reference_does_not_break_migration(tmp_path: P
     assert "docs/pending/p001_fix.md" in notes.read_text(encoding="utf-8")
     assert not (root / "docs/archive/tasks").exists()
     assert entity_storage_migration_status(_sync(root)) == []
+
+
+# ---------------------------------------------------------------------------
+# ② 引用引擎围栏感知 + ledger 来源按真实位置(history_path)解析相对链接
+# ---------------------------------------------------------------------------
+
+
+def test_2_fenced_code_paths_are_not_rewritten(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _finding(root, "d001_b.md", "d001")
+    (root / "docs/guide.md").write_text(
+        "见 docs/findings/d001_b.md\n\n"
+        "```text\n"
+        "docs/findings/d001_b.md\n"
+        "```\n\n"
+        "再见 docs/findings/d001_b.md\n",
+        encoding="utf-8",
+    )
+    _commit_all(root, "guide with fenced example")
+
+    migrate_entity_storage(_sync(root), write=True)
+    text = (root / "docs/guide.md").read_text(encoding="utf-8")
+    assert text.count("docs/findings/d002_b.md") == 2, text
+    assert "```text\ndocs/findings/d001_b.md\n```" in text, text
+
+
+def test_2_ledger_relative_link_resolves_from_ledger_position(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _pending(root, "docs/pending/p001_fix.md", "p001", "fix")
+    (root / "docs/findings.md").write_text(
+        "# 发现\n\n## d010 link\n\n- 现状：有效\n\n[ref](pending/p001_fix.md)\n",
+        encoding="utf-8",
+    )
+    _commit_all(root, "ledger with relative link")
+
+    plan = build_migration_plan(_sync(root))
+    ledger = [f for f in plan.findings if f.from_ledger][0]
+    assert "../pending/p001_fix.md" in ledger.content, ledger.content
+
+    migrate_entity_storage(_sync(root), write=True)
+    final = next(p for p in (root / "docs/findings").glob("d010_*.md"))
+    assert "../pending/p001_fix.md" in final.read_text(encoding="utf-8")
+    assert (final.parent / "../pending/p001_fix.md").resolve().is_file()

@@ -144,6 +144,7 @@ class PendingItem:
     final_id: str = ""
     source_rel: str = ""
     from_ledger: bool = False
+    doc_base_rel: str = ""
 
 
 @dataclass
@@ -156,6 +157,7 @@ class FindingItem:
     content: str = ""
     source_rel: str = ""
     from_ledger: bool = False
+    doc_base_rel: str = ""
 
 
 @dataclass
@@ -888,6 +890,7 @@ def build_migration_plan(
                     dec.orig_id, dec.final_id, cand.slug,
                     consumer / "docs/findings.md" if from_ledger else data["path"],
                     target_path, text, cand.source_rel, from_ledger,
+                    cand.history_path or cand.source_rel,
                 ))
                 all_entity_texts[dec.target_rel] = (dec.final_id, text)
                 findings_final_texts[dec.target_rel] = (dec.final_id, text)
@@ -909,6 +912,7 @@ def build_migration_plan(
                     consumer / "docs/pending.md" if from_ledger else data["path"],
                     target_path, fm["status"], fm.get("resolution"), fm.get("reason"),
                     fm.get("fix_ref"), body, content, dec.final_id, cand.source_rel, from_ledger,
+                    cand.history_path or cand.source_rel,
                 ))
                 all_entity_texts[dec.target_rel] = (dec.final_id, content)
             else:
@@ -958,13 +962,8 @@ def build_migration_plan(
 
     # 实体最终文本中的精确路径引用：按来源位置解析旧相对链接，按最终位置输出
     for finding in findings_plan:
-        src_rel = (
-            finding.source_rel
-            if not finding.from_ledger
-            else finding.target_path.relative_to(consumer).as_posix()
-        )
         new_text = update_exact_path_references(
-            finding.content, doc_rel=src_rel,
+            finding.content, doc_rel=finding.doc_base_rel,
             final_doc_rel=finding.target_path.relative_to(consumer).as_posix(),
             path_mappings=path_mappings, consumer=consumer,
         )
@@ -974,13 +973,8 @@ def build_migration_plan(
         if target_rel in findings_final_texts:
             findings_final_texts[target_rel] = (finding.final_id, new_text)
     for pending in pendings_plan:
-        src_rel = (
-            pending.source_rel
-            if not pending.from_ledger
-            else pending.target_path.relative_to(consumer).as_posix()
-        )
         pending.content = update_exact_path_references(
-            pending.content, doc_rel=src_rel,
+            pending.content, doc_rel=pending.doc_base_rel,
             final_doc_rel=pending.target_path.relative_to(consumer).as_posix(),
             path_mappings=path_mappings, consumer=consumer,
         )

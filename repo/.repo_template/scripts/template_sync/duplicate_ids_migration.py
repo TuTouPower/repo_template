@@ -243,12 +243,15 @@ def update_exact_path_references(
     目标命中迁移映射则跟随改号。无映射且文档未搬迁时不改动任何文本；裸编号与外链不碰。
     consumer 用于校验未命中映射的本地目标真实存在，避免改写正文示例。
     """
-    out = text
     sorted_mappings = sorted(
         [(o, n, d) for o, n, d in path_mappings if o != n],
         key=lambda item: len(item[0]),
         reverse=True,
     )
+    doc_parent = posixpath.dirname(doc_rel) or "."
+    final_parent = posixpath.dirname(final_doc_rel) or "."
+    need_relink = bool(sorted_mappings) or doc_parent != final_parent
+    exact_patterns: list[tuple[re.Pattern[str], str]] = []
     for old_rel, new_rel, is_dir in sorted_mappings:
         if is_dir:
             pat = re.compile(
@@ -258,12 +261,7 @@ def update_exact_path_references(
             pat = re.compile(
                 rf"(?<![A-Za-z0-9_./-]){re.escape(old_rel)}(?![A-Za-z0-9_.-])"
             )
-        out = pat.sub(new_rel, out)
-
-    doc_parent = posixpath.dirname(doc_rel) or "."
-    final_parent = posixpath.dirname(final_doc_rel) or "."
-    if not sorted_mappings and doc_parent == final_parent:
-        return out
+        exact_patterns.append((pat, new_rel))
 
     def _resolve(raw_path: str) -> str:
         had_dot = raw_path.startswith("./")
@@ -307,8 +305,22 @@ def update_exact_path_references(
             return f"{match.group(1)}{_resolve(target)}{match.group(3)}"
         return _resolve(match.group(4))
 
-    out = local_link_re.sub(_replace, out)
-    return out
+    # 逐行改写：围栏代码块（含开/闭栏行）原样保留，避免篡改文档示例
+    fence = FenceState()
+    rewritten: list[str] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        ending = line[len(stripped):]
+        if fence.feed(stripped):
+            rewritten.append(line)
+            continue
+        new_line = stripped
+        for pat, new_rel in exact_patterns:
+            new_line = pat.sub(new_rel, new_line)
+        if need_relink:
+            new_line = local_link_re.sub(_replace, new_line)
+        rewritten.append(new_line + ending)
+    return "".join(rewritten)
 
 
 def is_protected_task_asset(rel: str) -> bool:
