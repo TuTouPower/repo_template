@@ -258,17 +258,17 @@ def test_legacy_ledger_hints_real_pending_command(tmp_path: Path):
 def test_branch_dir_scan_ignores_nested_spike_dirs(tmp_path: Path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/spikes/misc/s005_fixture/report.md", text="# s005\n")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
+    assert scan_max_id(repo, "s") == 0
 
     _commit_entry(repo, "docs/spikes/s007_real/report.md", text="# s007\n")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 7
+    assert scan_max_id(repo, "s") == 7
 
 
 def test_worktree_and_branch_dir_scan_agree_on_nesting(tmp_path: Path):
     repo = _init_repo(tmp_path)
     (repo / "docs/spikes/misc/s005_fixture").mkdir(parents=True)
     (repo / "docs/spikes/misc/s005_fixture/report.md").write_text("# s005\n", encoding="utf-8")
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
+    assert scan_max_id(repo, "s") == 0
 
 
 def test_legacy_ledger_entries_accept_all_heading_levels():
@@ -315,4 +315,4 @@ def test_canonical_padding_helpers():
 def test_non_canonical_padding_is_ignored_by_scan(tmp_path: Path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/p0001_pad.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
+    assert scan_max_id(repo, "p") == 0

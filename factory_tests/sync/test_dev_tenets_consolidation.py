@@ -192,3 +192,51 @@ def test_3_source_identity_separates_key_base_history() -> None:
     assert not hasattr(later, "source_rel"), "ambiguous source_rel must be gone"
     # 真实路径 + 整数 ordinal 排序不依赖 #ordinal 身份串
     assert sorted([later, earlier], key=lambda c: (c.doc_base, c.ordinal))[0].ordinal == 2
+
+
+# ---------------------------------------------------------------------------
+# ④ 删除死代码/死分支 + 软链策略单点化
+# ---------------------------------------------------------------------------
+
+
+def test_4_dead_allocation_helpers_and_state_removed() -> None:
+    import dataclasses
+    import inspect
+
+    import _id_scan
+    from template_sync.entity_storage_migration import MigrationPlan
+
+    for dead in (
+        "scan_occupied_max_id", "_numbers_from_branch",
+        "_numbers_from_index", "_effective_history_dirs",
+    ):
+        assert not hasattr(_id_scan, dead), f"dead helper still present: {dead}"
+    assert "extra_specs" not in inspect.signature(_id_scan.scan_occupied_max_ids).parameters
+    assert list(inspect.signature(_id_scan.scan_max_id).parameters) == ["repo_root", "prefix"]
+    assert "findings_final_texts" not in {f.name for f in dataclasses.fields(MigrationPlan)}
+
+
+def test_4_scan_max_id_prefix_lookup_is_equivalent(tmp_path: Path) -> None:
+    from _id_scan import scan_max_id
+
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _commit_all(root, "one finding")
+
+    assert scan_max_id(root, "d") == 1
+    assert scan_max_id(root, "p") == 0
+    assert scan_max_id(root, "s") == 0
+    assert scan_max_id(root, "t") == 0
+
+
+def test_4_symlink_policy_single_point_blocks_finding_symlink(tmp_path: Path) -> None:
+    """软链拒绝只在 _reject_symlink_entities 定义；validate/plan 行为仍一致。"""
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    (root / "docs/findings/d001_b.md").symlink_to("d001_a.md")
+    _commit_all(root, "finding symlink")
+
+    status = entity_storage_migration_status(_sync(root))
+    assert any("BLOCKED" in s or "软链" in s for s in status), status
+    with pytest.raises(MigrationError):
+        build_migration_plan(_sync(root))

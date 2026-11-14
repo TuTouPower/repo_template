@@ -187,7 +187,7 @@ def test_runtime_duplicate_blocks_allocation(tmp_path: Path) -> None:
     from _id_scan import scan_max_id
 
     with pytest.raises(IdScanError, match="重复"):
-        scan_max_id(root, "d", ("docs/findings",))
+        scan_max_id(root, "d")
 
 
 def test_history_and_saved_remote_duplicates_only_contribute_max(tmp_path: Path) -> None:

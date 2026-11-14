@@ -197,7 +197,6 @@ class MigrationPlan:
     renumber_reports: list[str] = field(default_factory=list)
     reference_reports: list[str] = field(default_factory=list)
     transaction_extra_rels: list[str] = field(default_factory=list)
-    findings_final_texts: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 def validate_current_entities(sync: ctx.SyncContext) -> None:
@@ -217,13 +216,10 @@ def validate_current_entities(sync: ctx.SyncContext) -> None:
             for path in sorted(base.iterdir()):
                 if path.is_dir() and not path.name.startswith(".tmp_"):
                     raise MigrationError(f"当前 {label} 布局禁止嵌套目录：{sync.rel(path)}")
-                name = path.name
-                looks_entity = bool(re.match(rf"^{prefix}[0-9]", name))
-                if path.is_symlink():
-                    if looks_entity:
-                        raise MigrationError(f"{sync.rel(path)} 是软链实体，拒绝迁移")
+                if path.is_symlink() or not path.is_file():
                     continue
-                if not path.is_file() or not looks_entity:
+                name = path.name
+                if not re.match(rf"^{prefix}[0-9]", name):
                     continue
                 parsed = parse_entry_file_name(prefix, name)
                 if parsed is None:
@@ -249,8 +245,6 @@ def validate_current_entities(sync: ctx.SyncContext) -> None:
             for path in sorted(spikes_dir.iterdir()):
                 if path.name.startswith(".") or path.name in _CLEANABLE_NAMES or not path.name.startswith("s"):
                     continue
-                if path.is_symlink():
-                    raise MigrationError(f"非法 spike 项：{sync.rel(path)}（软链）")
                 if not path.is_dir():
                     raise MigrationError(f"非法 spike 项：{sync.rel(path)}")
                 match = SPIKE_DIR_RE.fullmatch(path.name)
@@ -670,10 +664,7 @@ def _collect_sources(
         for path in sorted(fdir.iterdir()):
             if path.name.startswith(".tmp_"):
                 continue
-            if path.is_symlink():
-                if re.match(r"^d[0-9]", path.name):
-                    raise MigrationError(f"{sync.rel(path)} 是软链实体，拒绝迁移")
-                continue
+            # 软链策略单点在 _reject_symlink_entities（build/status 入口已调用）
             if path.is_dir():
                 raise MigrationError(f"当前 findings 布局禁止嵌套目录：{sync.rel(path)}")
             if not path.is_file():
@@ -861,7 +852,6 @@ def build_migration_plan(
     spikes_plan: list[SpikeItem] = []
     renumber_reports: list[str] = []
     renumbered_decisions: list = []
-    findings_final_texts: dict[str, tuple[str, str]] = {}
     all_entity_texts: dict[str, tuple[str, str]] = {}
 
     for prefix in ("d", "p", "s"):
@@ -890,7 +880,6 @@ def build_migration_plan(
                     cand.doc_base,
                 ))
                 all_entity_texts[dec.target_rel] = (dec.final_id, text)
-                findings_final_texts[dec.target_rel] = (dec.final_id, text)
             elif prefix == "p":
                 fm = dict(data["fm"]) if data["kind"] == "pending_file" else {
                     "pid": dec.final_id, "slug": cand.slug, "status": "todo"
@@ -967,8 +956,6 @@ def build_migration_plan(
         finding.content = new_text
         target_rel = finding.target_path.relative_to(consumer).as_posix()
         all_entity_texts[target_rel] = (finding.final_id, new_text)
-        if target_rel in findings_final_texts:
-            findings_final_texts[target_rel] = (finding.final_id, new_text)
     for pending in pendings_plan:
         pending.content = update_exact_path_references(
             pending.content, doc_rel=pending.doc_base_rel,
@@ -1084,7 +1071,6 @@ def build_migration_plan(
         stale_index_paths=stale_index_paths, non_entities=_non_entities(sync),
         renumber_reports=renumber_reports, reference_reports=reference_reports,
         transaction_extra_rels=sorted(set(transaction_extra_rels)),
-        findings_final_texts=findings_final_texts,
     )
 
 

@@ -61,7 +61,7 @@ def cmd_add(args):
                 sys.path.insert(0, scripts_dir)
             from _id_scan import IdScanError, scan_max_id
         try:
-            global_max = scan_max_id(repo.root, "t", ("docs/tasks",), kind="dir")
+            global_max = scan_max_id(repo.root, "t")
         except IdScanError as error:
             sys.exit(str(error))
         n = max(local_max, global_max) + 1

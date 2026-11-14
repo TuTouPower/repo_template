@@ -14,11 +14,10 @@ task.py / pending.py / findings.py / spikes.py 共用。四类条目分别递增
 - 每个 worktree 各自的 Git index（含已暂存后又从磁盘删除的条目）。
 
 占用计算与当前校验分离：
-- `scan_occupied_max_ids` / `scan_occupied_max_id`：单轮批量收集本机可达历史、分支 tip、
-  worktree 磁盘与 index 的规范路径并计算最大占用号；相同编号出现多次仍正常取最大值，
-  不因来源缺少当前 schema 而忽略规范路径占用号。
-- `scan_max_id`：普通创建入口，先对当前协议来源按每个分支、磁盘快照、index 快照分别校验
-  目录形状与同快照重复，再取最大占用号。
+- `scan_occupied_max_ids`：单轮批量收集本机可达历史、分支 tip、worktree 磁盘与 index
+  的规范路径并计算四类最大占用号；相同编号出现多次仍正常取最大值。
+- `scan_max_id(repo_root, prefix)`：普通创建入口，按 prefix 查表，先对当前协议来源
+  校验目录形状与同快照零重复，再取最大占用号。
 - `validate_snapshot_ids`：合并/提交/验收边界校验当前快照（`t`/`p`/`d`/`s`）零重复。
 
 编号与文件名映射由本模块统一定义（`canonical_entry_id` / `parse_entry_file_name` /
@@ -305,15 +304,6 @@ def _numbers_from_tree_entries(
     return found
 
 
-def _numbers_from_branch(
-    repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...], kind: str
-) -> dict[int, list[str]]:
-    text = _run_git(
-        repo_root, ["ls-tree", "-r", "-t", "-z", branch, "--", *dirs]
-    )
-    return _numbers_from_tree_entries(_parse_ls_tree_entries(text), prefix, dirs, kind)
-
-
 def _numbers_from_worktree(
     root: Path, prefix: str, dirs: tuple[str, ...], kind: str
 ) -> dict[int, list[str]]:
@@ -370,13 +360,6 @@ def _numbers_from_file_paths(
     return found
 
 
-def _numbers_from_index(
-    root: Path, prefix: str, dirs: tuple[str, ...], kind: str
-) -> dict[int, list[str]]:
-    text = _run_git(root, ["ls-files", "-z", "--", *dirs])
-    return _numbers_from_file_paths(text.split("\0"), prefix, dirs, kind)
-
-
 def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> None:
     duplicated = {n: paths for n, paths in found.items() if len(paths) > 1}
     if duplicated:
@@ -387,17 +370,9 @@ def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> 
         raise IdScanError(f"{source} 中条目编号重复：{detail}")
 
 
-def _effective_history_dirs(
-    prefix: str, dirs: tuple[str, ...], history_dirs: tuple[str, ...] | None
-) -> tuple[str, ...]:
-    base = history_dirs if history_dirs is not None else HISTORY_SCAN_DIRS.get(prefix, ())
-    return tuple(dict.fromkeys([*dirs, *base]))
-
-
 def scan_occupied_max_ids(
     repo_root: Path,
     *,
-    extra_specs: tuple[tuple[str, tuple[str, ...], str], ...] = (),
     _branches: list[str] | None = None,
     _wt_records: list[tuple[Path, str | None]] | None = None,
 ) -> dict[str, int]:
@@ -416,14 +391,8 @@ def scan_occupied_max_ids(
     specs: list[tuple[str, tuple[str, ...], str]] = [
         (prefix, HISTORY_SCAN_DIRS[prefix], kind) for prefix, _dir, kind in ENTRY_KINDS
     ]
-    for ep, edirs, ekind in extra_specs:
-        eff_dirs = _effective_history_dirs(ep, edirs, None)
-        specs.append((ep, eff_dirs, ekind))
-
     all_scan_dirs = tuple(dict.fromkeys(d for _p, sdirs, _k in specs for d in sdirs))
     max_ids: dict[str, int] = {prefix: 0 for prefix, _dir, _kind in ENTRY_KINDS}
-    for ep, _edirs, _ekind in extra_specs:
-        max_ids.setdefault(ep, 0)
 
     # 1. 单次 git log 批量扫描全部可达本地历史路径
     log_text = _run_git(
@@ -477,34 +446,16 @@ def scan_occupied_max_ids(
     return max_ids
 
 
-def scan_occupied_max_id(
-    repo_root: Path,
-    prefix: str,
-    dirs: tuple[str, ...] | None = None,
-    kind: str = "file",
-) -> int:
-    """计算指定类别的最大占用号（供分配和迁移共用）。"""
-    default_dirs = dict((p, (d,)) for p, d, _k in ENTRY_KINDS).get(prefix, ())
-    target_dirs = dirs if dirs is not None else default_dirs
-    extra = ((prefix, target_dirs, kind),) if target_dirs != default_dirs else ()
-    return scan_occupied_max_ids(repo_root, extra_specs=extra).get(prefix, 0)
-
-
-def scan_max_id(
-    repo_root: Path, prefix: str, dirs: tuple[str, ...], kind: str = "file"
-) -> int:
-    """普通创建入口：先按分支、磁盘快照、index 快照分别校验当前协议来源，再返回最大占用号。"""
+def scan_max_id(repo_root: Path, prefix: str) -> int:
+    """普通创建入口：按 prefix 查表，校验当前协议来源零重复/布局，再返回最大占用号。"""
+    if prefix not in {p for p, _dir, _kind in ENTRY_KINDS}:
+        raise IdScanError(f"未知条目类别前缀：{prefix!r}")
     branches = local_branches(repo_root)
     wt_records = _worktree_records(repo_root)
-    default_spec = (prefix, dirs, kind) in {(p, (d,), k) for p, d, k in ENTRY_KINDS}
 
     for branch in branches:
-        if not branch_uses_current_schema(repo_root, branch):
-            continue
-        validate_snapshot_ids(repo_root, branch)
-        if not default_spec:
-            found = _numbers_from_branch(repo_root, branch, prefix, dirs, kind)
-            _check_duplicates(f"分支 {branch}", found, prefix)
+        if branch_uses_current_schema(repo_root, branch):
+            validate_snapshot_ids(repo_root, branch)
 
     for root, _head in wt_records:
         if not current_schema(root):
@@ -513,18 +464,10 @@ def scan_max_id(
         for sp, sdir, skind in ENTRY_KINDS:
             found_disk = _numbers_from_worktree(root, sp, (sdir,), skind)
             _check_duplicates(f"worktree {root}", found_disk, sp)
-        if not default_spec:
-            found_disk = _numbers_from_worktree(root, prefix, dirs, kind)
-            _check_duplicates(f"worktree {root}", found_disk, prefix)
         validate_snapshot_ids(root)
-        if not default_spec:
-            found_idx = _numbers_from_index(root, prefix, dirs, kind)
-            _check_duplicates(f"index {root}", found_idx, prefix)
 
-    extra = ((prefix, dirs, kind),) if not default_spec else ()
     return scan_occupied_max_ids(
         repo_root,
-        extra_specs=extra,
         _branches=branches,
         _wt_records=wt_records,
     ).get(prefix, 0)
@@ -795,7 +738,7 @@ def allocate(
         raise IdScanError(f"slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     with id_lock(repo_root):
         require_current_schema(repo_root)
-        number = scan_max_id(repo_root, prefix, dirs) + 1
+        number = scan_max_id(repo_root, prefix) + 1
         entry_id = canonical_entry_id(prefix, number)
         path = target_dir / f"{entry_id}_{slug}.md"
         if path.is_symlink() or path.exists():
@@ -860,7 +803,7 @@ def allocate_dir(
     safe_files = {_safe_file_name(name): content for name, content in files.items()}
     with id_lock(repo_root):
         require_current_schema(repo_root)
-        number = scan_max_id(repo_root, prefix, dirs, kind="dir") + 1
+        number = scan_max_id(repo_root, prefix) + 1
         entry_id = canonical_entry_id(prefix, number)
         path = target_dir / f"{entry_id}_{slug}"
         if path.is_symlink() or path.exists():

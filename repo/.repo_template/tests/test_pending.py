@@ -325,7 +325,7 @@ def test_id_scan_and_allocation_isolation(repo: Path) -> None:
     pending_mod.main(["new", "third"])
     assert (repo / "docs/pending/p003_third.md").is_file()
 
-    assert scan_max_id(repo, "p", ("docs/pending",)) == 3
+    assert scan_max_id(repo, "p") == 3
 
 
 def test_front_matter_validation_strictness(repo: Path) -> None:

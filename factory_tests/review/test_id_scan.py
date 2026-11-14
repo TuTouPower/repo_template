@@ -92,27 +92,27 @@ def _migrate_ledger(repo, kind, *, write=False):
 
 def test_empty_history_starts_at_zero(tmp_path):
     repo = _init_repo(tmp_path)
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
+    assert scan_max_id(repo, "p") == 0
 
 
 def test_todo_entries_drive_max(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/p007_bug.md")
     _commit_entry(repo, "docs/pending/p002_debt.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 7
+    assert scan_max_id(repo, "p") == 7
 
 
 def test_closed_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/p002_open.md")
     _commit_entry(repo, "docs/pending/p027_closed.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 27
+    assert scan_max_id(repo, "p") == 27
 
 
 def test_parked_entries_count(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/p013_later.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 13
+    assert scan_max_id(repo, "p") == 13
 
 
 def test_non_entry_filenames_ignored(tmp_path):
@@ -121,13 +121,13 @@ def test_non_entry_filenames_ignored(tmp_path):
     _commit_entry(repo, "docs/pending/p01_short.md")
     _commit_entry(repo, "docs/pending/p012_Upper.md")
     _commit_entry(repo, "docs/pending/p013_ok.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 13
+    assert scan_max_id(repo, "p") == 13
 
 
 def test_ids_can_exceed_999(tmp_path):
     repo = _init_repo(tmp_path)
     _commit_entry(repo, "docs/pending/p1024_big.md")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 1024
+    assert scan_max_id(repo, "p") == 1024
 
 
 def test_other_branch_bigger_id_is_picked_up(tmp_path):
@@ -136,7 +136,7 @@ def test_other_branch_bigger_id_is_picked_up(tmp_path):
     _git(repo, "checkout", "-b", "feature")
     _commit_entry(repo, "docs/pending/p005_feature.md")
     _git(repo, "checkout", "main")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 5
+    assert scan_max_id(repo, "p") == 5
 
 
 def test_worktree_uncommitted_entry_picked_up(tmp_path):
@@ -145,7 +145,7 @@ def test_worktree_uncommitted_entry_picked_up(tmp_path):
     worktree = tmp_path / "wt"
     _git(repo, "worktree", "add", "--detach", str(worktree))
     (worktree / "docs/pending/p009_wip.md").write_text("x\n", encoding="utf-8")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 9
+    assert scan_max_id(repo, "p") == 9
 
 
 def test_duplicate_within_source_fails(tmp_path):
@@ -153,7 +153,7 @@ def test_duplicate_within_source_fails(tmp_path):
     _commit_entry(repo, "docs/pending/p010_open.md")
     _commit_entry(repo, "docs/pending/p010_closed.md")
     with pytest.raises(IdScanError, match="p010"):
-        scan_max_id(repo, "p", PENDING_DIRS)
+        scan_max_id(repo, "p")
 
 
 def test_duplicate_across_sources_not_reported(tmp_path):
@@ -163,14 +163,14 @@ def test_duplicate_across_sources_not_reported(tmp_path):
     _git(repo, "rm", "-q", "docs/pending/p010_main.md")
     _commit_entry(repo, "docs/pending/p010_feature.md")
     _git(repo, "checkout", "main")
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 10
+    assert scan_max_id(repo, "p") == 10
 
 
 def test_git_failure_wrapped(tmp_path):
     not_a_repo = tmp_path / "norepo"
     not_a_repo.mkdir()
     with pytest.raises(IdScanError):
-        scan_max_id(not_a_repo, "p", PENDING_DIRS)
+        scan_max_id(not_a_repo, "p")
 
 
 # ---------- 互斥分配 ----------
@@ -577,7 +577,7 @@ def test_pending_new_format_failure_publishes_nothing(tmp_path, monkeypatch, cap
 
     assert not (repo / "docs/pending/p001_atomic_check.md").exists()
     assert capsys.readouterr().out == ""
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
+    assert scan_max_id(repo, "p") == 0
 
 
 def test_spikes_new_format_failure_publishes_no_directory(tmp_path, monkeypatch, capsys):
@@ -598,7 +598,7 @@ def test_spikes_new_format_failure_publishes_no_directory(tmp_path, monkeypatch,
 
     assert not (repo / "docs/spikes/s001_atomic_spike").exists()
     assert capsys.readouterr().out == ""
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
+    assert scan_max_id(repo, "s") == 0
 
 
 def test_spikes_new_formats_report_file(tmp_path, monkeypatch):
@@ -637,7 +637,7 @@ def test_allocate_dir_formatter_failure_cleans_up(tmp_path):
 
     assert not (target / "s001_flaky").exists()
     assert list(target.glob(".tmp_*")) == []
-    assert scan_max_id(repo, "s", SPIKE_DIRS, kind="dir") == 0
+    assert scan_max_id(repo, "s") == 0
 
 
 def test_allocate_formatter_failure_cleans_up(tmp_path):
@@ -654,7 +654,7 @@ def test_allocate_formatter_failure_cleans_up(tmp_path):
 
     assert not (target / "p001_flaky.md").exists()
     assert list(target.glob(".tmp_*")) == []
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
+    assert scan_max_id(repo, "p") == 0
 
 
 def test_spikes_new_requires_template(tmp_path, monkeypatch):
@@ -709,7 +709,7 @@ def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkey
                  slug="demo", body="# pNNN demo\n")
     with pytest.raises(SystemExit, match="apply"):
         pending_mod.main(["new", "--slug", "demo"])
-    assert scan_max_id(repo, "p", PENDING_DIRS) == 0
+    assert scan_max_id(repo, "p") == 0
 
 
 def test_migrate_legacy_findings_splits_entries(tmp_path, monkeypatch):
@@ -843,7 +843,7 @@ def test_spike_duplicate_active_archive_within_branch_fails(tmp_path):
     _commit_entry(repo, "docs/spikes/s012_other/report.md", text="# s012\n")
     _git(repo, "checkout", "main")
     with pytest.raises(IdScanError, match="s012"):
-        scan_max_id(repo, "s", SPIKE_DIRS, kind="dir")
+        scan_max_id(repo, "s")
 
 
 @pytest.mark.parametrize("reference", [None, "main", "abc123", "PR #42"])
