@@ -231,10 +231,13 @@ def update_exact_path_references(
     doc_rel: str,
     final_doc_rel: str,
     path_mappings: list[tuple[str, str, bool]],
+    consumer: Path | None = None,
 ) -> str:
-    """仅按本轮真实来源→目标映射更新精确路径（仓库相对与可解析文档相对，保留锚点）。
+    """按本轮真实来源→目标映射更新精确路径与可解析相对引用（保留锚点）。
 
-    不做裸前缀全文替换、不做裸编号全仓替换；无映射时不改动任何文本。
+    文档搬迁时，即使链接目标本身未搬迁/未改号，也要按最终文档位置重新表达相对地址；
+    目标命中迁移映射则跟随改号。无映射且文档未搬迁时不改动任何文本；裸编号与外链不碰。
+    consumer 用于校验未命中映射的本地目标真实存在，避免改写正文示例。
     """
     out = text
     sorted_mappings = sorted(
@@ -253,39 +256,54 @@ def update_exact_path_references(
             )
         out = pat.sub(new_rel, out)
 
-    if sorted_mappings:
-        doc_parent = posixpath.dirname(doc_rel) or "."
-        final_parent = posixpath.dirname(final_doc_rel) or "."
+    doc_parent = posixpath.dirname(doc_rel) or "."
+    final_parent = posixpath.dirname(final_doc_rel) or "."
+    if not sorted_mappings and doc_parent == final_parent:
+        return out
 
-        def _resolve(raw_path: str) -> str:
-            had_dot = raw_path.startswith("./")
-            norm = posixpath.normpath(posixpath.join(doc_parent, raw_path))
-            for old_rel, new_rel, is_dir in sorted_mappings:
-                if not is_dir and norm == old_rel:
-                    updated = new_rel
-                elif is_dir and (norm == old_rel or norm.startswith(old_rel + "/")):
-                    updated = new_rel + (norm[len(old_rel):] if norm.startswith(old_rel + "/") else "")
-                else:
-                    continue
-                rel_new = posixpath.relpath(updated, final_parent)
-                if had_dot and not rel_new.startswith("."):
-                    rel_new = "./" + rel_new
-                return rel_new
+    def _resolve(raw_path: str) -> str:
+        had_dot = raw_path.startswith("./")
+        # 从真实旧文档位置解析，得到仓内目标（迁移前）
+        norm_old = posixpath.normpath(posixpath.join(doc_parent, raw_path))
+        updated = norm_old
+        hit = False
+        for old_rel, new_rel, is_dir in sorted_mappings:
+            if not is_dir and norm_old == old_rel:
+                updated, hit = new_rel, True
+                break
+            if is_dir and (norm_old == old_rel or norm_old.startswith(old_rel + "/")):
+                updated = new_rel + (
+                    norm_old[len(old_rel):] if norm_old.startswith(old_rel + "/") else ""
+                )
+                hit = True
+                break
+        # 文档未搬迁且目标未改号：保持原相对字符串（也保护正文示例）
+        if doc_parent == final_parent and not hit:
             return raw_path
+        # 未命中映射时仅重写目标真实存在的本地链接，避免改写示例/精确仓内路径
+        if consumer is not None and not hit and not (consumer / updated).exists():
+            return raw_path
+        # 输出位置可能已改变：按最终文档目录重新表达相对地址
+        rel_new = posixpath.relpath(updated, final_parent)
+        if had_dot and not rel_new.startswith("."):
+            rel_new = "./" + rel_new
+        return rel_new
 
-        rel_token_re = re.compile(r"(?<![A-Za-z0-9_./-])(\.\.?/[A-Za-z0-9_./-]+)")
-        out = rel_token_re.sub(lambda m: _resolve(m.group(1)), out)
+    # 单次扫描：markdown 链接整体优先，剩余裸相对 token 兜底，避免同一片段被处理两次
+    local_link_re = re.compile(
+        r"(\]\(\s*<?)([^)>\s#?]+)((?:[?#][^)>\s]*)?>?\s*\))"
+        r"|(?<![A-Za-z0-9_./-])(\.\.?/[A-Za-z0-9_./-]+)"
+    )
 
-        md_link_re = re.compile(r"(\]\(\s*<?)([^)>\s#?]+)((?:[?#][^)>\s]*)?>?\s*\))")
-
-        def _replace_link(match: re.Match[str]) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        if match.group(1) is not None:
             target = match.group(2)
             if target.startswith(("http://", "https://", "mailto:", "#", "/")) or ":" in target:
                 return match.group(0)
             return f"{match.group(1)}{_resolve(target)}{match.group(3)}"
+        return _resolve(match.group(4))
 
-        out = md_link_re.sub(_replace_link, out)
-
+    out = local_link_re.sub(_replace, out)
     return out
 
 

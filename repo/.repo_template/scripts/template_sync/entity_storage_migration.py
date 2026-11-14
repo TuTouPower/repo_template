@@ -966,7 +966,7 @@ def build_migration_plan(
         new_text = update_exact_path_references(
             finding.content, doc_rel=src_rel,
             final_doc_rel=finding.target_path.relative_to(consumer).as_posix(),
-            path_mappings=path_mappings,
+            path_mappings=path_mappings, consumer=consumer,
         )
         finding.content = new_text
         target_rel = finding.target_path.relative_to(consumer).as_posix()
@@ -982,7 +982,7 @@ def build_migration_plan(
         pending.content = update_exact_path_references(
             pending.content, doc_rel=src_rel,
             final_doc_rel=pending.target_path.relative_to(consumer).as_posix(),
-            path_mappings=path_mappings,
+            path_mappings=path_mappings, consumer=consumer,
         )
         all_entity_texts[pending.target_path.relative_to(consumer).as_posix()] = (
             pending.final_id, pending.content
@@ -991,7 +991,7 @@ def build_migration_plan(
         spike.report_content = update_exact_path_references(
             spike.report_content, doc_rel=spike.source_rel + "/report.md",
             final_doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
-            path_mappings=path_mappings,
+            path_mappings=path_mappings, consumer=consumer,
         )
         all_entity_texts[
             spike.target_dir.relative_to(consumer).as_posix() + "/report.md"
@@ -1034,7 +1034,7 @@ def build_migration_plan(
             continue
         new_text = update_exact_path_references(
             text, doc_rel=rel, final_doc_rel=rel,
-            path_mappings=path_mappings,
+            path_mappings=path_mappings, consumer=consumer,
         )
         outside_doc_texts[rel] = new_text
         if new_text != text:

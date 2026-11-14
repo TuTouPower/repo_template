@@ -294,3 +294,56 @@ def test_r07_finding_symlink_blocked_consistently(tmp_path: Path) -> None:
         validate_current_entities(_sync(root))
     with pytest.raises(MigrationError):
         build_migration_plan(_sync(root))
+
+
+# ---------------------------------------------------------------------------
+# R02 残留：搬迁文档指向「未搬迁目标」的相对链接仍会失效（round2）。
+# ---------------------------------------------------------------------------
+
+
+def test_r02b_relocated_pending_link_to_unmoved_target(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_fact.md", "d001")
+    _pending(
+        root, "docs/pending/todo/p001_probe.md", "p001", "probe",
+        extra="\n[fact](../../findings/d001_fact.md#evidence)\n",
+    )
+    _commit_all(root, "todo link to unmoved finding")
+    # 迁移前：从旧位置解析，目标真实存在
+    assert (root / "docs/pending/todo" / "../../findings/d001_fact.md").resolve().is_file()
+
+    migrate_entity_storage(_sync(root), write=True)
+
+    text = (root / "docs/pending/p001_probe.md").read_text(encoding="utf-8")
+    assert "../../findings/d001_fact.md" not in text, text
+    assert "../findings/d001_fact.md#evidence" in text, text
+    # 迁移后：从最终位置解析，仍指向同一个存在目标
+    assert (root / "docs/pending" / "../findings/d001_fact.md").resolve().is_file()
+    assert entity_storage_migration_status(_sync(root)) == []
+
+
+def test_r02b_relocated_spike_link_to_unmoved_target(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_fact.md", "d001")
+    spike_dir = root / "docs/archive/spikes/s001_probe"
+    spike_dir.mkdir(parents=True)
+    (spike_dir / "report.md").write_text(
+        '---\nsid: "s001"\nslug: "probe"\nstatus: "completed"\n---\n'
+        "# Spike s001\n\n## 结论\n采纳，依据 d001。\n\n"
+        "[fact](../../../findings/d001_fact.md#evidence)\n",
+        encoding="utf-8",
+    )
+    _commit_all(root, "archive spike link to unmoved finding")
+    assert (
+        root / "docs/archive/spikes/s001_probe" / "../../../findings/d001_fact.md"
+    ).resolve().is_file()
+
+    migrate_entity_storage(_sync(root), write=True)
+
+    text = (root / "docs/spikes/s001_probe/report.md").read_text(encoding="utf-8")
+    assert "../../../findings/d001_fact.md" not in text, text
+    assert "../../findings/d001_fact.md#evidence" in text, text
+    assert (
+        root / "docs/spikes/s001_probe" / "../../findings/d001_fact.md"
+    ).resolve().is_file()
+    assert entity_storage_migration_status(_sync(root)) == []
