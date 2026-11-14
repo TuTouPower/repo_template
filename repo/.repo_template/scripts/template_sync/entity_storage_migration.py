@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from _id_scan import (
+    ENTITIES,
     IdScanError,
     canonical_entry_id,
     parse_entry_dir_name,
@@ -69,12 +70,13 @@ from .duplicate_ids_migration import (
 )
 from .legacy_ledgers import plan_legacy_migration
 
+# 旧布局目录由唯一实体描述表派生（当前目录之外的 history_dirs），不再独立硬编码。
+_ENTITY_TYPE = {"t": "tasks", "p": "pending", "d": "findings", "s": "spikes"}
 LEGACY_ENTITY_DIRS = {
-    "docs/archive/tasks": "tasks",
-    "docs/archive/spikes": "spikes",
-    "docs/archive/pending": "pending",
-    "docs/pending/todo": "pending",
-    "docs/pending/parked": "pending",
+    d: _ENTITY_TYPE[p]
+    for p, spec in ENTITIES.items()
+    for d in spec.history_dirs
+    if d != spec.current_dir
 }
 _CLEANABLE_NAMES = frozenset({".DS_Store", ".gitkeep"})
 _STALE_INDEX_RELS = ("docs/tasks_index.json", "docs/archive/tasks_index.json")

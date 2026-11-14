@@ -87,7 +87,7 @@ def test_allocate_does_not_follow_predictable_tmp_symlink(tmp_path: Path):
     tmp_link.symlink_to(outside)
 
     path = allocate(
-        repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+        repo, prefix="p", target_dir=repo / "docs/pending",
         slug="evil", body="# {id} evil\n",
     )
 
@@ -108,7 +108,7 @@ def test_allocate_rejects_symlinked_target_dir(tmp_path: Path):
 
     with pytest.raises(IdScanError, match="软链"):
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+            repo, prefix="p", target_dir=repo / "docs/pending",
             slug="evil", body="# {id} evil\n",
         )
     assert list(outside_dir.iterdir()) == []
@@ -141,7 +141,7 @@ def test_allocate_dir_rejects_symlinked_target_dir(tmp_path: Path):
 
     with pytest.raises(IdScanError, match="软链"):
         allocate_dir(
-            repo, prefix="s", dirs=SPIKE_DIRS, target_dir=repo / "docs/spikes",
+            repo, prefix="s", target_dir=repo / "docs/spikes",
             slug="evil", files={"report.md": "# {id}\n"},
         )
     assert list(outside_dir.iterdir()) == []
@@ -156,7 +156,7 @@ def test_allocate_dir_does_not_follow_predictable_tmp_symlink(tmp_path: Path):
     tmp_link.symlink_to(outside)
 
     path = allocate_dir(
-        repo, prefix="s", dirs=SPIKE_DIRS, target_dir=repo / "docs/spikes",
+        repo, prefix="s", target_dir=repo / "docs/spikes",
         slug="evil", files={"report.md": "# {id}\n"},
     )
 
@@ -176,7 +176,7 @@ def test_publish_io_error_is_wrapped_as_id_scan_error(tmp_path: Path):
 
     with pytest.raises(IdScanError, match="I/O 失败"):
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=target,
+            repo, prefix="p", target_dir=target,
             slug="atomic", body="# {id}\n", formatter=formatter,
         )
     assert not list(target.glob(".tmp_*"))
@@ -192,7 +192,7 @@ def test_publish_business_exception_propagates_unchanged(tmp_path: Path):
 
     with pytest.raises(ValueError, match="formatter failed"):
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+            repo, prefix="p", target_dir=repo / "docs/pending",
             slug="flaky", body="# {id}\n", formatter=explode,
         )
     assert not list((repo / "docs/pending").glob(".tmp_*"))
@@ -218,7 +218,7 @@ def test_legacy_layout_dir_blocks_allocation_and_hints_real_command(
 
     with pytest.raises(IdScanError) as exc:
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+            repo, prefix="p", target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
     assert "apply" in str(exc.value)
@@ -233,7 +233,7 @@ def test_legacy_layout_dir_in_other_branch_blocks_allocation(tmp_path: Path):
 
     with pytest.raises(IdScanError, match="嵌套条目|legacy"):
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+            repo, prefix="p", target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
 
@@ -244,7 +244,7 @@ def test_legacy_ledger_hints_real_pending_command(tmp_path: Path):
 
     with pytest.raises(IdScanError) as exc:
         allocate(
-            repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+            repo, prefix="p", target_dir=repo / "docs/pending",
             slug="next", body="# {id}\n",
         )
     assert "repo_sync.py apply" in str(exc.value)

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from _id_scan import (
+    ENTITIES,
     IdScanError,
     branch_uses_current_schema,
     canonical_entry_id,
@@ -147,7 +148,7 @@ def assign_final_ids(
     occupied_max: dict[str, int],
 ) -> dict[tuple[str, str, int], RenumberDecision]:
     """按 d -> p -> s、原编号升序分配最终编号；同号分组按首次提交时间稳定保留。"""
-    target_dir_map = {"d": "docs/findings", "p": "docs/pending", "s": "docs/spikes"}
+    target_dir_map = {p: s.current_dir for p, s in ENTITIES.items()}
     decisions: dict[tuple[str, str, int], RenumberDecision] = {}
     running_max = dict(occupied_max)
     for prefix in ("d", "p", "s"):

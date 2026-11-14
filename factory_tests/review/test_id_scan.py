@@ -25,8 +25,8 @@ import findings as findings_mod
 import spikes as spikes_mod
 
 PENDING_DIRS = ("docs/pending",)
-FINDING_DIRS = findings_mod.SCAN_DIRS
-SPIKE_DIRS = spikes_mod.SCAN_DIRS
+FINDING_DIRS = ("docs/findings",)
+SPIKE_DIRS = ("docs/spikes",)
 
 
 from repo_task.context import RepoContext
@@ -181,7 +181,6 @@ def test_allocate_creates_file_and_returns_path(tmp_path):
     path = allocate(
         repo,
         prefix="p",
-        dirs=PENDING_DIRS,
         target_dir=repo / "docs/pending",
         slug="new_item",
         body="# {id} demo\n",
@@ -196,7 +195,6 @@ def test_allocate_increments_sequentially(tmp_path):
     p1 = allocate(
         repo,
         prefix="p",
-        dirs=PENDING_DIRS,
         target_dir=repo / "docs/pending",
         slug="first",
         body="# {id}\n",
@@ -204,7 +202,6 @@ def test_allocate_increments_sequentially(tmp_path):
     p2 = allocate(
         repo,
         prefix="p",
-        dirs=PENDING_DIRS,
         target_dir=repo / "docs/pending",
         slug="second",
         body="# {id}\n",
@@ -220,7 +217,6 @@ def test_allocate_rejects_bad_slug(tmp_path):
             allocate(
                 repo,
                 prefix="p",
-                dirs=PENDING_DIRS,
                 target_dir=repo / "docs/pending",
                 slug=bad,
                 body="# {id}\n",
@@ -630,7 +626,7 @@ def test_allocate_dir_formatter_failure_cleans_up(tmp_path):
 
     with pytest.raises(ValueError, match="formatter failed"):
         allocate_dir(
-            repo, prefix="s", dirs=SPIKE_DIRS, target_dir=target,
+            repo, prefix="s", target_dir=target,
             slug="flaky", files={"report.md": "# {id}\n"},
             formatter=explode,
         )
@@ -650,7 +646,7 @@ def test_allocate_formatter_failure_cleans_up(tmp_path):
         raise ValueError("formatter failed")
 
     with pytest.raises(ValueError, match="formatter failed"):
-        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=target, slug="flaky", body="# {id}\n", formatter=explode)
+        allocate(repo, prefix="p", target_dir=target, slug="flaky", body="# {id}\n", formatter=explode)
 
     assert not (target / "p001_flaky.md").exists()
     assert list(target.glob(".tmp_*")) == []
@@ -705,7 +701,7 @@ def test_allocation_blocks_on_legacy_ledger_and_hints_migration(tmp_path, monkey
     )
 
     with pytest.raises(IdScanError, match="apply"):
-        allocate(repo, prefix="p", dirs=PENDING_DIRS, target_dir=repo / "docs/pending",
+        allocate(repo, prefix="p", target_dir=repo / "docs/pending",
                  slug="demo", body="# pNNN demo\n")
     with pytest.raises(SystemExit, match="apply"):
         pending_mod.main(["new", "--slug", "demo"])
@@ -902,7 +898,6 @@ def _allocate_worker(repo_str: str, slug: str) -> str:
     return allocate(
         repo,
         prefix="p",
-        dirs=PENDING_DIRS,
         target_dir=repo / "docs/pending",
         slug=slug,
         body="# {id}\n",
@@ -933,7 +928,6 @@ def test_allocate_dir_rejects_paths_escaping_target(tmp_path, monkeypatch):
             allocate_dir(
                 repo,
                 prefix="s",
-                dirs=SPIKE_DIRS,
                 target_dir=target,
                 slug="safe",
                 files={bad: "x"},

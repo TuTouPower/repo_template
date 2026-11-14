@@ -29,7 +29,6 @@ from _id_scan import (
 from md_format import MdFormatError, format_file
 
 PREFIX = "d"
-SCAN_DIRS = ("docs/findings",)
 
 TEMPLATE = """# {id} {一句话简述}
 
@@ -47,7 +46,6 @@ def cmd_new(args: argparse.Namespace) -> None:
         path = allocate(
             repo.root,
             prefix=PREFIX,
-            dirs=SCAN_DIRS,
             target_dir=(repo.root / "docs/findings"),
             slug=args.slug,
             body=TEMPLATE,

@@ -287,3 +287,33 @@ def test_5_task_add_uses_unified_id_lock() -> None:
     src = inspect.getsource(lifecycle.cmd_add)
     assert "id_lock" in src, "task.py add must use id_lock (scrubs GIT_* redirects)"
     assert "git_common_lock" not in src
+
+
+# ---------------------------------------------------------------------------
+# ⑥ 合并四份实体路径表为唯一实体描述，运行期与迁移共用
+# ---------------------------------------------------------------------------
+
+
+def test_6_single_entity_description_is_only_path_source() -> None:
+    import inspect
+
+    import _id_scan
+    from template_sync import entity_storage_migration as esm
+
+    assert hasattr(_id_scan, "ENTITIES"), "missing single entity table"
+    assert not hasattr(_id_scan, "HISTORY_SCAN_DIRS"), "history dirs must come from ENTITIES"
+    for prefix, spec in _id_scan.ENTITIES.items():
+        assert spec.prefix == prefix
+        assert spec.current_dir in spec.history_dirs
+    assert _id_scan.ENTRY_KINDS == tuple(
+        (p, s.current_dir, s.kind) for p, s in _id_scan.ENTITIES.items()
+    )
+    legacy = set(esm.LEGACY_ENTITY_DIRS)
+    assert legacy == {
+        d
+        for s in _id_scan.ENTITIES.values()
+        for d in s.history_dirs
+        if d != s.current_dir
+    }, legacy
+    assert "dirs" not in inspect.signature(_id_scan.allocate).parameters
+    assert "dirs" not in inspect.signature(_id_scan.allocate_dir).parameters

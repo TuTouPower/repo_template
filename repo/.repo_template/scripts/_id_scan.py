@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from repo_task.locks import TASK_ID_LOCK_NAME, git_common_lock
@@ -47,19 +48,30 @@ from repo_task.entity_schema import SCHEMA_PATH, current_schema, validate_schema
 
 LOCK_NAME = TASK_ID_LOCK_NAME
 
-ENTRY_KINDS: tuple[tuple[str, str, str], ...] = (
-    ("t", "docs/tasks", "dir"),
-    ("p", "docs/pending", "file"),
-    ("d", "docs/findings", "file"),
-    ("s", "docs/spikes", "dir"),
-)
+@dataclass(frozen=True)
+class EntitySpec:
+    """唯一实体描述：前缀、当前布局目录、历史/旧布局目录、条目形态。
 
-HISTORY_SCAN_DIRS: dict[str, tuple[str, ...]] = {
-    "t": ("docs/tasks", "docs/archive/tasks"),
-    "p": ("docs/pending", "docs/archive/pending", "docs/pending/todo", "docs/pending/parked"),
-    "d": ("docs/findings",),
-    "s": ("docs/spikes", "docs/archive/spikes"),
+    运行期取号与同步迁移共用本表；当前/历史/目标路径不再分散硬编码。
+    """
+
+    prefix: str
+    current_dir: str
+    history_dirs: tuple[str, ...]
+    kind: str
+
+
+ENTITIES: dict[str, EntitySpec] = {
+    "t": EntitySpec("t", "docs/tasks", ("docs/tasks", "docs/archive/tasks"), "dir"),
+    "p": EntitySpec("p", "docs/pending", ("docs/pending", "docs/archive/pending", "docs/pending/todo", "docs/pending/parked"), "file"),
+    "d": EntitySpec("d", "docs/findings", ("docs/findings",), "file"),
+    "s": EntitySpec("s", "docs/spikes", ("docs/spikes", "docs/archive/spikes"), "dir"),
 }
+
+# 派生遍历视图（非独立定义），供扫描/校验循环使用。
+ENTRY_KINDS: tuple[tuple[str, str, str], ...] = tuple(
+    (p, s.current_dir, s.kind) for p, s in ENTITIES.items()
+)
 
 # 规范 padding 的编号串：三位允许 0xx~9xx，四位及以上首位不得为 0。
 # 拒绝 p0001 这种「int 可解析但 canonical_entry_id(1) 找不到」的非法文件名。
@@ -389,10 +401,10 @@ def scan_occupied_max_ids(
             wt_heads.append(head_sha)
 
     specs: list[tuple[str, tuple[str, ...], str]] = [
-        (prefix, HISTORY_SCAN_DIRS[prefix], kind) for prefix, _dir, kind in ENTRY_KINDS
+        (p, s.history_dirs, s.kind) for p, s in ENTITIES.items()
     ]
     all_scan_dirs = tuple(dict.fromkeys(d for _p, sdirs, _k in specs for d in sdirs))
-    max_ids: dict[str, int] = {prefix: 0 for prefix, _dir, _kind in ENTRY_KINDS}
+    max_ids: dict[str, int] = {p: 0 for p in ENTITIES}
 
     # 1. 单次 git log 批量扫描全部可达本地历史路径
     log_text = _run_git(
@@ -448,7 +460,7 @@ def scan_occupied_max_ids(
 
 def scan_max_id(repo_root: Path, prefix: str) -> int:
     """普通创建入口：按 prefix 查表，校验当前协议来源零重复/布局，再返回最大占用号。"""
-    if prefix not in {p for p, _dir, _kind in ENTRY_KINDS}:
+    if prefix not in ENTITIES:
         raise IdScanError(f"未知条目类别前缀：{prefix!r}")
     branches = local_branches(repo_root)
     wt_records = _worktree_records(repo_root)
@@ -723,7 +735,6 @@ def allocate(
     repo_root: Path,
     *,
     prefix: str,
-    dirs: tuple[str, ...],
     target_dir: Path,
     slug: str,
     body: str,
@@ -786,7 +797,6 @@ def allocate_dir(
     repo_root: Path,
     *,
     prefix: str,
-    dirs: tuple[str, ...],
     target_dir: Path,
     slug: str,
     files: dict[str, str],

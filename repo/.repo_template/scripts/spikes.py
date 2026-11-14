@@ -46,7 +46,6 @@ from repo_task.spikes import (
 )
 
 PREFIX = "s"
-SCAN_DIRS = ("docs/spikes",)
 
 
 def _dir_slug(spike_dir: Path) -> str:
@@ -100,7 +99,6 @@ def cmd_new(args: argparse.Namespace) -> None:
         path = allocate_dir(
             repo.root,
             prefix=PREFIX,
-            dirs=SCAN_DIRS,
             target_dir=(repo.root / "docs/spikes"),
             slug=slug,
             files={"report.md": content},

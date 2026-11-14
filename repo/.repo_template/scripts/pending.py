@@ -51,7 +51,6 @@ from md_format import MdFormatError, format_file
 from repo_task.documents import atomic_write_text, parse_front_matter_text
 
 PREFIX = "p"
-SCAN_DIRS = ("docs/pending",)
 ID_RE = re.compile(r"^p(0[0-9]{2}|[1-9][0-9]{2,})$")
 ENTRY_FILE_RE = re.compile(entry_file_pattern(PREFIX))
 # 宽松匹配：同号但 padding/字符非法的文件，用于格式错误诊断而非静默“未找到”。
@@ -336,7 +335,6 @@ def cmd_new(args: argparse.Namespace) -> None:
         path = allocate(
             repo.root,
             prefix=PREFIX,
-            dirs=SCAN_DIRS,
             target_dir=(repo.root / "docs/pending"),
             slug=slug,
             body=body,
