@@ -942,10 +942,15 @@ def build_migration_plan(
                 True,
             ))
 
-    # 实体最终文本中的精确路径引用（实体互相引用）
+    # 实体最终文本中的精确路径引用：按来源位置解析旧相对链接，按最终位置输出
     for finding in findings_plan:
+        src_rel = (
+            finding.source_rel
+            if not finding.from_ledger
+            else finding.target_path.relative_to(consumer).as_posix()
+        )
         new_text = update_exact_path_references(
-            finding.content, doc_rel=finding.target_path.relative_to(consumer).as_posix(),
+            finding.content, doc_rel=src_rel,
             final_doc_rel=finding.target_path.relative_to(consumer).as_posix(),
             path_mappings=path_mappings,
         )
@@ -953,14 +958,19 @@ def build_migration_plan(
         if finding.target_path.relative_to(consumer).as_posix() in findings_final_texts:
             findings_final_texts[finding.target_path.relative_to(consumer).as_posix()] = (finding.final_id, new_text)
     for pending in pendings_plan:
+        src_rel = (
+            pending.source_rel
+            if not pending.from_ledger
+            else pending.target_path.relative_to(consumer).as_posix()
+        )
         pending.content = update_exact_path_references(
-            pending.content, doc_rel=pending.target_path.relative_to(consumer).as_posix(),
+            pending.content, doc_rel=src_rel,
             final_doc_rel=pending.target_path.relative_to(consumer).as_posix(),
             path_mappings=path_mappings,
         )
     for spike in spikes_plan:
         spike.report_content = update_exact_path_references(
-            spike.report_content, doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
+            spike.report_content, doc_rel=spike.source_rel + "/report.md",
             final_doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
             path_mappings=path_mappings,
         )

@@ -125,3 +125,27 @@ def test_r01_real_source_reference_rewritten_but_url_not(tmp_path: Path) -> None
     assert "https://example.com/docs/pending/todo/guide.md" in (
         root / "README.md"
     ).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# R02：移动实体文档时用最终位置解析旧相对链接，改号+旧目录转换并存留断链。
+# ---------------------------------------------------------------------------
+
+
+def test_r02_old_dir_relative_link_follows_renumber(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _pending(root, "docs/pending/p001_keep.md", "p001", "keep")
+    _pending(root, "docs/pending/todo/p001_moved.md", "p001", "moved")
+    _pending(
+        root, "docs/pending/todo/p002_peer.md", "p002", "peer",
+        extra="\n[moved](p001_moved.md#detail)\n",
+    )
+    _commit_all(root, "old dir peer link")
+
+    migrate_entity_storage(_sync(root), write=True)
+
+    peer = (root / "docs/pending/p002_peer.md").read_text(encoding="utf-8")
+    assert "p001_moved.md" not in peer, peer
+    assert "p003_moved.md#detail" in peer, peer
+    assert (root / "docs/pending/p003_moved.md").is_file()
+    assert entity_storage_migration_status(_sync(root)) == []
