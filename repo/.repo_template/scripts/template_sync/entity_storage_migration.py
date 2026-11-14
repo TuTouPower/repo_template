@@ -108,6 +108,7 @@ def _reject_symlink_entities(consumer: Path, sync: ctx.SyncContext) -> None:
     roots = (
         "docs/tasks", "docs/archive/tasks",
         "docs/pending", "docs/pending/todo", "docs/pending/parked", "docs/archive/pending",
+        "docs/findings",
         "docs/spikes", "docs/archive/spikes",
     )
     for rel in roots:
@@ -214,10 +215,13 @@ def validate_current_entities(sync: ctx.SyncContext) -> None:
             for path in sorted(base.iterdir()):
                 if path.is_dir() and not path.name.startswith(".tmp_"):
                     raise MigrationError(f"当前 {label} 布局禁止嵌套目录：{sync.rel(path)}")
-                if path.is_symlink() or not path.is_file():
-                    continue
                 name = path.name
-                if not re.match(rf"^{prefix}[0-9]", name):
+                looks_entity = bool(re.match(rf"^{prefix}[0-9]", name))
+                if path.is_symlink():
+                    if looks_entity:
+                        raise MigrationError(f"{sync.rel(path)} 是软链实体，拒绝迁移")
+                    continue
+                if not path.is_file() or not looks_entity:
                     continue
                 parsed = parse_entry_file_name(prefix, name)
                 if parsed is None:
@@ -662,7 +666,11 @@ def _collect_sources(
     fdir = consumer / "docs/findings"
     if fdir.is_dir():
         for path in sorted(fdir.iterdir()):
-            if path.name.startswith(".tmp_") or path.is_symlink():
+            if path.name.startswith(".tmp_"):
+                continue
+            if path.is_symlink():
+                if re.match(r"^d[0-9]", path.name):
+                    raise MigrationError(f"{sync.rel(path)} 是软链实体，拒绝迁移")
                 continue
             if path.is_dir():
                 raise MigrationError(f"当前 findings 布局禁止嵌套目录：{sync.rel(path)}")

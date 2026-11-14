@@ -275,3 +275,22 @@ def test_r06_handoff_json_reported_and_never_written(tmp_path: Path) -> None:
 
     migrate_entity_storage(_sync(root), write=True)
     assert handoff.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# R07：finding 软链被两层静默跳过，严格验收判合法但取号仍因重复阻塞。
+# ---------------------------------------------------------------------------
+
+
+def test_r07_finding_symlink_blocked_consistently(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    (root / "docs/findings/d001_b.md").symlink_to("d001_a.md")
+    _commit_all(root, "symlink finding")
+
+    status = entity_storage_migration_status(_sync(root))
+    assert any("BLOCKED" in s or "软链" in s for s in status), status
+    with pytest.raises(MigrationError, match="软链"):
+        validate_current_entities(_sync(root))
+    with pytest.raises(MigrationError):
+        build_migration_plan(_sync(root))
