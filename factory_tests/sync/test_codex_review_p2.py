@@ -210,3 +210,35 @@ def test_r04_later_ledger_yields_to_earlier_file(tmp_path: Path) -> None:
     plan = build_migration_plan(_sync(root))
     assert _ledger_item(plan, from_ledger=False).final_id == "d001"
     assert _ledger_item(plan, from_ledger=True).final_id == "d002"
+
+
+# ---------------------------------------------------------------------------
+# R05：裸编号待复核报告只收 finding，pending 与 spike 的歧义引用被静默漏掉。
+# ---------------------------------------------------------------------------
+
+
+def test_r05_pending_and_spike_bare_references_reported(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _finding(root, "d001_b.md", "d001")
+    _pending(
+        root, "docs/pending/p001_probe.md", "p001", "probe",
+        extra="\nEvidence d001.\n",
+    )
+    spike_dir = root / "docs/spikes/s001_probe"
+    spike_dir.mkdir(parents=True)
+    (spike_dir / "report.md").write_text(
+        '---\nsid: "s001"\nslug: "probe"\nstatus: "active"\n---\n'
+        "# Spike s001\n\nEvidence d001.\n",
+        encoding="utf-8",
+    )
+    _commit_all(root, "cross bare refs")
+
+    plan = build_migration_plan(_sync(root))
+    reports = plan.reference_reports
+    assert any("p001_probe" in r and "d001" in r for r in reports), reports
+    assert any("s001_probe" in r and "d001" in r for r in reports), reports
+
+    migrate_entity_storage(_sync(root), write=True)
+    assert "Evidence d001." in (root / "docs/pending/p001_probe.md").read_text(encoding="utf-8")
+    assert "Evidence d001." in (root / "docs/spikes/s001_probe/report.md").read_text(encoding="utf-8")

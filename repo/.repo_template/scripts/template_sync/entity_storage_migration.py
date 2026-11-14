@@ -961,8 +961,10 @@ def build_migration_plan(
             path_mappings=path_mappings,
         )
         finding.content = new_text
-        if finding.target_path.relative_to(consumer).as_posix() in findings_final_texts:
-            findings_final_texts[finding.target_path.relative_to(consumer).as_posix()] = (finding.final_id, new_text)
+        target_rel = finding.target_path.relative_to(consumer).as_posix()
+        all_entity_texts[target_rel] = (finding.final_id, new_text)
+        if target_rel in findings_final_texts:
+            findings_final_texts[target_rel] = (finding.final_id, new_text)
     for pending in pendings_plan:
         src_rel = (
             pending.source_rel
@@ -974,12 +976,18 @@ def build_migration_plan(
             final_doc_rel=pending.target_path.relative_to(consumer).as_posix(),
             path_mappings=path_mappings,
         )
+        all_entity_texts[pending.target_path.relative_to(consumer).as_posix()] = (
+            pending.final_id, pending.content
+        )
     for spike in spikes_plan:
         spike.report_content = update_exact_path_references(
             spike.report_content, doc_rel=spike.source_rel + "/report.md",
             final_doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
             path_mappings=path_mappings,
         )
+        all_entity_texts[
+            spike.target_dir.relative_to(consumer).as_posix() + "/report.md"
+        ] = (spike.final_id, spike.report_content)
 
     # 外部普通项目文档的精确路径引用；受保护 task 核心资产只读报告
     reference_updates: list[tuple[Path, str, str]] = []
@@ -1024,7 +1032,7 @@ def build_migration_plan(
 
     bare_reports, protected_reports = build_reference_reports(
         renumbered=renumbered_decisions,
-        entity_final_texts=findings_final_texts,
+        entity_final_texts=all_entity_texts,
         outside_doc_texts=outside_doc_texts,
         protected_asset_texts=protected_asset_texts,
     )
