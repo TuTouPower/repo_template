@@ -261,7 +261,9 @@ def validate_current_entities(sync: ctx.SyncContext) -> None:
         raise MigrationError(f"目标实体 schema 非法：{error}") from error
 
 
-def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
+def entity_storage_migration_status(
+    sync: ctx.SyncContext, *, plan: "MigrationPlan | None" = None
+) -> list[str]:
     """统一检测：旧布局/旧总账/重复编号/引用/其它分支冲突；status/plan/apply 共用同一计划。"""
     consumer = sync.consumer
     problems: list[str] = []
@@ -306,18 +308,19 @@ def entity_storage_migration_status(sync: ctx.SyncContext) -> list[str]:
     except MigrationError as error:
         problems.append(f"BLOCKED: {error}")
 
-    # 始终构建统一计划：暴露其它分支阻断、重复改号与引用更新待办
+    # 复用本轮统一计划（显式注入或 apply 注入）或按需构建；暴露其它分支阻断、改号与引用待办
+    resolved = plan if plan is not None else getattr(sync, "entity_plan", None)
     try:
-        plan = build_migration_plan(sync=sync)
+        resolved = resolved if resolved is not None else build_migration_plan(sync=sync)
     except (MigrationError, ctx.SyncError, TaskDataError, IdScanError, OSError, ValueError) as error:
         marker = f"BLOCKED: {error}"
         if marker not in problems:
             problems.append(marker)
     else:
-        problems.extend(plan.renumber_reports)
-        for path, _, _ in plan.reference_updates:
+        problems.extend(resolved.renumber_reports)
+        for path, _, _ in resolved.reference_updates:
             problems.append(f"更新普通文档精确路径引用：{sync.rel(path)}")
-        problems.extend(plan.reference_reports)
+        problems.extend(resolved.reference_reports)
 
     return sorted(set(problems))
 
@@ -1098,7 +1101,11 @@ def migrate_entity_storage(sync: ctx.SyncContext, *, write: bool = False) -> lis
     consumer = sync.consumer
     if not entity_storage_migration_status(sync):
         return []
-    plan = build_migration_plan(sync=sync)
+    plan = (
+        sync.entity_plan
+        if getattr(sync, "entity_plan", None) is not None
+        else build_migration_plan(sync=sync)
+    )
     # schema 缺失时即便实体已就位也须写盘补建 schema 边界（原契约：迁移建立 schema）
     if not _plan_has_work(plan) and current_schema(consumer):
         return []
@@ -1220,10 +1227,18 @@ def migrate_entity_storage(sync: ctx.SyncContext, *, write: bool = False) -> lis
         if d.exists() and d.is_dir():
             _clean_empty_dir_strictly(d, sync)
 
-    # 10. 严格目标验收 + 建立 schema，再确认无残留待办
-    validate_current_entities(sync)
+    # 10. 严格目标验收 + 建立 schema + 轻量收敛确认（不重建完整计划）
+    _assert_converged(consumer, sync)
     atomic_write_text(consumer / SCHEMA_PATH, json.dumps({"version": SCHEMA_VERSION}) + "\n")
-    remaining = entity_storage_migration_status(sync=sync)
-    if remaining:
-        raise MigrationError("实体存储迁移落盘后仍有未收敛项：\n- " + "\n- ".join(remaining))
     return reports
+
+
+def _assert_converged(consumer: Path, sync: ctx.SyncContext) -> None:
+    """写盘后确认本轮改动落地：零重复/软链、旧总账与旧布局已消失，不重建计划。"""
+    validate_current_entities(sync)
+    for ledger in LEDGER_RELS:
+        if (consumer / ledger).exists() or (consumer / ledger).is_symlink():
+            raise MigrationError(f"迁移后仍残留旧总账：{ledger}")
+    for rel in LEGACY_ENTITY_DIRS:
+        if (consumer / rel).is_dir():
+            raise MigrationError(f"迁移后仍残留旧布局目录：{rel}")

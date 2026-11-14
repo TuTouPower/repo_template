@@ -66,7 +66,9 @@ class Migration:
                 _, worktrees, errors = workflow_migration_status(src, sync=sync)
                 return errors + [f"已登记 task worktree {branch} @ {root}" for root, branch in worktrees]
             if self.kind == "entity-storage":
-                build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src))
+                # 本轮统一计划已注入并验证时不再重建；status/plan 命令无注入则按需构建
+                if getattr(sync, "entity_plan", None) is None:
+                    build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src))
             else:
                 self._run(sync, src, write=False)
         except (ctx.SyncError, ctx.TaskDataError, ValueError, OSError) as error:
@@ -133,12 +135,3 @@ MIGRATIONS = (
     Migration("retired-hooks", (".claude/hooks", ".claude/settings.json")),
     Migration("retired-docs", ("docs/pending/README.md", "docs/findings/README.md")),
 )
-
-
-def entity_storage_extra_rels(sync: ctx.SyncContext, src: Path) -> list[str]:
-    """统一实体计划产生的目录外引用改写文件，供 apply 在开事务前并入动态备份路径。"""
-    try:
-        plan = build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src))
-    except (ctx.SyncError, ctx.TaskDataError, ValueError, OSError):
-        return []
-    return list(plan.transaction_extra_rels)

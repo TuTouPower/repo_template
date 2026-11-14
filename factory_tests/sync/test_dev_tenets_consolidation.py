@@ -240,3 +240,50 @@ def test_4_symlink_policy_single_point_blocks_finding_symlink(tmp_path: Path) ->
     assert any("BLOCKED" in s or "软链" in s for s in status), status
     with pytest.raises(MigrationError):
         build_migration_plan(_sync(root))
+
+
+# ---------------------------------------------------------------------------
+# ⑤ apply 单次建计划（注入复用）+ extra_rels 去静默吞错 + task.py add 统一锁
+# ---------------------------------------------------------------------------
+
+
+def test_5_injected_entity_plan_is_reused_without_rebuild(monkeypatch, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    import template_sync.entity_storage_migration as esm
+
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _finding(root, "d001_b.md", "d001")
+    _commit_all(root, "duplicates")
+
+    sync = _sync(root)
+    plan = esm.build_migration_plan(sync)
+    injected = replace(sync, entity_plan=plan)
+
+    calls = {"n": 0}
+    real = esm.build_migration_plan
+
+    def counted(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(esm, "build_migration_plan", counted)
+    esm.migrate_entity_storage(injected, write=True)
+    assert calls["n"] == 0, f"plan rebuilt {calls['n']} times"
+
+
+def test_5_silent_extra_rels_helper_removed() -> None:
+    from template_sync import migrations as m
+
+    assert not hasattr(m, "entity_storage_extra_rels")
+
+
+def test_5_task_add_uses_unified_id_lock() -> None:
+    import inspect
+
+    from repo_task import lifecycle
+
+    src = inspect.getsource(lifecycle.cmd_add)
+    assert "id_lock" in src, "task.py add must use id_lock (scrubs GIT_* redirects)"
+    assert "git_common_lock" not in src

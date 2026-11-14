@@ -105,7 +105,7 @@ def test_failure_anywhere_rolls_back_all_types(env, tmp_path, monkeypatch, phase
         monkeypatch.setattr(module, name, fail)
     if phase == 'agents-zones':
         # 无旧 AGENTS，使用 execute 注入额外声明而不引入无关历史数据。
-        monkeypatch.setattr(module, '_preflight', lambda src, sync: list(MIGRATIONS))
+        monkeypatch.setattr(module, '_preflight', lambda src, sync: (list(MIGRATIONS), None))
     before = _assets(env['consumer'])
     state_before = env['state_file'].read_bytes()
     assert cmd_apply(args) == 1

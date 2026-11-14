@@ -75,6 +75,7 @@ class SyncContext:
     conventions_path: Path
     source_override: str | None = None
     checkout_override: Path | None = None
+    entity_plan: object | None = None
 
     @classmethod
     def for_consumer(

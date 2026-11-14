@@ -17,7 +17,6 @@ from .locks import control_locked
 
 from .documents import dump_front_matter, dump_tid_list, parse_front_matter, parse_tid_list, tid_sort_key, validate_task_documents, validate_tid_references, write_front_matter, write_front_matter_many
 from .git_ops import _get_head, _git, has_unmerged_commits, in_own_task_worktree, is_ancestor, porcelain_entries, require_own_task_worktree, require_primary_worktree, resolve_local_branch, tracked_anywhere, worktree_paths
-from .locks import TASK_ID_LOCK_NAME, git_common_lock
 from .scheduling import _dependency_cycle
 from .store import append_audit, append_note, git_text_at_ref, load_task, load_task_at_ref, require_status, scan_tasks, scan_tasks_at_ref, task_effective_state, task_schedule_references
 from .worktrees import discard_worktree, remove_worktree
@@ -46,20 +45,20 @@ def cmd_add(args):
     if template_problems:
         sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
-    # 取号 + 建目录持 git 公共锁，与 pending/findings/spikes 取号互斥，防并发撞号（RT-009）
-    with git_common_lock(repo.root, TASK_ID_LOCK_NAME):
+    # 取号 + 建目录持统一 ID 锁（剥离宿主 GIT_* 重定向），与四类取号互斥（RT-009）
+    try:
+        from _id_scan import IdScanError, id_lock, scan_max_id
+    except ImportError:
+        scripts_dir = str(Path(__file__).resolve().parent.parent)
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from _id_scan import IdScanError, id_lock, scan_max_id
+    with id_lock(repo.root):
         tasks = scan_tasks(repo=repo)
         for t in tasks:
             if t["slug"] == args.slug:
                 sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
         local_max = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0)
-        try:
-            from _id_scan import IdScanError, scan_max_id
-        except ImportError:
-            scripts_dir = str(Path(__file__).resolve().parent.parent)
-            if scripts_dir not in sys.path:
-                sys.path.insert(0, scripts_dir)
-            from _id_scan import IdScanError, scan_max_id
         try:
             global_max = scan_max_id(repo.root, "t")
         except IdScanError as error:

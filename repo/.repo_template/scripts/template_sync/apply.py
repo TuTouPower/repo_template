@@ -22,7 +22,7 @@ from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked, finished_legacy_transactions
 from .gates import _run_tests
 from .preflight import sync_preflight
-from .migrations import MIGRATIONS, entity_storage_extra_rels
+from .migrations import MIGRATIONS
 from .entity_storage_migration import validate_current_entities
 from .shared_files import (
     _apply_shared_unit,
@@ -77,7 +77,8 @@ def _preflight(src: Path, sync: ctx.SyncContext):
     result = sync_preflight(src, sync)
     if result.error:
         raise ctx.SyncError(result.error)
-    return [migration for migration in MIGRATIONS if migration.kind in dict(result.migrations)]
+    migrations = [migration for migration in MIGRATIONS if migration.kind in dict(result.migrations)]
+    return migrations, result.entity_plan
 
 
 def _transaction_roots(paths):
@@ -223,8 +224,10 @@ def _apply_body(args: argparse.Namespace) -> int:
     if (sync.consumer / "AGENTS.md").is_symlink():
         raise ctx.SyncError("apply 不支持软链 AGENTS.md，先替换为真实文件后重跑")
     changed: set[Path] = set()
+    # _preflight 内 sync_preflight 构建一次统一实体计划并返回；备份路径与执行复用它，
+    # 计划构建/数据阻断经预检以 BLOCKED 呈现，不静默吞掉。
     try:
-        migrations = _preflight(src, sync)
+        migrations, entity_plan = _preflight(src, sync)
     except ctx.SyncError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
@@ -233,11 +236,7 @@ def _apply_body(args: argparse.Namespace) -> int:
              ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
              "AGENTS.md",
              *ctx.MCP_CANDIDATES]
-    extra_rels = (
-        entity_storage_extra_rels(sync, src)
-        if any(migration.kind == "entity-storage" for migration in migrations)
-        else []
-    )
+    extra_rels = list(entity_plan.transaction_extra_rels) if entity_plan is not None else []
     paths = _transaction_roots(
         paths + [root for migration in migrations for root in migration.ROOTS] + extra_rels
     )
@@ -253,7 +252,7 @@ def _apply_body(args: argparse.Namespace) -> int:
         data["base_head"] = _git(sync.consumer, "rev-parse", "HEAD").stdout.strip()
         transaction.save(data)
         def write_snapshot(snapshot):
-            migration_sync = replace(sync, checkout_override=src)
+            migration_sync = replace(sync, checkout_override=src, entity_plan=entity_plan)
             for migration in migrations:
                 for report in migration.execute(migration_sync, snapshot):
                     print(f"{migration.kind}: {report}")
@@ -263,11 +262,12 @@ def _apply_body(args: argparse.Namespace) -> int:
             changed.update(_collect_delivery_paths(sync))
             return migrated_state
 
+        post_sync = replace(sync, entity_plan=None)  # 写盘后重新验证收敛，不复用旧计划
         if dirty:
             _assert_distributable_tree(src)
             state = write_snapshot(src)
             _format_markdown(sync, paths)
-            _validate_result(src, sync, paths, changed)
+            _validate_result(src, post_sync, paths, changed)
         else:
             with tempfile.TemporaryDirectory(prefix="source_", dir=transaction.backup) as directory:
                 snapshot = Path(directory)
@@ -275,7 +275,7 @@ def _apply_body(args: argparse.Namespace) -> int:
                 _as_product(snapshot)
                 state = write_snapshot(snapshot)
                 _format_markdown(sync, paths)
-                _validate_result(snapshot, sync, paths, changed)
+                _validate_result(snapshot, post_sync, paths, changed)
         if not args.skip_tests:
             if not _run_tests(sync.consumer):
                 raise ctx.SyncError("契约测试失败（pytest .repo_template/tests/ -q -m contract）")
