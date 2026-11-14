@@ -32,20 +32,42 @@ _RETIRED_DOC_RELS = frozenset({"docs/pending/README.md", "docs/findings/README.m
 
 @dataclass(frozen=True)
 class CandidateIdentity:
-    """一条实体来源的身份信息，供统一分组与改号。
+    """一条实体来源：计划键、解析基准、Git 历史路径三者显式分离。
 
-    source_rel 是计划内唯一身份（旧总账条目含 #ordinal，不是真实文件路径）；
-    history_path 是首次新增时间的真实 Git 查询路径，缺省回退 source_rel。
+    identity_key 是计划内唯一键（旧总账条目含 #ordinal，不是真实路径）；
+    doc_base 是真实文档位置（旧相对链接解析基准 + 展示）；
+    history_path 是首次新增时间的真实 Git 查询路径。
+    两类来源由 from_file / from_ledger 工厂一次性正确构造，调用方不再推断。
     """
 
     prefix: str
     orig_num: int
     orig_id: str
     slug: str
-    source_rel: str
+    identity_key: str
+    doc_base: str
+    history_path: str
     ordinal: int = 0
     is_dir: bool = False
-    history_path: str = ""
+    ledger: bool = False
+
+    @classmethod
+    def from_file(
+        cls, prefix: str, orig_num: int, orig_id: str, slug: str, rel: str,
+        *, is_dir: bool = False,
+    ) -> "CandidateIdentity":
+        return cls(prefix, orig_num, orig_id, slug, rel, rel, rel, is_dir=is_dir)
+
+    @classmethod
+    def from_ledger(
+        cls, prefix: str, orig_num: int, orig_id: str, slug: str,
+        ledger_rel: str, ordinal: int,
+    ) -> "CandidateIdentity":
+        return cls(
+            prefix, orig_num, orig_id, slug,
+            f"{ledger_rel}#{ordinal}", ledger_rel, ledger_rel,
+            ordinal=ordinal, ledger=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -62,6 +84,7 @@ class RenumberDecision:
     target_rel: str
     ordinal: int
     kept_source_rel: str | None = None
+    from_ledger: bool = False
 
     @property
     def renumbered(self) -> bool:
@@ -149,42 +172,45 @@ def assign_final_ids(
             group = grouped[orig_num]
             if len(group) == 1:
                 only = group[0]
-                decisions[(prefix, only.source_rel, only.ordinal)] = RenumberDecision(
+                decisions[(prefix, only.identity_key, only.ordinal)] = RenumberDecision(
                     prefix, orig_num, only.orig_id, orig_num, only.orig_id,
-                    only.slug, only.source_rel,
+                    only.slug, only.identity_key,
                     _target(only.orig_id, only.slug, only.is_dir), only.ordinal,
+                    from_ledger=only.ledger,
                 )
                 continue
 
             ts_cache = {
-                (c.source_rel, c.ordinal): first_added_timestamp(
-                    consumer, c.history_path or c.source_rel, is_dir=c.is_dir
+                (c.identity_key, c.ordinal): first_added_timestamp(
+                    consumer, c.history_path, is_dir=c.is_dir
                 )
                 for c in group
             }
             ordered = sorted(
                 group,
                 key=lambda c: (
-                    ts_cache[(c.source_rel, c.ordinal)],
-                    c.history_path or c.source_rel,
+                    ts_cache[(c.identity_key, c.ordinal)],
+                    c.doc_base,
                     c.ordinal,
                 ),
             )
             winner = ordered[0]
-            decisions[(prefix, winner.source_rel, winner.ordinal)] = RenumberDecision(
+            decisions[(prefix, winner.identity_key, winner.ordinal)] = RenumberDecision(
                 prefix, orig_num, winner.orig_id, orig_num, winner.orig_id,
-                winner.slug, winner.source_rel,
+                winner.slug, winner.identity_key,
                 _target(winner.orig_id, winner.slug, winner.is_dir), winner.ordinal,
+                from_ledger=winner.ledger,
             )
             for dup in ordered[1:]:
                 running_max[prefix] = running_max.get(prefix, 0) + 1
                 new_num = running_max[prefix]
                 new_id = canonical_entry_id(prefix, new_num)
-                decisions[(prefix, dup.source_rel, dup.ordinal)] = RenumberDecision(
+                decisions[(prefix, dup.identity_key, dup.ordinal)] = RenumberDecision(
                     prefix, orig_num, dup.orig_id, new_num, new_id,
-                    dup.slug, dup.source_rel,
+                    dup.slug, dup.identity_key,
                     _target(new_id, dup.slug, dup.is_dir), dup.ordinal,
-                    kept_source_rel=winner.source_rel,
+                    kept_source_rel=winner.identity_key,
+                    from_ledger=dup.ledger,
                 )
     return decisions
 
@@ -382,7 +408,7 @@ def build_reference_reports(
     old_rels = {
         d.source_rel: d.orig_id
         for d in renumbered
-        if d.source_rel not in ("docs/pending.md", "docs/findings.md")
+        if not d.from_ledger
     }
     bare_reports: list[str] = []
     protected_reports: list[str] = []

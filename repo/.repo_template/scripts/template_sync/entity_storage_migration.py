@@ -686,8 +686,9 @@ def _collect_sources(
             num, slug = parsed
             eid = canonical_entry_id("d", num)
             rel = f"docs/findings/{path.name}"
-            candidates["d"].append(CandidateIdentity("d", num, eid, slug, rel))
-            source_data[("d", rel, 0)] = {"kind": "finding_file", "path": path, "text": path.read_text(encoding="utf-8")}
+            cand = CandidateIdentity.from_file("d", num, eid, slug, rel)
+            candidates["d"].append(cand)
+            source_data[("d", cand.identity_key, cand.ordinal)] = {"kind": "finding_file", "path": path, "text": path.read_text(encoding="utf-8")}
 
     f_ledger = consumer / "docs/findings.md"
     if f_ledger.exists() or f_ledger.is_symlink():
@@ -695,15 +696,12 @@ def _collect_sources(
             raise MigrationError(f"旧总账是软链，拒绝迁移：docs/findings.md")
         legacy_ledgers.append(f_ledger)
         for item in plan_legacy_migration(consumer, prefix="d", ledger_rel="docs/findings.md", target_dir=fdir):
-            rel = f"docs/findings.md#{item.ordinal}"
-            candidates["d"].append(
-                CandidateIdentity(
-                    "d", item.number, item.entry_id, item.slug, rel, item.ordinal,
-                    history_path="docs/findings.md",
-                )
+            cand = CandidateIdentity.from_ledger(
+                "d", item.number, item.entry_id, item.slug, "docs/findings.md", item.ordinal
             )
+            candidates["d"].append(cand)
             ledger_nums["d"].append(item.number)
-            source_data[("d", rel, item.ordinal)] = {
+            source_data[("d", cand.identity_key, cand.ordinal)] = {
                 "kind": "finding_ledger", "title": item.title, "body": item.body,
             }
 
@@ -742,8 +740,9 @@ def _collect_sources(
             validate_pending_front_matter(fm, filename=path.name, source=rel)
         except (TaskDataError, ValueError, KeyError) as err:
             raise MigrationError(f"{rel} 非法 Front Matter：{err}") from err
-        candidates["p"].append(CandidateIdentity("p", num, eid, slug, rel))
-        source_data[("p", rel, 0)] = {"kind": "pending_file", "path": path, "fm": fm, "body": body}
+        cand = CandidateIdentity.from_file("p", num, eid, slug, rel)
+        candidates["p"].append(cand)
+        source_data[("p", cand.identity_key, cand.ordinal)] = {"kind": "pending_file", "path": path, "fm": fm, "body": body}
 
     p_ledger = consumer / "docs/pending.md"
     if p_ledger.exists() or p_ledger.is_symlink():
@@ -751,15 +750,12 @@ def _collect_sources(
             raise MigrationError(f"旧总账是软链，拒绝迁移：docs/pending.md")
         legacy_ledgers.append(p_ledger)
         for item in plan_legacy_migration(consumer, prefix="p", ledger_rel="docs/pending.md", target_dir=consumer / "docs/pending"):
-            rel = f"docs/pending.md#{item.ordinal}"
-            candidates["p"].append(
-                CandidateIdentity(
-                    "p", item.number, item.entry_id, item.slug, rel, item.ordinal,
-                    history_path="docs/pending.md",
-                )
+            cand = CandidateIdentity.from_ledger(
+                "p", item.number, item.entry_id, item.slug, "docs/pending.md", item.ordinal
             )
+            candidates["p"].append(cand)
             ledger_nums["p"].append(item.number)
-            source_data[("p", rel, item.ordinal)] = {
+            source_data[("p", cand.identity_key, cand.ordinal)] = {
                 "kind": "pending_ledger", "title": item.title, "body": item.body,
             }
 
@@ -810,8 +806,9 @@ def _collect_sources(
         if not final_fm.get("slug"):
             final_fm["slug"] = slug
         _validate_spike_fm(final_fm, eid, slug, rep, sync)
-        candidates["s"].append(CandidateIdentity("s", num, eid, slug, rel, is_dir=True))
-        source_data[("s", rel, 0)] = {
+        cand = CandidateIdentity.from_file("s", num, eid, slug, rel, is_dir=True)
+        candidates["s"].append(cand)
+        source_data[("s", cand.identity_key, cand.ordinal)] = {
             "kind": "spike_dir", "path": child, "fm": final_fm, "body": body,
             "report_text": rep_text, "from_archive": from_archive,
         }
@@ -869,10 +866,10 @@ def build_migration_plan(
 
     for prefix in ("d", "p", "s"):
         for cand in candidates[prefix]:
-            dec = decisions[(prefix, cand.source_rel, cand.ordinal)]
-            data = source_data[(prefix, cand.source_rel, cand.ordinal)]
+            dec = decisions[(prefix, cand.identity_key, cand.ordinal)]
+            data = source_data[(prefix, cand.identity_key, cand.ordinal)]
             target_path = consumer / dec.target_rel
-            from_ledger = data["kind"] in ("finding_ledger", "pending_ledger")
+            from_ledger = cand.ledger
             if dec.renumbered:
                 renumber_reports.append(
                     f"{dec.orig_id}: {dec.source_rel} -> {dec.target_rel}（保留 {dec.kept_source_rel}）"
@@ -884,13 +881,13 @@ def build_migration_plan(
                     text = f"# {dec.final_id} {data['title']}\n\n{data['body'].strip()}\n"
                 else:
                     text = validate_and_rewrite_h1(
-                        data["text"], "d", dec.orig_id, dec.final_id, source_label=cand.source_rel
+                        data["text"], "d", dec.orig_id, dec.final_id, source_label=cand.identity_key
                     )
                 findings_plan.append(FindingItem(
                     dec.orig_id, dec.final_id, cand.slug,
                     consumer / "docs/findings.md" if from_ledger else data["path"],
-                    target_path, text, cand.source_rel, from_ledger,
-                    cand.history_path or cand.source_rel,
+                    target_path, text, cand.identity_key, from_ledger,
+                    cand.doc_base,
                 ))
                 all_entity_texts[dec.target_rel] = (dec.final_id, text)
                 findings_final_texts[dec.target_rel] = (dec.final_id, text)
@@ -903,7 +900,7 @@ def build_migration_plan(
                     body = f"# {dec.final_id} {data['title']}\n\n{data['body'].strip()}\n"
                 else:
                     body = validate_and_rewrite_h1(
-                        data["body"], "p", dec.orig_id, dec.final_id, source_label=cand.source_rel
+                        data["body"], "p", dec.orig_id, dec.final_id, source_label=cand.identity_key
                     )
                 validate_pending_front_matter(fm, filename=target_path.name, source=dec.target_rel)
                 content = dump_pending_front_matter(fm) + body.lstrip("\r\n").rstrip() + ("\n" if body.strip() else "")
@@ -911,8 +908,8 @@ def build_migration_plan(
                     fm["pid"], cand.slug,
                     consumer / "docs/pending.md" if from_ledger else data["path"],
                     target_path, fm["status"], fm.get("resolution"), fm.get("reason"),
-                    fm.get("fix_ref"), body, content, dec.final_id, cand.source_rel, from_ledger,
-                    cand.history_path or cand.source_rel,
+                    fm.get("fix_ref"), body, content, dec.final_id, cand.identity_key, from_ledger,
+                    cand.doc_base,
                 ))
                 all_entity_texts[dec.target_rel] = (dec.final_id, content)
             else:
@@ -920,12 +917,12 @@ def build_migration_plan(
                 fm["sid"] = dec.final_id
                 validate_spike_metadata(fm, expected_sid=dec.final_id, expected_slug=cand.slug)
                 new_body = validate_and_rewrite_h1(
-                    data["body"], "s", dec.orig_id, dec.final_id, source_label=cand.source_rel
+                    data["body"], "s", dec.orig_id, dec.final_id, source_label=cand.identity_key
                 )
                 report_content = _render_front_matter(fm, new_body)
                 spikes_plan.append(SpikeItem(
                     dec.final_id, cand.slug, data["path"], target_path,
-                    data["fm"]["status"], report_content, dec.final_id, cand.source_rel,
+                    data["fm"]["status"], report_content, dec.final_id, cand.identity_key,
                 ))
                 all_entity_texts[dec.target_rel + "/report.md"] = (dec.final_id, report_content)
 
@@ -947,11 +944,11 @@ def build_migration_plan(
     path_mappings: list[tuple[str, str, bool]] = []
     for prefix in ("d", "p", "s"):
         for cand in candidates[prefix]:
-            if "#" in cand.source_rel:  # 旧总账条目无旧文件路径
+            if cand.ledger:  # 旧总账条目无旧文件路径
                 continue
-            dec = decisions[(prefix, cand.source_rel, cand.ordinal)]
-            if cand.source_rel != dec.target_rel:
-                path_mappings.append((cand.source_rel, dec.target_rel, cand.is_dir))
+            dec = decisions[(prefix, cand.identity_key, cand.ordinal)]
+            if cand.doc_base != dec.target_rel:
+                path_mappings.append((cand.doc_base, dec.target_rel, cand.is_dir))
     for t in tasks_plan:
         if t.source_dir != t.target_dir:
             path_mappings.append((
@@ -1001,7 +998,7 @@ def build_migration_plan(
     protected_asset_texts: dict[str, str] = {}
     entity_rels = {p.as_posix() for p in all_targets}
     source_rels = {
-        cand.source_rel for prefix in candidates for cand in candidates[prefix] if "#" not in cand.source_rel
+        cand.doc_base for prefix in candidates for cand in candidates[prefix] if not cand.ledger
     }
     ledger_rels = {p.relative_to(consumer).as_posix() for p in legacy_ledgers}
     handled_rels = set(entity_rels) | source_rels | ledger_rels

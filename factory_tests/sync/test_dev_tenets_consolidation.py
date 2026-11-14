@@ -165,3 +165,30 @@ def test_2_ledger_relative_link_resolves_from_ledger_position(tmp_path: Path) ->
     final = next(p for p in (root / "docs/findings").glob("d010_*.md"))
     assert "../pending/p001_fix.md" in final.read_text(encoding="utf-8")
     assert (final.parent / "../pending/p001_fix.md").resolve().is_file()
+
+
+# ---------------------------------------------------------------------------
+# ③ 来源身份模型：计划键 / 解析基准 / Git 历史路径显式分离，不再三义混于一个字符串
+# ---------------------------------------------------------------------------
+
+
+def test_3_source_identity_separates_key_base_history() -> None:
+    from template_sync.duplicate_ids_migration import CandidateIdentity
+
+    file_source = CandidateIdentity.from_file(
+        "d", 1, "d001", "x", "docs/findings/d001_x.md"
+    )
+    assert file_source.identity_key == "docs/findings/d001_x.md"
+    assert file_source.doc_base == "docs/findings/d001_x.md"
+    assert file_source.history_path == "docs/findings/d001_x.md"
+    assert file_source.ordinal == 0 and not file_source.ledger and not file_source.is_dir
+
+    later = CandidateIdentity.from_ledger("d", 1, "d001", "y", "docs/findings.md", 10)
+    earlier = CandidateIdentity.from_ledger("d", 1, "d001", "x", "docs/findings.md", 2)
+    assert later.identity_key == "docs/findings.md#10"
+    assert later.doc_base == "docs/findings.md"
+    assert later.history_path == "docs/findings.md"
+    assert later.ordinal == 10 and later.ledger
+    assert not hasattr(later, "source_rel"), "ambiguous source_rel must be gone"
+    # 真实路径 + 整数 ordinal 排序不依赖 #ordinal 身份串
+    assert sorted([later, earlier], key=lambda c: (c.doc_base, c.ordinal))[0].ordinal == 2
