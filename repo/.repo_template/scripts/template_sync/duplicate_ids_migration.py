@@ -223,9 +223,11 @@ def update_exact_path_references(
     doc_rel: str,
     final_doc_rel: str,
     path_mappings: list[tuple[str, str, bool]],
-    legacy_prefix_mappings: list[tuple[str, str]] = (),
 ) -> str:
-    """更新精确旧路径（仓库相对与可解析文档相对，保留锚点），不做裸编号全仓替换。"""
+    """仅按本轮真实来源→目标映射更新精确路径（仓库相对与可解析文档相对，保留锚点）。
+
+    不做裸前缀全文替换、不做裸编号全仓替换；无映射时不改动任何文本。
+    """
     out = text
     sorted_mappings = sorted(
         [(o, n, d) for o, n, d in path_mappings if o != n],
@@ -276,8 +278,6 @@ def update_exact_path_references(
 
         out = md_link_re.sub(_replace_link, out)
 
-    for old_prefix, new_prefix in legacy_prefix_mappings:
-        out = out.replace(old_prefix, new_prefix)
     return out
 
 

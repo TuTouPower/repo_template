@@ -925,7 +925,7 @@ def build_migration_plan(
         if (p.exists() or p.is_symlink()) and p.as_posix() not in source_paths:
             raise MigrationError(f"最终目标占用：{sync.rel(p)} 已存在且不属于本轮迁移来源")
 
-    # 引用更新：精确旧路径映射（含旧目录搬迁与改号）
+    # 引用更新：只按本轮真实来源→目标映射（含旧目录搬迁、改号、tasks 归档搬迁）
     path_mappings: list[tuple[str, str, bool]] = []
     for prefix in ("d", "p", "s"):
         for cand in candidates[prefix]:
@@ -934,21 +934,20 @@ def build_migration_plan(
             dec = decisions[(prefix, cand.source_rel, cand.ordinal)]
             if cand.source_rel != dec.target_rel:
                 path_mappings.append((cand.source_rel, dec.target_rel, cand.is_dir))
-    legacy_prefix_mappings = [
-        ("docs/archive/tasks/", "docs/tasks/"),
-        ("docs/pending/todo/", "docs/pending/"),
-        ("docs/pending/parked/", "docs/pending/"),
-        ("docs/archive/pending/", "docs/pending/"),
-        ("docs/archive/spikes/", "docs/spikes/"),
-        ("docs/archive/tasks_audit.log", "docs/runtime/tasks_audit.log"),
-    ]
+    for t in tasks_plan:
+        if t.source_dir != t.target_dir:
+            path_mappings.append((
+                t.source_dir.relative_to(consumer).as_posix(),
+                t.target_dir.relative_to(consumer).as_posix(),
+                True,
+            ))
 
     # 实体最终文本中的精确路径引用（实体互相引用）
     for finding in findings_plan:
         new_text = update_exact_path_references(
             finding.content, doc_rel=finding.target_path.relative_to(consumer).as_posix(),
             final_doc_rel=finding.target_path.relative_to(consumer).as_posix(),
-            path_mappings=path_mappings, legacy_prefix_mappings=legacy_prefix_mappings,
+            path_mappings=path_mappings,
         )
         finding.content = new_text
         if finding.target_path.relative_to(consumer).as_posix() in findings_final_texts:
@@ -957,13 +956,13 @@ def build_migration_plan(
         pending.content = update_exact_path_references(
             pending.content, doc_rel=pending.target_path.relative_to(consumer).as_posix(),
             final_doc_rel=pending.target_path.relative_to(consumer).as_posix(),
-            path_mappings=path_mappings, legacy_prefix_mappings=legacy_prefix_mappings,
+            path_mappings=path_mappings,
         )
     for spike in spikes_plan:
         spike.report_content = update_exact_path_references(
             spike.report_content, doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
             final_doc_rel=spike.target_dir.relative_to(consumer).as_posix() + "/report.md",
-            path_mappings=path_mappings, legacy_prefix_mappings=legacy_prefix_mappings,
+            path_mappings=path_mappings,
         )
 
     # 外部普通项目文档的精确路径引用；受保护 task 核心资产只读报告
@@ -994,26 +993,12 @@ def build_migration_plan(
             continue
         new_text = update_exact_path_references(
             text, doc_rel=rel, final_doc_rel=rel,
-            path_mappings=path_mappings, legacy_prefix_mappings=legacy_prefix_mappings,
+            path_mappings=path_mappings,
         )
         outside_doc_texts[rel] = new_text
         if new_text != text:
             reference_updates.append((path, text, new_text))
             transaction_extra_rels.append(rel)
-
-    # 维护文档（handoff / specs_index）的旧前缀兜底替换
-    for rel_doc in ("docs/handoff.md", "docs/specs_index.md"):
-        doc_path = consumer / rel_doc
-        if not doc_path.is_file() or doc_path.is_symlink():
-            continue
-        text = doc_path.read_text(encoding="utf-8")
-        new_text = text
-        for old, new in legacy_prefix_mappings:
-            new_text = new_text.replace(old, new)
-        if new_text != text and not any(p == doc_path for p, _, _ in reference_updates):
-            reference_updates.append((doc_path, text, new_text))
-            transaction_extra_rels.append(rel_doc)
-            outside_doc_texts[rel_doc] = new_text
 
     bare_reports, protected_reports = build_reference_reports(
         renumbered=renumbered_decisions,
