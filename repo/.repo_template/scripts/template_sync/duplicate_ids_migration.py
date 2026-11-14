@@ -32,7 +32,11 @@ _RETIRED_DOC_RELS = frozenset({"docs/pending/README.md", "docs/findings/README.m
 
 @dataclass(frozen=True)
 class CandidateIdentity:
-    """一条实体来源的身份信息，供统一分组与改号。"""
+    """一条实体来源的身份信息，供统一分组与改号。
+
+    source_rel 是计划内唯一身份（旧总账条目含 #ordinal，不是真实文件路径）；
+    history_path 是首次新增时间的真实 Git 查询路径，缺省回退 source_rel。
+    """
 
     prefix: str
     orig_num: int
@@ -41,6 +45,7 @@ class CandidateIdentity:
     source_rel: str
     ordinal: int = 0
     is_dir: bool = False
+    history_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,11 +157,14 @@ def assign_final_ids(
                 continue
 
             ts_cache = {
-                c.source_rel: first_added_timestamp(consumer, c.source_rel, is_dir=c.is_dir)
+                (c.source_rel, c.ordinal): first_added_timestamp(
+                    consumer, c.history_path or c.source_rel, is_dir=c.is_dir
+                )
                 for c in group
             }
             ordered = sorted(
-                group, key=lambda c: (ts_cache[c.source_rel], c.source_rel, c.ordinal)
+                group,
+                key=lambda c: (ts_cache[(c.source_rel, c.ordinal)], c.source_rel, c.ordinal),
             )
             winner = ordered[0]
             decisions[(prefix, winner.source_rel, winner.ordinal)] = RenumberDecision(

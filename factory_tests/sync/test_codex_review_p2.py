@@ -173,3 +173,40 @@ def test_r03_outside_report_md_reference_updated_and_declared(tmp_path: Path) ->
     text = (root / "docs/design/report.md").read_text(encoding="utf-8")
     assert "docs/findings/d002_b.md" in text, text
     assert "docs/findings/d001_b.md" not in text, text
+
+
+# ---------------------------------------------------------------------------
+# R04：旧总账条目把「#条目位置」当 Git 路径，保留原号规则不按真实历史执行。
+# ---------------------------------------------------------------------------
+
+
+def _ledger_item(plan, *, from_ledger: bool):
+    return [f for f in plan.findings if f.from_ledger is from_ledger][0]
+
+
+def test_r04_older_ledger_keeps_original_number(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    (root / "docs/findings.md").write_text(
+        "# 发现\n\n## d001 Old ledger\n\n- 现状：有效\n", encoding="utf-8"
+    )
+    _commit_all(root, "old ledger", at="2026-01-02T00:00:00+08:00")
+    _finding(root, "d001_new_file.md", "d001")
+    _commit_all(root, "new file", at="2026-01-03T00:00:00+08:00")
+
+    plan = build_migration_plan(_sync(root))
+    assert _ledger_item(plan, from_ledger=True).final_id == "d001"
+    assert _ledger_item(plan, from_ledger=False).final_id == "d002"
+
+
+def test_r04_later_ledger_yields_to_earlier_file(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_early.md", "d001")
+    _commit_all(root, "early file", at="2026-01-02T00:00:00+08:00")
+    (root / "docs/findings.md").write_text(
+        "# 发现\n\n## d001 Late ledger\n\n- 现状：有效\n", encoding="utf-8"
+    )
+    _commit_all(root, "late ledger", at="2026-01-03T00:00:00+08:00")
+
+    plan = build_migration_plan(_sync(root))
+    assert _ledger_item(plan, from_ledger=False).final_id == "d001"
+    assert _ledger_item(plan, from_ledger=True).final_id == "d002"

@@ -687,7 +687,10 @@ def _collect_sources(
         for item in plan_legacy_migration(consumer, prefix="d", ledger_rel="docs/findings.md", target_dir=fdir):
             rel = f"docs/findings.md#{item.ordinal}"
             candidates["d"].append(
-                CandidateIdentity("d", item.number, item.entry_id, item.slug, rel, item.ordinal)
+                CandidateIdentity(
+                    "d", item.number, item.entry_id, item.slug, rel, item.ordinal,
+                    history_path="docs/findings.md",
+                )
             )
             ledger_nums["d"].append(item.number)
             source_data[("d", rel, item.ordinal)] = {
@@ -740,7 +743,10 @@ def _collect_sources(
         for item in plan_legacy_migration(consumer, prefix="p", ledger_rel="docs/pending.md", target_dir=consumer / "docs/pending"):
             rel = f"docs/pending.md#{item.ordinal}"
             candidates["p"].append(
-                CandidateIdentity("p", item.number, item.entry_id, item.slug, rel, item.ordinal)
+                CandidateIdentity(
+                    "p", item.number, item.entry_id, item.slug, rel, item.ordinal,
+                    history_path="docs/pending.md",
+                )
             )
             ledger_nums["p"].append(item.number)
             source_data[("p", rel, item.ordinal)] = {
