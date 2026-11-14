@@ -997,7 +997,10 @@ def build_migration_plan(
             spike.target_dir.relative_to(consumer).as_posix() + "/report.md"
         ] = (spike.final_id, spike.report_content)
 
-    # 外部普通项目文档的精确路径引用；受保护 task 核心资产只读报告
+    # 外部项目文档的精确路径引用；受保护 task 核心资产只读报告。
+    # 「计划接管路径」单一派生：实体最终目标 / 来源文件 / 旧总账 / spike report 精确去重；
+    # 整目录搬迁实体（spike 与归档 task）统一用 (源目录前缀 → 目标目录前缀) 表达，
+    # 其内部普通 .md 的引用改写写向最终位置，避免按旧路径回写导致清理失败。
     reference_updates: list[tuple[Path, str, str]] = []
     transaction_extra_rels: list[str] = []
     outside_doc_texts: dict[str, str] = {}
@@ -1007,18 +1010,26 @@ def build_migration_plan(
         cand.source_rel for prefix in candidates for cand in candidates[prefix] if "#" not in cand.source_rel
     }
     ledger_rels = {p.relative_to(consumer).as_posix() for p in legacy_ledgers}
-    # 只按本轮实体计划实际接管的文件/目录去重，不按 report.md basename 全局排除
     handled_rels = set(entity_rels) | source_rels | ledger_rels
-    spike_dir_prefixes: set[str] = set()
+    en_bloc_moves: list[tuple[str, str]] = []  # (源目录前缀, 目标目录前缀)
     for s in spikes_plan:
+        src_pref = s.source_rel + "/"
+        dst_pref = s.target_dir.relative_to(consumer).as_posix() + "/"
         handled_rels.add(s.source_rel + "/report.md")
-        handled_rels.add(s.target_dir.relative_to(consumer).as_posix() + "/report.md")
-        spike_dir_prefixes.add(s.source_rel + "/")
-        spike_dir_prefixes.add(s.target_dir.relative_to(consumer).as_posix() + "/")
+        handled_rels.add(dst_pref + "report.md")
+        en_bloc_moves.append((src_pref, dst_pref))
+    for t in tasks_plan:
+        if t.source_dir != t.target_dir:
+            en_bloc_moves.append((
+                t.source_dir.relative_to(consumer).as_posix() + "/",
+                t.target_dir.relative_to(consumer).as_posix() + "/",
+            ))
 
     for rel in collect_tracked_project_files(consumer):
-        if rel in handled_rels or any(rel.startswith(p) for p in spike_dir_prefixes):
+        if rel in handled_rels:
             continue
+        move = next((m for m in en_bloc_moves if rel.startswith(m[0])), None)
+        final_rel = (move[1] + rel[len(move[0]):]) if move else rel
         path = consumer / rel
         if path.is_symlink() or not path.is_file():
             continue
@@ -1030,16 +1041,16 @@ def build_migration_plan(
         except (OSError, UnicodeDecodeError):
             continue
         if protected:
-            protected_asset_texts[rel] = text
+            protected_asset_texts[final_rel] = text
             continue
         new_text = update_exact_path_references(
-            text, doc_rel=rel, final_doc_rel=rel,
+            text, doc_rel=rel, final_doc_rel=final_rel,
             path_mappings=path_mappings, consumer=consumer,
         )
-        outside_doc_texts[rel] = new_text
+        outside_doc_texts[final_rel] = new_text
         if new_text != text:
-            reference_updates.append((path, text, new_text))
-            transaction_extra_rels.append(rel)
+            reference_updates.append((consumer / final_rel, text, new_text))
+            transaction_extra_rels.append(final_rel)
 
     bare_reports, protected_reports = build_reference_reports(
         renumbered=renumbered_decisions,
