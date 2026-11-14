@@ -22,7 +22,7 @@ from .assets import retired_template_warnings, sync_dir, sync_file
 from .common import _git, _now_iso, consumer_locked, finished_legacy_transactions
 from .gates import _run_tests
 from .preflight import sync_preflight
-from .migrations import MIGRATIONS
+from .migrations import MIGRATIONS, entity_storage_extra_rels
 from .entity_storage_migration import validate_current_entities
 from .shared_files import (
     _apply_shared_unit,
@@ -199,6 +199,14 @@ def _collect_delivery_paths(sync: ctx.SyncContext) -> set[Path]:
 
 @consumer_locked
 def cmd_apply(args: argparse.Namespace) -> int:
+    """控制面锁在前、公共 ID 锁在后：锁覆盖占用扫描、计划、写盘、校验与回滚全轮 apply。"""
+    from _id_scan import id_lock
+
+    with id_lock(args.sync.consumer):
+        return _apply_body(args)
+
+
+def _apply_body(args: argparse.Namespace) -> int:
     sync: ctx.SyncContext = args.sync
     state = read_state(sync)
     if not state:
@@ -225,7 +233,14 @@ def cmd_apply(args: argparse.Namespace) -> int:
              ".opencode/commands", ".md_kx.toml", ".gitignore", ".prettierignore",
              "AGENTS.md",
              *ctx.MCP_CANDIDATES]
-    paths = _transaction_roots(paths + [root for migration in migrations for root in migration.ROOTS])
+    extra_rels = (
+        entity_storage_extra_rels(sync, src)
+        if any(migration.kind == "entity-storage" for migration in migrations)
+        else []
+    )
+    paths = _transaction_roots(
+        paths + [root for migration in migrations for root in migration.ROOTS] + extra_rels
+    )
     state_paths = sorted({sync.state_path.name, *(root for migration in migrations for root in migration.STATE_ROOTS)})
     try:
         transaction.begin(paths, state_paths=state_paths)

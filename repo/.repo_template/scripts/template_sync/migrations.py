@@ -5,17 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from _id_scan import IdScanError, parse_entry_file_name
 from repo_task.context import PROGRESS_FILE
 
 from . import context as ctx
 from .adr_migration import adr_migration_status, migrate_adr
 from .agents_zone_migration import agents_zone_migration_status, migrate_agents_zones
 from .conventions_migration import conventions_migration_status, migrate_conventions
-from .entity_storage_migration import build_migration_plan, entity_storage_migration_status, migrate_entity_storage
+from .entity_storage_migration import (
+    build_migration_plan,
+    entity_storage_migration_status,
+    migrate_entity_storage,
+)
 from .goal_snapshot_migration import goal_snapshot_migration_status, migrate_goal_snapshot
 from .hooks import migrate_retired_hooks, retired_hooks_status
-from .legacy_ledgers import apply_legacy_migration, plan_legacy_migration
 from .retired_docs_migration import migrate_retired_docs, retired_docs_migration_status
 from .reviews_migration import migrate_reviews, reviews_migration_status
 from .specs_migration import migrate_specs_layout, specs_migration_status
@@ -25,43 +27,6 @@ from .workflow_migration import (
     _collect_workflow_task_dirs, _inspect_workflow_task_dir, _guide_blocks_by_heading,
     force_migrate_workflow_tasks, workflow_migration_status,
 )
-
-
-def _ledger_items(sync, prefix):
-    directory = "docs/pending" if prefix == "p" else "docs/findings"
-    ledger = directory + ".md"
-    if (sync.consumer / ledger).is_symlink():
-        raise ctx.SyncError(f"旧总账是软链，拒绝迁移：{ledger}")
-    if not (sync.consumer / ledger).exists():
-        return []
-    items = plan_legacy_migration(sync.consumer, prefix=prefix, ledger_rel=ledger, target_dir=sync.consumer / directory)
-    for item in items:
-        for path in item.target.parent.glob("*.md"):
-            parsed = parse_entry_file_name(prefix, path.name)
-            if path.is_symlink() or (parsed and parsed[0] == item.number):
-                raise ctx.SyncError(f"{item.entry_id} 目标占用：{sync.rel(path)}；请先修复编号冲突")
-    return items
-
-
-def _ledger(sync, prefix, *, write):
-    from pending import dump_pending_front_matter, validate_pending_front_matter
-
-    items = _ledger_items(sync, prefix)
-    if not items:
-        return []
-    def render(entry_id, slug, title, body):
-        fm = {"pid": entry_id, "slug": slug, "status": "todo"}
-        if prefix == "p":
-            validate_pending_front_matter(fm, filename=f"{entry_id}_{slug}.md")
-        front = dump_pending_front_matter(fm) if prefix == "p" else ""
-        return front + f"# {entry_id} {title}\n\n{body}\n"
-    for item in items:
-        render(item.entry_id, item.slug, item.title, item.body)
-    if write:
-        directory = "docs/pending" if prefix == "p" else "docs/findings"
-        apply_legacy_migration(items, repo_root=sync.consumer, prefix=prefix,
-                               ledger_rel=directory + ".md", render=render)
-    return [f"{item.entry_id} -> {sync.rel(item.target)}" for item in items]
 
 
 def _workflow_writes(sync, src):
@@ -90,9 +55,6 @@ class Migration:
     def findings(self, sync: ctx.SyncContext, src: Path) -> list[str]:
         if self.kind == "legacy-state":
             return [f"{sync.rel(sync.legacy_state_path())} 待迁移"] if sync.legacy_state_path().exists() or sync.legacy_state_path().is_symlink() else []
-        if self.kind in {"pending-ledger", "findings-ledger"}:
-            rel = self.ROOTS[0]
-            return [f"{rel} 待拆分"] if (sync.consumer / rel).exists() or (sync.consumer / rel).is_symlink() else []
         if self.kind == "workflow-schema":
             migrations, worktrees, errors = workflow_migration_status(src, sync=sync)
             return migrations + errors + [f"已登记 task worktree {branch} @ {root}" for root, branch in worktrees]
@@ -104,12 +66,10 @@ class Migration:
                 _, worktrees, errors = workflow_migration_status(src, sync=sync)
                 return errors + [f"已登记 task worktree {branch} @ {root}" for root, branch in worktrees]
             if self.kind == "entity-storage":
-                build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src),
-                                     pending_items=_ledger_items(sync, "p"),
-                                     finding_ids={item.entry_id for item in _ledger_items(sync, "d")}, allow_ledgers=True)
+                build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src))
             else:
                 self._run(sync, src, write=False)
-        except (ctx.SyncError, ctx.TaskDataError, IdScanError, ValueError, OSError) as error:
+        except (ctx.SyncError, ctx.TaskDataError, ValueError, OSError) as error:
             return [str(error)]
         return []
 
@@ -120,8 +80,6 @@ class Migration:
             if not write:
                 return self.findings(sync, src)
             return force_migrate_workflow_tasks(set(), template_template_dir=src / ".repo_template/docs/task_template", sync=sync)
-        if self.kind in {"pending-ledger", "findings-ledger"}:
-            return _ledger(sync, "p" if self.kind == "pending-ledger" else "d", write=write)
         if self.kind == "conventions":
             return migrate_conventions(set(), sync=sync) if write else self.findings(sync, src)
         if self.kind == "agents-zones":
@@ -153,12 +111,15 @@ _EXECUTORS = {
 MIGRATIONS = (
     Migration("legacy-state", (".agents/skills/repo-template-sync/sync_state.json",), ("sync_state.json",)),
     Migration("workflow-schema", ("docs/tasks", "docs/archive/tasks")),
-    Migration("pending-ledger", ("docs/pending.md", "docs/pending")),
-    Migration("findings-ledger", ("docs/findings.md", "docs/findings")),
     Migration("entity-storage", (
-        ".repo_template/entity_schema.json", "docs/tasks", "docs/archive/tasks", "docs/pending", "docs/archive/pending",
-        "docs/spikes", "docs/archive/spikes", "docs/tasks_index.json", "docs/archive/tasks_index.json",
-        "docs/archive/tasks_audit.log", "docs/runtime", "docs/archive/handoff.md", "docs/handoff.md", "docs/specs_index.md",
+        ".repo_template/entity_schema.json", "docs/tasks", "docs/archive/tasks",
+        "docs/pending", "docs/pending.md", "docs/archive/pending",
+        "docs/pending/todo", "docs/pending/parked",
+        "docs/findings", "docs/findings.md",
+        "docs/spikes", "docs/archive/spikes",
+        "docs/tasks_index.json", "docs/archive/tasks_index.json",
+        "docs/archive/tasks_audit.log", "docs/runtime", "docs/archive/handoff.md",
+        "docs/handoff.md", "docs/specs_index.md",
     )),
     Migration("state-root", ("docs/runtime", ".repo_template/sync_state.json", ".scratch/statusline_workdir.jsonl",
                              ".scratch/repo_sync_rollback", ".scratch/task_graph_transaction"),
@@ -172,3 +133,12 @@ MIGRATIONS = (
     Migration("retired-hooks", (".claude/hooks", ".claude/settings.json")),
     Migration("retired-docs", ("docs/pending/README.md", "docs/findings/README.md")),
 )
+
+
+def entity_storage_extra_rels(sync: ctx.SyncContext, src: Path) -> list[str]:
+    """统一实体计划产生的目录外引用改写文件，供 apply 在开事务前并入动态备份路径。"""
+    try:
+        plan = build_migration_plan(sync, workflow_writes=_workflow_writes(sync, src))
+    except (ctx.SyncError, ctx.TaskDataError, ValueError, OSError):
+        return []
+    return list(plan.transaction_extra_rels)

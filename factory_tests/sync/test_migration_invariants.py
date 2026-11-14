@@ -96,7 +96,7 @@ def test_specs_layout_status_stays_empty_after_cumulative_edits(consumer):
 
 
 @pytest.mark.parametrize("kind", [
-    "legacy-state", "workflow-schema", "pending-ledger", "findings-ledger",
+    "legacy-state", "workflow-schema", "entity-storage",
     "conventions", "retired-hooks",
 ])
 def test_migrated_layout_stays_current_after_daily_edit(env, tmp_path, monkeypatch, kind):
@@ -109,10 +109,9 @@ def test_migrated_layout_stays_current_after_daily_edit(env, tmp_path, monkeypat
     elif kind == "workflow-schema":
         _install_current_workflow_templates(env["src"])
         _legacy_workflow_task(root)
-    elif kind in {"pending-ledger", "findings-ledger"}:
-        ledger, prefix = ("pending", "p") if kind == "pending-ledger" else ("findings", "d")
-        (root / "docs" / f"{ledger}.md").write_text(
-            f"# Ledger\n\n## {prefix}001 Feature\n\n原始说明。\n", encoding="utf-8",
+    elif kind == "entity-storage":
+        (root / "docs/pending.md").write_text(
+            "# Ledger\n\n## p001 Feature\n\n原始说明。\n", encoding="utf-8",
         )
     elif kind == "conventions":
         path = root / "docs/blueprint/conventions.md"
@@ -130,8 +129,8 @@ def test_migrated_layout_stays_current_after_daily_edit(env, tmp_path, monkeypat
     elif kind == "workflow-schema":
         path = root / "docs/tasks/t001_old/progress.md"
         path.write_text(path.read_text(encoding="utf-8") + "\n实施笔记补充。\n", encoding="utf-8")
-    elif kind in {"pending-ledger", "findings-ledger"}:
-        path = next((root / "docs" / ledger).glob("*.md"))
+    elif kind == "entity-storage":
+        path = next((root / "docs/pending").glob("p*.md"))
         path.write_text(path.read_text(encoding="utf-8") + "\n补充验证结果。\n", encoding="utf-8")
     elif kind == "conventions":
         path.write_text(path.read_text(encoding="utf-8") + "\n## 项目约定\n\n业务使用四空格缩进。\n", encoding="utf-8")

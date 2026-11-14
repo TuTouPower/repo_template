@@ -342,16 +342,26 @@ def test_entity_storage_migration_blocks_on_duplicate_tid(repo):
         migrate_entity_storage(sync=sync, write=False)
 
 
-def test_entity_storage_migration_blocks_on_duplicate_pid(repo):
+def test_entity_storage_migration_deduplicates_duplicate_pid(repo):
+    """统一计划一次性改号消除 p 重复：两来源内容都保留、编号全局唯一、旧目录收敛。"""
     _setup_legacy_repo(repo)
     dup_p1 = repo / "docs/archive/pending/p001_duplicate.md"
-    dup_p1.write_text("# p001 duplicate\n\n- 处理：resolution=resolved；reason=done\n", encoding="utf-8")
+    dup_p1.write_text("# p001 duplicate\n\n- 内容：重复来源\n- 处理：resolution=resolved；reason=done\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "chore: add duplicate pid")
     sync = ctx.SyncContext.for_consumer(repo)
 
-    with pytest.raises(MigrationError, match="同号多处.*p001"):
-        migrate_entity_storage(sync=sync, write=False)
+    reports = migrate_entity_storage(sync=sync, write=True)
+    assert any("->" in r and "Finding" not in r for r in reports)
+
+    from _id_scan import parse_entry_file_name
+    files = sorted((repo / "docs/pending").glob("p*.md"))
+    nums = [parse_entry_file_name("p", f.name)[0] for f in files]
+    assert len(nums) == len(set(nums)), [f.name for f in files]
+    assert "duplicate" in "\n".join(f.read_text(encoding="utf-8") for f in files)
+    assert "fix_cli" in "\n".join(f.read_text(encoding="utf-8") for f in files)
+    assert not (repo / "docs/archive/pending").exists()
+    assert entity_storage_migration_status(sync=sync) == []
 
 
 def test_entity_storage_migration_blocks_on_missing_closure_reason(repo):

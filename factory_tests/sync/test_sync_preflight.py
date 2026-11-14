@@ -93,7 +93,7 @@ def test_migration_backlog_and_invalid_current_spec_are_both_reported(env, capsy
     (env["consumer"] / "docs/pending.md").write_text("# Pending\n", encoding="utf-8")
     previews, error = _blocked_outputs(env, capsys)
     for output in [*previews, error]:
-        assert "pending-ledger" in output
+        assert "entity-storage" in output
         assert "契约违规" in output
 
 

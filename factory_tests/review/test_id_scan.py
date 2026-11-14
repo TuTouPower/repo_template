@@ -74,19 +74,16 @@ def _bind(monkeypatch, repo):
 
 
 def _migrate_ledger(repo, kind, *, write=False):
-    from template_sync.migrations import _ledger as migrate
     from template_sync.context import SyncContext, SyncError
     from template_sync.entity_storage_migration import migrate_entity_storage
     from md_format import MdFormatError
     sync = SyncContext.for_consumer(repo)
     try:
-        reports = migrate(sync, "p" if kind == "pending" else "d", write=write)
-        if write:
-            migrate_entity_storage(sync, write=True)
-        else:
+        reports = migrate_entity_storage(sync, write=write)
+        if not write:
             print("dry-run: " + "; ".join(reports), file=sys.stderr)
         return reports
-    except (SyncError, IdScanError, MdFormatError) as error:
+    except (SyncError, IdScanError, MdFormatError, ValueError) as error:
         raise SystemExit(str(error)) from error
 
 
@@ -789,8 +786,8 @@ def test_pending_migrate_legacy_dry_run_is_read_only(tmp_path, monkeypatch, caps
     assert not (repo / "docs/pending/p001_old.md").exists()
 
 
-def test_migrate_legacy_rejects_same_number_occupied(tmp_path, monkeypatch):
-    """同号不同 slug 的既有条目也必须阻断，否则生成同号多文件（DS L253）。"""
+def test_migrate_legacy_deduplicates_same_number_occupied(tmp_path, monkeypatch):
+    """统一计划对同号不同 slug 一次性改号消除重复（DS L253 语义按 #96 收口）。"""
     repo = _init_repo(tmp_path)
     _bind(monkeypatch, repo)
     (repo / "docs/findings").mkdir(parents=True)
@@ -799,10 +796,13 @@ def test_migrate_legacy_rejects_same_number_occupied(tmp_path, monkeypatch):
         "# 发现\n\n## d012 uv lock 平台标记\n\n- 现状：有效\n", encoding="utf-8"
     )
 
-    with pytest.raises(SystemExit, match="目标占用"):
-        _migrate_ledger(repo, "findings", write=True)
-    assert not (repo / "docs/findings/d012_uv_lock.md").exists()
-    assert (repo / "docs/findings.md").is_file()
+    _migrate_ledger(repo, "findings", write=True)
+    assert not (repo / "docs/findings.md").exists()
+    files = sorted((repo / "docs/findings").glob("d*.md"))
+    from _id_scan import parse_entry_file_name
+    nums = [parse_entry_file_name("d", f.name)[0] for f in files]
+    assert len(nums) == len(set(nums)), [f.name for f in files]
+    assert "uv lock" in "\n".join(f.read_text(encoding="utf-8") for f in files)
 
 
 def test_ledger_executor_leaves_formatting_to_apply(tmp_path, monkeypatch):
