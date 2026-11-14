@@ -127,7 +127,7 @@ AGENTS 保留长期不变量和写权；本文解释机制与取舍；usage 说�
 
 ## 实体协议与交付验证
 
-实体协议边界由 `.repo_template/entity_schema.json` 表达。运行期只理解当前布局；旧正文转换集中在 `template_sync.legacy_ledgers`，仅 apply 内置迁移导入。取号扫描当前协议的分支/worktree，合并入口验证协议与编号唯一性。版本标记不能替代源身份校验、目标模型验收或业务证据核验。
+实体协议边界由 `.repo_template/entity_schema.json` 表达。运行期只理解当前布局；旧正文解析集中在 `template_sync.legacy_ledgers`，仅 `repo_sync.py apply` 内置 entity-storage 迁移导入。四类仓级编号（`t`/`p`/`d`/`s`）在 `TASK_ID_LOCK_NAME` 排他锁内按本机 Git commit 历史、本地分支、远端跟踪分支、tag 与全部 worktree 磁盘及 index 统一计算最大占用号加一，分配即全局唯一；占用计算与当前快照校验分离，运行期发现单个快照内同号多处或非法布局立即报错，合并入口验证协议与编号唯一性。存量 `d`/`p`/`s` 重复由同步期 entity-storage 统一只读计划一次性改号消除，连同精确路径引用一并纳入同一 `FileTransaction`，`status` / `plan` / `apply` 共用该计划。版本标记不能替代源身份校验、目标模型验收或业务证据核验。
 
 handoff 结构由 `repo_task.handoff` 单点校验。依赖来源查询保留缺失、坏数据、Git 查询失败与来源歧义诊断，不把查询失败改写成缺证据。工作区核心资产比较使用 Git 按路径执行 clean/EOL 规范化后的 blob OID。
 

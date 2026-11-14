@@ -16,7 +16,7 @@
 python3 "$product/.repo_template/scripts/repo_sync.py" --consumer "$consumer" --source "$source" --checkout "$checkout" apply --expected-commit "$commit"
 ```
 
-一次同步只开一个 `FileTransaction`，覆盖全部待迁移路径、模板同步路径与 common 状态文件。顺序固定为 `legacy-state → workflow-schema → pending-ledger → findings-ledger → entity-storage → state-root → goal-snapshot → conventions → agents-zones → specs-layout → reviews → adr → retired-hooks → retired-docs`，随后同步模板、格式化本次变更 Markdown、校验迁移收敛、spec 与实体契约、项目验证策略和模板契约测试。任一步失败整体回滚，不保留已完成迁移。
+一次同步只开一个 `FileTransaction`，覆盖全部待迁移路径、模板同步路径与 common 状态文件。顺序固定为 `legacy-state → workflow-schema → entity-storage → state-root → goal-snapshot → conventions → agents-zones → specs-layout → reviews → adr → retired-hooks → retired-docs`，随后同步模板、格式化本次变更 Markdown、校验迁移收敛、spec 与实体契约、项目验证策略和模板契约测试。任一步失败整体回滚，不保留已完成迁移。`entity-storage` 统一负责旧总账拆分、旧目录收敛、当前实体清单、重复编号一次性改号消除与精确路径引用更新；不再设独立 `pending-ledger` / `findings-ledger` 阶段，`status` / `plan` / `apply` 共用同一只读迁移计划。同步先持控制面锁、再持公共 ID 锁，ID 锁覆盖占用扫描、计划确定、备份、写盘、校验与回滚整轮 apply。
 
 开始前工作区与暂存区必须完全干净，未跟踪文件也须处理，忽略文件除外；来源 clean 且 SHA 与 plan 一致，无登记 worktree、无未结束同步或图事务，md_kx 可用。数据阻断项只报告与给出修复方案；用户批准后修复，修复单独批准并提交，再同步。迁移不从旧 state 推断来源，始终使用本轮固定来源。
 
@@ -35,6 +35,16 @@ python3 "$product/.repo_template/scripts/repo_sync.py" --consumer "$consumer" --
 - 清理遗留空旧目录（含仅剩 `.gitkeep` / `.DS_Store` 占位文件的旧目录亦列为待清理并移除占位文件），并更新维护文档中的确定引用。
 
 迁移同时转换仅有旧 active spike 的仓库；归档与当前 task 均校验 tid/slug 与目录一致、全状态编号唯一。
+
+## entity-storage 统一编号消重
+
+`entity-storage` 在只读计划阶段一次性读取当前 `docs/{tasks,pending,findings,spikes}/`、旧目录（`docs/archive/tasks|pending|spikes`、`docs/pending/todo|parked`）与旧总账（`docs/pending.md`、`docs/findings.md`），按类别与原编号分组：
+
+- `d` / `p` / `s` 同号多条进入消重计划，按来源首次进入 Git 历史的提交时间稳定保留一条原号（无提交记录者排后、同时间按路径排序），其余从该类别本地最大占用号加一顺序改号；最大占用号覆盖本地/远端/历史/tag/worktree 磁盘与 index，并并入本轮旧总账解析出的全部编号。`tNNN` 重复仍阻断（关联分支、执行记录与受保护核心资产），不自动改号。
+- 计划先为每条来源确定最终编号、最终路径与最终内容（更新文件名、`pid`/`sid` front matter 与 H1 编号），再构建精确旧路径引用改写与删除清单；写盘先写全部最终目标、再删源，目标存在时必须属于本轮计划，禁止覆盖未知内容。
+- 能确定指向被改号条目的完整仓库相对路径与可解析文档相对路径自动更新（保留锚点、校验边界），纳入同一事务备份；裸 `dNNN` / `pNNN` / `sNNN` 与 `docs/tasks/*/` 受保护核心资产只在迁移报告列出文件、行号与改号映射供复核，不盲改、不作为旧编号运行期别名。
+- 阻断项：工作区/index 不干净、额外登记 worktree、其它当前协议本地分支内部仍有重复、重复 `tNNN`、软链/非规范命名/损坏元数据/身份矛盾、旧总账解析不完整、最终目标冲突。历史 commit 与已保存远端分支中的重复只参与最大占用号计算，不阻断同步。
+- 严格 `validate_current_entities`（`t`/`p`/`d`/`s` 命名、软链、形状、编号零重复）用于计划生成的最终结果与实际落盘结果；`no_op` 仅在整轮同步无交付差异且满足既有状态条件时收尾。
 
 旧目录 `docs/archive/tasks`、`docs/archive/spikes`、`docs/archive/pending`、`docs/pending/todo`、`docs/pending/parked` 中，顶层非规范实体项均在本次事务内删除，不作为数据阻断项。规范实体仅指 tasks/spikes 中名称匹配当前规范的真实目录，或 pending 中匹配 `pNNN_slug.md` 的普通文件。其余文件、目录、软链、隐藏项与命名不合规的形似实体项均删除；每项单列路径与类型，目录附内部全部文件路径，必须报告给用户。规范实体内部 front matter 非法、编号冲突等仍阻断。拒绝同步时整体回滚，恢复删除项原始字节与软链。
 
