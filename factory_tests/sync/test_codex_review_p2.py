@@ -242,3 +242,36 @@ def test_r05_pending_and_spike_bare_references_reported(tmp_path: Path) -> None:
     migrate_entity_storage(_sync(root), write=True)
     assert "Evidence d001." in (root / "docs/pending/p001_probe.md").read_text(encoding="utf-8")
     assert "Evidence d001." in (root / "docs/spikes/s001_probe/report.md").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# R06：受保护 handoff.json 在扩展名过滤时就被排除，历史引用报告永远覆盖不到。
+# ---------------------------------------------------------------------------
+
+
+def test_r06_handoff_json_reported_and_never_written(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _finding(root, "d001_b.md", "d001")
+    task_dir = root / "docs/tasks/t001_probe"
+    task_dir.mkdir(parents=True)
+    (task_dir / "progress.md").write_text(
+        '---\ntid: "t001"\nslug: "probe"\ntitle: "probe"\nstatus: "backlog"\n---\n'
+        "## 实施笔记\n\n无\n",
+        encoding="utf-8",
+    )
+    (task_dir / "task.md").write_text("# t001 probe\n", encoding="utf-8")
+    handoff = task_dir / "handoff.json"
+    handoff.write_text(
+        '{"findings": ["docs/findings/d001_b.md"]}\n', encoding="utf-8"
+    )
+    _commit_all(root, "dup + protected handoff")
+    before = handoff.read_bytes()
+
+    plan = build_migration_plan(_sync(root))
+    assert any(
+        "handoff.json" in r and "d001" in r for r in plan.reference_reports
+    ), plan.reference_reports
+
+    migrate_entity_storage(_sync(root), write=True)
+    assert handoff.read_bytes() == before

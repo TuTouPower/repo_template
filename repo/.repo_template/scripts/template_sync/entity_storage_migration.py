@@ -1012,13 +1012,16 @@ def build_migration_plan(
         if rel in handled_rels or any(rel.startswith(p) for p in spike_dir_prefixes):
             continue
         path = consumer / rel
-        if path.is_symlink() or not path.is_file() or not rel.endswith(".md") and rel not in ("README.md",):
+        if path.is_symlink() or not path.is_file():
+            continue
+        protected = is_protected_task_asset(rel)
+        if not protected and not (rel.endswith(".md") or rel == "README.md"):
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if is_protected_task_asset(rel):
+        if protected:
             protected_asset_texts[rel] = text
             continue
         new_text = update_exact_path_references(
