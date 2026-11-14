@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """_id_scan.py - 跨 worktree 跨分支的条目编号扫描与互斥分配。
 
-pending.py / findings.py / spikes.py 共用。条目以「一条目一文件」形式存放，文件名形如
-`p047_cli_exit_code.md` / `d012_uv_lock_marker.md`，编号直接来自文件名，无需解析正文。
+task.py / pending.py / findings.py / spikes.py 共用。四类条目分别递增：
+- `docs/tasks/tNNN_{slug}/`
+- `docs/pending/pNNN_{slug}.md`
+- `docs/findings/dNNN_{slug}.md`
+- `docs/spikes/sNNN_{slug}/`
 
-扫描来源：
-- 所有本地分支的 git 树（`git ls-tree` 文件名）；
-- 所有登记 worktree 的工作区文件（含未提交条目）。
+扫描来源（仅读取本机已有数据，不执行任何网络请求）：
+- 本地 `refs/heads/*`、本机已有 `refs/remotes/*`、tag 及登记 worktree HEAD 可达的本地历史路径；
+- 当前本地分支和本机已有远端分支 tip（排除远端 HEAD 等符号引用）；
+- 主仓及所有登记 worktree 的磁盘条目（含未跟踪条目）；
+- 每个 worktree 各自的 Git index（含已暂存后又从磁盘删除的条目）。
 
-只有声明当前 entity_schema 的分支/worktree 参与分配；历史来源显式隔离。
-旧格式转换只存在于 template_sync，运行时不识别旧目录或解析旧正文。
-合并边界验证目标 schema 与编号唯一性，禁止旧分支直接进入新协议。
-
-重复检测语义：
-- 同一来源（单个分支或单个 worktree）内同号出现在多个状态目录时报错——迁移残留需立即暴露。
-- 跨来源重复不报——并行 task worktree 各自含主干历史，合并前允许暂时重复。
+占用计算与当前校验分离：
+- `scan_occupied_max_ids` / `scan_occupied_max_id`：单轮批量收集本机可达历史、分支 tip、
+  worktree 磁盘与 index 的规范路径并计算最大占用号；相同编号出现多次仍正常取最大值，
+  不因来源缺少当前 schema 而忽略规范路径占用号。
+- `scan_max_id`：普通创建入口，先对当前协议来源按每个分支、磁盘快照、index 快照分别校验
+  目录形状与同快照重复，再取最大占用号。
+- `validate_snapshot_ids`：合并/提交/验收边界校验当前快照（`t`/`p`/`d`/`s`）零重复。
 
 编号与文件名映射由本模块统一定义（`canonical_entry_id` / `parse_entry_file_name` /
 `parse_entry_dir_name`），强制规范 padding，杜绝 `p0001_x.md` 这类「可解析但按编号
 找不到」的分叉。
 
 互斥分配：
-`allocate` 在 git 公共目录的锁文件上取排他锁，锁内完成「扫描取号 → 建文件」。
-释放锁时新条目已落盘，后续扫描必然可见，不存在两个进程取到同号的窗口。
-
-条目发布统一走「唯一命名 + O_EXCL|O_NOFOLLOW + fsync + 拒绝软链 + os.replace」原语，
-文件型（allocate）与目录型（allocate_dir）共用同一套底层写入/发布/清理实现。
+`allocate` / `allocate_dir`（以及 `task.py add`）在 git 公共目录的排他锁 `TASK_ID_LOCK_NAME`
+上取锁，锁内完成「校验当前数据 → 扫描最大占用号 → 生成并原子发布条目」，释放锁时新条目已落盘。
 """
 
 from __future__ import annotations
@@ -45,6 +47,20 @@ from repo_task.context import TaskDataError
 from repo_task.entity_schema import SCHEMA_PATH, current_schema, validate_schema
 
 LOCK_NAME = TASK_ID_LOCK_NAME
+
+ENTRY_KINDS: tuple[tuple[str, str, str], ...] = (
+    ("t", "docs/tasks", "dir"),
+    ("p", "docs/pending", "file"),
+    ("d", "docs/findings", "file"),
+    ("s", "docs/spikes", "dir"),
+)
+
+HISTORY_SCAN_DIRS: dict[str, tuple[str, ...]] = {
+    "t": ("docs/tasks", "docs/archive/tasks"),
+    "p": ("docs/pending", "docs/archive/pending", "docs/pending/todo", "docs/pending/parked"),
+    "d": ("docs/findings",),
+    "s": ("docs/spikes", "docs/archive/spikes"),
+}
 
 # 规范 padding 的编号串：三位允许 0xx~9xx，四位及以上首位不得为 0。
 # 拒绝 p0001 这种「int 可解析但 canonical_entry_id(1) 找不到」的非法文件名。
@@ -99,7 +115,7 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
     """运行 git 子进程；失败统一包装为 IdScanError。"""
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_root), *args],
+            ["git", "-c", "core.quotePath=false", "-C", str(repo_root), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -157,16 +173,50 @@ def local_branches(repo_root: Path) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def remote_refs(repo_root: Path) -> list[str]:
+    """返回本机已保存的非符号引用远端分支完整 refname（如 refs/remotes/origin/main）。"""
+    text = _run_git(
+        repo_root, ["for-each-ref", "--format=%(refname)\t%(symref)", "refs/remotes"]
+    )
+    refs: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        refname, _, symref = line.partition("\t")
+        if symref.strip():
+            continue
+        if refname.strip():
+            refs.append(refname.strip())
+    return refs
+
+
+def _worktree_records(repo_root: Path) -> list[tuple[Path, str | None]]:
+    """用 NUL 分隔读取所有登记 worktree 的 (绝对路径, HEAD_sha_or_None)，不 .strip() 路径。"""
+    text = _run_git(repo_root, ["worktree", "list", "--porcelain", "-z"])
+    records: list[tuple[Path, str | None]] = []
+    current_path: Path | None = None
+    current_head: str | None = None
+    for field in text.split("\0"):
+        if not field:
+            if current_path is not None and current_path.is_dir():
+                records.append((current_path.resolve(), current_head))
+            current_path = None
+            current_head = None
+            continue
+        if field.startswith("worktree "):
+            current_path = Path(field[len("worktree ") :])
+        elif field.startswith("HEAD "):
+            sha = field[len("HEAD ") :]
+            if sha and not set(sha) <= {"0"}:
+                current_head = sha
+    if current_path is not None and current_path.is_dir():
+        records.append((current_path.resolve(), current_head))
+    return records
+
+
 def worktree_roots(repo_root: Path) -> list[Path]:
     """返回所有登记 worktree 的根目录（含主仓）。"""
-    text = _run_git(repo_root, ["worktree", "list", "--porcelain"])
-    roots: list[Path] = []
-    for line in text.splitlines():
-        if line.startswith("worktree "):
-            path = Path(line[len("worktree ") :].strip())
-            if path.is_dir():
-                roots.append(path.resolve())
-    return roots
+    return [path for path, _head in _worktree_records(repo_root)]
 
 
 def canonical_entry_id(prefix: str, number: int) -> str:
@@ -205,73 +255,63 @@ def _entry_number(prefix: str, name: str, *, kind: str) -> int | None:
     return parsed[0] if parsed else None
 
 
+def _parse_ls_tree_entries(text: str) -> list[tuple[str, str]]:
+    """解析 `git ls-tree -r -t -z` 输出，返回 [(obj_type, rel_path)]。"""
+    entries: list[tuple[str, str]] = []
+    for item in text.split("\0"):
+        if not item:
+            continue
+        meta, _, rel = item.partition("\t")
+        parts = meta.split()
+        if len(parts) < 2 or not rel:
+            continue
+        entries.append((parts[1], rel))
+    return entries
+
+
+def _numbers_from_tree_entries(
+    tree_entries: list[tuple[str, str]],
+    prefix: str,
+    dirs: tuple[str, ...],
+    kind: str,
+) -> dict[int, list[str]]:
+    found: dict[int, list[str]] = {}
+    dir_parts_list = [PurePosixPath(d).parts for d in dirs]
+    for obj_type, rel in tree_entries:
+        parts = PurePosixPath(rel).parts
+        if kind == "file":
+            if obj_type != "blob":
+                continue
+            for dparts in dir_parts_list:
+                if len(parts) > len(dparts) and parts[: len(dparts)] == dparts:
+                    number = _entry_number(prefix, parts[-1], kind="file")
+                    if number is not None:
+                        bucket = found.setdefault(number, [])
+                        if rel not in bucket:
+                            bucket.append(rel)
+                    break
+        else:
+            if obj_type != "tree":
+                continue
+            for d, dparts in zip(dirs, dir_parts_list):
+                if len(parts) == len(dparts) + 1 and parts[: len(dparts)] == dparts:
+                    number = _entry_number(prefix, parts[-1], kind="dir")
+                    if number is not None:
+                        identity = f"{d}/{parts[-1]}"
+                        bucket = found.setdefault(number, [])
+                        if identity not in bucket:
+                            bucket.append(identity)
+                    break
+    return found
+
+
 def _numbers_from_branch(
     repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...], kind: str
 ) -> dict[int, list[str]]:
-    if kind == "dir":
-        return _dir_numbers_from_branch(repo_root, branch, prefix, dirs)
     text = _run_git(
-        repo_root, ["ls-tree", "-r", "--name-only", branch, "--", *dirs]
+        repo_root, ["ls-tree", "-r", "-t", "-z", branch, "--", *dirs]
     )
-    found: dict[int, list[str]] = {}
-    for rel in text.splitlines():
-        rel = rel.strip()
-        if not rel:
-            continue
-        parts = Path(rel).parts
-        if kind == "file":
-            # 文件型条目身份取文件自身相对路径。
-            candidates = [(parts[-1], rel)]
-        else:
-            # 目录型只接受 `{dir}/<name>` 直接子目录，与 worktree 顶层扫描口径一致；
-            # 嵌套路径（如 docs/spikes/misc/s005_fixture/report.md）不计入编号。
-            candidates = []
-            dir_parts = {d: Path(d).parts for d in dirs}
-            for d, dparts in dir_parts.items():
-                if len(parts) > len(dparts) and tuple(parts[: len(dparts)]) == dparts:
-                    candidates.append((parts[len(dparts)], "/".join(parts[: len(dparts) + 1])))
-        for name, identity in candidates:
-            number = _entry_number(prefix, name, kind=kind)
-            if number is not None:
-                paths = found.setdefault(number, [])
-                if identity not in paths:
-                    paths.append(identity)
-                break
-    return found
-
-
-def _dir_numbers_from_branch(
-    repo_root: Path, branch: str, prefix: str, dirs: tuple[str, ...]
-) -> dict[int, list[str]]:
-    """目录型分支扫描：只认 tree 对象，文件同名不占号。
-
-    对每棵扫描目录用 `git ls-tree <branch>:<dir>` 列直接子项并校验 type==tree，
-    与 worktree 侧 `is_dir()` 双校验口径一致。目录在该分支不存在时视为空。
-    """
-    found: dict[int, list[str]] = {}
-    for rel_dir in dirs:
-        parent = _run_git(repo_root, ["ls-tree", "--name-only", branch, "--", rel_dir])
-        if not parent.strip():
-            continue
-        text = _run_git(repo_root, ["ls-tree", f"{branch}:{rel_dir}"])
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                meta, name = line.split("\t", 1)
-            except ValueError:
-                continue
-            meta_parts = meta.split()
-            if len(meta_parts) < 2 or meta_parts[1] != "tree":
-                continue
-            number = _entry_number(prefix, name, kind="dir")
-            if number is not None:
-                identity = f"{rel_dir}/{name}"
-                paths = found.setdefault(number, [])
-                if identity not in paths:
-                    paths.append(identity)
-    return found
+    return _numbers_from_tree_entries(_parse_ls_tree_entries(text), prefix, dirs, kind)
 
 
 def _numbers_from_worktree(
@@ -290,8 +330,51 @@ def _numbers_from_worktree(
                 continue
             number = _entry_number(prefix, path.name, kind=kind)
             if number is not None:
-                found.setdefault(number, []).append(str(path.relative_to(root)))
+                identity = path.relative_to(root).as_posix()
+                bucket = found.setdefault(number, [])
+                if identity not in bucket:
+                    bucket.append(identity)
     return found
+
+
+def _numbers_from_file_paths(
+    file_paths: list[str], prefix: str, dirs: tuple[str, ...], kind: str
+) -> dict[int, list[str]]:
+    """从 NUL 分隔的相对文件路径列表（如 ls-files -z 或 log --name-only -z）提取编号。"""
+    found: dict[int, list[str]] = {}
+    dir_parts_list = [PurePosixPath(d).parts for d in dirs]
+    for rel in file_paths:
+        if not rel:
+            continue
+        parts = PurePosixPath(rel).parts
+        if kind == "file":
+            for dparts in dir_parts_list:
+                if len(parts) > len(dparts) and parts[: len(dparts)] == dparts:
+                    number = _entry_number(prefix, parts[-1], kind="file")
+                    if number is not None:
+                        bucket = found.setdefault(number, [])
+                        if rel not in bucket:
+                            bucket.append(rel)
+                    break
+        else:
+            for d, dparts in zip(dirs, dir_parts_list):
+                if len(parts) > len(dparts) + 1 and parts[: len(dparts)] == dparts:
+                    name = parts[len(dparts)]
+                    number = _entry_number(prefix, name, kind="dir")
+                    if number is not None:
+                        identity = f"{d}/{name}"
+                        bucket = found.setdefault(number, [])
+                        if identity not in bucket:
+                            bucket.append(identity)
+                    break
+    return found
+
+
+def _numbers_from_index(
+    root: Path, prefix: str, dirs: tuple[str, ...], kind: str
+) -> dict[int, list[str]]:
+    text = _run_git(root, ["ls-files", "-z", "--", *dirs])
+    return _numbers_from_file_paths(text.split("\0"), prefix, dirs, kind)
 
 
 def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> None:
@@ -304,29 +387,147 @@ def _check_duplicates(source: str, found: dict[int, list[str]], prefix: str) -> 
         raise IdScanError(f"{source} 中条目编号重复：{detail}")
 
 
+def _effective_history_dirs(
+    prefix: str, dirs: tuple[str, ...], history_dirs: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    base = history_dirs if history_dirs is not None else HISTORY_SCAN_DIRS.get(prefix, ())
+    return tuple(dict.fromkeys([*dirs, *base]))
+
+
+def scan_occupied_max_ids(
+    repo_root: Path,
+    *,
+    extra_specs: tuple[tuple[str, tuple[str, ...], str], ...] = (),
+    _branches: list[str] | None = None,
+    _wt_records: list[tuple[Path, str | None]] | None = None,
+) -> dict[str, int]:
+    """单轮批量扫描本地历史、分支 tip、worktree 磁盘与 index，返回四类最大占用号。
+
+    只读本机已有数据，不执行任何网络请求；相同编号出现多次仍正常取最大值。
+    """
+    branches = _branches if _branches is not None else local_branches(repo_root)
+    remotes = remote_refs(repo_root)
+    wt_records = _wt_records if _wt_records is not None else _worktree_records(repo_root)
+    wt_heads: list[str] = []
+    for _root, head_sha in wt_records:
+        if head_sha and head_sha not in wt_heads:
+            wt_heads.append(head_sha)
+
+    specs: list[tuple[str, tuple[str, ...], str]] = [
+        (prefix, HISTORY_SCAN_DIRS[prefix], kind) for prefix, _dir, kind in ENTRY_KINDS
+    ]
+    for ep, edirs, ekind in extra_specs:
+        eff_dirs = _effective_history_dirs(ep, edirs, None)
+        specs.append((ep, eff_dirs, ekind))
+
+    all_scan_dirs = tuple(dict.fromkeys(d for _p, sdirs, _k in specs for d in sdirs))
+    max_ids: dict[str, int] = {prefix: 0 for prefix, _dir, _kind in ENTRY_KINDS}
+    for ep, _edirs, _ekind in extra_specs:
+        max_ids.setdefault(ep, 0)
+
+    # 1. 单次 git log 批量扫描全部可达本地历史路径
+    log_text = _run_git(
+        repo_root,
+        [
+            "log",
+            "-m",
+            "--branches",
+            "--remotes",
+            "--tags",
+            *wt_heads,
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "--format=",
+            "--",
+            *all_scan_dirs,
+        ],
+    )
+    history_paths = [p for p in log_text.split("\0") if p]
+    if history_paths:
+        for sp, sdirs, skind in specs:
+            found = _numbers_from_file_paths(history_paths, sp, sdirs, skind)
+            if found:
+                max_ids[sp] = max([max_ids[sp], *found])
+
+    # 2. 本地分支与本机已保存远端分支当前 tip
+    for ref in [*branches, *remotes]:
+        tree_entries = _parse_ls_tree_entries(
+            _run_git(repo_root, ["ls-tree", "-r", "-t", "-z", ref, "--", *all_scan_dirs])
+        )
+        for sp, sdirs, skind in specs:
+            found = _numbers_from_tree_entries(tree_entries, sp, sdirs, skind)
+            if found:
+                max_ids[sp] = max([max_ids[sp], *found])
+
+    # 3. 主仓及所有登记 worktree 的磁盘条目与各自 Git index
+    for root, _head in wt_records:
+        index_paths = [
+            p for p in _run_git(root, ["ls-files", "-z", "--", *all_scan_dirs]).split("\0") if p
+        ]
+        for sp, sdirs, skind in specs:
+            disk_found = _numbers_from_worktree(root, sp, sdirs, skind)
+            if disk_found:
+                max_ids[sp] = max([max_ids[sp], *disk_found])
+            if index_paths:
+                idx_found = _numbers_from_file_paths(index_paths, sp, sdirs, skind)
+                if idx_found:
+                    max_ids[sp] = max([max_ids[sp], *idx_found])
+
+    return max_ids
+
+
+def scan_occupied_max_id(
+    repo_root: Path,
+    prefix: str,
+    dirs: tuple[str, ...] | None = None,
+    kind: str = "file",
+) -> int:
+    """计算指定类别的最大占用号（供分配和迁移共用）。"""
+    default_dirs = dict((p, (d,)) for p, d, _k in ENTRY_KINDS).get(prefix, ())
+    target_dirs = dirs if dirs is not None else default_dirs
+    extra = ((prefix, target_dirs, kind),) if target_dirs != default_dirs else ()
+    return scan_occupied_max_ids(repo_root, extra_specs=extra).get(prefix, 0)
+
+
 def scan_max_id(
     repo_root: Path, prefix: str, dirs: tuple[str, ...], kind: str = "file"
 ) -> int:
-    """扫描所有本地分支与 worktree，返回已用最大编号；无条目返回 0。
+    """普通创建入口：先按分支、磁盘快照、index 快照分别校验当前协议来源，再返回最大占用号。"""
+    branches = local_branches(repo_root)
+    wt_records = _worktree_records(repo_root)
+    default_spec = (prefix, dirs, kind) in {(p, (d,), k) for p, d, k in ENTRY_KINDS}
 
-    kind="file" 时条目是 `{prefix}NNN_{slug}.md`；kind="dir" 时是同名目录。
-    """
-    maximum = 0
-    for branch in local_branches(repo_root):
+    for branch in branches:
         if not branch_uses_current_schema(repo_root, branch):
             continue
         validate_snapshot_ids(repo_root, branch)
-        found = _numbers_from_branch(repo_root, branch, prefix, dirs, kind)
-        _check_duplicates(f"分支 {branch}", found, prefix)
-        maximum = max([maximum, *found])
-    for root in worktree_roots(repo_root):
+        if not default_spec:
+            found = _numbers_from_branch(repo_root, branch, prefix, dirs, kind)
+            _check_duplicates(f"分支 {branch}", found, prefix)
+
+    for root, _head in wt_records:
         if not current_schema(root):
             continue
         validate_worktree_shape(root)
-        found = _numbers_from_worktree(root, prefix, dirs, kind)
-        _check_duplicates(f"worktree {root}", found, prefix)
-        maximum = max([maximum, *found])
-    return maximum
+        for sp, sdir, skind in ENTRY_KINDS:
+            found_disk = _numbers_from_worktree(root, sp, (sdir,), skind)
+            _check_duplicates(f"worktree {root}", found_disk, sp)
+        if not default_spec:
+            found_disk = _numbers_from_worktree(root, prefix, dirs, kind)
+            _check_duplicates(f"worktree {root}", found_disk, prefix)
+        validate_snapshot_ids(root)
+        if not default_spec:
+            found_idx = _numbers_from_index(root, prefix, dirs, kind)
+            _check_duplicates(f"index {root}", found_idx, prefix)
+
+    extra = ((prefix, dirs, kind),) if not default_spec else ()
+    return scan_occupied_max_ids(
+        repo_root,
+        extra_specs=extra,
+        _branches=branches,
+        _wt_records=wt_records,
+    ).get(prefix, 0)
 
 
 def validate_worktree_shape(root: Path) -> None:
@@ -382,23 +583,52 @@ def validate_merge_sources(repo_root: Path) -> bool:
 
 def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
     """合并/提交边界校验当前布局编号唯一性，不加载历史解析器。"""
-    args = ["ls-files", "-z"] if ref is None else ["ls-tree", "-r", "--name-only", "-z", ref]
-    files = _run_git(repo_root, args).split("\0")
-    for prefix, directory, kind in (("p", "docs/pending", "file"), ("d", "docs/findings", "file"), ("s", "docs/spikes", "dir")):
-        found: dict[int, list[str]] = {}
-        for rel in files:
+    if ref is None:
+        files = _run_git(repo_root, ["ls-files", "-z"]).split("\0")
+        for prefix, directory, kind in ENTRY_KINDS:
+            found: dict[int, list[str]] = {}
+            for rel in files:
+                if not rel.startswith(directory + "/"):
+                    continue
+                tail = rel[len(directory) + 1:].split("/")
+                if kind == "file" and len(tail) != 1:
+                    raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先从固定来源运行 repo_sync.py plan / apply 完成内置迁移")
+                if kind == "dir" and len(tail) < 2:
+                    continue
+                number = _entry_number(prefix, tail[0], kind=kind)
+                if number is not None:
+                    identity = directory + "/" + tail[0]
+                    bucket = found.setdefault(number, [])
+                    if identity not in bucket:
+                        bucket.append(identity)
+            _check_duplicates("index", found, prefix)
+        return
+
+    tree_entries = _parse_ls_tree_entries(
+        _run_git(repo_root, ["ls-tree", "-r", "-t", "-z", ref])
+    )
+    for prefix, directory, kind in ENTRY_KINDS:
+        found = {}
+        for obj_type, rel in tree_entries:
             if not rel.startswith(directory + "/"):
                 continue
             tail = rel[len(directory) + 1:].split("/")
-            if kind == "file" and len(tail) != 1:
-                raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先从固定来源运行 repo_sync.py plan / apply 完成内置迁移")
-            number = _entry_number(prefix, tail[0], kind=kind)
+            if kind == "file":
+                if obj_type != "blob":
+                    continue
+                if len(tail) != 1:
+                    raise IdScanError(f"当前实体布局禁止嵌套条目：{rel}；先从固定来源运行 repo_sync.py plan / apply 完成内置迁移")
+                number = _entry_number(prefix, tail[0], kind="file")
+            else:
+                if obj_type != "tree" or len(tail) != 1:
+                    continue
+                number = _entry_number(prefix, tail[0], kind="dir")
             if number is not None:
                 identity = directory + "/" + tail[0]
                 bucket = found.setdefault(number, [])
                 if identity not in bucket:
                     bucket.append(identity)
-        _check_duplicates(ref or "index", found, prefix)
+        _check_duplicates(ref, found, prefix)
 
 
 def slug_from_title(title: str) -> str:

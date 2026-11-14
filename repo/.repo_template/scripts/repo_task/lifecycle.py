@@ -46,13 +46,25 @@ def cmd_add(args):
     if template_problems:
         sys.exit("模板结构校验失败：" + "；".join(template_problems))
 
-    # 取号 + 建目录持 git 公共锁，与 pending/findings 取号互斥，防并发撞号（RT-009）
+    # 取号 + 建目录持 git 公共锁，与 pending/findings/spikes 取号互斥，防并发撞号（RT-009）
     with git_common_lock(repo.root, TASK_ID_LOCK_NAME):
         tasks = scan_tasks(repo=repo)
         for t in tasks:
             if t["slug"] == args.slug:
                 sys.exit(f"slug 已存在：{args.slug}（{t['tid']}）")
-        n = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0) + 1
+        local_max = max((int(ctx.TID_RE.match(t["tid"]).group(1)) for t in tasks), default=0)
+        try:
+            from _id_scan import IdScanError, scan_max_id
+        except ImportError:
+            scripts_dir = str(Path(__file__).resolve().parent.parent)
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            from _id_scan import IdScanError, scan_max_id
+        try:
+            global_max = scan_max_id(repo.root, "t", ("docs/tasks",), kind="dir")
+        except IdScanError as error:
+            sys.exit(str(error))
+        n = max(local_max, global_max) + 1
         tid = f"t{n:03d}"
         task_dir = repo.tasks_dir / f"{tid}_{args.slug}"
         if task_dir.exists():

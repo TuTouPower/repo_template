@@ -449,3 +449,122 @@ def test_concurrent_modification_rejected_by_sha256(repo: Path, monkeypatch: pyt
     with pytest.raises(SystemExit, match="内容已被并发修改|内容摘要不一致"):
         pending_mod.main(["close", "p001", "--reason", "完成", "--write"])
 
+
+def test_unified_occupied_scan_covers_history_remotes_index_and_disk_rename(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """7.1：已删除历史提交、远端跟踪分支、index 独有条目、磁盘未暂存改名及历史重复均正确处理。"""
+    import findings as findings_mod
+    from _id_scan import scan_occupied_max_ids
+
+    monkeypatch.setattr(
+        findings_mod, "main", partial(findings_mod.main, repo=RepoContext.for_root(repo))
+    )
+
+    # 1. 旧 commit 中曾有重复（d005 两条），随后在后续提交删除 d005 和 d008
+    findings_dir = repo / "docs/findings"
+    findings_dir.mkdir(parents=True, exist_ok=True)
+    (findings_dir / "d005_dup_a.md").write_text("# d005 a\n", encoding="utf-8")
+    (findings_dir / "d005_dup_b.md").write_text("# d005 b\n", encoding="utf-8")
+    (findings_dir / "d008_deleted_later.md").write_text("# d008 gone\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "historical duplicate and d008")
+
+    (findings_dir / "d005_dup_b.md").unlink()
+    (findings_dir / "d008_deleted_later.md").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "clean up d005_dup_b and delete d008")
+
+    # d008 虽从当前树删除，但可达历史仍占用 d008，新建必须分配 d009
+    findings_mod.main(["new", "--slug", "after_deleted_history"])
+    assert (findings_dir / "d009_after_deleted_history.md").is_file()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "commit d009")
+
+    # 2. 本机保存的远端跟踪分支（含无 schema 与历史重复）提供更大占用号 d020
+    _git(repo, "checkout", "-b", "temp_remote")
+    (repo / ".repo_template/entity_schema.json").unlink()
+    (findings_dir / "d015_rem_a.md").write_text("# d015 a\n", encoding="utf-8")
+    (findings_dir / "d015_rem_b.md").write_text("# d015 b\n", encoding="utf-8")
+    (findings_dir / "d020_remote_tip.md").write_text("# d020 remote\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "remote branch commit")
+    remote_sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "update-ref", "refs/remotes/origin/main", remote_sha)
+    _git(repo, "checkout", "main")
+    _git(repo, "branch", "-D", "temp_remote")
+
+    # 配置不可达远端 URL，验证取号绝不发起网络请求且避开远端记录 d020 -> 分配 d021
+    _git(repo, "remote", "add", "origin", "https://127.0.0.1:1/unreachable/repo.git")
+    findings_mod.main(["new", "--slug", "after_remote"])
+    assert (findings_dir / "d021_after_remote.md").is_file()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "commit d021")
+
+    # 3. 磁盘条目改名但 index 尚未更新：分别校验快照不误报重复，且占用取并集
+    (findings_dir / "d021_after_remote.md").rename(findings_dir / "d021_renamed_on_disk.md")
+    # 4. 仅在 index 中有 d025（暂存后从磁盘删除）
+    (findings_dir / "d025_staged_only.md").write_text("# d025 staged\n", encoding="utf-8")
+    _git(repo, "add", "docs/findings/d025_staged_only.md")
+    (findings_dir / "d025_staged_only.md").unlink()
+
+    findings_mod.main(["new", "--slug", "after_staged_only"])
+    assert (findings_dir / "d026_after_staged_only.md").is_file()
+    occupied = scan_occupied_max_ids(repo)
+    assert occupied["d"] == 26
+
+
+def test_task_add_uses_unified_scan_and_purge_reclaims_uncommitted_draft(
+    repo: Path,
+) -> None:
+    """7.1：task.py add 跨分支/远端/历史避重，且未入库未启动草稿经 purge 后自然回收。"""
+    import argparse
+    from repo_task import lifecycle
+    from repo_task.documents import parse_front_matter, write_front_matter
+
+    # 准备最小 task 模板
+    tpl_dir = repo / ".repo_template/docs/task_template"
+    tpl_dir.mkdir(parents=True, exist_ok=True)
+    real_tpl = REPO_ROOT / ".repo_template/docs/task_template"
+    for name in ("task.md", "progress.md"):
+        (tpl_dir / name).write_bytes((real_tpl / name).read_bytes())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add task template")
+
+    # 在远端跟踪分支放入 t007_remote
+    _git(repo, "checkout", "-b", "remote_task_branch")
+    remote_task = repo / "docs/tasks/t007_remote"
+    remote_task.mkdir(parents=True, exist_ok=True)
+    fm, body = parse_front_matter(tpl_dir / "progress.md")
+    fm.update({"tid": "t007", "slug": "remote", "title": "remote", "status": "backlog"})
+    write_front_matter(remote_task / "progress.md", fm, body)
+    (remote_task / "task.md").write_bytes((tpl_dir / "task.md").read_bytes())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "remote t007")
+    sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "update-ref", "refs/remotes/origin/feat", sha)
+    _git(repo, "checkout", "main")
+    _git(repo, "branch", "-D", "remote_task_branch")
+
+    ctx_repo = RepoContext.for_root(repo)
+    lifecycle.cmd_add(
+        argparse.Namespace(
+            title="first local", slug="first_local", note="", review_level="single", repo=ctx_repo
+        )
+    )
+    assert (repo / "docs/tasks/t008_first_local").is_dir()
+
+    # 未入库、未启动的 t008 草稿被 purge 后，t008 不在历史、任何 worktree 或 index 中，自然回收
+    lifecycle.cmd_purge(
+        argparse.Namespace(tid="t008", reason="miscreated draft", repo=ctx_repo)
+    )
+    assert not (repo / "docs/tasks/t008_first_local").exists()
+
+    lifecycle.cmd_add(
+        argparse.Namespace(
+            title="reclaimed", slug="reclaimed", note="", review_level="single", repo=ctx_repo
+        )
+    )
+    assert (repo / "docs/tasks/t008_reclaimed").is_dir()
+
+
