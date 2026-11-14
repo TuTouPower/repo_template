@@ -347,3 +347,48 @@ def test_r02b_relocated_spike_link_to_unmoved_target(tmp_path: Path) -> None:
         root / "docs/spikes/s001_probe" / "../../findings/d001_fact.md"
     ).resolve().is_file()
     assert entity_storage_migration_status(_sync(root)) == []
+
+
+# ---------------------------------------------------------------------------
+# R04 残留：同一总账内 ordinal 两位数时，字符串排序把 #10 排在 #2 前（round2）。
+# ---------------------------------------------------------------------------
+
+
+def _write_two_digit_ledger(root: Path, rel: str, prefix: str) -> None:
+    entries = [
+        (20, "zero"), (21, "one"), (1, "earlier"),
+        (22, "f2"), (23, "f3"), (24, "f4"), (25, "f5"),
+        (26, "f6"), (27, "f7"), (28, "f8"), (1, "later"),
+    ]
+    lines = ["# 总账\n"]
+    for num, title in entries:
+        lines.append(f"\n## {prefix}{num:03d} {title}\n\n- 现状：有效\n")
+    (root / rel).write_text("".join(lines), encoding="utf-8")
+
+
+def test_r04b_findings_ledger_two_digit_ordinal(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _write_two_digit_ledger(root, "docs/findings.md", "d")
+    _commit_all(root, "findings ledger #2/#10")
+
+    plan = build_migration_plan(_sync(root))
+    by_rel = {f.source_rel: f for f in plan.findings if f.from_ledger}
+    assert by_rel["docs/findings.md#2"].final_id == "d001", {
+        k: v.final_id for k, v in by_rel.items() if "#" in k and ("#2" in k or "#10" in k)
+    }
+    assert "earlier" in by_rel["docs/findings.md#2"].content
+    assert by_rel["docs/findings.md#10"].final_id == "d029"
+    assert "later" in by_rel["docs/findings.md#10"].content
+
+
+def test_r04b_pending_ledger_two_digit_ordinal(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _write_two_digit_ledger(root, "docs/pending.md", "p")
+    _commit_all(root, "pending ledger #2/#10")
+
+    plan = build_migration_plan(_sync(root))
+    by_rel = {p.source_rel: p for p in plan.pendings if p.from_ledger}
+    assert by_rel["docs/pending.md#2"].final_id == "p001", {
+        k: v.final_id for k, v in by_rel.items() if "#" in k and ("#2" in k or "#10" in k)
+    }
+    assert by_rel["docs/pending.md#10"].final_id == "p029"

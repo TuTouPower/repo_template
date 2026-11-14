@@ -164,7 +164,11 @@ def assign_final_ids(
             }
             ordered = sorted(
                 group,
-                key=lambda c: (ts_cache[(c.source_rel, c.ordinal)], c.source_rel, c.ordinal),
+                key=lambda c: (
+                    ts_cache[(c.source_rel, c.ordinal)],
+                    c.history_path or c.source_rel,
+                    c.ordinal,
+                ),
             )
             winner = ordered[0]
             decisions[(prefix, winner.source_rel, winner.ordinal)] = RenumberDecision(
