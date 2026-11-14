@@ -985,11 +985,17 @@ def build_migration_plan(
         cand.source_rel for prefix in candidates for cand in candidates[prefix] if "#" not in cand.source_rel
     }
     ledger_rels = {p.relative_to(consumer).as_posix() for p in legacy_ledgers}
+    # 只按本轮实体计划实际接管的文件/目录去重，不按 report.md basename 全局排除
+    handled_rels = set(entity_rels) | source_rels | ledger_rels
+    spike_dir_prefixes: set[str] = set()
+    for s in spikes_plan:
+        handled_rels.add(s.source_rel + "/report.md")
+        handled_rels.add(s.target_dir.relative_to(consumer).as_posix() + "/report.md")
+        spike_dir_prefixes.add(s.source_rel + "/")
+        spike_dir_prefixes.add(s.target_dir.relative_to(consumer).as_posix() + "/")
 
     for rel in collect_tracked_project_files(consumer):
-        if rel in entity_rels or rel in source_rels or rel in ledger_rels:
-            continue
-        if rel.endswith("/report.md") or rel.startswith("docs/spikes/") or rel.startswith("docs/archive/spikes/"):
+        if rel in handled_rels or any(rel.startswith(p) for p in spike_dir_prefixes):
             continue
         path = consumer / rel
         if path.is_symlink() or not path.is_file() or not rel.endswith(".md") and rel not in ("README.md",):

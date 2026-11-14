@@ -149,3 +149,27 @@ def test_r02_old_dir_relative_link_follows_renumber(tmp_path: Path) -> None:
     assert "p003_moved.md#detail" in peer, peer
     assert (root / "docs/pending/p003_moved.md").is_file()
     assert entity_storage_migration_status(_sync(root)) == []
+
+
+# ---------------------------------------------------------------------------
+# R03：按 basename 排除全部 report.md 漏掉普通项目文档中的精确旧路径引用。
+# ---------------------------------------------------------------------------
+
+
+def test_r03_outside_report_md_reference_updated_and_declared(tmp_path: Path) -> None:
+    root = _init_consumer(tmp_path)
+    _finding(root, "d001_a.md", "d001")
+    _finding(root, "d001_b.md", "d001")
+    (root / "docs/design").mkdir(parents=True)
+    (root / "docs/design/report.md").write_text(
+        "See docs/findings/d001_b.md\n", encoding="utf-8"
+    )
+    _commit_all(root, "dup findings + outside report")
+
+    plan = build_migration_plan(_sync(root))
+    assert "docs/design/report.md" in plan.transaction_extra_rels
+
+    migrate_entity_storage(_sync(root), write=True)
+    text = (root / "docs/design/report.md").read_text(encoding="utf-8")
+    assert "docs/findings/d002_b.md" in text, text
+    assert "docs/findings/d001_b.md" not in text, text
