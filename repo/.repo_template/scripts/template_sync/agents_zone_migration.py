@@ -1,7 +1,5 @@
 """一次性把旧 AGENTS.md 拆为项目区与模板区。"""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

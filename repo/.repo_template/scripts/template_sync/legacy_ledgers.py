@@ -1,6 +1,4 @@
 """显式旧总账解析：由统一 entity-storage 迁移调用，运行期编号扫描不导入本模块。"""
-from __future__ import annotations
-
 import re
 from pathlib import Path
 from typing import NamedTuple

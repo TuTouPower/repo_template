@@ -1,7 +1,5 @@
 """Issue #96 统一实体迁移专项测试：一次性消重、引用事务、分支阻断、运行期报错。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess

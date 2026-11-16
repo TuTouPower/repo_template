@@ -228,7 +228,7 @@ def recovery_state(tid: str, *, repo) -> dict:
     return state
 
 
-def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: "ctx.RepoContext") -> bool:
+def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: ctx.RepoContext) -> bool:
     """tip 是否已被其它本地分支包含（后继分支或已合入）。"""
     result = _git(["branch", "--format=%(refname:short)"], repo=repo)
     if result.returncode != 0:
@@ -243,7 +243,7 @@ def _tip_has_successor(tip_sha: str, current_branch: str, *, repo: "ctx.RepoCont
 
 def _review_repair_action(
     tid: str, attempt: int, execution_id: str, tip_sha: str, diff_anchor: str,
-    detail: str, branch: str, *, repo: "ctx.RepoContext",
+    detail: str, branch: str, *, repo: ctx.RepoContext,
 ) -> str:
     if _tip_has_successor(tip_sha, branch, repo=repo):
         return (

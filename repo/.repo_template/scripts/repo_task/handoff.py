@@ -1,6 +1,4 @@
 """唯一 handoff 结构契约；提交、依赖与集成入口复用。"""
-from __future__ import annotations
-
 from .context import TaskDataError
 
 HANDOFF_TYPES = {

@@ -1,7 +1,5 @@
 """repo_sync.py 的参数解析与子命令分发。"""
 
-from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path

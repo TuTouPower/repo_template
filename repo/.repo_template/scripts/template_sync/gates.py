@@ -1,7 +1,5 @@
 """同步后的契约测试门禁执行。"""
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path

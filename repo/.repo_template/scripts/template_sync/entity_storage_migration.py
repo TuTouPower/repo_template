@@ -14,8 +14,6 @@ t 重复仍阻断。status / plan / apply 共用同一计划构建；写盘先�
 计划与执行均不管理事务，由 apply 统一备份、校验与回滚。
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -264,7 +262,7 @@ def validate_current_entities(sync: ctx.SyncContext) -> None:
 
 
 def entity_storage_migration_status(
-    sync: ctx.SyncContext, *, plan: "MigrationPlan | None" = None
+    sync: ctx.SyncContext, *, plan: MigrationPlan | None = None
 ) -> list[str]:
     """统一检测：旧布局/旧总账/重复编号/引用/其它分支冲突；status/plan/apply 共用同一计划。"""
     consumer = sync.consumer

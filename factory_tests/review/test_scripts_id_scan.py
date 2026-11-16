@@ -5,8 +5,6 @@
 规范 padding（L258）、真实迁移命令提示（P1-11）。
 """
 
-from __future__ import annotations
-
 import re
 import subprocess
 import sys

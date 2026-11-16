@@ -1,7 +1,5 @@
 """宿主 skill 软链与 opencode 命令薄层的状态、修复与 link-skills 子命令。"""
 
-from __future__ import annotations
-
 import argparse
 import os
 import shutil

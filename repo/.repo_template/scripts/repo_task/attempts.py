@@ -1,7 +1,5 @@
 """Attempt lifecycle domain model and exact-identity commands."""
 
-from __future__ import annotations
-
 import uuid
 import json
 from pathlib import Path
@@ -209,7 +207,7 @@ def validate_execution_context(worktree, tid, current):
 
 def resolve_identity(
     tid: str, attempt: int | None = None, execution_id: str | None = None,
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> tuple[int, str]:
     """Resolve the exact ``(attempt, execution_id)`` of ``tid``.
 
@@ -247,7 +245,7 @@ def resolve_identity(
 
 
 def _execution_context_identity(
-    worktree, tid: str, *, repo: "ctx.RepoContext",
+    worktree, tid: str, *, repo: ctx.RepoContext,
 ) -> tuple[int, str]:
     path = execution_context_path(worktree)
     try:
@@ -264,7 +262,7 @@ def _execution_context_identity(
 
 
 def reserve_attempt(
-    tid: str, model: str | None = None, *, repo: "ctx.RepoContext",
+    tid: str, model: str | None = None, *, repo: ctx.RepoContext,
 ) -> dict:
     if not ctx.TID_RE.fullmatch(tid):
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
@@ -352,7 +350,7 @@ def reserve_attempt(
 
 def claim_execution(
     tid, attempt, execution_id, owner_id, *, replace_owner=None, confirm_stopped=False,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ):
     """Compare-and-swap ownership. No expiry: time cannot prove an agent stopped."""
     if not isinstance(owner_id, str) or not owner_id.strip():
@@ -379,7 +377,7 @@ def claim_execution(
 
 def terminal_attempt(
     tid: str, attempt: int, execution_id: str, status: str,
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> dict:
     if status not in ctx.LEDGER_TERMINAL_STATUSES:
         raise ctx.TaskDataError("terminal status 必须是 completed/failed/stopped")
@@ -408,7 +406,7 @@ def report_attempt(
     sha: str | None = None,
     fail_class: str | None = None,
     reason: str | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> dict:
     if status not in ctx.LEDGER_REPORT_STATUSES:
         raise ctx.TaskDataError("report status 必须是 done/blocked/failed")
@@ -452,7 +450,7 @@ def append_integrated(
     attempt: int,
     execution_id: str,
     merge_sha: str,
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> dict:
     events = append_integrated_batch([{
         "tid": tid,
@@ -468,7 +466,7 @@ def append_integrated(
 
 
 def append_integrated_batch(
-    members: list[dict], merge_sha: str, *, repo: "ctx.RepoContext",
+    members: list[dict], merge_sha: str, *, repo: ctx.RepoContext,
 ) -> list[dict]:
     """Atomically preflight and append every missing exact integrated event."""
     if not isinstance(merge_sha, str) or not merge_sha:

@@ -1,7 +1,5 @@
 """spec front matter 与 finish 闭环契约。"""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

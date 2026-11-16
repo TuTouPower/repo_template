@@ -206,31 +206,6 @@ def test_format_failure_rolls_back_without_misleading_dirty_state(repo, tmp_path
     assert "不一致" not in result.stderr
 
 
-def test_precommit_hook_python39_compatibility(repo, tmp_path):
-    """只有真实 Python 3.9 才运行；找不到或版本不符时 skip（Issue #82）。"""
-    import shutil
-    system_python = shutil.which("python3.9")
-    if not system_python:
-        pytest.skip("未找到真实 python3.9；跳过 3.9 兼容性验证")
-    r = subprocess.run(
-        [system_python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-        capture_output=True, text=True, timeout=30,
-    )
-    if r.returncode != 0 or r.stdout.strip() != "3.9":
-        pytest.skip(f"{system_python} 不是 Python 3.9（{r.stdout.strip() or r.stderr.strip()}）")
-    env = dict(os.environ)
-    env["PATH"] = str(_fake_md_kx(tmp_path).parent) + os.pathsep + env["PATH"]
-    _stage_drifted_md(repo)
-    result = subprocess.run(
-        [system_python, str(HOOK_PATH)], cwd=str(repo), env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=30,
-    )
-    assert "TypeError: unsupported operand type(s) for |" not in result.stderr
-    assert result.returncode == 1
-    assert "格式漂移" in result.stderr
-
-
 def test_review_retention_blocks_only_new_review_over_limit(repo, tmp_path):
     reviews = repo / "docs/reviews"
     for index in range(1, 6):

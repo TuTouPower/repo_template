@@ -5,8 +5,6 @@
 判定（已提交不回滚 / 未提交精确回滚）、回滚中途及再次中断后幂等重做。
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shutil

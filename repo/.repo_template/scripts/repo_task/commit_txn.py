@@ -16,8 +16,6 @@ journal 是唯一状态机载体：每步写入前持久化 before/after 指纹�
 格式兼容分支。
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os

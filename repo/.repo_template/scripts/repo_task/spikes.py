@@ -1,7 +1,5 @@
 """repo_task.spikes - Spike entity metadata schema and resolution helpers."""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

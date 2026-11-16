@@ -1,6 +1,5 @@
 """消费仓契约套件边界：标记范围、默认门禁命令、同步验证命令。"""
 
-from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
@@ -149,41 +148,18 @@ def test_all_consumer_skills_disable_model_invocation():
         )
 
 
-def _runtime_union_annotations(tree) -> list[int]:
-    """未启用延迟注解时，函数签名与模块/类级注解里的 `X | Y` 在导入期求值。"""
-    import ast
-    lines = []
-    for node in ast.walk(tree):
-        annotations = []
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            for arg in args.posonlyargs + args.args + args.kwonlyargs + [args.vararg, args.kwarg]:
-                if arg is not None and arg.annotation is not None:
-                    annotations.append(arg.annotation)
-            if node.returns is not None:
-                annotations.append(node.returns)
-        elif isinstance(node, ast.AnnAssign):
-            annotations.append(node.annotation)
-        for annotation in annotations:
-            if any(isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr) for n in ast.walk(annotation)):
-                lines.append(annotation.lineno)
-    return lines
+def test_version_contract_is_single_source():
+    """版本契约由 _runtime.PYTHON_VERSION 单一定义，现行文档必须一致。"""
+    from _runtime import MIN_PYTHON, PYTHON_VERSION
 
-
-def test_toolchain_annotations_importable_on_python39():
-    """模板脚本最低 Python 3.9：PEP 604 注解必须配 `from __future__ import annotations`。"""
-    import ast
-    problems = []
-    for path in sorted(SCRIPTS_DIR.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(path))
-        has_future = any(
-            isinstance(node, ast.ImportFrom) and node.module == "__future__"
-            and any(alias.name == "annotations" for alias in node.names)
-            for node in tree.body
-        )
-        if has_future:
-            continue
-        for line in _runtime_union_annotations(tree):
-            problems.append(f"{path.relative_to(SCRIPTS_DIR)}:{line}")
-    assert not problems, "Python 3.9 导入期会求值 `X | Y` 注解：" + ", ".join(problems)
+    assert sys.version_info[:3] >= MIN_PYTHON, (
+        f"契约测试需在 Python {PYTHON_VERSION}+ 运行；当前 {sys.version.split()[0]}"
+    )
+    for doc in (REPO_ROOT / "README.md", TESTS_DIR.parent / "docs/usage.md"):
+        text = doc.read_text(encoding="utf-8")
+        assert PYTHON_VERSION in text, f"{doc} 未声明 {PYTHON_VERSION}"
+        assert "Python 3.9" not in text, f"{doc} 仍声明 3.9 为最低版本"
+    testing = (REPO_ROOT / "docs/blueprint/testing.md").read_text(encoding="utf-8")
+    if _section(testing, "verification_policy").strip() != "project_configured":
+        assert PYTHON_VERSION in testing, "testing.md 未声明模板最低版本"
+        assert "Python 3.9" not in testing, "testing.md 仍声明 3.9 为最低版本"

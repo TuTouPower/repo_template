@@ -1,7 +1,5 @@
 """硬同步与镜像：树对树 / 单文件 / skill 整目录覆盖及差异扫描。"""
 
-from __future__ import annotations
-
 import shutil
 from pathlib import Path
 

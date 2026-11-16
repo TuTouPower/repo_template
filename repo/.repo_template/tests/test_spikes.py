@@ -1,7 +1,5 @@
 """test_spikes.py - Spike 实体稳定存储、元数据与状态机契约测试。"""
 
-from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path

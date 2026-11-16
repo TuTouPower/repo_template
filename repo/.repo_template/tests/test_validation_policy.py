@@ -1,7 +1,5 @@
 """验证策略门禁契约：拒绝多个可执行代码块，保留非执行示例。"""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

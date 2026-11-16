@@ -1,7 +1,5 @@
 """跨模块共享的小工具：git 调用、JSON 读取与缩进探测、时间戳、消费仓锁。"""
 
-from __future__ import annotations
-
 import json
 import subprocess
 from functools import wraps

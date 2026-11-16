@@ -1,7 +1,5 @@
 """AGENTS.md 两区协议：项目区原样保留，模板区整块替换。"""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 

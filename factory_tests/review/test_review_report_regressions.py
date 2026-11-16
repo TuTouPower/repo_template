@@ -1,4 +1,4 @@
-"""Behavioral regressions for finish, immutable sync, locking and Python 3.9."""
+"""Behavioral regressions for finish, immutable sync, locking and archive extraction."""
 
 import io
 import json
@@ -225,7 +225,7 @@ def _archive(members):
 
 
 @pytest.mark.parametrize("kind", ["traversal", "absolute", "nested_drive", "symlink_parent", "hardlink", "device"])
-def test_python39_extractor_rejects_unsafe_archive_members_before_any_write(tmp_path, kind):
+def test_extractor_rejects_unsafe_archive_members(tmp_path, kind):
     name = {"traversal": "../escaped", "absolute": "/escaped", "nested_drive": "dir/C:escaped"}.get(kind, "entry")
     member = tarfile.TarInfo(name)
     member.size = 1
@@ -247,7 +247,7 @@ def test_python39_extractor_rejects_unsafe_archive_members_before_any_write(tmp_
     assert list(target.iterdir()) == []
 
 
-def test_python39_extractor_preserves_regular_executable_and_internal_symlink(tmp_path):
+def test_extractor_preserves_regular_executable_and_internal_symlink(tmp_path):
     member = tarfile.TarInfo("bin/run")
     member.mode = 0o755
     member.size = 4

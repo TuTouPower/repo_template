@@ -1,7 +1,5 @@
 """旧事务仅在明确结束后退役；删除纳入 common 标准事务，可回滚。"""
 
-from __future__ import annotations
-
 import json
 import subprocess
 import sys

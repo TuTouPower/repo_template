@@ -6,8 +6,6 @@
 目标布局：task.md + progress.md（标题「Task 进展」）。note.md 与 progress.md 并存时拒绝，不猜测合并。
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

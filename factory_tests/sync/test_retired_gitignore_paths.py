@@ -11,8 +11,6 @@ N2 顶层方案跟进：status 现从完整 frozen ReviewPlan 派生，archive �
 整体重写（禁止就地改旧预期），改为校验「迁回项 + 超额删除项」并存的完整计划。
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path

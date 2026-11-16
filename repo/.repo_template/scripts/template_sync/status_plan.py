@@ -1,7 +1,5 @@
 """status / plan 子命令：差异摘要与预览输出。"""
 
-from __future__ import annotations
-
 import argparse
 
 from . import context as ctx

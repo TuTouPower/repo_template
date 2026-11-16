@@ -22,8 +22,6 @@ goal 模式的提示词必须是可机器判定的终态，而不是过程指令
 合并授权不在判定范围：merge 是 goal 结束后的人工步骤。
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 import os

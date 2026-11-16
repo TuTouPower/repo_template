@@ -1,7 +1,5 @@
 """WP2/WP3 一次性迁移：AGENTS 两区、specs front matter、review 裁剪、ADR。"""
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from argparse import Namespace

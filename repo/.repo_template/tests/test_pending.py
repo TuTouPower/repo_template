@@ -13,8 +13,6 @@
 10. 旧命令与旧状态移除（archive、rename、--state archived 被拒绝）
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

@@ -1,6 +1,4 @@
 """当前实体协议边界；不包含任何旧路径或旧格式解析。"""
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

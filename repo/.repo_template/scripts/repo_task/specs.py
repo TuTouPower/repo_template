@@ -1,7 +1,5 @@
 """docs/specs front matter：长期需求索引的唯一真相源。"""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

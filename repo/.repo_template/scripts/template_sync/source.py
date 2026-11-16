@@ -1,7 +1,5 @@
 """模板来源解析：来源身份、固定 checkout、URL 缓存、产物根识别与来源干净度。"""
 
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path

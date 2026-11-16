@@ -8,8 +8,6 @@
 模块级可变全局。
 """
 
-from __future__ import annotations
-
 import os
 import re
 import subprocess
@@ -94,7 +92,7 @@ class RepoContext:
     _state_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
-    def for_root(cls, root: Path, *, primary_root: Path | None = None) -> "RepoContext":
+    def for_root(cls, root: Path, *, primary_root: Path | None = None) -> RepoContext:
         current = root.expanduser().resolve()
         common: Path | None = None
         if primary_root is None:
@@ -108,7 +106,7 @@ class RepoContext:
         return context
 
     @classmethod
-    def from_code_location(cls, code_file: Path | str) -> "RepoContext":
+    def from_code_location(cls, code_file: Path | str) -> RepoContext:
         """入口脚本/模块所在工作区：由 .repo_template 祖先定位；未命中即显式报错。"""
         resolved = Path(code_file).resolve()
         for parent in (resolved, *resolved.parents):

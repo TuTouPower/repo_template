@@ -3,8 +3,6 @@
 每项先锁定缺陷或行为契约，再改生产代码。
 """
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

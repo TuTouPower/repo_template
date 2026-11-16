@@ -3,8 +3,6 @@
 本模块只做纯计算与明确的文本转换，不持有事务、不写盘、不提供运行期兼容路径。
 """
 
-from __future__ import annotations
-
 import posixpath
 import re
 import sys
@@ -56,14 +54,14 @@ class CandidateIdentity:
     def from_file(
         cls, prefix: str, orig_num: int, orig_id: str, slug: str, rel: str,
         *, is_dir: bool = False,
-    ) -> "CandidateIdentity":
+    ) -> CandidateIdentity:
         return cls(prefix, orig_num, orig_id, slug, rel, rel, rel, is_dir=is_dir)
 
     @classmethod
     def from_ledger(
         cls, prefix: str, orig_num: int, orig_id: str, slug: str,
         ledger_rel: str, ordinal: int,
-    ) -> "CandidateIdentity":
+    ) -> CandidateIdentity:
         return cls(
             prefix, orig_num, orig_id, slug,
             f"{ledger_rel}#{ordinal}", ledger_rel, ledger_rel,

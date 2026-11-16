@@ -5,8 +5,6 @@
 调用方必须显式构造并传递 SyncContext，不存在模块级默认身份与回退。
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from pathlib import Path

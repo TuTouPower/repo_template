@@ -1,7 +1,5 @@
 """同步期 goal_queue.json 快照升版迁移（仅在同步事务内运行，运行期保持零兼容）。"""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

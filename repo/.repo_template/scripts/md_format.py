@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """md_format.py - 模板仓/消费仓统一的 Markdown 格式化入口（md_kx 包装）。
 
-选文件、黑名单、缺二进制在仓库内解决，不依赖 md_kx 的 exclude（Python 3.13+ 才
-生效）。风格只读 `.md_kx.toml`，本脚本不重复传 `--table-mode`。
+选文件、黑名单、缺二进制在仓库内解决，不依赖 md_kx 的 exclude（该能力由 md_kx
+自身工具环境决定）。风格只读 `.md_kx.toml`，本脚本不重复传 `--table-mode`。
 
 用法：
   python3 .repo_template/scripts/md_format.py PATH...      # 点名路径（须在仓库内）
@@ -12,8 +12,6 @@
 
 库函数 format_paths() 与 CLI 统一在缺二进制或执行失败时抛出 MdFormatError（硬失败，无静默降级）。
 """
-
-from __future__ import annotations
 
 import argparse
 import os
@@ -293,7 +291,5 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    main()
+    from _runtime import run
+    run(main)

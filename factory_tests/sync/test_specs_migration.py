@@ -7,8 +7,6 @@
 P1-7 计划即检测回归：status 与执行共用完整计划、规范文本比对、计划失败转 finding。
 """
 
-from __future__ import annotations
-
 import argparse
 import subprocess
 import sys

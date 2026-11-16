@@ -1,7 +1,5 @@
 """状态迁入 Git common dir；事务由 apply 统一管理。"""
 
-from __future__ import annotations
-
 import shutil
 from pathlib import Path
 

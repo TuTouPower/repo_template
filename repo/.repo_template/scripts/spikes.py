@@ -13,8 +13,6 @@
 list 对 front matter 损坏或缺失的 spike 打印 stderr 警告并归入 unknown，不静默吞错。
 """
 
-from __future__ import annotations
-
 import argparse
 from repo_task.context import RepoContext, TaskDataError
 import re
@@ -391,7 +389,5 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    main()
+    from _runtime import run
+    run(main)

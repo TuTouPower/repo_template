@@ -1,7 +1,5 @@
 """Canonical lifecycle implementation for the task toolchain."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

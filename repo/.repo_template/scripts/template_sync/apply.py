@@ -1,7 +1,5 @@
 """apply 子命令：事务内写盘主体、dirty 源检查与改动清单。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import re

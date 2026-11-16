@@ -6,8 +6,6 @@ git merge 的自动提交不运行 pre-commit，且 pre-merge-commit 阶段 MERG
 校验放在本 hook。
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -50,7 +48,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    sys.exit(main())
+    from _runtime import run
+    run(main)

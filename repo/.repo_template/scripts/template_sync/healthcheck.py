@@ -1,7 +1,5 @@
 """只读健康检查：安装入口、hooks、来源、验证策略与占位符。"""
 
-from __future__ import annotations
-
 import os
 import shutil
 from pathlib import Path

@@ -4,8 +4,6 @@ Snapshots precede every asset mutation. Backups are copied on restore, never
 consumed, and a failed restore remains visible as an unfinished transaction.
 """
 
-from __future__ import annotations
-
 import datetime
 import hashlib
 import json
@@ -58,7 +56,7 @@ def open_transactions(root) -> list[tuple[str, str]]:
     return findings
 
 
-def state_transaction(root: Path, directory: str) -> "FileTransaction":
+def state_transaction(root: Path, directory: str) -> FileTransaction:
     """事务备份落在 Git common 状态目录；资产路径仍相对仓库根。"""
     from .context import common_state_dir
 

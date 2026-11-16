@@ -13,8 +13,6 @@
 再分配新编号；编号分配本身不解析旧正文。
 """
 
-from __future__ import annotations
-
 import argparse
 from repo_task.context import RepoContext, TaskDataError
 import sys
@@ -98,7 +96,5 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    main()
+    from _runtime import run
+    run(main)

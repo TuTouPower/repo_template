@@ -1,6 +1,4 @@
 """2026-11-09 合并审阅回归：入口一致性、迁移模型与事务恢复。"""
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

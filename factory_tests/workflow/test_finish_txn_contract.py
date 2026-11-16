@@ -7,8 +7,6 @@ _tip_has_successor fail-closed（DS L224）、bind 诊断降级（P1-12/DS L267/
 Git 操作统一走 git_repo_support 的受控 env（DS L286），不裸用宿主配置。
 """
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess

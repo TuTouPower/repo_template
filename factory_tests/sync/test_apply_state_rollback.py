@@ -1,7 +1,5 @@
 """P1-2 回归：apply 成功后 CLI rollback 恢复 common-dir state 与工作区工具文件。"""
 
-from __future__ import annotations
-
 import json
 import sys
 

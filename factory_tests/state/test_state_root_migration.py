@@ -11,8 +11,6 @@ N1 那套「恢复未完成」状态机（``state_root_migration.json`` + 手写
 退役与故障恢复行为由 test_legacy_transaction_retirement.py 独立覆盖。
 """
 
-from __future__ import annotations
-
 import json
 import subprocess
 import sys

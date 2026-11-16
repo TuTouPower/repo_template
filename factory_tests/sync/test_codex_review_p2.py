@@ -1,7 +1,5 @@
 """Codex 复审 P2 逐项回归（R01–R07）：每项先以负例锁定缺陷，再改生产代码。"""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

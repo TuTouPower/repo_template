@@ -1,7 +1,5 @@
 """Repository observation, handoff verification, and attempt-based monitoring."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
@@ -134,7 +132,7 @@ def validate_task_core_asset_changes(
 
 
 def git_tree_entries(
-    ref_or_tree: str, *, root: Path | None = None, repo: "ctx.RepoContext | None" = None,
+    ref_or_tree: str, *, root: Path | None = None, repo: ctx.RepoContext | None = None,
 ) -> dict[str, tuple[str, str]]:
     """读取指定 commit / tree 的完整 entries：path -> (mode, oid)。"""
     r = _git(["ls-tree", "-r", "-z", "--end-of-options", ref_or_tree], root=root, repo=repo)
@@ -152,7 +150,7 @@ def git_tree_entries(
 
 
 def git_worktree_entries(
-    root: Path, *, repo: "ctx.RepoContext | None" = None,
+    root: Path, *, repo: ctx.RepoContext | None = None,
 ) -> dict[str, tuple[str, str]]:
     """读取 worktree 当前真实物理/暂存文件的完整 entries：path -> (mode, oid)。
     未经过 review scope 过滤，反映交付候选真实内容。
@@ -322,7 +320,7 @@ def _review_worktree(root: Path, task_name: str) -> dict[str, tuple[str, str]]:
 
 def review_scope_fingerprint(
     diff_anchor: str, rel_task_dir: str, *, repo_root: Path | None = None,
-    ref: str | None = None, repo: "ctx.RepoContext | None" = None,
+    ref: str | None = None, repo: ctx.RepoContext | None = None,
 ) -> str:
     """Hash the delivered content delta, independent of staging/commit.
 
@@ -749,7 +747,7 @@ def compute_ps_rows(
     effective: dict[str, dict],
     main_statuses: dict[str, str],
     *,
-    repo: "ctx.RepoContext | None" = None,
+    repo: ctx.RepoContext | None = None,
     verifier=None,
 ) -> list[dict]:
     # verifier 协议与 verify_integrate_ready 同形：(tid, attempt, execution_id) -> (verdict, kind, detail)。

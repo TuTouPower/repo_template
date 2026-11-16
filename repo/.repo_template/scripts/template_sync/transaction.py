@@ -1,7 +1,5 @@
 """transaction 子命令：持久同步事务的查询、回滚与接受。"""
 
-from __future__ import annotations
-
 import json
 
 from repo_task.file_transaction import SYNC_TRANSACTION_DIR, state_transaction

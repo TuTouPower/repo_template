@@ -7,8 +7,6 @@
 4. 批量树模式校验与批量物化。
 """
 
-from __future__ import annotations
-
 import copy
 import subprocess
 from pathlib import Path

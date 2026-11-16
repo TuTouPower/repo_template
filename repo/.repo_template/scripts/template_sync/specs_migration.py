@@ -1,7 +1,5 @@
 """一次性迁移：specs_index.md + archive specs -> docs/specs front matter。"""
 
-from __future__ import annotations
-
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path

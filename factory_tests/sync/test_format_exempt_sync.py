@@ -1,7 +1,5 @@
 """模板自有资产 format 豁免：可观测的 lint-staged 替身与提交稳定性回归。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess

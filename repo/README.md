@@ -8,7 +8,7 @@
 
 以下命令为 POSIX shell（Linux/macOS/WSL/Git Bash）。目标目录应为**不存在或空目录**，已有项目禁止直接覆盖。
 
-1. 从已提交的模板版本一条命令初始化。仅 Git commit 中的 `repo/` 参与分发；命令会导出、`git init`、安装 hooks 并登记来源。需要 Python 3.9+ 与 Git：
+1. 从已提交的模板版本一条命令初始化。仅 Git commit 中的 `repo/` 参与分发；命令会导出、`git init`、安装 hooks 并登记来源。需要 Python 3.14.7+ 与 Git：
 
     ```bash
     python3 /path/to/repo_template/repo/.repo_template/scripts/export_template.py \

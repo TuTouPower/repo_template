@@ -10,8 +10,6 @@
 7. 只读 loose object 复制与无残留清理。
 """
 
-from __future__ import annotations
-
 import hashlib
 import os
 import shutil

@@ -8,8 +8,6 @@
 5. 检验多副本与种子间的文件系统、Git 状态与跨进程锁隔离性（Plan 9.1 节）。
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import subprocess
@@ -115,6 +113,7 @@ def _build_workflow_tasks_seed(seed_dir: Path, tasks: list[tuple[str, str]]) -> 
         scripts_dir.mkdir(parents=True)
         (scripts_dir.parent / "entity_schema.json").write_text('{"version": 1}\n')
         shutil.copy2(SCRIPTS_DIR / "_id_scan.py", scripts_dir / "_id_scan.py")
+        shutil.copy2(SCRIPTS_DIR / "_runtime.py", scripts_dir / "_runtime.py")
 
         shutil.copy2(SCRIPTS_DIR / "task.py", scripts_dir / "task.py")
         shutil.copy2(SCRIPTS_DIR / "md_format.py", scripts_dir / "md_format.py")

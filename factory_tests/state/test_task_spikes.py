@@ -1,7 +1,5 @@
 """factory_tests/test_spikes.py - Spike 工厂集成与端到端 CLI 测试。"""
 
-from __future__ import annotations
-
 import shutil
 import subprocess
 import sys

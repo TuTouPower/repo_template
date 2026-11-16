@@ -1,7 +1,5 @@
 """同步预检：三入口先给完整迁移指引，当前布局再按同一 spec 契约阻断。"""
 
-from __future__ import annotations
-
 import argparse
 import stat
 from pathlib import Path

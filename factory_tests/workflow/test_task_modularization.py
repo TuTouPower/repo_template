@@ -101,6 +101,7 @@ def test_direct_cli_from_external_cwd_and_copied_toolchain(tmp_path):
     copied = tmp_path / "copied" / "scripts" / "repo_template"
     copied.mkdir(parents=True)
     shutil.copy2(SCRIPTS_DIR / "task.py", copied / "task.py")
+    shutil.copy2(SCRIPTS_DIR / "_runtime.py", copied / "_runtime.py")
     shutil.copytree(SCRIPTS_DIR / "repo_task", copied / "repo_task")
     result = subprocess.run(
         [sys.executable, str(copied / "task.py"), "--help"],

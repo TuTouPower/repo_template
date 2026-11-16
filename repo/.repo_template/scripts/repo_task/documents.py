@@ -1,7 +1,5 @@
 """Canonical documents implementation for the task toolchain."""
 
-from __future__ import annotations
-
 import os
 import re
 import secrets
@@ -115,7 +113,7 @@ def parse_front_matter_text(text: str, *, source: str) -> tuple[dict, str]:
     return fm, body
 
 def parse_front_matter(
-    path: Path, *, repo: "ctx.RepoContext | None" = None,
+    path: Path, *, repo: ctx.RepoContext | None = None,
 ) -> tuple[dict, str]:
     """返回 (front matter dict, 正文)。缺失或不合法抛 ctx.TaskDataError。
 
@@ -506,7 +504,7 @@ def validate_task_documents(
     require_verified: bool = False,
     allow_template_placeholders: bool = False,
     creation: bool = False,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> tuple[list[str], list[str]]:
     """校验 task 创建骨架与未知契约门禁，返回 (阻塞项, 警告项)。"""
     problems, warnings = [], []

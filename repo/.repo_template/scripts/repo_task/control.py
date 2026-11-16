@@ -156,7 +156,7 @@ _STATUSLINE_ERRORS = (OSError, ValueError, TypeError, AttributeError)
 
 
 def _statusline_diagnostic(
-    action: str, repo: "ctx.RepoContext", owner_id: str, tid: str, detail: str,
+    action: str, repo: ctx.RepoContext, owner_id: str, tid: str, detail: str,
 ) -> None:
     print(
         f"WARNING: 状态行{action}失败（project={repo.root} owner_id={owner_id!r} "
@@ -166,7 +166,7 @@ def _statusline_diagnostic(
 
 
 def _bind_statusline(
-    repo: "ctx.RepoContext", owner_id: str, tid: str, attempt: int, execution_id: str, session_id: str,
+    repo: ctx.RepoContext, owner_id: str, tid: str, attempt: int, execution_id: str, session_id: str,
 ) -> None:
     """展示层副作用：显式写入会话 → worktree 绑定；不吞 bind 返回值，失败只诊断。"""
     from . import statusline
@@ -184,7 +184,7 @@ def _bind_statusline(
         )
 
 
-def _unbind_statusline(repo: "ctx.RepoContext", owner_id: str, tid: str, session_id: str) -> None:
+def _unbind_statusline(repo: ctx.RepoContext, owner_id: str, tid: str, session_id: str) -> None:
     from . import statusline
 
     try:
@@ -223,7 +223,7 @@ def cmd_attempt_terminal(args):
 
 
 def require_report_done_ready(
-    tid: str, attempt: int, execution_id: str, *, repo: "ctx.RepoContext"
+    tid: str, attempt: int, execution_id: str, *, repo: ctx.RepoContext
 ) -> None:
     """report=done 的门禁：最终提交须带 exact handoff 与同内容的 review PASS 证据。"""
     suffix = "；先按 recovery 判定（review_repair / review_mismatch）处理后重跑 run-close"
@@ -260,7 +260,7 @@ def _recovery_hint(tid: str) -> str:
     return f"运行 `python3 .repo_template/scripts/task.py recovery {tid}` 判定现场"
 
 
-def _require_fresh_run(tid: str, *, repo: "ctx.RepoContext") -> None:
+def _require_fresh_run(tid: str, *, repo: ctx.RepoContext) -> None:
     """run-begin 只接受从未执行过的 backlog task；既有现场一律交给 recovery。"""
     hint = _recovery_hint(tid)
     task = discover_effective_tasks(repo=repo).get(tid)

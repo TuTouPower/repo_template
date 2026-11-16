@@ -12,8 +12,6 @@
 - 新仓显式关闭 ``commit.gpgsign``，固定测试身份，``GIT_TERMINAL_PROMPT=0`` 禁止交互。
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import subprocess

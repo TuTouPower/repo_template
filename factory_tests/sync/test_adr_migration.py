@@ -6,8 +6,6 @@ YYYYMMDD_<slug>.md（同名冲突追加 _2/_3 后缀、supersedes 指向带后�
 全部失败路径断言停止早于写盘、零写入。
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from argparse import Namespace

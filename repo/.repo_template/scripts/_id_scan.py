@@ -29,8 +29,6 @@ task.py / pending.py / findings.py / spikes.py 共用。四类条目分别递增
 上取锁，锁内完成「校验当前数据 → 扫描最大占用号 → 生成并原子发布条目」，释放锁时新条目已落盘。
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re

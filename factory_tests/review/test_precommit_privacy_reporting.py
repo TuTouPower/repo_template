@@ -1,7 +1,5 @@
 """2026-11-10 审阅 F14 回归：pre-commit 编号校验 fail-closed。"""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

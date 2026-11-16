@@ -26,8 +26,6 @@ config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不�
 默认不 commit；本脚本不写 git index / 不 commit。
 """
 
-from __future__ import annotations
-
 import argparse
 import fnmatch
 import os
@@ -569,6 +567,5 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    main()
+    from _runtime import run
+    run(main)

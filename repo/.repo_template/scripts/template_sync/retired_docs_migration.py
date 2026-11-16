@@ -1,7 +1,5 @@
 """同步期清理已下线旧模板说明文档（docs/pending/README.md、docs/findings/README.md）。"""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from . import context as ctx

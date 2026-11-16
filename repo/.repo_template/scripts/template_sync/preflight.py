@@ -1,7 +1,5 @@
 """status/plan/apply 共用只读迁移与数据预检。"""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, replace
 from pathlib import Path
 

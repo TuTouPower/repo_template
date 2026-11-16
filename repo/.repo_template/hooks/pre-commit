@@ -4,8 +4,6 @@
 提交 hooks 不改写文件或 index；格式漂移须在审阅前运行 md_format 修复。
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path
@@ -140,7 +138,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    sys.exit(main())
+    from _runtime import run
+    run(main)

@@ -1,7 +1,5 @@
 """迁移接口与 reviews 完整计划：事务由调用方持有，超额目录统一删除。"""
 
-from __future__ import annotations
-
 import argparse
 import subprocess
 import sys

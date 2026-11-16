@@ -4,8 +4,6 @@ status 与 action 共用同一「可处理集合」：status 报告什么，appl
 避免 plan/apply 显示一致但 action 无法收敛的死锁。
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

@@ -1,7 +1,5 @@
 """Canonical worktrees implementation for the task toolchain."""
 
-from __future__ import annotations
-
 import os
 import re
 import tempfile
@@ -22,14 +20,14 @@ EXCLUDE_BLOCK_START = "# repo_template:worktreeinclude start"
 EXCLUDE_BLOCK_END = "# repo_template:worktreeinclude end"
 
 
-def _ignored_others(*exclude_args: str, repo: "ctx.RepoContext") -> list[str]:
+def _ignored_others(*exclude_args: str, repo: ctx.RepoContext) -> list[str]:
     r = _git(["ls-files", "-z", "--others", "--ignored", "--directory", *exclude_args], repo=repo)
     if r.returncode != 0:
         raise ctx.TaskDataError(f"git ls-files 失败：{r.stderr.strip()}")
     return [entry for entry in r.stdout.split("\0") if entry]
 
 
-def _include_sources(repo: "ctx.RepoContext") -> list[Path]:
+def _include_sources(repo: ctx.RepoContext) -> list[Path]:
     """主仓 .worktreeinclude（gitignore 语法）命中且确被 gitignore 的路径。
 
     命中目录时整目录软链；未被 gitignore 的未跟踪路径（用户在途工作）与
@@ -59,7 +57,7 @@ def _untracked_in(worktree: Path, paths: list[str]) -> list[str]:
 
 
 def _ensure_links_ignored(
-    worktree: Path, linked: list[str], *, repo: "ctx.RepoContext",
+    worktree: Path, linked: list[str], *, repo: ctx.RepoContext,
 ) -> None:
     """以 / 结尾的 gitignore 规则只匹配目录，不匹配同名软链，链接会在 worktree
     显示为未跟踪而被误暂存。对这类链接在共享 info/exclude 托管块追加锚定规则；
@@ -173,7 +171,7 @@ def find_unignored_env_symlinks(root: Path, paths: Iterable[str]) -> dict[str, s
         return results
 
 
-def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
+def link_local_files(worktree: Path, *, repo: ctx.RepoContext) -> list[str]:
     """把主仓未入库的本地文件软链进 worktree（同相对路径）。
 
     默认链接任意层级的 .env；主仓有 .worktreeinclude 时另链其命中的
@@ -243,7 +241,7 @@ def link_local_files(worktree: Path, *, repo: "ctx.RepoContext") -> list[str]:
     return linked
 
 def is_managed_link(
-    worktree: Path, link: Path, *, repo: "ctx.RepoContext",
+    worktree: Path, link: Path, *, repo: ctx.RepoContext,
 ) -> bool:
     """仅识别 link_local_files() 为主仓同相对路径创建的软链。"""
     if not link.is_symlink():
@@ -264,9 +262,9 @@ def is_managed_link(
     )
 
 def unlink_managed_links(
-    worktree: Path, *, repo: "ctx.RepoContext",
+    worktree: Path, *, repo: ctx.RepoContext,
 ) -> None:
-    # 用 os.walk 而非 Path.rglob：rglob 在 Python 3.10+ 会跳过 dangling
+    # 用 os.walk 而非 Path.rglob：rglob 会跳过 dangling
     # symlink（源已删的链接），清理时恰恰需要删除这类残留。目录软链出现在
     # dirs 中且 followlinks=False 不会进入，只删链接本身，不触及主仓目标。
     for root, dirs, files in os.walk(worktree, followlinks=False):
@@ -276,7 +274,7 @@ def unlink_managed_links(
                 link.unlink()
 
 def resolve_start_base(
-    base_arg: str | None, *, repo: "ctx.RepoContext",
+    base_arg: str | None, *, repo: ctx.RepoContext,
 ) -> tuple[str, str]:
     """解析 start base。
 
@@ -331,7 +329,7 @@ def resolve_start_base(
 
 def _check_worktree_ownership(
     rel: str, registered_branch: str | None,
-    *, tid: str, repo: "ctx.RepoContext",
+    *, tid: str, repo: ctx.RepoContext,
 ) -> str | None:
     """破坏性操作前的归属校验；通过返回 None，否则返回拒绝理由。
 
@@ -359,7 +357,7 @@ def _check_worktree_ownership(
 
 
 def create_worktree(
-    tid: str, branch: str, base_sha: str, *, repo: "ctx.RepoContext",
+    tid: str, branch: str, base_sha: str, *, repo: ctx.RepoContext,
 ) -> str:
     """从固定 base SHA 创建全新的 task branch/worktree；调用方负责补偿失败。"""
     rel = repo.worktree_rel(tid)
@@ -381,7 +379,7 @@ def rollback_start(
     base_sha: str,
     branch: str,
     worktree_rel: str,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> str | None:
     """补偿尚未成功返回的 start；不修改主仓 HEAD 或工作区。
 
@@ -428,7 +426,7 @@ def rollback_start(
     return "; ".join(failures) or None
 
 def _prune_unregistered(
-    path: Path, rel: str, *, repo: "ctx.RepoContext",
+    path: Path, rel: str, *, repo: ctx.RepoContext,
 ) -> tuple[bool, str]:
     """未登记 worktree：prune 后必须确认路径确实消失，否则报告孤儿目录。"""
     prune = _git(["worktree", "prune"], repo=repo)
@@ -447,7 +445,7 @@ def _prune_unregistered(
     return True, f"worktree 不在登记表且路径已不存在，已 prune：{rel}"
 
 def discard_worktree(
-    rel: str, *, repo: "ctx.RepoContext", tid: str,
+    rel: str, *, repo: ctx.RepoContext, tid: str,
 ) -> tuple[bool, str]:
     """显式撤回时强制丢弃 task worktree；调用方必须先取得用户确认。
 
@@ -478,7 +476,7 @@ def discard_worktree(
 
 def remove_worktree(
     rel: str, *, expected_branch: str | None = None,
-    repo: "ctx.RepoContext", tid: str,
+    repo: ctx.RepoContext, tid: str,
 ) -> tuple[bool, str]:
     """返回 (是否已确实移除, 说明)。失败不代表流程必须中断，由调用方决定。
 

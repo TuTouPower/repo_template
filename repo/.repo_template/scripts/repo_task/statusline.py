@@ -13,8 +13,6 @@
 不伪装成功，也不影响业务事务。
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import logging
@@ -22,6 +20,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import repo_task.context as ctx
 
@@ -386,4 +386,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from _runtime import run
+    run(main)

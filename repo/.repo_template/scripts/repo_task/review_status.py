@@ -29,11 +29,11 @@ AC 复验门禁：每份应有报告最后一轮须逐条列出 task.md 全部 A
   - no_spec：目录里没有 task.md，无法比对 AC 集合，只拦 TICK-VOID、缺小节与格式错误
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from repo_task import context as ctx
 from repo_task.context import PROGRESS_FILE, RepoContext, TaskDataError
@@ -140,7 +140,5 @@ def main(argv: list[str] | None = None, *, repo: ctx.RepoContext | None = None) 
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    main()
+    from _runtime import run
+    run(main)

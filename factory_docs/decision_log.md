@@ -189,8 +189,19 @@ Claude 的禁用字段与 OpenCode 的 metadata 语义已对照官方文档核�
    - 彻底脱钩历史文件路径，纯粹基于目标 `handoff.json` Blob OID 与唯一非 merge 实现 commit 血缘拓扑验证。
 5. **一次性迁移与同步阻断**：
    - `repo_sync.py migrate entity-storage [--write]` 提供原子文件事务保护与完整前置预检（零兜底、全阻断）；日常 `template_sync apply` 严格阻断旧布局，杜绝旧结构重生。
-6. **全量验收实测数据**：
-   - 契约测试：367 passed（13.52s）；
-   - 工厂全量：1,175 用例（1174 passed, 1 skipped），耗时 203.27s。零回归，全量通过。
+ 6. **全量验收实测数据**：
+    - 契约测试：367 passed（13.52s）；
+    - 工厂全量：1,175 用例（1174 passed, 1 skipped），耗时 203.27s。零回归，全量通过。
+
+## #97：模板工具链 Python 3.14.7 契约与彻底重构
+
+| 报告项 | 裁决与落点 |
+| --- | --- |
+| 根因 | 「最低 Python 版本」无机器可执行的单一真相源，且验证环境（3.14.7）与文档契约（3.9）脱节；3.12+ 语法无声进入产物并分发。 |
+| 版本契约 | 提升至 Python 3.14.7，由 `scripts/_runtime.py` 的 `PYTHON_VERSION` 单一定义；14 个 CLI/模块与 3 个 hook 的 `__main__` 统一经 `run(main)` 启动，`require_python()` 在启动前校验，低版本明确提示并退出。 |
+| 兼容包袱 | 删除全仓 `from __future__ import annotations`（103 处）、字符串注解引号（127 处）、3.9 注解静态检查与专项兼容测试；`export_template.py` 手写受控解包收敛为 `tarfile.extractall(filter="data")` 加标准库不覆盖的边界校验（绝对路径、Windows 驱动器/反斜杠路径、重复条目）；现行版本声明统一到 README / usage / testing。 |
+| 保留甄别 | `md_format.py` 选文件/黑名单（md_kx 独立工具环境）、`worktrees.py` os.walk（删 dangling symlink）、`documents.py` fdopen 原子写、`locks.py` 平台分支、`hasattr(stdout,"reconfigure")` 保护、`lifecycle.py` ImportError 兜底，均非 3.9 取舍，逻辑不动。 |
+| 历史记录 | 本文件「后续缺陷核验与 Python 3.9」节及 `archive/`、`reviews/`、`audits/` 中的 3.9 约束保留原貌，由工厂根 `AGENTS.md` 声明作废。 |
+| 方案 | `factory_docs/plans/plan_python_314_contract.md`。 |
 
 

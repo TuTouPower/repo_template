@@ -1,7 +1,5 @@
 """sync_state.json 读写、user_prompts 管理，以及 init / prompt 子命令。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

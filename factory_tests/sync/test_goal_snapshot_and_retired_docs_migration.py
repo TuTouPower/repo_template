@@ -1,7 +1,5 @@
 """goal-snapshot 与 retired-docs 同步期迁移测试。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess

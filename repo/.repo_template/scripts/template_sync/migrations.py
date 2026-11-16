@@ -1,7 +1,5 @@
 """声明式迁移目录：只读 findings/blockers 与无事务 execute。"""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 

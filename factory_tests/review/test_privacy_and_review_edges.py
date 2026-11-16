@@ -1,7 +1,5 @@
 """WP3 边界：review 保留与 spec 迁移边界。"""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

@@ -1,7 +1,5 @@
 """C2：RepoContext 缓存 common/state 路径解析，重复访问不再启动 git。"""
 
-from __future__ import annotations
-
 import os
 import subprocess
 from pathlib import Path

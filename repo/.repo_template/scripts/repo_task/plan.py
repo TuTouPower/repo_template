@@ -9,8 +9,6 @@
 是 base 选择的唯一权威，plan 输出与 goal-check 共用。
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from typing import Any, Callable

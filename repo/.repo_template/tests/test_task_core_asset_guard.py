@@ -6,8 +6,6 @@
 - 授权 owner 核心资产修改放行；
 - lifecycle 与 integration 门禁拦截联动。
 """
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 from types import SimpleNamespace

@@ -5,8 +5,6 @@
 超额目录（含被引用、未跟踪、_meta/）一律 rmtree，不设保留子集。
 """
 
-from __future__ import annotations
-
 import re
 import shutil
 from dataclasses import dataclass

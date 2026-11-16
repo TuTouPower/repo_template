@@ -1,7 +1,5 @@
 """旧 docs/specs_index.md 迁移解析器；仅一次性迁移使用。"""
 
-from __future__ import annotations
-
 import re
 from datetime import date
 from pathlib import Path

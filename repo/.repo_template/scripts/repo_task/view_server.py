@@ -6,8 +6,6 @@
 board.js）从同目录 view_static/ 读取，无构建、无 CDN 依赖。
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging

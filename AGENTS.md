@@ -19,6 +19,10 @@ python3 repo/.repo_template/scripts/task.py --help
 
 工厂改模板必须跑全量（契约测试 + `factory_tests/` 集成测试），需要 pytest 与 pytest-xdist。消费仓只含契约测试，默认门禁是 `pytest .repo_template/tests -q -m contract`，见 `repo/docs/blueprint/testing.md`。
 
+## 工具链版本契约
+
+模板工具链最低 Python 3.14.7，由 `repo/.repo_template/scripts/_runtime.py` 的 `PYTHON_VERSION` 单一定义；`require_python()` 在所有 CLI 入口启动前校验，低于该版本明确提示并退出。工厂全量门禁须运行于该版本（`factory_tests/integration/test_python_version.py` 断言），契约测试断言现行文档版本声明与常量一致（`test_contract_suite.py`）。`factory_docs/archive/`、`reviews/`、`audits/` 与本仓 `decision_log.md` 历史行中涉及 Python 3.9 的约束为历史记录，已作废，不作为现行规范。
+
 ## 开发铁律
 
 - **架构至上**：始终选择最优雅、彻底、纯粹的顶层设计与架构方案，**完全忽略开发难度与改动工作量**。

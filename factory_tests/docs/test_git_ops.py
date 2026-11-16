@@ -1,7 +1,5 @@
 """git_ops 主干探测失败必须显式报错（F08）。"""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

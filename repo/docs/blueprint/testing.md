@@ -6,7 +6,7 @@
 
 默认命令只跑模板工具链的轻量契约（pytest marker `contract`）：解析、文档结构、清理 CLI 等，不建临时 git 仓库、不派发 worktree。工厂全量测试（含调度 / 合并 / 同步集成）位于工厂根 `factory_tests/`，不随模板分发，消费仓只含契约测试。
 
-下列默认命令在消费仓根（工厂验产物时为 `repo/`）的 POSIX shell（Linux/macOS/WSL/Git Bash）执行，需要 Python 3、PATH 中可运行的 pytest（及其所属 Python 环境）和 PATH 中的 md_kx。任一检查非零退出则停止后续验收，先区分「环境缺工具」与「shell 不兼容」（Windows 原生 shell 无 `command -v`），修复环境或测试后重跑；收集成功只证明可收集，不等于测试通过。
+下列默认命令在消费仓根（工厂验产物时为 `repo/`）的 POSIX shell（Linux/macOS/WSL/Git Bash）执行，需要 Python 3.14.7、PATH 中可运行的 pytest（及其所属 Python 环境）和 PATH 中的 md_kx。任一检查非零退出则停止后续验收，先区分「环境缺工具」与「shell 不兼容」（Windows 原生 shell 无 `command -v`），修复环境或测试后重跑；收集成功只证明可收集，不等于测试通过。
 
 项目自身测试落地后，把 `test_cmd` 换成项目技术栈命令，或在契约命令之后追加。不要把空的 `tests/` 写进命令：pytest 收集到 0 条会以退出码 5 失败。
 
@@ -23,6 +23,7 @@ template_default
 环境前置检查：契约测试可成功收集；另需 `md_kx` 在 PATH（Markdown 格式化，见 `.repo_template/scripts/md_format.py`）。
 
 ```bash
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 14, 7) else "需要 Python 3.14.7+")'
 pytest .repo_template/tests -q --collect-only -m contract
 command -v md_kx
 ```

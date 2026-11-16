@@ -1,7 +1,5 @@
 """迁移后合法日常编辑不重建遗留物；reviews 动态保留策略单独验证。"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

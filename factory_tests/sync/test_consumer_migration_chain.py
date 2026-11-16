@@ -3,8 +3,6 @@
 链路：固定当前来源 → 一次 apply 内置全部迁移 → hooks 下单 commit → accept。
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil

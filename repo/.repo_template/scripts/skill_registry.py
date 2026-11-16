@@ -51,4 +51,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from _runtime import run
+    run(main)

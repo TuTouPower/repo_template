@@ -9,8 +9,6 @@
   python3 .repo_template/scripts/track_worktree.py render --session <host-session>
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -26,4 +24,5 @@ from repo_task.statusline import (  # noqa: E402,F401  (CLI 出口与测试复�
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from _runtime import run
+    run(main)

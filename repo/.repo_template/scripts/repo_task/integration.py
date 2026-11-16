@@ -1,7 +1,5 @@
 """Task worktree creation, cleanup, and exact-identity integration."""
 
-from __future__ import annotations
-
 import functools
 import json
 import logging
@@ -73,7 +71,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _order_by_ancestry(
-    branches: list[str], *, repo: "ctx.RepoContext",
+    branches: list[str], *, repo: ctx.RepoContext,
 ) -> list[str] | None:
     """若 branches 构成单条祖先链（A→B→C，每个后继含前驱），返回有序列表；
     否则返回 None。用 git merge-base --is-ancestor 判定。"""
@@ -108,7 +106,7 @@ def _order_by_ancestry(
 _is_ancestor = is_ancestor
 
 
-def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[str]:
+def _dependency_implementations(dep: str, *, repo: ctx.RepoContext) -> list[str]:
     """按 handoff 对象与唯一实现血缘定位；缺失、损坏、Git 故障分别保留诊断。"""
     refs = [resolve_local_branch(branch, repo=repo)[1] for branch in _task_branch_names(dep, repo=repo)]
     if refs:
@@ -157,7 +155,7 @@ def _dependency_implementations(dep: str, *, repo: "ctx.RepoContext") -> list[st
 
 
 def _validate_task_dir_tree_modes(
-    ref: str, task_rel: str, *, repo: "ctx.RepoContext",
+    ref: str, task_rel: str, *, repo: ctx.RepoContext,
 ) -> list[tuple[str, str, str]]:
     """校验 ref:task_rel 下的完整 tree 清单，仅允许 100644/100755 普通文件（A09）。"""
     listing = _git(["ls-tree", "-r", "-z", "--end-of-options", ref, "--", task_rel], repo=repo)
@@ -184,7 +182,7 @@ def _validate_task_dir_tree_modes(
 
 def _load_validated_start_task(
     tid: str, base_sha: str, effective: dict[str, dict], *, auto_selected: bool = False,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> tuple[dict, dict, str, str]:
     """加载并校验待启动 backlog task 的权威定义 (task, fm, body, source_ref)。
 
@@ -241,7 +239,7 @@ def _load_validated_start_task(
 
 
 def _materialize_task_dir_from_ref(
-    ref: str, task_rel: str, worktree: Path, *, repo: "ctx.RepoContext",
+    ref: str, task_rel: str, worktree: Path, *, repo: ctx.RepoContext,
 ) -> None:
     """将主干 backlog 权威 ref 中的 task 目录完整物化到新创建的 worktree（A09）。"""
     entries = _validate_task_dir_tree_modes(ref, task_rel, repo=repo)
@@ -428,7 +426,7 @@ def cmd_start(args):
 
 
 def _resolve_integrate_branch(
-    tid: str, *, repo: "ctx.RepoContext",
+    tid: str, *, repo: ctx.RepoContext,
 ) -> tuple[str, str]:
     branches = _task_branch_names(tid, repo=repo)
     if not branches:
@@ -449,7 +447,7 @@ def _resolve_integrate_branch(
 
 def _require_execution_gate(
     tid: str, attempt: int, execution_id: str, *, allow_integrated: bool = False,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> tuple[dict, list[dict]]:
     events = ledger_read(repo=repo)
     record = require_exact_terminal(
@@ -484,7 +482,7 @@ def _verify_exact_handoff(
 
 
 def _require_handoff_base_merged(
-    tid: str, ref: str, base_ref: str, *, repo: "ctx.RepoContext",
+    tid: str, ref: str, base_ref: str, *, repo: ctx.RepoContext,
 ) -> None:
     """handoff.base_sha 必须是 base_ref 的祖先；否则前驱会被单 task merge 夹带进主干。"""
     try:
@@ -501,7 +499,7 @@ def _require_handoff_base_merged(
 
 
 def _cleanup_worktree(
-    tid: str, attempt: int, execution_id: str, *, repo: "ctx.RepoContext",
+    tid: str, attempt: int, execution_id: str, *, repo: ctx.RepoContext,
 ) -> str:
     """Exact cleanup of one terminal attempt's worktree; returns the result line."""
     try:
@@ -551,23 +549,23 @@ def cmd_cleanup_worktree(args):
     print(_cleanup_worktree(args.tid, attempt, execution_id, repo=repo))
 
 
-def _merge_in_progress(*, repo: "ctx.RepoContext") -> bool:
+def _merge_in_progress(*, repo: ctx.RepoContext) -> bool:
     result = _git(["rev-parse", "--absolute-git-dir"], repo=repo)
     if result.returncode != 0 or not result.stdout.strip():
         raise ctx.TaskDataError("无法解析 git 目录，无法判断 merge 状态")
     return (Path(result.stdout.strip()) / "MERGE_HEAD").exists()
 
 
-def _conflicted_paths(*, repo: "ctx.RepoContext") -> list[str]:
+def _conflicted_paths(*, repo: ctx.RepoContext) -> list[str]:
     result = _git(["diff", "--name-only", "--diff-filter=U"], repo=repo)
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _registered_for_branch(branch: str, *, repo: "ctx.RepoContext") -> list[str]:
+def _registered_for_branch(branch: str, *, repo: ctx.RepoContext) -> list[str]:
     return [path for path, name in worktree_paths(repo=repo).items() if name == branch]
 
 
-def _ensure_primary_merge_ready(*, repo: "ctx.RepoContext") -> None:
+def _ensure_primary_merge_ready(*, repo: ctx.RepoContext) -> None:
     if _merge_in_progress(repo=repo):
         raise ctx.TaskDataError("存在进行中的 merge；先继续或 git merge --abort")
     dirty = tracked_dirty_entries(repo=repo)
@@ -578,7 +576,7 @@ def _ensure_primary_merge_ready(*, repo: "ctx.RepoContext") -> None:
         )
 
 
-def _delete_branches(branches: list[str], *, repo: "ctx.RepoContext") -> None:
+def _delete_branches(branches: list[str], *, repo: ctx.RepoContext) -> None:
     base = default_branch(repo=repo)
     for branch in branches:
         if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo=repo).returncode != 0:
@@ -596,7 +594,7 @@ def _delete_branches(branches: list[str], *, repo: "ctx.RepoContext") -> None:
 
 
 def _find_merge_commit(
-    second_parent: str, subject_prefix: str, *, repo: "ctx.RepoContext",
+    second_parent: str, subject_prefix: str, *, repo: ctx.RepoContext,
 ) -> str | None:
     # 优先在 second_parent 到 HEAD 的祖先路径上查找，避免受后续无关 merge 数量截断（Issue #62）
     candidates: list[str] = []
@@ -625,7 +623,7 @@ def _find_merge_commit(
 
 
 def _validate_merge_lineage(
-    merge_sha: str, second_parent: str, *, repo: "ctx.RepoContext",
+    merge_sha: str, second_parent: str, *, repo: ctx.RepoContext,
 ) -> str:
     """校验被认领 merge commit 的父血缘，返回其 first parent（主干侧）。
 
@@ -649,7 +647,7 @@ def _validate_merge_lineage(
 
 
 def _merge_tree_result(
-    first: str, second: str, *, repo: "ctx.RepoContext",
+    first: str, second: str, *, repo: ctx.RepoContext,
 ) -> tuple[str, set[str]]:
     """用 git merge-tree 重算 first+second 的自动合并结果，返回 (tree_oid, conflict_paths)。
 
@@ -677,7 +675,7 @@ def _merge_tree_result(
     return tree, {path for path in fields[1:end] if path}
 
 
-def _validate_entry_snapshot(ref: str, *, repo: "ctx.RepoContext") -> None:
+def _validate_entry_snapshot(ref: str, *, repo: ctx.RepoContext) -> None:
     from _id_scan import IdScanError, validate_snapshot_ids
     try:
         validate_snapshot_ids(repo.root, ref)
@@ -711,7 +709,7 @@ def _validate_claimed_merge_commit(
     merge_sha: str,
     second_parent: str,
     *,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
     names: list[str] | None = None,
     member_tips: dict[str, str] | None = None,
 ) -> None:
@@ -756,7 +754,7 @@ def _validate_claimed_merge_commit(
     )
 
 
-def _merge_head(*, repo: "ctx.RepoContext") -> str:
+def _merge_head(*, repo: ctx.RepoContext) -> str:
     result = _git(["rev-parse", "MERGE_HEAD"], repo=repo)
     if result.returncode != 0 or not result.stdout.strip():
         raise ctx.TaskDataError("当前无进行中的 merge")
@@ -796,7 +794,7 @@ def _normalize_spec_checkboxes(text: str) -> str:
 
 
 def _is_pure_backlog_to_done_member_conflict(
-    branch: str, names: list[str], path: str, *, repo: "ctx.RepoContext",
+    branch: str, names: list[str], path: str, *, repo: ctx.RepoContext,
 ) -> bool:
     """三方比较判断 merge 冲突是否仅源于「主干保留 backlog 初态，分支合法演进为 done 终态」（A06）。
 
@@ -917,7 +915,7 @@ def _is_pure_backlog_to_done_member_conflict(
 
 
 def _member_paths_changed_between(
-    base_ref: str, head_ref: str, names: list[str], *, repo: "ctx.RepoContext",
+    base_ref: str, head_ref: str, names: list[str], *, repo: ctx.RepoContext,
 ) -> list[str]:
     """返回 head_ref 相对 base_ref 在成员 task 目录下新增或修改的路径（fail-closed）。
 
@@ -935,7 +933,7 @@ def _member_paths_changed_between(
 
 
 def _main_touched_member_paths(
-    branch: str, names: list[str], *, repo: "ctx.RepoContext",
+    branch: str, names: list[str], *, repo: ctx.RepoContext,
     main_ref: str = "HEAD",
 ) -> list[str]:
     """返回主干 main_ref 相对 merge-base(main_ref, branch) 在成员 task 目录下新增或修改的路径。"""
@@ -949,7 +947,7 @@ def _owner_of_member_path(path: str, names: list[str]) -> str | None:
     return next((name for name in names if path.startswith(f"docs/tasks/{name}/")), None)
 
 
-def _main_rewrite_command(path: str, ref: str, *, repo: "ctx.RepoContext") -> str:
+def _main_rewrite_command(path: str, ref: str, *, repo: ctx.RepoContext) -> str:
     """生成「取分支 tip 内容」的可执行命令：分支有该路径则 checkout，否则删除主干新增项。"""
     exists = _git(["cat-file", "-e", f"{ref}:{path}"], repo=repo).returncode == 0
     if exists:
@@ -958,7 +956,7 @@ def _main_rewrite_command(path: str, ref: str, *, repo: "ctx.RepoContext") -> st
 
 
 def _resolve_backlog_member_conflicts(
-    branch: str, names: list[str], conflicts: list[str], *, repo: "ctx.RepoContext",
+    branch: str, names: list[str], conflicts: list[str], *, repo: ctx.RepoContext,
 ) -> tuple[list[str], list[str]]:
     """收敛成员 task 目录内 backlog -> done 伪冲突，返回 (原生冲突, 主干独立改写待确认路径)。
 
@@ -987,7 +985,7 @@ def _resolve_backlog_member_conflicts(
 
 
 def _prepare_native_merge(
-    branch: str, message: str, names: list[str], *, repo: "ctx.RepoContext",
+    branch: str, message: str, names: list[str], *, repo: ctx.RepoContext,
 ) -> None:
     try:
         _expected_auto_merge(branch, repo=repo)
@@ -1031,7 +1029,7 @@ def _prepare_native_merge(
 
 
 def _expected_auto_merge(
-    expected_head: str, *, repo: "ctx.RepoContext",
+    expected_head: str, *, repo: ctx.RepoContext,
 ) -> tuple[str, set[str]]:
     """Recompute Git's merge result without touching the current index.
 
@@ -1046,7 +1044,7 @@ def _validate_core_assets(
     after_entries: dict[str, tuple[str, str]],
     names: list[str],
     tips: dict[str, str],
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> None:
     """核心资产门禁两层严格保护（方案第 212 行），供进行中 merge 提交前校验：
     第一层：非成员核心资产相对 before 必须完全不变；
@@ -1081,7 +1079,7 @@ def _validate_member_core_from_tips(
     after_entries: dict[str, tuple[str, str]],
     names: list[str],
     tips: dict[str, str],
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> None:
     """认领路径专用：只做核心资产第二层（成员核心资产必须等于已验证 tip）。
 
@@ -1115,7 +1113,7 @@ def _validate_main_touched_from_tip(
     names: list[str],
     tips: dict[str, str],
     after_entries: dict[str, tuple[str, str]],
-    *, repo: "ctx.RepoContext",
+    *, repo: ctx.RepoContext,
 ) -> None:
     """A06：主干独立改写的成员路径必须取成员已验证实现 tip 的内容（L219）。"""
     tip_trees = {
@@ -1139,7 +1137,7 @@ def _validate_merge_staged_scope(
     names: list[str],
     *,
     member_tips: dict[str, str] | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> str:
     """校验进行中 merge 的 staged 范围/内容/核心资产，返回已校验的 staged tree oid。"""
     merge_base = _git(["merge-base", "HEAD", expected_head], repo=repo)
@@ -1200,7 +1198,7 @@ def _commit_native_merge(
     names: list[str],
     *,
     member_tips: dict[str, str] | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> str:
     if _merge_in_progress(repo=repo):
         conflicts = _conflicted_paths(repo=repo)
@@ -1329,7 +1327,7 @@ def cmd_integrate(args):
 
 def _collect_chain(
     tail_tid: str, *, base_ref: str = "HEAD", require_base_merged: bool = True,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> list[tuple[str, str, str]]:
     tail_branch, tail_sha = _resolve_integrate_branch(tail_tid, repo=repo)
     candidates = []
@@ -1371,7 +1369,7 @@ def _collect_chain(
 
 
 def _chain_continue_base(
-    tail_tid: str, tail_sha: str, *, repo: "ctx.RepoContext",
+    tail_tid: str, tail_sha: str, *, repo: ctx.RepoContext,
 ) -> str:
     if _merge_in_progress(repo=repo):
         if _merge_head(repo=repo) != tail_sha:
@@ -1386,7 +1384,7 @@ def _chain_continue_base(
 
 
 def _preflight_chain(
-    tail_tid: str, *, continue_merge: bool = False, repo: "ctx.RepoContext",
+    tail_tid: str, *, continue_merge: bool = False, repo: ctx.RepoContext,
 ) -> list[dict]:
     _, tail_sha = _resolve_integrate_branch(tail_tid, repo=repo)
     base_ref = (

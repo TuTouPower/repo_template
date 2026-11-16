@@ -1,7 +1,5 @@
 """A2 复修：按消费仓同步的历史模板逐行分类 AGENTS.md 旧区。"""
 
-from __future__ import annotations
-
 import json
 import subprocess
 import sys

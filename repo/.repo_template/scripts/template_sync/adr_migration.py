@@ -1,7 +1,5 @@
 """一次性把 docs/blueprint/decisions.md 拆成一条一文件 ADR。"""
 
-from __future__ import annotations
-
 import re
 import subprocess
 from pathlib import Path

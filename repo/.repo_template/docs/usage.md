@@ -134,7 +134,7 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 |维度|契约|
 |---|---|
 |系统|macOS、Linux 的 POSIX/Bash 路径；WSL/Git Bash 须自行验证软链与 shell，原生 Windows 全流程未验证|
-|基础工具|Python 3.9+、Git 2.38+、pytest、Bash；Markdown 使用 md_kx（发行名 md-kx）|
+|基础工具|Python 3.14.7+、Git 2.38+、pytest、Bash；Markdown 使用 md_kx（发行名 md-kx）|
 |工厂测试|Node 22；工厂全量 pytest，消费默认 contract 不运行全部 Git 集成场景|
 |Claude|依赖用户 `/` 入口、文件读取与工具权限；使用 disable-model-invocation 和内部 user-invocable=false|
 |Kimi Code|使用显式入口与文件读取；原生 Skill 禁用字段兼容性须按安装版本实测|
@@ -164,4 +164,4 @@ python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求�
 
 `docs/reviews/review_*` 以最近 5 个为上限，超出的旧目录一律删除（含 `_meta/`、被引用或未跟踪目录），不因引用保留；删除由 apply 内置 reviews 迁移执行，Git 历史保留。pre-commit 只在本次提交新增 review 顶层目录时检查；按 index 计数，超过 5 个即阻断并列出可删除旧目录；merge 提交跳过该检查。项目交接固定在 `docs/handoff.md` 单文件快照；task、spec、spike、pending 均终生在规范路径原位流转，不归档。
 
-Python 3.9 是模板脚本最低版本。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.9 环境。
+Python 3.14.7 是模板脚本最低版本，由 `.repo_template/scripts/_runtime.py` 的 `PYTHON_VERSION` 单一定义；所有 CLI 入口启动前校验，低于该版本时明确提示并退出。md_kx 是 PATH 上独立工具，其自身 Python 需求由独立工具环境满足，不要求装进消费项目的 Python 3.14.7 环境。

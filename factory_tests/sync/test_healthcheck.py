@@ -1,7 +1,5 @@
 """healthcheck 与 hooks 接入片段。"""
 
-from __future__ import annotations
-
 import json
 import os
 import shutil

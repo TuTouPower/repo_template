@@ -1,7 +1,5 @@
 """Canonical store implementation for the task toolchain."""
 
-from __future__ import annotations
-
 import copy
 import json
 import os
@@ -83,7 +81,7 @@ def _cache_key(target: Path, template_name: str) -> str:
 
 
 def task_schedule_references(
-    target_tid: str, tasks: list[dict] | None = None, *, repo: "ctx.RepoContext | None" = None,
+    target_tid: str, tasks: list[dict] | None = None, *, repo: ctx.RepoContext | None = None,
 ) -> list[str]:
     """返回非终态 task 中引用 target_tid 的字段，供 drop/purge 拒绝悬空边。
 
@@ -151,7 +149,7 @@ def _scan_tasks_in_directory(
         ))
     return _validate_task_records(tasks)
 
-def scan_tasks(*, repo: "ctx.RepoContext") -> list[dict]:
+def scan_tasks(*, repo: ctx.RepoContext) -> list[dict]:
     """扫描当前工作区 task，按 tid 升序返回状态记录。"""
     return _scan_tasks_in_directory(
         repo.tasks_dir, template_name=repo.template_dir.name
@@ -165,7 +163,7 @@ def scan_tasks_in_worktree(root: Path) -> list[dict]:
 
 def git_text_at_ref(
     ref: str, path: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> str:
     r = _git(["show", f"{ref}:{path}"], root=root, repo=repo)
     if r.returncode != 0:
@@ -177,7 +175,7 @@ def _load_tasks_at_commit(
     *,
     ref_label: str | None = None,
     root: Path | None = None,
-    repo: "ctx.RepoContext | None" = None,
+    repo: ctx.RepoContext | None = None,
     template_name: str | None = None,
     cache: CommitSnapshotCache | None = None,
 ) -> CommitTaskSnapshot:
@@ -269,7 +267,7 @@ def _load_tasks_at_commit(
 
 
 def scan_tasks_at_ref(
-    ref: str, *, root: Path | None = None, repo: "ctx.RepoContext",
+    ref: str, *, root: Path | None = None, repo: ctx.RepoContext,
     template_name: str | None = None,
     cache: CommitSnapshotCache | None = None,
 ) -> list[dict]:
@@ -297,7 +295,7 @@ def find_task(tid: str, tasks: list[dict]) -> dict | None:
     return None
 
 
-def _task_branch_names(tid: str, *, repo: "ctx.RepoContext") -> list[str]:
+def _task_branch_names(tid: str, *, repo: ctx.RepoContext) -> list[str]:
     """本地属于该 tid 的 task 分支名列表（形如 {tid}_{slug}）。"""
     r = _git(["branch", "--format=%(refname:short)", "--list", f"{tid}_*"], repo=repo)
     if r.returncode != 0:
@@ -307,7 +305,7 @@ def _task_branch_names(tid: str, *, repo: "ctx.RepoContext") -> list[str]:
 
 def load_owner_task_at_ref(
     tid: str, ref: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
     cache: CommitSnapshotCache | None = None,
 ) -> dict:
     """只读 ref 中该 tid 自身的 task，避免为一条分支扫描全部 task（Issue #77）。"""
@@ -393,7 +391,7 @@ def load_owner_task_at_ref(
 
 
 def task_effective_state(
-    tid: str, primary_fm: dict, *, repo: "ctx.RepoContext",
+    tid: str, primary_fm: dict, *, repo: ctx.RepoContext,
 ) -> str | None:
     """main 副本为 backlog 时，探测其被 worktree/未合并分支覆盖的有效状态。
 
@@ -429,7 +427,7 @@ def task_effective_state(
             return f"未合并分支 {branch!r} 中 status={ref_status}"
     return None
 
-def _unmerged_task_branches(*, repo: "ctx.RepoContext") -> list[str]:
+def _unmerged_task_branches(*, repo: ctx.RepoContext) -> list[str]:
     """一次 git 调用取全部未合并 task 分支；失败时回退逐分支保守判定。"""
     branches = _local_task_branches(repo=repo)
     if not branches:
@@ -449,7 +447,7 @@ def _unmerged_task_branches(*, repo: "ctx.RepoContext") -> list[str]:
     return [branch for branch in branches if branch in unmerged]
 
 
-def _local_task_branches(*, repo: "ctx.RepoContext") -> list[str]:
+def _local_task_branches(*, repo: ctx.RepoContext) -> list[str]:
     r = _git(["branch", "--format=%(refname:short)", "--list", "t[0-9]*_*"], repo=repo)
     if r.returncode != 0:
         return []
@@ -460,7 +458,7 @@ def _local_task_branches(*, repo: "ctx.RepoContext") -> list[str]:
     )
 
 def discover_effective_bundle(
-    *, allow_corrupt: bool = False, repo: "ctx.RepoContext",
+    *, allow_corrupt: bool = False, repo: ctx.RepoContext,
 ) -> tuple[dict[str, dict], dict[str, dict]]:
     """一次有效状态发现，同时返回 (tasks, sources)（Issue #77, A05）。
 
@@ -487,14 +485,14 @@ def discover_effective_bundle(
 
 
 def discover_effective_tasks(
-    *, allow_corrupt: bool = False, repo: "ctx.RepoContext",
+    *, allow_corrupt: bool = False, repo: ctx.RepoContext,
 ) -> dict[str, dict]:
     """按 worktree → 未合并 task 分支 → main 发现每个 task 的有效状态。"""
     return discover_effective_bundle(allow_corrupt=allow_corrupt, repo=repo)[0]
 
 
 def discover_effective_sources(
-    *, allow_corrupt: bool = True, repo: "ctx.RepoContext",
+    *, allow_corrupt: bool = True, repo: ctx.RepoContext,
 ) -> dict[str, dict]:
     """每个有效 task 的状态 + 读取来源与位置。
 
@@ -508,7 +506,7 @@ def discover_effective_sources(
 
 
 def _discover_effective_entries(
-    *, repo: "ctx.RepoContext", cache: CommitSnapshotCache,
+    *, repo: ctx.RepoContext, cache: CommitSnapshotCache,
 ) -> list[tuple[str, dict, str, str | None]]:
     """(tid, task, source, read_at) 列表，按 worktree → 未合并分支 → main 优先级。"""
     require_primary_worktree(repo=repo)
@@ -585,7 +583,7 @@ def _discover_effective_entries(
     return [(tid, task, *sources[tid]) for tid, task in effective.items()]
 
 def load_task(
-    tid: str, *, repo: "ctx.RepoContext",
+    tid: str, *, repo: ctx.RepoContext,
 ) -> tuple[dict, Path, dict, str]:
     """返回 (索引记录, progress.md 路径, front matter, 正文)。"""
     task = find_task(tid, scan_tasks(repo=repo))
@@ -600,7 +598,7 @@ def load_task(
 
 def load_task_at_ref(
     tid: str, ref: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
     cache: CommitSnapshotCache | None = None,
 ) -> tuple[dict, dict, str]:
     """返回指定 ref 中的 (索引记录, front matter, 正文)。"""
@@ -621,7 +619,7 @@ def load_task_at_ref(
 
 def _resolve_commit_sha(
     ref: str, *, label: str, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> str:
     if not ref or ref.startswith("-"):
         raise ctx.TaskDataError(f"无法解析 {label} {ref!r} 为 commit")
@@ -635,7 +633,7 @@ def _resolve_commit_sha(
 
 
 def _resolve_primary_commit(
-    root: Path | None = None, *, repo: "ctx.RepoContext",
+    root: Path | None = None, *, repo: ctx.RepoContext,
 ) -> tuple[str, str]:
     primary = default_branch(root=root, repo=repo)
     sha = _resolve_commit_sha(
@@ -646,7 +644,7 @@ def _resolve_primary_commit(
 
 def _owner_bundle_at_ref(
     tid: str, ref_sha: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
     cache: CommitSnapshotCache | None = None,
 ) -> tuple[dict, dict, str]:
     target = root or repo.root
@@ -683,7 +681,7 @@ def _owner_bundle_at_ref(
 
 def load_task_backlog_baseline(
     tid: str, *, root: Path | None = None,
-    repo: "ctx.RepoContext",
+    repo: ctx.RepoContext,
 ) -> tuple[dict, dict, str, str]:
     """解析 task 启动时的初始 backlog 定义 (task, fm, body, source_commit_sha)。
 
@@ -702,7 +700,7 @@ def load_task_backlog_baseline(
 
 
 def resolve_baseline_spec_text(
-    tid: str, spec_rel: str, spec_source_sha: str, *, repo: "ctx.RepoContext",
+    tid: str, spec_rel: str, spec_source_sha: str, *, repo: ctx.RepoContext,
 ) -> tuple[str, str]:
     """解析 spec 的契约基线文本与来源 commit SHA，供 render_review_prompts 与监控共用（A04/C90）。
 
@@ -767,7 +765,7 @@ def append_note(fm: dict, text: str) -> None:
 
 def append_audit(action: str, *, tid: str, fr: str, to: str, reason: str,
                  slug: str = "", title: str = "",
-                 repo: "ctx.RepoContext") -> None:
+                 repo: ctx.RepoContext) -> None:
     """append 一行审计。字段内的 `|` 与换行会被替换，保证行格式可 grep。"""
     def clean(value: str) -> str:
         return re.sub(r"\s+", " ", str(value).replace("|", "/")).strip()

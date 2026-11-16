@@ -1,7 +1,5 @@
 """共享文件机械合并：.gitignore / .prettierignore / MCP，以及裁定单元决策。"""
 
-from __future__ import annotations
-
 import json
 import re
 import shutil

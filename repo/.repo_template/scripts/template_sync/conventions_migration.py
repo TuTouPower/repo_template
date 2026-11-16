@@ -1,7 +1,5 @@
 """消费仓 conventions.md 的模板内部实现段落迁移。"""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

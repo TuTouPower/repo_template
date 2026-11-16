@@ -1,7 +1,5 @@
 """模板自有资产 format 豁免契约：根锚定、真实 ignore 语义与提交前断言。"""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
