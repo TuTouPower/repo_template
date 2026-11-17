@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _runtime import require_python, run
+
+require_python()
+
 
 import repo_task.context as ctx
 
@@ -386,5 +390,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

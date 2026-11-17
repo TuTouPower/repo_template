@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Check the canonical skill registry and render its public/internal interface."""
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 import json
 from pathlib import Path
@@ -51,5 +55,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

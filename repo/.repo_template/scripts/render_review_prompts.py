@@ -19,6 +19,10 @@ reviewer 不再自行去读 task：契约区与上下文区正文直接注入 pr
   绝对路径，落进 task 目录会被一并提交；请用 .scratch/review_prompts）
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 import difflib
 import re
@@ -401,5 +405,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

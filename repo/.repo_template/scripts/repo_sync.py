@@ -26,6 +26,10 @@ apply 在单个持久文件事务内迁移、同步、格式化并校验，失�
 禁止自动 commit——写盘与 state 更新完成后由 agent 走审批门禁。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import sys
 from pathlib import Path
 
@@ -37,5 +41,4 @@ if _SCRIPT_DIR not in sys.path:
 from template_sync.cli import main  # noqa: E402
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

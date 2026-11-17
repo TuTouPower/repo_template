@@ -11,6 +11,10 @@ from pathlib import Path
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLKIT_ROOT / "scripts"))
+from _runtime import require_python, run
+
+require_python()
+
 
 from _id_scan import IdScanError, validate_merge_sources, validate_snapshot_ids  # noqa: E402
 from repo_task.context import RepoContext, TaskDataError  # noqa: E402
@@ -48,5 +52,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

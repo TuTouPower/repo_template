@@ -26,6 +26,10 @@ config/scripts/.agents/.claude 下的类别命中垃圾可清（文件本身不�
 默认不 commit；本脚本不写 git index / 不 commit。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 import fnmatch
 import os
@@ -567,5 +571,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

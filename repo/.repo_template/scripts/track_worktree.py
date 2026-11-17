@@ -9,6 +9,10 @@
   python3 .repo_template/scripts/track_worktree.py render --session <host-session>
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import sys
 from pathlib import Path
 
@@ -24,5 +28,4 @@ from repo_task.statusline import (  # noqa: E402,F401  (CLI 出口与测试复�
 )
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

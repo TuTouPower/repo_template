@@ -21,7 +21,7 @@ python3 repo/.repo_template/scripts/task.py --help
 
 ## 工具链版本契约
 
-模板工具链最低 Python 3.14.7，由 `repo/.repo_template/scripts/_runtime.py` 的 `PYTHON_VERSION` 单一定义；`require_python()` 在所有 CLI 入口启动前校验，低于该版本明确提示并退出。工厂全量门禁须运行于该版本（`factory_tests/integration/test_python_version.py` 断言），契约测试断言现行文档版本声明与常量一致（`test_contract_suite.py`）。`factory_docs/archive/`、`reviews/`、`audits/` 与本仓 `decision_log.md` 历史行中涉及 Python 3.9 的约束为历史记录，已作废，不作为现行规范。
+模板工具链最低 Python 3.14.7，由 `repo/.repo_template/scripts/_runtime.py` 的 `PYTHON_VERSION` 单一定义；`require_python()` 在所有 CLI 入口启动前校验，低于该版本明确提示并退出。工厂全量门禁须运行于该版本并校验模板产物树版本声明与常量一致（`factory_tests/integration/test_python_version.py`）；消费仓契约测试只校验运行期版本（`test_contract_suite.py`），不校验由项目定制的 README。所有 CLI 入口在业务导入之前调用 `require_python()`，低版本明确提示并退出。`factory_docs/archive/`、`reviews/`、`audits/` 与本仓 `decision_log.md` 历史行中涉及 Python 3.9 的约束为历史记录，已作废，不作为现行规范。
 
 ## 开发铁律
 

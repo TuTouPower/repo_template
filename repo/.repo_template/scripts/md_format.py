@@ -13,6 +13,10 @@
 库函数 format_paths() 与 CLI 统一在缺二进制或执行失败时抛出 MdFormatError（硬失败，无静默降级）。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 import os
 import shutil
@@ -291,5 +295,4 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

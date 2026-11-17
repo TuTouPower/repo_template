@@ -13,6 +13,10 @@
 再分配新编号；编号分配本身不解析旧正文。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 from repo_task.context import RepoContext, TaskDataError
 import sys
@@ -96,5 +100,4 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

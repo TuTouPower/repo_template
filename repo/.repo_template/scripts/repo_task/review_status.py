@@ -34,6 +34,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _runtime import require_python, run
+
+require_python()
+
 
 from repo_task import context as ctx
 from repo_task.context import PROGRESS_FILE, RepoContext, TaskDataError
@@ -140,5 +144,4 @@ def main(argv: list[str] | None = None, *, repo: ctx.RepoContext | None = None) 
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

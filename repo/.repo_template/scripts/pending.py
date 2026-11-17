@@ -25,6 +25,10 @@
 逐次批准并单次提交同步结果后再分配新编号；编号分配本身不解析旧正文。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 from repo_task.context import RepoContext, TaskDataError
 import hashlib
@@ -275,9 +279,9 @@ def _malformed_for_number(number: int, *, repo: RepoContext) -> list[Path]:
 def find_entry(number: int, *, repo: RepoContext) -> tuple[str, Path]:
     """在 docs/pending 中定位条目，返回 (status, path)。"""
     if (repo.root / "docs/pending").is_symlink():
-        raise IdScanError(f"拒绝经软链目录定位条目：{_rel((repo.root / "docs/pending"), repo=repo)}")
+        raise IdScanError(f'拒绝经软链目录定位条目：{_rel((repo.root / "docs/pending"), repo=repo)}')
     if not (repo.root / "docs/pending").is_dir():
-        raise IdScanError(f"未找到 p{number:03d}（{_rel((repo.root / "docs/pending"), repo=repo)} 目录不存在）")
+        raise IdScanError(f'未找到 p{number:03d}（{_rel((repo.root / "docs/pending"), repo=repo)} 目录不存在）')
     _assert_no_symlink(repo.root, (repo.root / "docs/pending"))
     hits = sorted(
         path
@@ -346,7 +350,7 @@ def cmd_new(args: argparse.Namespace) -> None:
 def cmd_list(args: argparse.Namespace) -> None:
     repo = args.repo
     if (repo.root / "docs/pending").is_symlink():
-        raise IdScanError(f"拒绝经软链目录列举条目：{_rel((repo.root / "docs/pending"), repo=repo)}")
+        raise IdScanError(f'拒绝经软链目录列举条目：{_rel((repo.root / "docs/pending"), repo=repo)}')
     if not (repo.root / "docs/pending").is_dir():
         print("(no entries)")
         return
@@ -595,5 +599,4 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

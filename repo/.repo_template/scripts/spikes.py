@@ -13,6 +13,10 @@
 list 对 front matter 损坏或缺失的 spike 打印 stderr 警告并归入 unknown，不静默吞错。
 """
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 from repo_task.context import RepoContext, TaskDataError
 import re
@@ -77,12 +81,12 @@ def cmd_new(args: argparse.Namespace) -> None:
     if not SLUG_RE.match(slug):
         sys.exit(f"错误: slug 须匹配 {SLUG_RE.pattern}（收到 {slug!r}）")
     if not (repo.toolkit_root / "docs/spike_report_template.md").is_file():
-        raise IdScanError(f"缺模板 {(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}")
+        raise IdScanError(f'缺模板 {(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}')
 
     template_text = (repo.toolkit_root / "docs/spike_report_template.md").read_text(encoding="utf-8")
     if not template_text.startswith("---"):
         raise IdScanError(
-            f"模板缺少标准 Front Matter (---)：{(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}"
+            f'模板缺少标准 Front Matter (---)：{(repo.toolkit_root / "docs/spike_report_template.md").relative_to(repo.root).as_posix()}'
         )
     content = template_text.replace("{slug}", slug)
 
@@ -110,7 +114,7 @@ def cmd_new(args: argparse.Namespace) -> None:
 def cmd_list(args: argparse.Namespace) -> None:
     repo = args.repo
     if (repo.root / "docs/spikes").is_symlink():
-        raise IdScanError(f"拒绝经软链目录列举 spike：{(repo.root / "docs/spikes")}")
+        raise IdScanError(f'拒绝经软链目录列举 spike：{(repo.root / "docs/spikes")}')
     if not (repo.root / "docs/spikes").is_dir():
         print("(no spikes)")
         return
@@ -389,5 +393,4 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)

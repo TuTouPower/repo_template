@@ -48,6 +48,32 @@ def test_extract_rejects_symlink_escaping_destination(tmp_path):
     assert not (tmp_path.parent / "outside").exists()
 
 
+def test_extract_preserves_symlink_target_semantics(tmp_path):
+    """软链按原始 linkname 写入；经软链解析的 `..` 不得被字符串规范化改写。"""
+    def symlink(name, target):
+        info = tarfile.TarInfo(name)
+        info.type = tarfile.SYMTYPE
+        info.linkname = target
+        return info
+
+    top = tarfile.TarInfo("top")
+    top.type = tarfile.DIRTYPE
+    sub = tarfile.TarInfo("top/subdir")
+    sub.type = tarfile.DIRTYPE
+    with _archive([
+        (top, None),
+        (tarfile.TarInfo("top/file"), b"TOP"),
+        (sub, None),
+        (tarfile.TarInfo("file"), b"ROOT"),
+        (symlink("dir", "top/subdir"), None),
+        (symlink("entry", "dir/../file"), None),
+    ]) as stream:
+        _extract_product(stream, tmp_path)
+    assert (tmp_path / "dir").readlink() == Path("top/subdir")
+    assert (tmp_path / "entry").readlink() == Path("dir/../file")
+    assert (tmp_path / "entry").read_bytes() == b"TOP"
+
+
 def _git(repo, *args):
     return subprocess.run(
         ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True

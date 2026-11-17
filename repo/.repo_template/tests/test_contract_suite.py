@@ -148,18 +148,10 @@ def test_all_consumer_skills_disable_model_invocation():
         )
 
 
-def test_version_contract_is_single_source():
-    """版本契约由 _runtime.PYTHON_VERSION 单一定义，现行文档必须一致。"""
+def test_contract_suite_runs_on_contract_python():
+    """消费仓契约测试须运行于工具链契约版本；模板文档一致性由工厂测试校验。"""
     from _runtime import MIN_PYTHON, PYTHON_VERSION
 
     assert sys.version_info[:3] >= MIN_PYTHON, (
         f"契约测试需在 Python {PYTHON_VERSION}+ 运行；当前 {sys.version.split()[0]}"
     )
-    for doc in (REPO_ROOT / "README.md", TESTS_DIR.parent / "docs/usage.md"):
-        text = doc.read_text(encoding="utf-8")
-        assert PYTHON_VERSION in text, f"{doc} 未声明 {PYTHON_VERSION}"
-        assert "Python 3.9" not in text, f"{doc} 仍声明 3.9 为最低版本"
-    testing = (REPO_ROOT / "docs/blueprint/testing.md").read_text(encoding="utf-8")
-    if _section(testing, "verification_policy").strip() != "project_configured":
-        assert PYTHON_VERSION in testing, "testing.md 未声明模板最低版本"
-        assert "Python 3.9" not in testing, "testing.md 仍声明 3.9 为最低版本"

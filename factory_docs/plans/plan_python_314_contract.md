@@ -2,7 +2,7 @@
 
 > 编写时间：2026-11-16T19:11:38+08:00
 >
-> 修订时间：2026-11-16T20:03:37+08:00
+> 修订时间：2026-11-17T10:44:26+08:00
 >
 > 关联 Issue：`TuTouPower/repo_template#97`
 >
@@ -12,7 +12,7 @@
 >
 > 实现状态：Implemented（2026-11-16 落地）
 >
-> 验证状态：Verified（契约子集 385 passed；工厂全量 1672 passed）
+> 验证状态：Verified（审查复核后：契约子集 385 passed；工厂全量 1674 passed）
 >
 > 权威落点：本方案定义目标契约。落地后契约权威为 `repo/.repo_template/scripts/_runtime.py` 的 `PYTHON_VERSION`；用法权威为 `repo/.repo_template/docs/usage.md`；工厂门禁权威为工厂根 `AGENTS.md`。
 
@@ -29,7 +29,7 @@
 |AC-1|`_runtime.py` 定义唯一 `PYTHON_VERSION = "3.14.7"`；所有 Python 入口启动前校验，低于则明确中文提示并 `sys.exit(2)`|契约测试 + 用 3.9.6 调用入口观察提示|
 |AC-2|全仓无 `from __future__ import annotations`；`"ctx.RepoContext"` 等字符串注解改为直接类型引用|全仓计数为 0 + 全量测试|
 |AC-3|14 个 CLI/模块 `__main__` 与 3 个 hook 统一经 `_runtime.run()` 启动；`reconfigure` 样板收敛到一处；模块顶部 `sys.path.insert` 作为导入依赖保留|逐个 `--help` 冒烟 + hook 临时仓试跑|
-|AC-4|`export_template.py` 用 `tarfile.extractall(filter="data")` 解包，`_extract_product` 收敛为边界校验 + `extractall`；业务白名单 `is_non_distributable` 与 staging 原子重命名保留|六类归档安全用例回归|
+|AC-4|`export_template.py` 保留手写受控解包：软链按原始 `linkname` 写入、以 resolve 后真实路径校验越界（`data_filter` 会规范化 linkname，不用于落盘）；业务白名单与 staging 原子重命名保留|六类归档安全用例 + `dir/../file` 软链语义回归|
 |AC-5|所有现行版本声明为 3.14.7；无现行文档仍写 3.9 为最低版本|契约测试断言三处文档 == `PYTHON_VERSION`|
 |AC-6|删除 3.9 专项兼容测试与注解静态检查|全量收集结果不含这些用例|
 |AC-7|契约子集与工厂全量测试全绿|§7|
@@ -63,7 +63,7 @@
 |版本契约|文档散写 3.9，代码无声明|`_runtime.py` 单一常量 `PYTHON_VERSION = "3.14.7"`|
 |入口启动|12 顶层 CLI + 2 包内子模块 + 3 hooks 各自 `reconfigure` / 四种 `__main__` 形态|17 个 `__main__` 统一 `run(main)`；`reconfigure` 收敛到 `_runtime`；模块顶部 `sys.path.insert` 作为导入依赖保留|
 |注解|约 104 处 future + 字符串注解|无 future，直接类型引用（PEP 649）|
-|归档解包|50 行手写路径/类型/软链/权限校验|`extractall(filter="data")` + 标准库不覆盖的边界校验 + 业务白名单 + staging 原子重命名|
+|归档解包|50 行手写路径/类型/软链/权限校验|保留手写解包（链接语义正确性要求，非 3.9 包袱）；补 `dir/../file` 软链语义回归|
 |门禁|3.9 静态检查与专项测试|3.14.7 契约断言 + 文档一致性 + 全量真实解释器验证|
 |文档|3 处现行 3.9 声明|3 处 3.14.7 声明；历史归档保留并标注作废|
 
@@ -88,7 +88,7 @@
 
 - 删除全仓 `from __future__ import annotations`（产物树 scripts 62 文件、tests 9 文件、factory_tests 30 文件、hooks 3 文件）。
 - 字符串注解（`"ctx.RepoContext"`、`"CandidateIdentity"` 等）改为直接类型引用。
-- `export_template.py`：`_extract_product` 收敛为「边界校验 + `stream.extractall(destination, filter="data")`」；标准库不覆盖的绝对路径、Windows 驱动器/反斜杠路径、重复条目、非目录/文件/软链类型显式拒绝；`tarfile.FilterError` 统一转 `ValueError` 以保持对外错误契约；`is_non_distributable` 白名单与 `finally: shutil.rmtree(staging)` 保留。
+- `export_template.py`：`_extract_product` 保留手写受控解包——先校验全部成员，再写普通文件/目录，最后按原始 `item.linkname` 写软链，并以 `resolve()` 后的真实路径校验越界；绝对路径、Windows 驱动器/反斜杠路径、`..`、重复条目、非目录/文件/软链类型显式拒绝；`is_non_distributable` 白名单与 `finally: shutil.rmtree(staging)` 保留。审查复核确认 `tarfile.data_filter` 会把 `dir/../file` 规范化为 `file`，改变经软链解析后的实际目标，故不用于落盘。
 - 改写 `factory_tests/review/test_review_report_regressions.py` 的两个解包测试：去掉 `python39` 命名，保留 `ValueError` + target 为空 + 可执行位/内部软链断言（对外错误契约不变）。
 
 ### 4.4 文档与门禁
@@ -96,7 +96,7 @@
 - 现行声明统一 3.14.7：`repo/README.md:11`、`usage.md:137/167`、`repo/docs/blueprint/testing.md:9`、`export_template.py:42` docstring、`test_review_report_regressions.py:1` docstring、`factory_docs/plans/plan_global_id_uniqueness.md:309`。
 - 措辞更新（逻辑不动）：`md_format.py:4`（md_kx 自身 tool 环境门槛，非模板契约）、`worktrees.py:269`（3.14 下 rglob 仍跳过 dangling symlink）。
 - `testing.md` 的 `doctor_cmd` 增加一行 `python3 -c` 版本前置检查；`test_contract_suite.py` 现有 doctor 断言只取 `pytest` 行与 `command -v md_kx`，不受影响。
-- 契约测试：删 `test_toolchain_annotations_importable_on_python39` 与 `_runtime_union_annotations`；新增版本一致性断言（README / usage 始终校验，testing.md 仅在 `verification_policy` 为模板默认时校验——消费仓配置策略后 testing.md 由消费仓自担）。`CONTRACT_MODULES` 白名单不变。
+- 契约测试：删 `test_toolchain_annotations_importable_on_python39` 与 `_runtime_union_annotations`；`test_contract_suite_runs_on_contract_python` 只校验运行期版本。模板产物树 README / usage / testing 的版本声明一致性属工厂侧，落在 `factory_tests/integration/test_python_version.py`（消费仓 README 由项目定制，不校验）。`CONTRACT_MODULES` 白名单不变。
 - 工厂层：新增断言 `sys.version_info[:3] >= MIN_PYTHON`，使「契约 = 门禁环境」成为可执行约束。
 - 删 `factory_tests/review/test_precommit_hook.py:209-231`。
 - 工厂根 `AGENTS.md`：加权威声明「工具链 Python 3.14.7；`factory_docs/archive|reviews|audits` 中 3.9 约束为历史记录，已作废」。
@@ -108,7 +108,7 @@
 
 |取舍|落点|
 |---|---|
-|手写受控解包|`export_template.py` 的 `_extract_product` + `test_review_report_regressions.py` 两个解包测试|
+
 |future 样板与字符串注解|全仓约 104 处|
 |3.9 注解静态检查|`test_contract_suite.py:152-189`|
 |3.9 专项兼容测试|`test_precommit_hook.py:209-231`|
@@ -124,6 +124,7 @@
 |`locks.py:34` `hasattr(os,"register_at_fork")`|Windows 平台兼容|
 |11 处 `hasattr(sys.stdout,"reconfigure")`|stdout 被 capsys / 重定向替换时的保护；收敛到一处但保留判断|
 |`lifecycle.py:644` ImportError 兜底、`os.name == "nt"`、`typing.Any/NamedTuple/Callable`|导入路径容错、平台分支、3.14 仍合法的类型导入|
+|`export_template.py` 手写受控解包|`data_filter` 会规范化 linkname 改变软链解析目标；保留原始 `linkname` 写入与 resolve 边界校验，属链接语义正确性要求，非 3.9 包袱|
 
 ## 6. 执行步骤
 
@@ -132,7 +133,7 @@
 |1|新增 `_runtime.py`|语法自检；导入失败即停|
 |2|批量删除全仓 future 与字符串注解|逐文件 compile 校验；循环导入导致注解求值 NameError 时修导入结构，不回退 future|
 |3|收敛 14 个 CLI/模块 `__main__` 与 3 个 hook|逐个入口 `--help` 冒烟；失败回查该入口形态|
-|4|重写 `export_template.py` 解包 + 改写 2 个解包测试|六类安全用例必须全绿；不等价则恢复手写校验并报告|
+|4|审查复核后恢复 `export_template.py` 手写解包（软链语义）+ 补 `dir/../file` 回归|六类安全用例与软链语义用例必须全绿|
 |5|删 3.9 专项测试与注解静态检查|收集结果核对无残留|
 |6|统一文档版本声明、措辞、doctor_cmd|契约测试断言文档 == `PYTHON_VERSION`|
 |7|新增契约断言与工厂层版本断言；AGENTS.md / decision_log.md / plans 更新|契约子集先绿|
@@ -147,13 +148,13 @@ pytest repo/.repo_template/tests -q -m contract
 pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"
 ```
 
-实测（2026-11-16T20:03:37+08:00）：契约子集 385 passed（36.77s）；工厂全量 1672 passed（585.15s，Python 3.14.7 / pytest 9.2.0 / pytest-xdist 3.8.0）。
+复核实测：契约子集 385 passed（30.50s）；工厂全量 1674 passed（535.74s，Python 3.14.7 / pytest 9.2.0 / pytest-xdist 3.8.0）。
 
 补充验证：
 
 - 14 个 CLI/模块 + 3 个 hook 逐个 `--help` / 冒烟。
-- `/usr/bin/python3`（3.9.6）调用 `export_template.py --help`，应看到明确版本提示并 exit 2；`repo_sync.py` 等导入链含 3.10+ 语法，低版本本就不支持。
-- `export_template` 六类归档安全用例：traversal / absolute / nested_drive / symlink_parent / hardlink / device，加可执行位与内部软链保留。
+- `/usr/bin/python3`（3.9.6）与 3.12.14 调用任意 CLI 入口，均应看到明确版本提示并 exit 2（检查在业务 import 之前）。
+- `export_template` 六类归档安全用例：traversal / absolute / nested_drive / symlink_parent / hardlink / device，加可执行位、内部软链与 `dir/../file` 原始 linkname 语义保留。
 - future 全删后重点回归：注解求值、NamedTuple / dataclass、循环导入模块（`repo_task/store.py`、`template_sync/duplicate_ids_migration.py`）。
 - `grep -rn 'from __future__ import annotations'` 与 `grep -rn 'Python 3.9'`（现行文档）计数为 0。
 
@@ -162,7 +163,8 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 |风险|缓解|
 |---|---|
 |PEP 649 语义变更：3.14 延迟注解在访问 `__annotations__` 时求值，与 future 字符串化不同|全仓无 `get_type_hints` / `__annotations__` 依赖；全量测试兜底；个别循环导入模块若求值期 NameError，修导入结构|
-|`extractall` 边解边写，原子性依赖 staging|现有 `tempfile.mkdtemp` + `os.rename` + `finally rmtree` 保证 target 不被部分写入；专项测试覆盖|
+|`data_filter` 规范化 linkname 改变软链解析目标|不用于落盘；软链按原始 `linkname` 写入，以 resolve 后真实路径校验越界；`dir/../file` 回归覆盖|
+|入口在低版本解析/导入期即失败|`require_python()` 前移到入口顶部、业务 import 之前；6 处 PEP 701 f-string 改低版本可解析，保证引导入口在 3.9 可解析|
 |改动面约 110 文件|分批落地、每批跑契约子集、末次全量；失败按步回退，全部改动未提交前可用 `git diff` 复核|
 
 回滚：所有改动均为工作区未提交修改，按文件逐步恢复即可；不执行 `git reset --hard` 或批量删除。
@@ -183,3 +185,12 @@ pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --
 - 完成报告列改动文件、已执行/未执行的检查、未解决冲突与开放项。
 - 提交走正常门禁：列改动文件、用户同意后提交，不 push。
 - 消费仓通过 `repo-template-sync` 拉取修复。
+
+
+## 11. 审查复核修订（2026-11-17T10:44:26+08:00）
+
+|问题|结论|修复|
+|---|---|---|
+|P1 README 定制阻断消费仓门禁|`repo/README.md` 是消费仓项目文档（初始化指南要求替换），不是模板契约文档；版本一致性校验属工厂侧|契约测试只校验运行期版本；模板产物树 README / usage / testing 的版本声明一致性迁至 `factory_tests/integration/test_python_version.py`|
+|P2 导出悄然改变软链指向|实测 `tarfile.data_filter` 将 `dir/../file` 规范化为 `file`，改变经软链解析后的实际目标；手写解包是链接语义正确性要求，非 3.9 包袱|恢复 `_extract_product` 手写解包：软链按原始 `linkname` 写入、resolve 后真实路径校验越界；`data_filter` 不用于落盘；补 `test_extract_preserves_symlink_target_semantics`|
+|P3 版本检查晚于业务解析与导入|`require_python()` 原在文件尾 `run()` 内，低版本在解析/导入阶段即失败|16 个入口在文件顶部（业务 import 之前）调用 `require_python()`；6 处 PEP 701 f-string 改低版本可解析写法；3.9.6 / 3.12.14 实测明确提示并 exit 2|

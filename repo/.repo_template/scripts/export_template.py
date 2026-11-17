@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Export only a committed product tree; never copy a developer worktree."""
 
+from _runtime import require_python, run
+
+require_python()
+
 import argparse
 import io
 import os
@@ -39,33 +43,56 @@ def is_non_distributable(name: str) -> bool:
 
 
 def _extract_product(stream, destination):
-    """解包归档：路径遍历、软链越界与特殊文件由 tarfile.data_filter 拒绝。
+    """解包归档：先校验全部成员，再写普通文件/目录，最后按原始 linkname 写软链。
 
-    标准库不拦截绝对路径、Windows 驱动器/反斜杠路径与重复条目，故在解包前
-    显式校验；所有违规统一抛 ValueError。staging 原子性由调用方保证。
+    tarfile.data_filter 会规范化 linkname（把 `dir/../file` 改成 `file`），改变
+    经符号链接解析后的实际目标，故不用于落盘；软链边界以 resolve 后的真实路径
+    校验。staging 原子性由调用方保证。
     """
-    seen = set()
-    for item in stream.getmembers():
-        name = item.name
-        path = PurePosixPath(name)
-        if path.is_absolute() or ":" in name or "\\" in name or not path.parts:
-            raise ValueError(f"非法归档路径：{name}")
+    members = stream.getmembers()
+    entries = {}
+    for item in members:
+        path = PurePosixPath(item.name)
+        if path.is_absolute() or ".." in path.parts or "\\" in item.name or not path.parts:
+            raise ValueError(f"非法归档路径：{item.name}")
+        if ":" in item.name or not (item.isdir() or item.isfile() or item.issym()):
+            raise ValueError(f"不支持的归档条目：{item.name}")
         key = path.as_posix()
-        if key in seen:
-            raise ValueError(f"重复归档路径：{name}")
-        seen.add(key)
+        if key in entries:
+            raise ValueError(f"重复归档路径：{item.name}")
+        entries[key] = item
+    for name in entries:
+        for parent in Path(name).parents:
+            if parent.as_posix() in entries and not entries[parent.as_posix()].isdir():
+                raise ValueError(f"归档父路径不是目录：{name}")
+    for name, item in entries.items():
+        target = destination / name
+        if item.issym():
+            continue
+        if item.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with stream.extractfile(item) as source, target.open("xb") as output:
+                shutil.copyfileobj(source, output)
+            target.chmod(0o755 if item.mode & 0o111 else 0o644)
+    for name, item in entries.items():
         if item.issym():
             link = PurePosixPath(item.linkname)
             if link.is_absolute() or "\\" in item.linkname or ":" in item.linkname:
                 raise ValueError(f"非法归档软链：{name}")
-        elif not (item.isdir() or item.isfile()):
-            raise ValueError(f"不支持的归档条目：{name}")
-    try:
-        stream.extractall(destination, filter="data")
-    except tarfile.LinkOutsideDestinationError as error:
-        raise ValueError(f"无效或越界软链：{error}") from error
-    except tarfile.FilterError as error:
-        raise ValueError(f"归档含不安全成员：{error}") from error
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(item.linkname)
+    for name, item in entries.items():
+        if item.issym():
+            path = destination / name
+            try:
+                valid = path.resolve().is_relative_to(destination.resolve()) and path.exists()
+            except (OSError, RuntimeError) as error:
+                raise ValueError(f"无效软链：{name}") from error
+            if not valid:
+                raise ValueError(f"无效或越界软链：{name}")
 
 
 def export_template(source: Path, target: Path, ref: str = "HEAD") -> None:
@@ -158,5 +185,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from _runtime import run
     run(main)
