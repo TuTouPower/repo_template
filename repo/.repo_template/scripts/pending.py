@@ -381,15 +381,32 @@ def cmd_list(args: argparse.Namespace) -> None:
         print(f"{status:<8} {stem:<40} {title}")
 
 
+def _entry_snapshot(
+    number: int, *, repo: RepoContext
+) -> tuple[dict[str, str], str, str, Path, str]:
+    """定位并读取条目，返回与内容摘要同源的状态快照。
+
+    find_entry 先读一次状态、_read_and_parse_entry 再读一次内容；两次读取之间
+    另一会话若完成状态流转，必须拒绝，避免用新状态的摘要写回旧状态的转换。
+    """
+    state, path = find_entry(number, repo=repo)
+    fm, body, sha = _read_and_parse_entry(path, repo=repo)
+    if fm["status"] != state:
+        raise IdScanError(
+            f"p{number:03d} 在读取期间状态已变（{state} → {fm['status']}）；请重试"
+        )
+    return fm, body, sha, path, fm["status"]
+
+
 def _apply_state_updates(
     write: bool,
-    plan: list[tuple[int, Path, dict[str, str], str, str]],
+    plan: list[tuple[int, Path, dict[str, str], str, str, str]],
     note: str,
     *, repo: RepoContext,
 ) -> None:
     if not write:
         sys.stderr.write("dry-run；以下为拟定改动，加 --write 落盘。\n")
-        for _num, path, new_fm, _new_body, _expected_sha in plan:
+        for _num, path, new_fm, _new_body, _expected_sha, _expected_status in plan:
             target_status = new_fm["status"]
             sys.stderr.write(f"  {_rel(path, repo=repo)} → status: {target_status}  {note}\n")
         return
@@ -398,8 +415,12 @@ def _apply_state_updates(
     try:
         with id_lock(repo.root):
             snapshots: list[tuple[Path, str, bytes]] = []
-            for number, path, new_fm, new_body, expected_sha in plan:
+            for number, path, new_fm, new_body, expected_sha, expected_status in plan:
                 curr_status, curr_path = find_entry(number, repo=repo)
+                if curr_status != expected_status:
+                    raise IdScanError(
+                        f"p{number:03d} 在加锁前状态已变（期望 {expected_status}，当前 {curr_status}）；请重试"
+                    )
                 if curr_path.resolve() != path.resolve():
                     raise IdScanError(
                         f"p{number:03d} 在加锁前路径已变（当前 {_rel(curr_path, repo=repo)}）；请重试"
@@ -455,16 +476,15 @@ def cmd_park(args: argparse.Namespace) -> None:
     if "\n" in reason or "\r" in reason:
         raise IdScanError("reason 不能包含换行符（收到多行输入）")
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str, str]] = []
     for number in numbers:
-        state, path = find_entry(number, repo=repo)
-        if state != "todo":
-            if state == "parked":
+        fm, body, expected_sha, path, current = _entry_snapshot(number, repo=repo)
+        if current != "todo":
+            if current == "parked":
                 raise IdScanError(f"p{number:03d} 当前在 parked；只有 todo 可暂搁")
-            if state == "closed":
+            if current == "closed":
                 raise IdScanError(f"p{number:03d} 当前在 closed（终态）；禁止暂搁")
-            raise IdScanError(f"p{number:03d} 当前在 {state}；只有 todo 可暂搁")
-        fm, body, expected_sha = _read_and_parse_entry(path, repo=repo)
+            raise IdScanError(f"p{number:03d} 当前在 {current}；只有 todo 可暂搁")
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
@@ -473,7 +493,7 @@ def cmd_park(args: argparse.Namespace) -> None:
         }
         new_body = set_field_text(body, PARKED_RE, f"- 暂搁：{reason}")
         new_body = set_field_text(new_body, HANDLE_RE, "- 处理：不办")
-        plan.append((number, path, new_fm, new_body, expected_sha))
+        plan.append((number, path, new_fm, new_body, expected_sha, current))
 
     _apply_state_updates(args.write, plan, note=f"暂搁：{reason}", repo=repo)
 
@@ -481,23 +501,22 @@ def cmd_park(args: argparse.Namespace) -> None:
 def cmd_revive(args: argparse.Namespace) -> None:
     repo = args.repo
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str, str]] = []
     for number in numbers:
-        state, path = find_entry(number, repo=repo)
-        if state != "parked":
-            if state == "todo":
+        fm, body, expected_sha, path, current = _entry_snapshot(number, repo=repo)
+        if current != "parked":
+            if current == "todo":
                 raise IdScanError(f"p{number:03d} 当前在 todo；只有 parked 可复活")
-            if state == "closed":
+            if current == "closed":
                 raise IdScanError(f"p{number:03d} 当前在 closed（终态）；禁止复活")
-            raise IdScanError(f"p{number:03d} 当前在 {state}；只有 parked 可复活")
-        fm, body, expected_sha = _read_and_parse_entry(path, repo=repo)
+            raise IdScanError(f"p{number:03d} 当前在 {current}；只有 parked 可复活")
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
             "status": "todo",
         }
         new_body = set_field_text(body, HANDLE_RE, "- 处理：未开")
-        plan.append((number, path, new_fm, new_body, expected_sha))
+        plan.append((number, path, new_fm, new_body, expected_sha, current))
 
     _apply_state_updates(args.write, plan, note="revive", repo=repo)
 
@@ -519,16 +538,15 @@ def cmd_close(args: argparse.Namespace) -> None:
     note = f"处理：{ref_part}resolution={resolution}；reason={reason}"
 
     numbers = parse_ids(args.ids)
-    plan: list[tuple[int, Path, dict[str, str], str, str]] = []
+    plan: list[tuple[int, Path, dict[str, str], str, str, str]] = []
     for number in numbers:
-        state, path = find_entry(number, repo=repo)
-        if state != "todo":
-            if state == "closed":
+        fm, body, expected_sha, path, current = _entry_snapshot(number, repo=repo)
+        if current != "todo":
+            if current == "closed":
                 raise IdScanError(f"p{number:03d} 已在 closed；禁止重复闭环")
-            if state == "parked":
+            if current == "parked":
                 raise IdScanError(f"p{number:03d} 在 parked（暂搁而非闭环）；如需闭环请先 revive")
-            raise IdScanError(f"p{number:03d} 当前在 {state}；只有 todo 可闭环")
-        fm, body, expected_sha = _read_and_parse_entry(path, repo=repo)
+            raise IdScanError(f"p{number:03d} 当前在 {current}；只有 todo 可闭环")
         new_fm = {
             "pid": fm["pid"],
             "slug": fm["slug"],
@@ -539,7 +557,7 @@ def cmd_close(args: argparse.Namespace) -> None:
         if fix_ref:
             new_fm["fix_ref"] = fix_ref
         new_body = set_field_text(body, HANDLE_RE, f"- {note}")
-        plan.append((number, path, new_fm, new_body, expected_sha))
+        plan.append((number, path, new_fm, new_body, expected_sha, current))
 
     _apply_state_updates(args.write, plan, note=note, repo=repo)
 

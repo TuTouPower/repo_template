@@ -28,9 +28,11 @@ def staged_md() -> list[str]:
 
     -z：NUL 分隔且从不引号化，非 ASCII 文件名原样返回（core.quotePath 无效），
     否则中文等路径会被引号化而在后续 is_file 判断中被静默跳过。
+    --diff-filter=AMR：改名且修改的 .md 被 Git 判为 R，须纳入目标新路径，
+    否则格式门禁与工作区/index 一致性检查都会漏掉。
     """
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=AM", "--", "*.md"],
+        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=AMR", "--", "*.md"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )
@@ -111,7 +113,7 @@ def dirty_vs_index(rels: list[str]) -> list[str]:
 def main() -> int:
     try:
         validate_merge_sources(repo.root)
-        validate_snapshot_ids(repo.root)
+        validate_snapshot_ids(repo.root, preserve_index=True)
     except IdScanError as error:
         print(f"pre-commit: 编号校验失败（fail-closed）：{error}", file=sys.stderr)
         return 1

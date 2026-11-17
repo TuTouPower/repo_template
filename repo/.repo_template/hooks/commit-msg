@@ -24,7 +24,7 @@ def _check() -> int:
     root = RepoContext.for_root(Path.cwd()).root
     try:
         validate_merge_sources(root)
-        validate_snapshot_ids(root)
+        validate_snapshot_ids(root, preserve_index=True)
     except IdScanError as error:
         print(f"commit-msg: 编号校验失败（fail-closed）：{error}", file=sys.stderr)
         return 1

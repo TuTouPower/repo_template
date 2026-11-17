@@ -37,16 +37,14 @@ def _read_unlocked(
             "拒绝继续以防 attempt 号复用。请确认权限/文件系统状态后重试"
         ) from error
     events = []
-    tid_needle = f'"{tid}"' if tid else None
     try:
         with stream:
             for line_no, raw_line in enumerate(stream, 1):
                 line = raw_line.strip()
                 if not line:
                     continue
-                # 若指定了 tid，先通过快速子串预筛，跳过不含目标 tid 的无关行 JSON 解析开销（Issue #57）
-                if tid_needle and tid_needle not in line:
-                    continue
+                # 先解析每行再按 tid 过滤：损坏尾行即使尚未写到 tid 字段也必须
+                # 触发 fail-closed，不能被子串预筛静默跳过。
                 try:
                     value = json.loads(line)
                 except json.JSONDecodeError as e:
@@ -77,6 +75,8 @@ def _append_many_unlocked(
     finals = [_sanitize(event) for event in events]
     if not finals:
         return []
+    # fail-closed：写入口先验证账本完整性，损坏尾行不得被静默跳过或接上新事件。
+    _read_unlocked(repo=repo)
     payload = "".join(
         json.dumps(event, ensure_ascii=False) + "\n" for event in finals
     ).encode("utf-8")

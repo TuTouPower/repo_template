@@ -94,6 +94,66 @@ def _run_hook(repo, tmp_path, *, with_fake_kx=True, bin_dir=None):
     )
 
 
+def test_rename_with_edit_is_format_checked(repo, tmp_path):
+    """P2-4：改名并修改的 .md 被 Git 判为 R 时，格式门禁不得漏掉。"""
+    body = "|x|y|\n|------|------|\n" + "".join(f"|{i}|{i}|\n" for i in range(1, 9))
+    (repo / "a.md").write_text(body, encoding="utf-8")
+    _git(repo, "add", "a.md")
+    _git(repo, "commit", "-m", "drifted baseline")
+    _git(repo, "mv", "a.md", "b.md")
+    (repo / "b.md").write_text(body.replace("|1|1|", "|1|9|"), encoding="utf-8")
+    _git(repo, "add", "-A")
+    status = _git(repo, "diff", "--cached", "--name-status").stdout
+    assert status.startswith("R"), status
+
+    result = _run_hook(repo, tmp_path)
+    assert result.returncode == 1
+    assert "格式漂移" in result.stderr
+
+
+def test_partial_commit_checks_git_index_file(repo, tmp_path):
+    """P2-1：hook 须按 GIT_INDEX_FILE（git commit --only 临时 index）校验编号。"""
+    pending = repo / "docs/pending"
+    pending.mkdir(parents=True)
+    old = pending / "p001_a.md"
+    old.write_text(
+        '---\npid: "p001"\nslug: "a"\nstatus: "todo"\n---\n# p001 a\n', encoding="utf-8"
+    )
+    _git(repo, "add", "docs/pending/p001_a.md")
+    _git(repo, "commit", "-m", "add pending")
+
+    new = pending / "p001_b.md"
+    new.write_text(
+        '---\npid: "p001"\nslug: "b"\nstatus: "todo"\n---\n# p001 b\n', encoding="utf-8"
+    )
+    # 主 index：只保留新路径（无同号）；工作区同时保留旧文件，避免 dirty 干扰。
+    _git(repo, "add", "docs/pending/p001_b.md")
+    _git(repo, "rm", "--cached", "docs/pending/p001_a.md")
+
+    # 临时 index：HEAD + 只提交的新路径；旧路径仍来自 HEAD → 实际提交树同号。
+    tmp_index = tmp_path / "partial.index"
+    env_index = dict(os.environ)
+    env_index["GIT_INDEX_FILE"] = str(tmp_index)
+    subprocess.run(
+        ["git", "-C", str(repo), "read-tree", "HEAD"], env=env_index,
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "docs/pending/p001_b.md"], env=env_index,
+        check=True, capture_output=True,
+    )
+
+    env = dict(os.environ)
+    env["GIT_INDEX_FILE"] = str(tmp_index)
+    env["PATH"] = str(_fake_md_kx(tmp_path).parent) + os.pathsep + env["PATH"]
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)], cwd=str(repo), env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    assert result.returncode == 1
+    assert "编号校验失败" in result.stderr
+
+
 def _stage_drifted_md(repo):
     """把 a.md 改成格式漂移并暂存。"""
     (repo / "a.md").write_text("|x|y|\n|------|------|\n|1|2|\n", encoding="utf-8")

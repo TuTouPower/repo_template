@@ -92,11 +92,17 @@ _GIT_REDIRECT_VARS = (
 )
 
 
-def _controlled_git_env() -> dict[str, str]:
-    """返回剥离仓库重定向变量后的 git 子进程环境。"""
+def _controlled_git_env(*, preserve_index: bool = False) -> dict[str, str]:
+    """返回剥离仓库重定向变量后的 git 子进程环境。
+
+    普通 CLI 清除 GIT_INDEX_FILE 以防宿主注入；hook 由 Git 设置该变量指向
+    `git commit --only` 的临时 index，必须保留以校验实际提交树。
+    """
     env = dict(os.environ)
     for key in list(env.keys()):
         if key in _GIT_REDIRECT_VARS or key.startswith("GIT_CONFIG_KEY_") or key.startswith("GIT_CONFIG_VALUE_"):
+            if preserve_index and key == "GIT_INDEX_FILE":
+                continue
             env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
@@ -120,7 +126,7 @@ class IdScanError(ValueError):
     """编号扫描或分配失败。"""
 
 
-def _run_git(repo_root: Path, args: list[str]) -> str:
+def _run_git(repo_root: Path, args: list[str], *, preserve_index: bool = False) -> str:
     """运行 git 子进程；失败统一包装为 IdScanError。"""
     try:
         result = subprocess.run(
@@ -131,7 +137,7 @@ def _run_git(repo_root: Path, args: list[str]) -> str:
             errors="replace",
             check=True,
             timeout=30,
-            env=_controlled_git_env(),
+            env=_controlled_git_env(preserve_index=preserve_index),
         )
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()
@@ -534,10 +540,18 @@ def validate_merge_sources(repo_root: Path) -> bool:
     return True
 
 
-def validate_snapshot_ids(repo_root: Path, ref: str | None = None) -> None:
-    """合并/提交边界校验当前布局编号唯一性，不加载历史解析器。"""
+def validate_snapshot_ids(
+    repo_root: Path, ref: str | None = None, *, preserve_index: bool = False
+) -> None:
+    """合并/提交边界校验当前布局编号唯一性，不加载历史解析器。
+
+    hook 校验 `git commit --only` 时传 preserve_index=True，按 Git 设置的
+    GIT_INDEX_FILE 读取实际待提交树，而非主 index。
+    """
     if ref is None:
-        files = _run_git(repo_root, ["ls-files", "-z"]).split("\0")
+        files = _run_git(
+            repo_root, ["ls-files", "-z"], preserve_index=preserve_index
+        ).split("\0")
         for prefix, directory, kind in ENTRY_KINDS:
             found: dict[int, list[str]] = {}
             for rel in files:

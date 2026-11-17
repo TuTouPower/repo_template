@@ -343,6 +343,20 @@ def compute_batch_plan(data: dict) -> dict:
         deferred_set.add(victim)
 
     winners = [tid for tid in rest if tid not in deferred_set]
+    # 贪心按最大冲突度剔除可能多剔除：与最终选中集（及 active）无冲突的候选
+    # 应补回，避免无故暂缓本可并行的任务。
+    winners_set = set(winners)
+    restored: list[str] = []
+    for tid in sorted(deferred_set, key=tid_sort_key_or_zero):
+        peers = sub["conflict_of"].get(tid, [])
+        if any(peer in winners_set or peer in active_set for peer in peers):
+            continue
+        winners.append(tid)
+        winners_set.add(tid)
+        restored.append(tid)
+    restored_set = set(restored)
+    deferred_set.difference_update(restored_set)
+    deferred_list = [item for item in deferred_list if item["taskId"] not in restored_set]
     heads = sorted(active_heads + winners, key=tid_sort_key_or_zero)
     head_set = set(heads)
     assigned: set[str] = set()

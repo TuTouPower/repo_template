@@ -855,6 +855,12 @@ function closeSheet() {
 }
 
 var sheetDocCache = {};
+var sheetDocRequestSeq = 0;
+
+function activeDocTab() {
+  var active = document.querySelector('.tab-item.active');
+  return active ? active.getAttribute('data-doc') : null;
+}
 
 function setSheetTab(tab) {
   var tabs = document.querySelectorAll('.tab-item');
@@ -919,8 +925,9 @@ function renderSheetDoc(doc) {
   var n = nodes.get(state.selectedId);
   var body = $('sheet-body');
   if (!n) return;
-  body.textContent = '';
   var cacheKey = n.id + '/' + doc;
+  var seq = ++sheetDocRequestSeq;
+  body.textContent = '';
   if (sheetDocCache[cacheKey]) {
     body.appendChild(el('pre', null, [sheetDocCache[cacheKey]]));
     return;
@@ -934,10 +941,14 @@ function renderSheetDoc(doc) {
     })
     .then(function (text) {
       sheetDocCache[cacheKey] = text;
+      // 请求身份校验：切换任务或文档标签后，旧请求不得覆盖当前详情区。
+      if (seq !== sheetDocRequestSeq) return;
+      if (state.selectedId !== n.id || activeDocTab() !== doc) return;
       body.textContent = '';
       body.appendChild(el('pre', null, [text]));
     })
     .catch(function (err) {
+      if (seq !== sheetDocRequestSeq) return;
       body.textContent = '';
       body.appendChild(el('p', { class: 'doc-error' }, ['加载失败:' + err.message]));
     });

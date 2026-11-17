@@ -68,8 +68,27 @@ def visible_markdown_lines(text: str) -> list[str]:
 
 
 def extract_verdicts(path: Path) -> list[str]:
+    """全文 verdict 序列（供回归轮次统计）；门禁判定另见 last_round_text。"""
     text = "\n".join(visible_markdown_lines(read(path)))
     return VERDICT_RE.findall(text)
+
+
+def last_round_lines(path: Path) -> list[str]:
+    """最后一个 `## Round N` 之后的可见正文行（含该标题行）；无 Round 标题则全文。
+
+    verdict / scope / AC 三类证据必须来自同一完整轮次，避免新一轮只写了
+    scope 与 AC、未写 verdict 时继承上一轮 PASS。
+    """
+    lines = visible_markdown_lines(read(path))
+    start = 0
+    for index, line in enumerate(lines):
+        if ROUND_HEADER_RE.match(line):
+            start = index
+    return lines[start:]
+
+
+def last_round_text(path: Path) -> str:
+    return "\n".join(last_round_lines(path))
 
 
 def parse_front_matter(path: Path) -> dict:
@@ -262,19 +281,17 @@ def reported_findings(task_tid: str, *paths: Path) -> set[str]:
 
 
 def reviewed_scope(path: Path) -> str | None:
-    """报告可见正文最后一条 `reviewed_scope:` 指纹（对应最后 verdict 的被审 diff）。
+    """最后一轮可见正文的最后一条 `reviewed_scope:` 指纹。
 
     只在可见行上扫描（与 verdict/文档校验一致）；fenced 示例里的 scope 不算声明。
     """
-    text = "\n".join(visible_markdown_lines(read(path)))
-    scopes = REVIEW_SCOPE_RE.findall(text)
+    scopes = REVIEW_SCOPE_RE.findall(last_round_text(path))
     return scopes[-1] if scopes else None
 
 
 def reviewed_scope_hint(path: Path) -> bool:
-    """报告可见正文提及 reviewed_scope 但宽容正则提取不到 → 写了但格式错。"""
-    text = "\n".join(visible_markdown_lines(read(path)))
-    return REVIEW_SCOPE_HINT_RE.search(text) is not None
+    """最后一轮提及 reviewed_scope 但宽容正则提取不到 → 写了但格式错。"""
+    return REVIEW_SCOPE_HINT_RE.search(last_round_text(path)) is not None
 
 
 
@@ -285,16 +302,12 @@ def parse_ac_review(path: Path) -> tuple[bool, list[tuple[str, str, str]], list[
     只扫可见行：fenced 示例与引用块不计入。小节为标题以「AC 复验方式」起头的 H2–H6，
     止于下一个同级或更高级标题；`## Round N` 同样截断小节。
     """
-    lines = visible_markdown_lines(read(path))
-    start = 0
-    for index, line in enumerate(lines):
-        if ROUND_HEADER_RE.match(line):
-            start = index
+    lines = last_round_lines(path)
     found = False
     rows: list[tuple[str, str, str]] = []
     bad: list[str] = []
     depth = 0
-    for line in lines[start:]:
+    for line in lines:
         heading = MD_HEADING_RE.match(line)
         if heading:
             level = len(heading.group(1))
@@ -378,7 +391,8 @@ def evaluate_review(
     result = {"review_level": level}
     verdicts = []
     for name, report in zip(names, reports):
-        values = extract_verdicts(report)
+        # 只采信最后一轮的 verdict：新一轮未写 verdict 时不得继承上一轮 PASS。
+        values = VERDICT_RE.findall(last_round_text(report))
         verdict = values[-1] if values else "MISSING"
         verdicts.append(verdict)
         result[f"{name}_verdict"] = verdict

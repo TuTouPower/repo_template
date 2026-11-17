@@ -141,6 +141,29 @@ def test_park_then_revive_round_trip(repo: Path) -> None:
     assert "- 暂搁：2026-11-08 等外部依赖" in body
 
 
+def test_concurrent_close_cannot_revert_terminal_state(repo: Path, monkeypatch) -> None:
+    """P2-2：状态判断与内容摘要须同一快照；并发 close 不得被 park 逆转终态。"""
+    pending_mod.main(["new", "demo"])
+    path = repo / "docs/pending/p001_demo.md"
+    closed = (
+        '---\npid: "p001"\nslug: "demo"\nstatus: "closed"\n'
+        'resolution: "resolved"\nreason: "并发闭环"\n---\n# p001 Demo\n'
+    )
+    real_find = pending_mod.find_entry
+
+    def racing_find(number, *, repo):
+        status, found = real_find(number, repo=repo)
+        # 另一会话在「读取状态」与「读取内容/摘要」之间完成 close。
+        found.write_text(closed, encoding="utf-8")
+        return status, found
+
+    monkeypatch.setattr(pending_mod, "find_entry", racing_find)
+    with pytest.raises(SystemExit):
+        pending_mod.main(["park", "p001", "--reason", "竞态", "--write"])
+    fm, _ = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
+    assert fm["status"] == "closed"
+
+
 def test_close_direct_from_todo(repo: Path) -> None:
     pending_mod.main(["new", "demo"])
     path = repo / "docs/pending/p001_demo.md"

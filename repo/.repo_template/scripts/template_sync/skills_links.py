@@ -172,7 +172,14 @@ def opencode_commands_status(sync: ctx.SyncContext) -> list[dict]:
     for name in names:
         dest = sync.commands_opencode / f"{name}.md"
         expected = _expected_opencode_command_content(name, sync)
-        if not dest.exists():
+        if dest.is_symlink():
+            items.append({
+                "name": name,
+                "rel": sync.rel(dest),
+                "state": "unmanaged",
+                "desc": "命令薄层为软链，跳过",
+            })
+        elif not dest.exists():
             items.append({
                 "name": name,
                 "rel": sync.rel(dest),
@@ -247,6 +254,10 @@ def sync_opencode_commands(changed: set[Path], sync: ctx.SyncContext) -> list[st
     for name in names:
         content = _expected_opencode_command_content(name, sync)
         dest = sync.commands_opencode / f"{name}.md"
+        if dest.is_symlink():
+            # write_text 会跟随软链覆盖事务外目标；事务只备份链接，回滚无法恢复。
+            reports.append(f"{sync.rel(dest)} 为软链，跳过（避免覆盖事务外目标）")
+            continue
         if dest.exists() and not dest.is_file():
             continue
         if dest.is_file():

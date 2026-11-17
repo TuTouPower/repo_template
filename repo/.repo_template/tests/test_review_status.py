@@ -860,6 +860,21 @@ def test_ac_gate_last_round_must_relist_all_acs(tmp_path, monkeypatch, capsys):
     assert out["next_action"] == "complete_ac_review"
 
 
+def test_verdict_cannot_be_inherited_from_previous_round(tmp_path, monkeypatch, capsys):
+    """P1-3：最后一轮未写 verdict 时，不得继承上一轮 PASS 放行。"""
+    first = _report([ROW_1, ROW_2], verdict="PASS")
+    second = (
+        "## Round 2 (2026-11-03T10:00:00+08:00)\n"
+        f"reviewed_scope: {SCOPE}\n\n"
+        "### AC 复验方式\n\n" + "\n".join([ROW_1, ROW_2]) + "\n\n"
+        "coverage = 1 / 2\n"
+    )
+    task_dir = _ac_task(tmp_path, monkeypatch, first + "\n" + second)
+    out = _check(task_dir, monkeypatch, capsys)
+    assert out["overall"] != "PASS"
+    assert out["general_verdict"] == "MISSING"
+
+
 def test_ac_gate_last_round_void_overrides_earlier_valid(tmp_path, monkeypatch, capsys):
     void = "- AC-002：TICK-VOID，re_verified。回归后测试假绿。"
     first = _report([ROW_1, ROW_2])

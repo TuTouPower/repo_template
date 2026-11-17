@@ -48,6 +48,22 @@ def plan_of(nodes, edges):
     }
 
 
+def test_greedy_deferral_keeps_conflict_free_candidates():
+    """P3-1：冲突 1-2、1-3、2-4、3-5 时 1/4/5 可并行，不得只推荐 4/5。"""
+    nodes = [node(f"t{i:03d}", "runnable") for i in range(1, 6)]
+    edges = [
+        conflict("t001", "t002"),
+        conflict("t001", "t003"),
+        conflict("t002", "t004"),
+        conflict("t003", "t005"),
+    ]
+    result = plan_of(nodes, edges)
+    heads = [chain[0] for chain in result["chains"]]
+    assert "t001" in heads, result
+    assert sorted(heads) == ["t001", "t004", "t005"]
+    assert result["deferred"] == ["t002", "t003"]
+
+
 def test_blocked_conflict_not_chain_head():
     assert plan_of(
         [

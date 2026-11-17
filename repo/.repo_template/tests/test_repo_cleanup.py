@@ -246,6 +246,27 @@ def test_private_local_dir_is_never_collected_or_deleted(tmp_path):
     assert (repo / "local/backup/run.log").is_file()
 
 
+def test_scratch_symlink_into_local_never_deletes_private_files(tmp_path):
+    """P1-1：.scratch 软链指向仓内 local/ 时，不得借 .scratch 路径删除私有文件。"""
+    repo = tmp_path / "repo"
+    (repo / "local").mkdir(parents=True)
+    private = repo / "local" / "private.txt"
+    private.write_text("private\n", encoding="utf-8")
+    (repo / ".scratch").symlink_to("local", target_is_directory=True)
+
+    hits, _ = rc.collect(repo, ["scratch"], [])
+    assert not any(h["path"].startswith(".scratch/") for h in hits)
+
+    # 纵深防线：即便伪造 hits，apply 也不得经软链删除 local/ 内容。
+    deleted = rc.apply_delete(
+        repo,
+        [{"path": ".scratch/private.txt", "category": "scratch", "kind": "file"}],
+        [],
+    )
+    assert private.is_file()
+    assert ".scratch/private.txt" not in deleted
+
+
 def test_cli_scan_is_read_only(tree):
     before = {str(p) for p in tree.rglob("*")}
     r = subprocess.run(

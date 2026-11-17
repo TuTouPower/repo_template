@@ -862,6 +862,30 @@ def test_ledger_read_filtered_by_tid_and_fast_allocate(tmp_path):
     assert len(t001_events2) == 2
 
 
+def test_corrupt_tail_line_blocks_filtered_read_and_append(tmp_path):
+    """P2-3：不含 tid 的损坏尾行不得被预筛跳过；写入口须先验证账本完整性。"""
+    from repo_task import context as ctx
+    from repo_task.ledger import ledger_allocate_attempt, ledger_append, ledger_read
+
+    runtime = state_dir(tmp_path)
+    runtime.mkdir(parents=True, exist_ok=True)
+    ledger_path = runtime / "ledger.jsonl"
+    good = json.dumps({"tid": "t001", "attempt": 1, "event": "start"})
+    corrupt = '{"event": "attempt_reserved", "ti'
+    original = good + "\n" + corrupt
+    ledger_path.write_text(original, encoding="utf-8")
+    repo = ctx.RepoContext.for_root(tmp_path)
+
+    with pytest.raises(ctx.TaskDataError):
+        ledger_read(tid="t001", repo=repo)
+    with pytest.raises(ctx.TaskDataError):
+        ledger_append({"tid": "t001", "event": "probe"}, repo=repo)
+    with pytest.raises(ctx.TaskDataError):
+        ledger_allocate_attempt("t001", lambda att, ev: {"event": "start"}, repo=repo)
+
+    assert ledger_path.read_text(encoding="utf-8") == original
+
+
 def test_ledger_unreadable_fails_closed_instead_of_reusing_attempt(tmp_path, monkeypatch):
     """账本存在但不可读时必须拒绝，不能按空账本重新分配 attempt（Issue #70）。"""
     from repo_task import context as ctx

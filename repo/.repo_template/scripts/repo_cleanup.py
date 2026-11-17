@@ -313,8 +313,9 @@ def scan_repository(repo: Path, categories: list[str], keeps: list[str]) -> Scan
         base = repo / rel_dir
         if not base.is_dir():
             continue
-        # 清理根本身若为指向仓库外的软链，防越界不递归（Issue #16, #55）
-        if base.is_symlink() and not base.resolve().is_relative_to(repo.resolve()):
+        # 清理根本身为软链时不递归：无论目标在仓内还是仓外，扫描命中的
+        # `.scratch/...` 路径都会经软链解析到真实目录，绕过 local/ 保护。
+        if base.is_symlink():
             continue
         for root, dirs, files in os.walk(base, followlinks=False):
             dirs[:] = [d for d in dirs if d != ".git"]
@@ -429,6 +430,14 @@ def apply_delete(repo: Path, hits: list[dict], keeps: list[str] | None = None) -
         if not target.exists() and not target.is_symlink():
             continue
         if _is_protected(h["path"]):
+            continue
+        # 路径中任一软链把真实目标解析到受保护根（如 local/）时，字符串形态的
+        # `.scratch/...` 保护会失效；按 resolve 后的真实位置再查一次。
+        try:
+            resolved_rel = target.resolve().relative_to(repo.resolve()).as_posix()
+        except ValueError:
+            resolved_rel = None
+        if resolved_rel is not None and _is_protected(resolved_rel):
             continue
         # 二次防线：apply 独立重查 keep（文件级与目录级），防止调用方
         # 传入未经 collect 过滤的 hits（或 scan/apply 之间 keep 变化）。
