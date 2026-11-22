@@ -555,22 +555,34 @@ def _render_real_templates(tmp_path, monkeypatch, level="full"):
     return render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES), str(tmp_path.resolve())
 
 
+def _assert_prompt_cwd_independent_and_anchored(content, root):
+    """完整提示词的取证命令必须全部 -C 锚定到目标，无 cwd 依赖。"""
+    # 不得含 cwd 探针：独立 reviewer 子 agent 的 cwd 继承主仓，无法等于 worktree
+    assert "落点仓库校验失败" not in content
+    assert "git rev-parse --show-toplevel" not in content
+    assert "cwd 落错仓库" not in content
+    # 明确 cwd 与 repo_root 不同是允许的，靠显式锚定而非 cwd 校验
+    assert "cwd 可能与" in content and "这不是错误" in content
+    # 审阅与状态取证一律 -C '{repo_root}' 锚定；不得出现裸命令
+    assert f"git -C '{root}' diff abc1234" in content
+    assert f"git -C '{root}' status --short" in content
+    assert "git status --short" not in content
+    # 报告写入用绝对落点
+    assert f"`{root}/t001_foo/review_" in content
+    # 不得依赖 cd（bash cd 不改变后续工具工作根）
+    assert "随后 `cd" not in content
+    # 旧假防线不得复活
+    assert "所属仓库一致" not in content
+
+
 @pytest.mark.stub_anchor
-def test_real_templates_cwd_probe_and_anchored_git(tmp_path, monkeypatch):
-    """首步须用不带 -C 的 rev-parse 探测会话 cwd（去空白精确比对）；后续 git 一律 -C 带引号锚定，不依赖 cd。"""
-    out, root = _render_real_templates(tmp_path, monkeypatch)
+@pytest.mark.parametrize("level", ["full", "single"])
+def test_real_templates_cwd_independent_and_anchored_git(tmp_path, monkeypatch, level):
+    """full/single 共用同一套断言：无 cwd 探针，状态与 diff 命令均 -C 锚定，落点绝对。"""
+    out, root = _render_real_templates(tmp_path, monkeypatch, level=level)
+    assert len(out) == (2 if level == "full" else 1)
     for content in out.values():
-        # 首步：无 -C 探测 cwd（-C 指定路径后恒真，探测不到 cwd 错位）
-        assert "不带" in content and "`git rev-parse --show-toplevel`" in content
-        assert f"git -C {root} rev-parse" not in content
-        # 去首尾空白后精确比对（rev-parse stdout 带末尾换行，字面相等恒假）
-        assert f"去掉首尾空白后必须精确等于 `{root}`" in content
-        # 审阅用 git 全部 -C '{repo_root}' 锚定（diff_anchor 为 stub 值 abc1234）
-        assert f"git -C '{root}' diff abc1234" in content
-        # 不得依赖 cd（bash cd 不改变后续工具工作根）
-        assert "随后 `cd" not in content
-        # 旧假防线不得复活
-        assert "所属仓库一致" not in content
+        _assert_prompt_cwd_independent_and_anchored(content, root)
 
 
 @pytest.mark.stub_anchor
@@ -579,15 +591,6 @@ def test_real_templates_output_line_absolute_and_rel(tmp_path, monkeypatch):
     out, root = _render_real_templates(tmp_path, monkeypatch)
     assert f"输出到 `{root}/t001_foo/review_code.md`（仓库内相对路径 `t001_foo`）" in out["code_review_prompt.md"]
     assert f"输出到 `{root}/t001_foo/review_test.md`（仓库内相对路径 `t001_foo`）" in out["test_review_prompt.md"]
-
-
-@pytest.mark.stub_anchor
-def test_real_templates_single_general_anchored(tmp_path, monkeypatch):
-    out, root = _render_real_templates(tmp_path, monkeypatch, level="single")
-    content = out["general_review_prompt.md"]
-    assert f"输出到 `{root}/t001_foo/review_general.md`（仓库内相对路径 `t001_foo`）" in content
-    assert "不带" in content and "`git rev-parse --show-toplevel`" in content
-    assert f"git -C '{root}' diff abc1234" in content
 
 
 @pytest.mark.stub_anchor

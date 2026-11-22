@@ -61,6 +61,16 @@ def test_render_cli_resolves_active_task_from_main_cwd(render_repo):
     assert (out_dir / "test_review_prompt.md").is_file()
     assert not (render_repo / ".scratch/review_prompts/code_review_prompt.md").exists()
 
+    # 完整提示词的取证命令锚定到目标 worktree，报告落点为其绝对路径
+    target = worktree.resolve()
+    for name in ("code_review_prompt.md", "test_review_prompt.md"):
+        prompt = (out_dir / name).read_text(encoding="utf-8")
+        assert f"git -C '{target}' status --short" in prompt
+        assert f"git -C '{target}' diff " in prompt
+        assert f"`{target}/docs/tasks/t001_alpha/review_" in prompt
+        assert "git status --short" not in prompt
+        assert "落点仓库校验失败" not in prompt
+
 
 def test_render_cli_rejects_stale_backlog_copy(render_repo):
     """backlog 主仓副本不是执行期权威：明确拒绝且提示滞后快照。"""
