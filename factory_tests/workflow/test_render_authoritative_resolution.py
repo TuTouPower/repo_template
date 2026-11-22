@@ -141,7 +141,7 @@ def test_task_worktree_detached_is_not_recognized(render_repo):
 
     result = _render_cli(render_repo, "t001")
     assert result.returncode != 0
-    assert "无登记 worktree" in result.stderr
+    assert "Git 登记该路径分支" in result.stderr
 
 
 def test_main_copy_corruption_does_not_block_worktree_render(render_repo):
@@ -168,23 +168,38 @@ def test_main_branch_without_task_does_not_block_render(render_repo):
 
 def test_invalid_utf8_template_fails_closed(render_repo):
     """锁定模板含非法 UTF-8：严格解码失败并报出 commit 与模板路径。"""
-    from repo_task.documents import parse_front_matter, write_front_matter
-
-    _start(render_repo, "t001")
-    worktree = _worktree_path(render_repo, "t001")
-
     (render_repo / TEMPLATE_REL).write_bytes(b"\xff\xfe invalid utf8\n")
     _git(render_repo, "add", TEMPLATE_REL)
     _git(render_repo, "commit", "-m", "corrupt review template")
     corrupt_sha = _git(render_repo, "rev-parse", "HEAD").stdout.strip()
 
-    progress = worktree / "docs/tasks/t001_alpha/progress.md"
-    fm, body = parse_front_matter(progress)
-    fm["spec_source_sha"] = corrupt_sha
-    write_front_matter(progress, fm, body)
-
+    _start(render_repo, "t001")
     result = _render_cli(render_repo, "t001")
     assert result.returncode != 0
     assert "UTF-8 解码失败" in result.stderr
     assert TEMPLATE_REL in result.stderr
     assert corrupt_sha[:12] in result.stderr
+
+
+def test_main_worktree_on_task_branch_is_rejected(render_repo):
+    """run-close 后在 main 检出任务分支：主工作区不得被当作任务 worktree。"""
+    _start(render_repo, "t001")
+    worktree = _worktree_path(render_repo, "t001")
+    _git(render_repo, "worktree", "remove", "--force", str(worktree))
+    _git(render_repo, "checkout", "t001_alpha")
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode != 0
+    assert "该分支路径" in result.stderr
+
+
+def test_registered_worktree_missing_progress_reports_path(render_repo):
+    """登记 worktree 缺 progress.md：报出登记路径与缺失文件，不误报无登记。"""
+    _start(render_repo, "t001")
+    worktree = _worktree_path(render_repo, "t001")
+    (worktree / "docs/tasks/t001_alpha/progress.md").unlink()
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode != 0
+    assert "缺 docs/tasks/t001_alpha/progress.md" in result.stderr
+    assert str(worktree) in result.stderr

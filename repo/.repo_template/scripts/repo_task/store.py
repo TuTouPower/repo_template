@@ -23,6 +23,7 @@ from .git_ops import (
     require_primary_worktree,
     worktree_paths,
 )
+from .ledger import ledger_read
 
 
 @dataclass(frozen=True)
@@ -531,50 +532,15 @@ def _read_task_front_matter(path: Path) -> dict:
     return fm
 
 
-def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
-    """单 task 定位：身份来自 Git 登记的精确任务分支，内容来自该 worktree。
+def _latest_start_event(tid: str, *, repo: ctx.RepoContext) -> dict | None:
+    for event in reversed(ledger_read(tid=tid, repo=repo)):
+        if event.get("event") == "start" and event.get("tid") == tid:
+            return event
+    return None
 
-    解析顺序固定：登记 worktree → 权威 progress.md → 返回；仅无登记 worktree
-    时回退主仓副本（滞后快照，状态准入由用途层决定）。主仓当前 checkout 的
-    分支与内容不参与有 worktree task 的解析。刻意不走 discover_effective_bundle
-    / scan_tasks：那是面向调度的全仓视图，无关 task 损坏会污染单 task 读取。
-    """
-    if not ctx.TID_RE.fullmatch(tid):
-        raise ctx.TaskDataError(f"tid 非法：{tid!r}")
-    primary = ctx.RepoContext.for_root(repo.primary_root)
 
-    matches: list[tuple[Path, str, dict]] = []
-    for path_text, branch in worktree_paths(repo=primary).items():
-        if not branch:
-            continue
-        matched = ctx.TASK_BRANCH_RE.fullmatch(branch)
-        if matched is None or matched.group(1) != tid:
-            continue
-        task_rel = f"docs/tasks/{branch}"
-        candidate = Path(path_text) / task_rel / ctx.PROGRESS_FILE
-        if not candidate.is_file():
-            continue
-        fm = _read_task_front_matter(candidate)
-        if fm.get("tid") != tid:
-            raise ctx.TaskDataError(
-                f"登记分支 {branch!r} 的 {ctx.PROGRESS_FILE} tid={fm.get('tid')!r}，"
-                f"与 {tid} 不一致"
-            )
-        matches.append((Path(path_text), task_rel, fm))
-    if len(matches) > 1:
-        paths = ", ".join(str(p) for p, _, _ in matches)
-        raise ctx.TaskDataError(f"{tid} 有多个登记 worktree：{paths}")
-    if matches:
-        worktree_root, task_rel, fm = matches[0]
-        return TaskLocation(
-            tid=tid,
-            status=str(fm.get("status", "")),
-            spec_source_sha=str(fm.get("spec_source_sha", "") or ""),
-            repo=ctx.RepoContext.for_root(worktree_root),
-            task_dir=(worktree_root / task_rel).resolve(),
-            worktree_root=worktree_root,
-        )
-
+def _main_copy_location(tid: str, *, primary: ctx.RepoContext) -> TaskLocation:
+    """无 start 登记时回退主仓副本：那是滞后快照，状态准入由用途层决定。"""
     directories = sorted(
         d for d in primary.tasks_dir.glob(f"{tid}_*")
         if d.is_dir() and (d / ctx.PROGRESS_FILE).is_file()
@@ -597,6 +563,67 @@ def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
         repo=primary,
         task_dir=main_dir.resolve(),
         worktree_root=None,
+    )
+
+
+def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
+    """单 task 定位：身份来自 start 时的 ledger 登记，用 Git 验证现场仍成立。
+
+    ledger 的 start 事件是 start 创建 worktree 时原子写入的权威登记，含
+    branch / worktree / spec_source_sha。不再用分支前缀、路径约定或内容相似度
+    重新发现身份；登记与现场任一不符即硬失败并输出差异，交 recovery 处理。
+    """
+    if not ctx.TID_RE.fullmatch(tid):
+        raise ctx.TaskDataError(f"tid 非法：{tid!r}")
+    primary = ctx.RepoContext.for_root(repo.primary_root)
+    start = _latest_start_event(tid, repo=primary)
+    if start is None:
+        return _main_copy_location(tid, primary=primary)
+
+    branch = str(start.get("branch") or "")
+    worktree_rel = str(start.get("worktree") or "")
+    locked_sha = str(start.get("spec_source_sha") or "")
+    if not branch or not worktree_rel or not locked_sha:
+        raise ctx.TaskDataError(f"{tid} 的 start 登记缺 branch/worktree/spec_source_sha：{start}")
+
+    expected = (primary.primary_root / worktree_rel).resolve()
+    if expected == primary.root.resolve():
+        raise ctx.TaskDataError(
+            f"{tid} 登记的 worktree 路径与主工作区相同：{expected}；拒绝把主工作区当任务 worktree"
+        )
+
+    registered = worktree_paths(repo=primary)
+    actual_branch = registered.get(str(expected))
+    if actual_branch != branch:
+        branches_at = {p: b for p, b in registered.items() if b == branch}
+        raise ctx.TaskDataError(
+            f"{tid} 登记 branch={branch!r} worktree={expected}，"
+            f"但 Git 登记该路径分支={actual_branch!r}、该分支路径={branches_at}"
+        )
+
+    task_rel = f"docs/tasks/{branch}"
+    progress = expected / task_rel / ctx.PROGRESS_FILE
+    if not progress.is_file():
+        raise ctx.TaskDataError(f"{tid} 登记 worktree {expected} 缺 {task_rel}/{ctx.PROGRESS_FILE}")
+    fm = _read_task_front_matter(progress)
+    if fm.get("tid") != tid:
+        raise ctx.TaskDataError(
+            f"{branch!r} 的 {ctx.PROGRESS_FILE} tid={fm.get('tid')!r}，与 {tid} 不一致"
+        )
+    fm_sha = str(fm.get("spec_source_sha") or "")
+    if fm_sha != locked_sha:
+        raise ctx.TaskDataError(
+            f"{tid} spec_source_sha 与 start 登记不一致："
+            f"ledger={locked_sha[:12]} progress={fm_sha[:12]}"
+        )
+
+    return TaskLocation(
+        tid=tid,
+        status=str(fm.get("status", "")),
+        spec_source_sha=locked_sha,
+        repo=ctx.RepoContext.for_root(expected),
+        task_dir=(expected / task_rel).resolve(),
+        worktree_root=expected,
     )
 
 
