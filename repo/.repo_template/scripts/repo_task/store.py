@@ -521,16 +521,60 @@ class TaskLocation:
     worktree_root: Path | None
 
 
-def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
-    """单 task 定位：只读目标 progress.md + 定向 git worktree list。
+def _read_task_front_matter(path: Path) -> dict:
+    """严格读取目标 progress.md；损坏即 fail-closed，定位到具体路径。"""
+    try:
+        text = path.read_text(encoding="utf-8", errors="strict")
+    except (UnicodeDecodeError, OSError) as error:
+        raise ctx.TaskDataError(f"{path} 读取失败：{error}") from error
+    fm, _ = parse_front_matter_text(text, source=str(path))
+    return fm
 
-    刻意不走 discover_effective_bundle / scan_tasks：那是面向调度的全仓视图，
-    会因无关 task 损坏或主仓分支状态而失败。本函数只校验目标 task 及其登记位置，
-    不做状态准入——状态是调用方用途层的策略（render 接受 active/done）。
+
+def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
+    """单 task 定位：身份来自 Git 登记的精确任务分支，内容来自该 worktree。
+
+    解析顺序固定：登记 worktree → 权威 progress.md → 返回；仅无登记 worktree
+    时回退主仓副本（滞后快照，状态准入由用途层决定）。主仓当前 checkout 的
+    分支与内容不参与有 worktree task 的解析。刻意不走 discover_effective_bundle
+    / scan_tasks：那是面向调度的全仓视图，无关 task 损坏会污染单 task 读取。
     """
     if not ctx.TID_RE.fullmatch(tid):
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
     primary = ctx.RepoContext.for_root(repo.primary_root)
+
+    matches: list[tuple[Path, str, dict]] = []
+    for path_text, branch in worktree_paths(repo=primary).items():
+        if not branch:
+            continue
+        matched = ctx.TASK_BRANCH_RE.fullmatch(branch)
+        if matched is None or matched.group(1) != tid:
+            continue
+        task_rel = f"docs/tasks/{branch}"
+        candidate = Path(path_text) / task_rel / ctx.PROGRESS_FILE
+        if not candidate.is_file():
+            continue
+        fm = _read_task_front_matter(candidate)
+        if fm.get("tid") != tid:
+            raise ctx.TaskDataError(
+                f"登记分支 {branch!r} 的 {ctx.PROGRESS_FILE} tid={fm.get('tid')!r}，"
+                f"与 {tid} 不一致"
+            )
+        matches.append((Path(path_text), task_rel, fm))
+    if len(matches) > 1:
+        paths = ", ".join(str(p) for p, _, _ in matches)
+        raise ctx.TaskDataError(f"{tid} 有多个登记 worktree：{paths}")
+    if matches:
+        worktree_root, task_rel, fm = matches[0]
+        return TaskLocation(
+            tid=tid,
+            status=str(fm.get("status", "")),
+            spec_source_sha=str(fm.get("spec_source_sha", "") or ""),
+            repo=ctx.RepoContext.for_root(worktree_root),
+            task_dir=(worktree_root / task_rel).resolve(),
+            worktree_root=worktree_root,
+        )
+
     directories = sorted(
         d for d in primary.tasks_dir.glob(f"{tid}_*")
         if d.is_dir() and (d / ctx.PROGRESS_FILE).is_file()
@@ -540,39 +584,11 @@ def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
     if len(directories) > 1:
         names = ", ".join(d.name for d in directories)
         raise ctx.TaskDataError(f"{tid} 对应多个 task 目录：{names}")
-
     main_dir = directories[0]
-    task_rel = f"docs/tasks/{main_dir.name}"
-    main_fm, _ = parse_front_matter_text(
-        (main_dir / ctx.PROGRESS_FILE).read_text(encoding="utf-8"),
-        source=str(main_dir / ctx.PROGRESS_FILE),
-    )
-
-    matches: list[tuple[Path, dict]] = []
-    for path_text, branch in worktree_paths(repo=primary).items():
-        if branch and not branch.startswith(f"{tid}_"):
-            continue
-        candidate = Path(path_text) / task_rel / ctx.PROGRESS_FILE
-        if not candidate.is_file():
-            continue
-        fm, _ = parse_front_matter_text(
-            candidate.read_text(encoding="utf-8"), source=str(candidate)
-        )
-        if fm.get("tid") == tid:
-            matches.append((Path(path_text), fm))
-    if len(matches) > 1:
-        paths = ", ".join(str(p) for p, _ in matches)
-        raise ctx.TaskDataError(f"{tid} 有多个登记 worktree：{paths}")
-
-    if matches:
-        worktree_root, fm = matches[0]
-        return TaskLocation(
-            tid=tid,
-            status=str(fm.get("status", "")),
-            spec_source_sha=str(fm.get("spec_source_sha", "") or ""),
-            repo=ctx.RepoContext.for_root(worktree_root),
-            task_dir=(worktree_root / task_rel).resolve(),
-            worktree_root=worktree_root,
+    main_fm = _read_task_front_matter(main_dir / ctx.PROGRESS_FILE)
+    if main_fm.get("tid") != tid:
+        raise ctx.TaskDataError(
+            f"{main_dir.name} 的 {ctx.PROGRESS_FILE} tid={main_fm.get('tid')!r}，与 {tid} 不一致"
         )
     return TaskLocation(
         tid=tid,
@@ -624,9 +640,15 @@ def load_review_templates(spec_source_sha: str, *, repo: ctx.RepoContext) -> dic
     fetched = batch_cat_file([oid for _, oid in wanted], repo=repo)
     for name, oid in wanted:
         raw = fetched.get(oid)
+        rel = f"{_REVIEW_TEMPLATE_DIR}/{name}"
         if raw is None:
-            raise ctx.TaskDataError(f"{spec_source_sha[:12]}:{_REVIEW_TEMPLATE_DIR}/{name} 无法读取")
-        contents[name] = raw.decode("utf-8", errors="replace")
+            raise ctx.TaskDataError(f"{spec_source_sha[:12]}:{rel} 无法读取")
+        try:
+            contents[name] = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise ctx.TaskDataError(
+                f"{spec_source_sha[:12]}:{rel} UTF-8 解码失败：{error}"
+            ) from error
     return contents
 
 

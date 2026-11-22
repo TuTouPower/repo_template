@@ -121,3 +121,70 @@ def test_templates_pinned_to_locked_source(render_repo):
     assert from_worktree.returncode == 0, from_worktree.stderr
     assert from_main.stdout == from_worktree.stdout
     assert "LATEST RULE" not in from_main.stdout
+
+
+def test_detached_duplicate_worktree_not_ambiguous(render_repo):
+    """detached 副本含同一 progress.md，不得被误认为第二个任务 worktree。"""
+    _start(render_repo, "t001")
+    duplicate = render_repo.parent / "detached_duplicate"
+    _git(render_repo, "worktree", "add", "--detach", str(duplicate), "HEAD")
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode == 0, result.stderr
+
+
+def test_task_worktree_detached_is_not_recognized(render_repo):
+    """真 worktree 切到 detached：不再按任务 worktree 归属，渲染拒绝。"""
+    _start(render_repo, "t001")
+    worktree = _worktree_path(render_repo, "t001")
+    _git(worktree, "checkout", "--detach", "HEAD")
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode != 0
+    assert "无登记 worktree" in result.stderr
+
+
+def test_main_copy_corruption_does_not_block_worktree_render(render_repo):
+    """主仓副本损坏时，健康任务 worktree 的权威内容仍可渲染。"""
+    _start(render_repo, "t001")
+    (render_repo / "docs/tasks/t001_alpha/progress.md").write_text(
+        "损坏的主仓副本\n", encoding="utf-8"
+    )
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode == 0, result.stderr
+
+
+def test_main_branch_without_task_does_not_block_render(render_repo):
+    """主仓切到不含该 task 的分支时，登记 worktree 仍可被解析。"""
+    _start(render_repo, "t001")
+    _git(render_repo, "checkout", "-b", "old-branch-without-task")
+    _git(render_repo, "rm", "-r", "docs/tasks/t001_alpha")
+    _git(render_repo, "commit", "-m", "remove task from main branch")
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode == 0, result.stderr
+
+
+def test_invalid_utf8_template_fails_closed(render_repo):
+    """锁定模板含非法 UTF-8：严格解码失败并报出 commit 与模板路径。"""
+    from repo_task.documents import parse_front_matter, write_front_matter
+
+    _start(render_repo, "t001")
+    worktree = _worktree_path(render_repo, "t001")
+
+    (render_repo / TEMPLATE_REL).write_bytes(b"\xff\xfe invalid utf8\n")
+    _git(render_repo, "add", TEMPLATE_REL)
+    _git(render_repo, "commit", "-m", "corrupt review template")
+    corrupt_sha = _git(render_repo, "rev-parse", "HEAD").stdout.strip()
+
+    progress = worktree / "docs/tasks/t001_alpha/progress.md"
+    fm, body = parse_front_matter(progress)
+    fm["spec_source_sha"] = corrupt_sha
+    write_front_matter(progress, fm, body)
+
+    result = _render_cli(render_repo, "t001")
+    assert result.returncode != 0
+    assert "UTF-8 解码失败" in result.stderr
+    assert TEMPLATE_REL in result.stderr
+    assert corrupt_sha[:12] in result.stderr
