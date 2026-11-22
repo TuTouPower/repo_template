@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import git_env_support
 import render_review_prompts as rrp
 from git_env_support import get_controlled_git_env, git_run, init_repo
+from repo_task.context import RepoContext
 
 pytestmark = pytest.mark.contract
 
@@ -79,38 +80,41 @@ def test_init_repo_leaves_no_host_template_hooks(tmp_path):
 # --- DS L221：--out-dir 不得落在 docs/tasks/ 下 ---
 
 @pytest.fixture
-def fake_root(tmp_path, monkeypatch) -> Path:
+def fake_root(tmp_path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
-    monkeypatch.setattr(rrp, "REPO_ROOT", root)
     return root
+
+
+def _repo(root):
+    return RepoContext.for_root(root, primary_root=root)
 
 
 def test_out_dir_inside_task_tree_rejected(fake_root):
     with pytest.raises(SystemExit, match="不得落在 docs/tasks"):
-        rrp.resolve_out_dir("docs/tasks/t001_x")
+        rrp.resolve_out_dir("docs/tasks/t001_x", repo=_repo(fake_root))
 
 
 def test_out_dir_tasks_root_rejected(fake_root):
     with pytest.raises(SystemExit, match="不得落在 docs/tasks"):
-        rrp.resolve_out_dir("docs/tasks")
+        rrp.resolve_out_dir("docs/tasks", repo=_repo(fake_root))
 
 
 def test_out_dir_absolute_task_path_rejected(fake_root):
     with pytest.raises(SystemExit, match="不得落在 docs/tasks"):
-        rrp.resolve_out_dir(str(fake_root / "docs" / "tasks" / "t001_x"))
+        rrp.resolve_out_dir(str(fake_root / "docs" / "tasks" / "t001_x"), repo=_repo(fake_root))
 
 
 def test_out_dir_outside_repo_rejected(fake_root, tmp_path):
     with pytest.raises(SystemExit, match="必须在仓库内"):
-        rrp.resolve_out_dir(str(tmp_path / "elsewhere"))
+        rrp.resolve_out_dir(str(tmp_path / "elsewhere"), repo=_repo(fake_root))
 
 
 def test_out_dir_scratch_and_stdout_default_allowed(fake_root):
-    assert rrp.resolve_out_dir(".scratch/review_prompts") == (
+    assert rrp.resolve_out_dir(".scratch/review_prompts", repo=_repo(fake_root)) == (
         fake_root / ".scratch" / "review_prompts"
     ).resolve()
-    assert rrp.resolve_out_dir("docs/archive/reviews") == (
+    assert rrp.resolve_out_dir("docs/archive/reviews", repo=_repo(fake_root)) == (
         fake_root / "docs" / "archive" / "reviews"
     ).resolve()
 

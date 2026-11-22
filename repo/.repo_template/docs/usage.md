@@ -111,7 +111,7 @@ Git 原生 integrate 的内容校验依赖 `git merge-tree --write-tree --name-o
 
 ## workflow 示例
 
-`/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。单个 task 的 `/task-run` 主路径只传 `tid` 与 `owner_id`：主仓 `run-begin` → worktree 内 `preflight` / `render_review_prompts.py` / `task.py review-status` / `finish` → 主仓 `run-close --result done`；merge 经授权后 `integrate {tid}` 与 `integrate {tid} --continue`。阻塞或失败用 `run-close --result blocked|failed`；`recovery` 与原语子命令只在恢复时使用。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
+`/task-create` → `/task-schedule` → `task.py plan`（本波链）/ `view --serve` → 一个或多个会话 `/task-run`（多会话手动并发各跑一段；状态变后重跑 `plan` 得下一批）。单个 task 的 `/task-run` 主路径只传 `tid` 与 `owner_id`：主仓 `run-begin` → `render_review_prompts.py --tid {tid}`（位置由状态机裁决，主仓或 worktree 均可调用，只读 active task 的登记 worktree）/ worktree 内 `preflight` / `task.py review-status` / `finish` → 主仓 `run-close --result done`；merge 经授权后 `integrate {tid}` 与 `integrate {tid} --continue`。阻塞或失败用 `run-close --result blocked|failed`；`recovery` 与原语子命令只在恢复时使用。goal 模式自治跑队列：先 `task.py goal` 冻结队列并粘贴其输出的 `/goal` 行，终态以 `task.py goal-check` marker 判定。
 
 `/task-integrate` 是公开入口：无参运行 `task.py integrate` 只列待合单体/链尾候选并等待授权；显式 tid 用 `integrate {tid}`，多成员链用 `integrate-chain {tail_tid}`，只授权该范围。`/task-combine` 合并范围重叠或拆得过细的 backlog task；未点名时只提出候选等待确认，不自行决定合并范围。两者都不自动执行 Git merge、不 push；`task-combine` 的 backlog 图改写只在用户确认来源范围后执行。
 

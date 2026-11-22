@@ -156,14 +156,14 @@ def test_issue_90_main_progression_does_not_drift_active_task_review_baseline(gi
     # 3. 正在执行的 worktree 内渲染 review prompt：
     # 契约基线依然针对 locked_source_sha，若 worktree 未篡改契约，则无 drift 警告
     import render_review_prompts as rrp
-    monkeypatch.setattr(rrp, "REPO_ROOT", wt)
-    prompts = rrp.render_review_prompts(wt / "docs/tasks/t001_alpha")
+    wt_repo = ctx.RepoContext.for_root(wt)
+    prompts = rrp.render_review_prompts(wt / "docs/tasks/t001_alpha", repo=wt_repo)
     assert "契约区 drift 警告" not in prompts["code_review_prompt.md"]
 
     # 4. 若 worktree 内真的篡改了契约，drift 警告以 locked_source_sha 为基线检出
     wt_spec = wt / "docs/tasks/t001_alpha/task.md"
     wt_spec.write_text(wt_spec.read_text(encoding="utf-8").replace("AC-001：", "AC-001：被篡改契约 "), encoding="utf-8")
-    prompts_drifted = rrp.render_review_prompts(wt / "docs/tasks/t001_alpha")
+    prompts_drifted = rrp.render_review_prompts(wt / "docs/tasks/t001_alpha", repo=wt_repo)
     assert "契约区 drift 警告" in prompts_drifted["code_review_prompt.md"]
     assert "被篡改契约" in prompts_drifted["code_review_prompt.md"]
     # 来源显示的是真实的锁定 SHA

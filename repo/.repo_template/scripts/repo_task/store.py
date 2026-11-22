@@ -505,6 +505,61 @@ def discover_effective_sources(
     return discover_effective_bundle(allow_corrupt=allow_corrupt, repo=repo)[1]
 
 
+@dataclass(frozen=True)
+class AuthoritativeTask:
+    """状态机裁决出的 task 权威执行位置，供只读消费方直接定位文档与 git 操作。"""
+
+    tid: str
+    status: str
+    source: str
+    repo: ctx.RepoContext
+    task_dir: Path
+
+
+def resolve_authoritative_task(tid: str, *, repo: ctx.RepoContext) -> AuthoritativeTask:
+    """解析 tid 的权威执行位置：只认 active + 登记 worktree。
+
+    状态机是 task 位置的唯一裁决者（worktree → 未合并分支 → main）。主仓副本
+    按设计停在 backlog，是滞后快照而非执行期权威；只读消费方若按 cwd 或脚本
+    物理路径定位，会读到空的 spec_source_sha / diff_anchor 并报出无关错误。
+
+    本函数是这类消费方的唯一入口。入参 repo 可以是主仓或任一 task worktree
+    的 context：先归一化到主仓做状态发现，再按裁决结果返回 rooted 到权威
+    worktree 的 context 与绝对路径。非 active 或未登记 worktree 明确拒绝。
+    """
+    if not ctx.TID_RE.fullmatch(tid):
+        raise ctx.TaskDataError(f"tid 非法：{tid!r}")
+    primary = ctx.RepoContext.for_root(repo.primary_root)
+    tasks, sources = discover_effective_bundle(repo=primary)
+    task = tasks.get(tid)
+    entry = sources.get(tid)
+    if task is None or entry is None:
+        raise ctx.TaskNotFoundError(f"{tid} 不存在于有效 task 集合")
+    status = entry["status"]
+    source = entry["source"]
+    read_at = entry["read_at"]
+    if status != "active":
+        raise ctx.TaskDataError(
+            f"{tid} 权威状态为 {status!r}（source={source}）；"
+            "render 只服务 active task；主仓 backlog 副本是滞后快照，不是执行期权威"
+        )
+    if source != "worktree" or not read_at:
+        raise ctx.TaskDataError(
+            f"{tid} 权威状态 active 但来源为 {source!r}（read_at={read_at!r}），"
+            "无登记 worktree 可供渲染；请先 start 或在对应 worktree 内操作"
+        )
+    task_root = Path(read_at).resolve()
+    if not task_root.is_dir():
+        raise ctx.TaskDataError(f"{tid} 登记 worktree {task_root} 不存在")
+    task_repo = ctx.RepoContext.for_root(task_root)
+    task_dir = (task_repo.root / task["dir"]).resolve()
+    if not (task_dir / ctx.PROGRESS_FILE).is_file():
+        raise ctx.TaskDataError(f"{task_dir / ctx.PROGRESS_FILE} 不存在")
+    return AuthoritativeTask(
+        tid=tid, status=status, source=source, repo=task_repo, task_dir=task_dir,
+    )
+
+
 def _discover_effective_entries(
     *, repo: ctx.RepoContext, cache: CommitSnapshotCache,
 ) -> list[tuple[str, dict, str, str | None]]:

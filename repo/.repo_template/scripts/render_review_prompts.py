@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""render_review_prompts.py - 从 progress.md front matter 渲染 full/single reviewer 完整 prompt。
+"""render_review_prompts.py - 从 active task 的权威 progress.md 渲染 full/single reviewer prompt。
 
 提示词正文存于 .repo_template/docs/review_prompts/ 下四个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt / general_prompt.txt）。
 review_level=full 使用 code + test；review_level=single 使用 general。
 
 reviewer 不再自行去读 task：契约区与上下文区正文直接注入 prompt，消除信息不对称。
-契约区自 diff_anchor 后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
+契约区自 spec 锁定来源后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
 
-用法：
-  python3 .repo_template/scripts/render_review_prompts.py --task-dir docs/tasks/t001_my_slug
-  python3 .repo_template/scripts/render_review_prompts.py --progress docs/tasks/t001_my_slug/progress.md
-  python3 .repo_template/scripts/render_review_prompts.py --task-dir ... --out-dir .scratch/review_prompts
+用法（唯一入口以 --tid 定位，位置由状态机裁决，与 cwd / 脚本调用路径无关）：
+  python3 .repo_template/scripts/render_review_prompts.py --tid t001
+  python3 .repo_template/scripts/render_review_prompts.py --tid t001 --out-dir .scratch/review_prompts
+  python3 .repo_template/scripts/render_review_prompts.py --tid t001 --root /path/to/repo
 
- 必填 front matter：tid, slug, diff_anchor
- 可选：spec_path（默认 <task_dir>/task.md）、review_level
- 默认 stdout；--out-dir 时 full 写入 code_review_prompt.md 与 test_review_prompt.md，single 写入 general_review_prompt.md
- --out-dir 必须在仓库内且不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root
-  绝对路径，落进 task 目录会被一并提交；请用 .scratch/review_prompts）
+仅 active + 登记 worktree 可渲染；主仓 backlog 副本是滞后快照，明确拒绝。
+--out-dir 必须在仓库内且不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root
+绝对路径，落进 task 目录会被一并提交；请用 .scratch/review_prompts）
 """
 
 from _runtime import require_python, run
@@ -35,16 +33,15 @@ from repo_task.documents import (
     atomic_write_text,
     parse_front_matter as _parse_front_matter,
 )
+from repo_task.git_ops import _git
 from repo_task.monitoring import (
     REVIEW_PROMPT_OUTPUT_FILES,
     review_scope_fingerprint as monitoring_scope_fingerprint,
 )
-from repo_task.store import resolve_baseline_spec_text
+from repo_task.store import resolve_authoritative_task, resolve_baseline_spec_text
 from repo_task.specs import load_spec
 
-TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
-REPO_ROOT = TOOLKIT_ROOT.parent
-TEMPLATES_DIR = TOOLKIT_ROOT / "docs/review_prompts"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "docs/review_prompts"
 PLACEHOLDER_RE = re.compile(
     r"\{(tid|slug|spec_path|task_dir_rel|task_dir|repo_root|diff_anchor|review_level|contract_section|context_section|review_scope_fingerprint)\}"
 )
@@ -88,9 +85,9 @@ def extract_section(spec_text: str, heading: str) -> str:
     return "\n".join(section).strip()
 
 
-def resolve_repo_path(path: Path, *, label: str, require_file: bool = False) -> tuple[Path, str]:
-    """解析仓库内路径，返回绝对路径与 POSIX 仓库相对路径。"""
-    root = REPO_ROOT.resolve()
+def resolve_repo_path(path: Path, *, repo: RepoContext, label: str, require_file: bool = False) -> tuple[Path, str]:
+    """解析仓库内路径，返回绝对路径与 POSIX 仓库相对路径；根由注入的 repo 决定。"""
+    root = repo.root.resolve()
     candidate = path if path.is_absolute() else root / path
     candidate = candidate.resolve()
     try:
@@ -102,7 +99,7 @@ def resolve_repo_path(path: Path, *, label: str, require_file: bool = False) -> 
     return candidate, relative.as_posix()
 
 
-def resolve_out_dir(raw: str) -> Path:
+def resolve_out_dir(raw: str, *, repo: RepoContext) -> Path:
     """解析 --out-dir 并统一校验输出落点，返回绝对路径。
 
     prompt 内含 task_dir/repo_root 本机绝对路径：落进 docs/tasks/ 会被一并提交，
@@ -110,8 +107,8 @@ def resolve_out_dir(raw: str) -> Path:
     """
     out_dir = Path(raw)
     if not out_dir.is_absolute():
-        out_dir = REPO_ROOT / out_dir
-    root = REPO_ROOT.resolve()
+        out_dir = repo.root / out_dir
+    root = repo.root.resolve()
     resolved = out_dir.resolve()
     try:
         rel = resolved.relative_to(root)
@@ -128,35 +125,29 @@ def resolve_out_dir(raw: str) -> Path:
     return resolved
 
 
-def validate_diff_anchor(diff_anchor: str) -> str:
-    """校验 revision 并返回完整 commit SHA。"""
+def validate_diff_anchor(diff_anchor: str, *, repo: RepoContext) -> str:
+    """校验 revision 并返回完整 commit SHA（git 调用绑定注入的权威 repo）。"""
     try:
-        result = subprocess.run(
-            [
-                "git", "-C", str(REPO_ROOT), "rev-parse", "--verify",
-                "--end-of-options", f"{diff_anchor}^{{commit}}",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8", errors="replace",
-            timeout=15,
+        result = _git(
+            ["rev-parse", "--verify", "--end-of-options", f"{diff_anchor}^{{commit}}"],
+            repo=repo, timeout=15,
         )
-    except (OSError, subprocess.SubprocessError) as e:
-        sys.exit(f"diff_anchor validation failed: {e}")
+    except TaskDataError as error:
+        sys.exit(f"diff_anchor validation failed: {error}")
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown revision"
         sys.exit(f"invalid diff_anchor {diff_anchor!r}: {detail}")
     return result.stdout.strip()
 
 
-def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str) -> str:
+def review_scope_fingerprint(diff_anchor: str, rel_task_dir: str, *, repo: RepoContext) -> str:
     """被审 diff 指纹：委托 monitoring.review_scope_fingerprint（单一真相源）。
 
     reviewer 把本值写回报告 `reviewed_scope:`；checker 重算当前指纹比对。
     review 后改动代码/测试/spec 会改变指纹，PASS 随即失效（防「PASS 后继续改」）。
     空指纹（git 失败/anchor 无效）显式失败，绝不注入空的 reviewed_scope。
     """
-    fingerprint = monitoring_scope_fingerprint(diff_anchor, rel_task_dir, repo_root=REPO_ROOT)
+    fingerprint = monitoring_scope_fingerprint(diff_anchor, rel_task_dir, repo_root=repo.root)
     if not fingerprint:
         sys.exit(
             f"review scope 指纹无法计算（{diff_anchor}:{rel_task_dir}）："
@@ -180,7 +171,7 @@ def validate_output_format_template(template: str, *, source: Path) -> None:
             )
 
 
-def linked_spec_summary(task_dir: Path) -> str:
+def linked_spec_summary(task_dir: Path, *, repo: RepoContext) -> str:
     task_md = task_dir / "task.md"
     if not task_md.is_file():
         return ""
@@ -194,9 +185,9 @@ def linked_spec_summary(task_dir: Path) -> str:
             break
     if not linked or linked == "无":
         return ""
-    path = REPO_ROOT / linked
+    path = repo.root / linked
     try:
-        spec = load_spec(path, root=REPO_ROOT)
+        spec = load_spec(path, root=repo.root)
     except TaskDataError as error:
         sys.exit(f"关联 spec 无法读取：{error}")
     tasks = ", ".join(spec["tasks"])
@@ -216,7 +207,7 @@ def _normalize_checkboxes(text: str) -> str:
 
 def contract_drift_notice(
     spec_rel: str, diff_anchor: str, current_contract: str, *, tid: str = "",
-    spec_source_sha: str = "",
+    spec_source_sha: str = "", repo: RepoContext,
 ) -> str:
     """契约区相对基线有变更时返回追加给 reviewer 的警告块（A04/C90）。
 
@@ -229,7 +220,7 @@ def contract_drift_notice(
         sys.exit(f"契约区 drift 基线读取失败（{spec_rel}）：缺 spec_source_sha")
     try:
         anchored_text, source_sha = resolve_baseline_spec_text(
-            tid, spec_rel, spec_source_sha, repo=RepoContext.for_root(REPO_ROOT),
+            tid, spec_rel, spec_source_sha, repo=repo,
         )
     except (OSError, subprocess.SubprocessError, TaskDataError) as e:
         sys.exit(f"契约区 drift 基线读取失败（{spec_source_sha[:12]}:{spec_rel}）：{e}")
@@ -260,12 +251,12 @@ def contract_drift_notice(
 
 
 def render_review_prompts(
-    task_dir: Path,
+    task_dir: Path, *, repo: RepoContext,
     task_path: Path | None = None,
 ) -> dict[str, str]:
-    task_dir, rel_task_dir = resolve_repo_path(task_dir, label="task directory")
+    task_dir, rel_task_dir = resolve_repo_path(task_dir, repo=repo, label="task directory")
     task_path = task_path or task_dir / PROGRESS_FILE
-    task_path, _ = resolve_repo_path(task_path, label="task file", require_file=True)
+    task_path, _ = resolve_repo_path(task_path, repo=repo, label="task file", require_file=True)
 
     template_paths = {
         "code": TEMPLATES_DIR / "code_prompt.txt",
@@ -292,7 +283,7 @@ def render_review_prompts(
             f"review_level must be one of {sorted(VALID_REVIEW_LEVELS)} "
             f"(got {level!r})"
         )
-    diff_anchor = validate_diff_anchor(fm["diff_anchor"])
+    diff_anchor = validate_diff_anchor(fm["diff_anchor"], repo=repo)
 
     spec_value = fm.get("spec_path") or f"{rel_task_dir}/task.md"
     if "\\" in spec_value:
@@ -301,7 +292,7 @@ def render_review_prompts(
     if spec_input.is_absolute():
         sys.exit(f"spec_path must be repository-relative: {spec_value!r}")
     spec_abs, spec_rel = resolve_repo_path(
-        spec_input, label="spec", require_file=True
+        spec_input, repo=repo, label="spec", require_file=True
     )
     spec_text = spec_abs.read_text(encoding="utf-8")
 
@@ -312,9 +303,9 @@ def render_review_prompts(
 
     # 先做契约区基线校验（失败时给出可定位的基线错误），再算被审指纹。
     drift = contract_drift_notice(
-        spec_rel, diff_anchor, contract, tid=fm["tid"], spec_source_sha=fm["spec_source_sha"]
+        spec_rel, diff_anchor, contract, tid=fm["tid"], spec_source_sha=fm["spec_source_sha"], repo=repo
     )
-    fingerprint = review_scope_fingerprint(diff_anchor, rel_task_dir)
+    fingerprint = review_scope_fingerprint(diff_anchor, rel_task_dir, repo=repo)
 
     # task_dir 注入绝对路径（reviewer 写文件落点与 cwd 无关）；
     # task_dir_rel 仓库内相对路径（模板在输出指令行展示，供报告引用与相对 git 路径）。
@@ -324,7 +315,7 @@ def render_review_prompts(
         "spec_path": spec_rel,
         "task_dir": task_dir.as_posix(),
         "task_dir_rel": rel_task_dir,
-        "repo_root": str(REPO_ROOT.resolve()),
+        "repo_root": str(repo.root.resolve()),
         "diff_anchor": diff_anchor,
         "review_level": level,
         "contract_section": contract,
@@ -354,7 +345,7 @@ def render_review_prompts(
             ),
         }
 
-    linked = linked_spec_summary(task_dir)
+    linked = linked_spec_summary(task_dir, repo=repo)
     extras = "\n".join(part for part in (linked, drift) if part)
     if extras:
         prompts = {
@@ -365,34 +356,27 @@ def render_review_prompts(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="渲染 code/test reviewer prompt（唯一入口）",
+        description="渲染 active task 的 code/test reviewer prompt（唯一入口）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--task", "--progress", dest="task", help=f"{PROGRESS_FILE} 路径")
-    parser.add_argument("--task-dir", help=f"task 目录（内含 {PROGRESS_FILE}）")
+    parser.add_argument("--tid", required=True, help="task id（如 t001）；权威位置由状态机裁决")
+    parser.add_argument("--root", help="仓库根；默认由入口脚本 .repo_template 祖先定位")
     parser.add_argument("--out-dir", help="输出目录；不填则 stdout")
     args = parser.parse_args()
 
-    if args.task and args.task_dir:
-        sys.exit("use only one of --task or --task-dir")
-    if not args.task and not args.task_dir:
-        parser.print_help()
-        sys.exit(1)
-
-    if args.task_dir:
-        task_dir = Path(args.task_dir)
-        task_path = None
-    else:
-        task_path = Path(args.task)
-        if not task_path.is_absolute():
-            task_path = REPO_ROOT / task_path
-        task_dir = task_path.parent
-
-    prompts = render_review_prompts(task_dir, task_path=task_path)
+    repo = (
+        RepoContext.for_root(Path(args.root))
+        if args.root else RepoContext.from_code_location(Path(__file__))
+    )
+    try:
+        authoritative = resolve_authoritative_task(args.tid, repo=repo)
+        prompts = render_review_prompts(authoritative.task_dir, repo=authoritative.repo)
+    except TaskDataError as error:
+        sys.exit(f"render=FAIL：{error}")
 
     if args.out_dir:
-        out_dir = resolve_out_dir(args.out_dir)
+        out_dir = resolve_out_dir(args.out_dir, repo=authoritative.repo)
         out_dir.mkdir(parents=True, exist_ok=True)
         for filename, prompt in prompts.items():
             path = out_dir / filename
