@@ -100,10 +100,10 @@ PY
 ### 7. 验证
 
 ```bash
-pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"
+pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$TMPDIR/repo_template_basetemp"
 ```
 
-全量耗时本机 2 worker 实测 7 分 17 秒（需 pytest-xdist；worker 数依机器与负载变化），`--basetemp` 用系统临时目录，不用仓内 `.scratch/`。需要快速信号时先跑契约子集 `pytest repo/.repo_template/tests -q -m contract`。失败 → 修到绿，不提交。
+全量耗时本机 2 worker 实测 7 分 17 秒（需 pytest-xdist；worker 数依机器与负载变化），`--basetemp` 用系统临时目录下的固定路径 `"$TMPDIR/repo_template_basetemp"`，pytest 每次运行前清空，跨运行不累积；不用仓内 `.scratch/`。需要保留失败现场时临时改用 `$(mktemp -d)`。需要快速信号时先跑契约子集 `pytest repo/.repo_template/tests -q -m contract`。失败 → 修到绿，不提交。
 
 ### 8. 回执
 

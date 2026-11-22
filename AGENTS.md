@@ -8,12 +8,12 @@
 - 消费仓用法、工具链写权与 skill 调用只在 `repo/.repo_template/docs/usage.md`。
 - 工厂根不放业务骨架。`factory_docs/` 不进产物。
 - 契约测试在 `repo/.repo_template/tests/`，随产物分发；其余集成测试在工厂根 `factory_tests/`，不进产物。
-- 全量测试 `--basetemp` 用系统临时目录（`"$(mktemp -d)"`），不用仓内 `.scratch/`。
+- 全量测试 `--basetemp` 用系统临时目录下的固定路径（`"$TMPDIR/repo_template_basetemp"`），不用仓内 `.scratch/`。pytest 每次运行前清空该目录，跨运行不累积；需要保留失败现场时临时改用 `$(mktemp -d)`。
 
 命令：
 
 ```bash
-pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$(mktemp -d)"
+pytest repo/.repo_template/tests factory_tests -q -n auto -p no:cacheprovider --basetemp "$TMPDIR/repo_template_basetemp"
 python3 repo/.repo_template/scripts/task.py --help
 ```
 
