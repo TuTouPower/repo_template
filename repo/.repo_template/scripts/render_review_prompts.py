@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""render_review_prompts.py - 从 active task 的权威 progress.md 渲染 full/single reviewer prompt。
+"""render_review_prompts.py - 从 task 的权威 worktree 渲染 full/single reviewer prompt。
 
-提示词正文存于 .repo_template/docs/review_prompts/ 下四个 txt（code_prompt.txt / test_prompt.txt / share_prompt.txt / general_prompt.txt）。
+提示词模板从 task 锁定的 spec_source_sha（Git commit）读取，规则与 spec 基线同源；
+与 cwd、入口脚本位置、主仓当前模板内容无关。
+
 review_level=full 使用 code + test；review_level=single 使用 general。
 
 reviewer 不再自行去读 task：契约区与上下文区正文直接注入 prompt，消除信息不对称。
 契约区自 spec 锁定来源后有变更时，prompt 末尾附「契约区 drift 警告」与 diff 供 reviewer 核对。
 
-用法（唯一入口以 --tid 定位，位置由状态机裁决，与 cwd / 脚本调用路径无关）：
+用法（唯一入口以 --tid 定位）：
   python3 .repo_template/scripts/render_review_prompts.py --tid t001
   python3 .repo_template/scripts/render_review_prompts.py --tid t001 --out-dir .scratch/review_prompts
   python3 .repo_template/scripts/render_review_prompts.py --tid t001 --root /path/to/repo
 
-仅 active + 登记 worktree 可渲染；主仓 backlog 副本是滞后快照，明确拒绝。
+准入：active（执行期）或 done（review_repair 补审）且存在登记 worktree。
+backlog 主仓副本是滞后快照，明确拒绝。
 --out-dir 必须在仓库内且不得落在 docs/tasks/ 下（prompt 内含 task_dir/repo_root
 绝对路径，落进 task 目录会被一并提交；请用 .scratch/review_prompts）
 """
@@ -38,10 +41,13 @@ from repo_task.monitoring import (
     REVIEW_PROMPT_OUTPUT_FILES,
     review_scope_fingerprint as monitoring_scope_fingerprint,
 )
-from repo_task.store import resolve_authoritative_task, resolve_baseline_spec_text
+from repo_task.store import (
+    load_review_templates,
+    resolve_baseline_spec_text,
+    resolve_task_location,
+)
 from repo_task.specs import load_spec
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "docs/review_prompts"
 PLACEHOLDER_RE = re.compile(
     r"\{(tid|slug|spec_path|task_dir_rel|task_dir|repo_root|diff_anchor|review_level|contract_section|context_section|review_scope_fingerprint)\}"
 )
@@ -160,7 +166,7 @@ def apply_placeholders(template: str, values: dict) -> str:
     return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
-def validate_output_format_template(template: str, *, source: Path) -> None:
+def validate_output_format_template(template: str, *, source: str | Path) -> None:
     """锁死模板 `## 输出格式` 章节：禁止包含本机绝对路径占位符 `{repo_root}` 或 `{task_dir}`。"""
     section = extract_section(template, "## 输出格式")
     for forbidden in ("{repo_root}", "{task_dir}"):
@@ -251,23 +257,19 @@ def contract_drift_notice(
 
 
 def render_review_prompts(
-    task_dir: Path, *, repo: RepoContext,
+    task_dir: Path, *, repo: RepoContext, templates: dict[str, str],
     task_path: Path | None = None,
 ) -> dict[str, str]:
     task_dir, rel_task_dir = resolve_repo_path(task_dir, repo=repo, label="task directory")
     task_path = task_path or task_dir / PROGRESS_FILE
     task_path, _ = resolve_repo_path(task_path, repo=repo, label="task file", require_file=True)
 
-    template_paths = {
-        "code": TEMPLATES_DIR / "code_prompt.txt",
-        "test": TEMPLATES_DIR / "test_prompt.txt",
-        "general": TEMPLATES_DIR / "general_prompt.txt",
-        "share": TEMPLATES_DIR / "share_prompt.txt",
-    }
-    for path in template_paths.values():
-        if not path.is_file():
-            sys.exit(f"missing prompt template: {path}")
-        validate_output_format_template(path.read_text(encoding="utf-8"), source=path)
+    required_templates = {"code_prompt.txt", "test_prompt.txt", "general_prompt.txt", "share_prompt.txt"}
+    missing_templates = required_templates - templates.keys()
+    if missing_templates:
+        sys.exit(f"missing prompt template: {', '.join(sorted(missing_templates))}")
+    for name, template in templates.items():
+        validate_output_format_template(template, source=f"<locked-template:{name}>")
 
     fm = parse_front_matter(task_path)
     for key in ("tid", "slug", "diff_anchor", "spec_source_sha"):
@@ -322,13 +324,13 @@ def render_review_prompts(
         "context_section": context,
         "review_scope_fingerprint": fingerprint,
     }
-    shared = template_paths["share"].read_text(encoding="utf-8")
+    shared = templates["share_prompt.txt"]
 
     if level == "single":
         (general_name,) = REVIEW_PROMPT_OUTPUT_FILES["single"]
         prompts = {
             general_name: apply_placeholders(
-                template_paths["general"].read_text(encoding="utf-8") + "\n" + shared,
+                templates["general_prompt.txt"] + "\n" + shared,
                 values,
             ),
         }
@@ -336,11 +338,11 @@ def render_review_prompts(
         code_name, test_name = REVIEW_PROMPT_OUTPUT_FILES["full"]
         prompts = {
             code_name: apply_placeholders(
-                template_paths["code"].read_text(encoding="utf-8") + "\n" + shared,
+                templates["code_prompt.txt"] + "\n" + shared,
                 values,
             ),
             test_name: apply_placeholders(
-                template_paths["test"].read_text(encoding="utf-8") + "\n" + shared,
+                templates["test_prompt.txt"] + "\n" + shared,
                 values,
             ),
         }
@@ -360,7 +362,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--tid", required=True, help="task id（如 t001）；权威位置由状态机裁决")
+    parser.add_argument("--tid", required=True, help="task id（如 t001）；位置由 tid 唯一决定")
     parser.add_argument("--root", help="仓库根；默认由入口脚本 .repo_template 祖先定位")
     parser.add_argument("--out-dir", help="输出目录；不填则 stdout")
     args = parser.parse_args()
@@ -370,13 +372,25 @@ def main():
         if args.root else RepoContext.from_code_location(Path(__file__))
     )
     try:
-        authoritative = resolve_authoritative_task(args.tid, repo=repo)
-        prompts = render_review_prompts(authoritative.task_dir, repo=authoritative.repo)
+        location = resolve_task_location(args.tid, repo=repo)
+        if location.worktree_root is None:
+            raise TaskDataError(
+                f"{args.tid} 无登记 worktree；主仓副本是滞后快照，拒绝渲染"
+            )
+        if location.status not in ("active", "done"):
+            raise TaskDataError(
+                f"{args.tid} 权威状态为 {location.status!r}；"
+                "渲染只服务 active（执行期）与 done（review_repair 补审）"
+            )
+        templates = load_review_templates(location.spec_source_sha, repo=repo)
+        prompts = render_review_prompts(
+            location.task_dir, repo=location.repo, templates=templates
+        )
     except TaskDataError as error:
         sys.exit(f"render=FAIL：{error}")
 
     if args.out_dir:
-        out_dir = resolve_out_dir(args.out_dir, repo=authoritative.repo)
+        out_dir = resolve_out_dir(args.out_dir, repo=location.repo)
         out_dir.mkdir(parents=True, exist_ok=True)
         for filename, prompt in prompts.items():
             path = out_dir / filename

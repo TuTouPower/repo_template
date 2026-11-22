@@ -29,6 +29,32 @@ def _repo(root):
     return RepoContext.for_root(Path(root), primary_root=Path(root))
 
 
+_TEMPLATE_NAMES = ("code_prompt.txt", "test_prompt.txt", "general_prompt.txt", "share_prompt.txt")
+_REAL_TEMPLATES = FACTORY_ROOT / "repo/.repo_template/docs/review_prompts"
+
+
+def _templates_from_dir(directory):
+    return {
+        name: (Path(directory) / name).read_text(encoding="utf-8")
+        for name in _TEMPLATE_NAMES
+    }
+
+
+_TEMPLATES = _templates_from_dir(_REAL_TEMPLATES)
+
+
+@pytest.fixture(autouse=True)
+def _reset_templates():
+    global _TEMPLATES
+    _TEMPLATES = _templates_from_dir(_REAL_TEMPLATES)
+
+
+def _set_templates(directory):
+    global _TEMPLATES
+    _TEMPLATES = _templates_from_dir(directory)
+    return _TEMPLATES
+
+
 @pytest.fixture(autouse=True)
 def stub_diff_anchor_validation(request, monkeypatch):
     """仅显式标记 ``stub_anchor`` 的测试跳过真实 Git 校验。
@@ -136,13 +162,13 @@ def test_review_scope_fingerprint_rejects_empty(tmp_path, monkeypatch):
 
 
 def test_render_fails_closed_when_scope_fingerprint_is_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor, **_kwargs: anchor)
     monkeypatch.setattr(rrp, "contract_drift_notice", lambda *_a, **_k: "")
     monkeypatch.setattr(rrp, "monitoring_scope_fingerprint", lambda *_a, **_k: "")
     task_dir = _make_task_dir(tmp_path)
     with pytest.raises(SystemExit, match="指纹无法计算"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 # --- apply_placeholders ---
@@ -201,9 +227,9 @@ def _make_task_dir(tmp_path, level="full", contract="AC1", context="策略"):
 
 @pytest.mark.stub_anchor
 def test_render_full_returns_two_prompts(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     assert set(out.keys()) == {"code_review_prompt.md", "test_review_prompt.md"}
     for content in out.values():
         assert "t001" in content
@@ -213,18 +239,18 @@ def test_render_full_returns_two_prompts(tmp_path, monkeypatch):
 
 @pytest.mark.stub_anchor
 def test_render_single_returns_one_prompt(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path, level="single")
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     assert list(out.keys()) == ["general_review_prompt.md"]
     assert "t001" in out["general_review_prompt.md"]
 
 
 def test_render_rejects_invalid_review_level(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path, level="singel")
     with pytest.raises(SystemExit, match="review_level"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.stub_anchor
@@ -233,7 +259,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
     repo.mkdir()
     outside = tmp_path / "private.md"
     outside.write_text("## 契约区\nsecret\n", encoding="utf-8")
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
+    _set_templates(_make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
     (task_dir / "progress.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\nspec_source_sha: abc\n"
@@ -241,7 +267,7 @@ def test_render_rejects_spec_outside_repository(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="inside repository"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.stub_anchor
@@ -250,7 +276,7 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
     repo.mkdir()
     outside = tmp_path / "private.md"
     outside.write_text("## 契约区\nsecret\n", encoding="utf-8")
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(repo))
+    _set_templates(_make_prompts_dir(repo))
     task_dir = _make_task_dir(repo)
     (repo / "linked_spec.md").symlink_to(outside)
     (task_dir / "progress.md").write_text(
@@ -259,12 +285,12 @@ def test_render_rejects_external_spec_symlink(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="inside repository"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.stub_anchor
 def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
     (task_dir / "progress.md").write_text(
         "---\ntid: t001\nslug: foo\ndiff_anchor: abc\nspec_source_sha: abc\n"
@@ -272,12 +298,12 @@ def test_render_rejects_backslash_spec_path(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="POSIX"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.stub_anchor
 def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
@@ -286,11 +312,11 @@ def test_render_missing_contract_section_errors(tmp_path, monkeypatch):
     )
     (task_dir / "task.md").write_text("# Spec\n无契约区\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="契约区"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
@@ -299,11 +325,11 @@ def test_render_missing_diff_anchor_errors(tmp_path, monkeypatch):
     )
     (task_dir / "task.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="diff_anchor"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 def test_render_missing_spec_source_sha_errors(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = tmp_path / "t001_foo"
     task_dir.mkdir()
     (task_dir / "progress.md").write_text(
@@ -312,7 +338,7 @@ def test_render_missing_spec_source_sha_errors(tmp_path, monkeypatch):
     )
     (task_dir / "task.md").write_text("# Spec\n## 契约区\nAC\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="spec_source_sha"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.stub_anchor
@@ -323,9 +349,9 @@ def test_render_includes_share_section(tmp_path, monkeypatch):
     (prompts / "test_prompt.txt").write_text("TEST {tid}\n", encoding="utf-8")
     (prompts / "general_prompt.txt").write_text("GEN {tid}\n", encoding="utf-8")
     (prompts / "share_prompt.txt").write_text("SHARED\n", encoding="utf-8")
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", prompts)
+    _set_templates(prompts)
     task_dir = _make_task_dir(tmp_path)
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     # share 内容附加在每路 prompt 末尾
     assert "SHARED" in out["code_review_prompt.md"]
     assert "SHARED" in out["test_review_prompt.md"]
@@ -341,7 +367,7 @@ def _git(repo, *args):
 
 def _init_repo_with_task(tmp_path, monkeypatch, contract="AC1"):
     """真实 git 仓库：prompts 模板 + t001_foo task（spec 已提交），返回 task_dir。"""
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path, contract=contract)
     _git(tmp_path, "init", "-b", "main")
     _git(tmp_path, "config", "user.email", "test@example.com")
@@ -381,7 +407,7 @@ def test_drift_notice_appended_when_contract_changed(tmp_path, monkeypatch):
         "# Spec\n## 契约区\n\nAC1 改宽\n\n## 上下文区\n\n策略\n",
         encoding="utf-8",
     )
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     for content in out.values():
         assert "契约区 drift 警告" in content
         assert "AC1 改宽" in content
@@ -394,7 +420,7 @@ def test_no_drift_notice_when_only_context_changed(tmp_path, monkeypatch):
         "# Spec\n## 契约区\n\nAC1\n\n## 上下文区\n\n策略 v2\n",
         encoding="utf-8",
     )
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     for content in out.values():
         assert "drift" not in content
 
@@ -407,7 +433,7 @@ def test_no_drift_notice_when_only_ac_checkbox_checked(tmp_path, monkeypatch):
         "# Spec\n## 契约区\n\n- [x] AC-001: 可独立验证行为\n\n## 上下文区\n\n策略\n",
         encoding="utf-8",
     )
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     for content in out.values():
         assert "契约区 drift 警告" not in content
 
@@ -417,11 +443,11 @@ def test_no_drift_notice_when_only_ac_checkbox_checked(tmp_path, monkeypatch):
 
 
 def test_drift_check_fails_closed_outside_git_repo_or_on_git_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     task_dir = _make_task_dir(tmp_path)
     monkeypatch.setattr(rrp, "validate_diff_anchor", lambda anchor, **_kwargs: anchor)
     with pytest.raises(SystemExit, match="契约区 drift 基线读取失败"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 @pytest.mark.parametrize("primary_branch", ["master", "trunk"])
@@ -431,7 +457,7 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
     """A04：master/自定义主干下旧链分叉且 anchor 缺 task 时，从真实主干 backlog 读取基线；
     正文伪造 `status: backlog` 不得欺骗解析器；损坏 front matter 直接阻断。
     """
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", _make_prompts_dir(tmp_path))
+    _set_templates(_make_prompts_dir(tmp_path))
     _git(tmp_path, "init", "-b", primary_branch)
     _git(tmp_path, "config", "user.email", "test@example.com")
     _git(tmp_path, "config", "user.name", "test")
@@ -478,7 +504,7 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
         "# Spec\n## 契约区\n\n- [x] AC-001: 初始契约\n\n## 上下文区\n\n策略\n",
         encoding="utf-8",
     )
-    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     assert "契约区 drift 警告" not in out["general_review_prompt.md"]
 
     # 实施期篡改契约文本时，相对非 main 主干基线检出 drift
@@ -486,7 +512,7 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
         "# Spec\n## 契约区\n\n- [x] AC-001: 被篡改契约\n\n## 上下文区\n\n策略\n",
         encoding="utf-8",
     )
-    out_drifted = render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+    out_drifted = render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
     assert "契约区 drift 警告" in out_drifted["general_review_prompt.md"]
     assert "被篡改契约" in out_drifted["general_review_prompt.md"]
 
@@ -508,7 +534,7 @@ def test_drift_baseline_uses_non_main_default_branch_and_rejects_body_spoofing(
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="契约区 drift 基线读取失败"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)
 
 
 def test_parse_front_matter_strips_inline_comment(tmp_path):
@@ -524,9 +550,9 @@ def test_parse_front_matter_strips_inline_comment(tmp_path):
 
 def _render_real_templates(tmp_path, monkeypatch, level="full"):
     """真实 prompt 模板渲染：task_dir 必须展开为绝对路径、repo_root 阻断校验就位。"""
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", REAL_TEMPLATES_DIR)
+    _set_templates(REAL_TEMPLATES_DIR)
     task_dir = _make_task_dir(tmp_path, level=level)
-    return render_review_prompts(task_dir, repo=_repo(task_dir.parent)), str(tmp_path.resolve())
+    return render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES), str(tmp_path.resolve())
 
 
 @pytest.mark.stub_anchor
@@ -603,7 +629,7 @@ def test_render_rejects_template_with_absolute_path_in_output_format(
         f"# Code\n## 输出格式\n```markdown\n- target: {placeholder}\n```\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(rrp, "TEMPLATES_DIR", prompts)
+    _set_templates(prompts)
     task_dir = _make_task_dir(tmp_path)
     with pytest.raises(SystemExit, match="输出格式.*不得引用本机绝对路径占位符"):
-        render_review_prompts(task_dir, repo=_repo(task_dir.parent))
+        render_review_prompts(task_dir, repo=_repo(task_dir.parent), templates=_TEMPLATES)

@@ -506,58 +506,128 @@ def discover_effective_sources(
 
 
 @dataclass(frozen=True)
-class AuthoritativeTask:
-    """状态机裁决出的 task 权威执行位置，供只读消费方直接定位文档与 git 操作。"""
+class TaskLocation:
+    """单 task 的权威位置与锁定事实；由 tid 唯一决定，不依赖 cwd 或全仓扫描。
+
+    worktree_root 为 None 表示无登记 worktree（主仓副本是滞后快照）。
+    spec_source_sha 取自权威工作区的 progress.md，供规则/spec 基线锁定。
+    """
 
     tid: str
     status: str
-    source: str
+    spec_source_sha: str
     repo: ctx.RepoContext
     task_dir: Path
+    worktree_root: Path | None
 
 
-def resolve_authoritative_task(tid: str, *, repo: ctx.RepoContext) -> AuthoritativeTask:
-    """解析 tid 的权威执行位置：只认 active + 登记 worktree。
+def resolve_task_location(tid: str, *, repo: ctx.RepoContext) -> TaskLocation:
+    """单 task 定位：只读目标 progress.md + 定向 git worktree list。
 
-    状态机是 task 位置的唯一裁决者（worktree → 未合并分支 → main）。主仓副本
-    按设计停在 backlog，是滞后快照而非执行期权威；只读消费方若按 cwd 或脚本
-    物理路径定位，会读到空的 spec_source_sha / diff_anchor 并报出无关错误。
-
-    本函数是这类消费方的唯一入口。入参 repo 可以是主仓或任一 task worktree
-    的 context：先归一化到主仓做状态发现，再按裁决结果返回 rooted 到权威
-    worktree 的 context 与绝对路径。非 active 或未登记 worktree 明确拒绝。
+    刻意不走 discover_effective_bundle / scan_tasks：那是面向调度的全仓视图，
+    会因无关 task 损坏或主仓分支状态而失败。本函数只校验目标 task 及其登记位置，
+    不做状态准入——状态是调用方用途层的策略（render 接受 active/done）。
     """
     if not ctx.TID_RE.fullmatch(tid):
         raise ctx.TaskDataError(f"tid 非法：{tid!r}")
     primary = ctx.RepoContext.for_root(repo.primary_root)
-    tasks, sources = discover_effective_bundle(repo=primary)
-    task = tasks.get(tid)
-    entry = sources.get(tid)
-    if task is None or entry is None:
-        raise ctx.TaskNotFoundError(f"{tid} 不存在于有效 task 集合")
-    status = entry["status"]
-    source = entry["source"]
-    read_at = entry["read_at"]
-    if status != "active":
-        raise ctx.TaskDataError(
-            f"{tid} 权威状态为 {status!r}（source={source}）；"
-            "render 只服务 active task；主仓 backlog 副本是滞后快照，不是执行期权威"
-        )
-    if source != "worktree" or not read_at:
-        raise ctx.TaskDataError(
-            f"{tid} 权威状态 active 但来源为 {source!r}（read_at={read_at!r}），"
-            "无登记 worktree 可供渲染；请先 start 或在对应 worktree 内操作"
-        )
-    task_root = Path(read_at).resolve()
-    if not task_root.is_dir():
-        raise ctx.TaskDataError(f"{tid} 登记 worktree {task_root} 不存在")
-    task_repo = ctx.RepoContext.for_root(task_root)
-    task_dir = (task_repo.root / task["dir"]).resolve()
-    if not (task_dir / ctx.PROGRESS_FILE).is_file():
-        raise ctx.TaskDataError(f"{task_dir / ctx.PROGRESS_FILE} 不存在")
-    return AuthoritativeTask(
-        tid=tid, status=status, source=source, repo=task_repo, task_dir=task_dir,
+    directories = sorted(
+        d for d in primary.tasks_dir.glob(f"{tid}_*")
+        if d.is_dir() and (d / ctx.PROGRESS_FILE).is_file()
     )
+    if not directories:
+        raise ctx.TaskNotFoundError(f"{tid} 不存在于 {primary.rel(primary.tasks_dir)}")
+    if len(directories) > 1:
+        names = ", ".join(d.name for d in directories)
+        raise ctx.TaskDataError(f"{tid} 对应多个 task 目录：{names}")
+
+    main_dir = directories[0]
+    task_rel = f"docs/tasks/{main_dir.name}"
+    main_fm, _ = parse_front_matter_text(
+        (main_dir / ctx.PROGRESS_FILE).read_text(encoding="utf-8"),
+        source=str(main_dir / ctx.PROGRESS_FILE),
+    )
+
+    matches: list[tuple[Path, dict]] = []
+    for path_text, branch in worktree_paths(repo=primary).items():
+        if branch and not branch.startswith(f"{tid}_"):
+            continue
+        candidate = Path(path_text) / task_rel / ctx.PROGRESS_FILE
+        if not candidate.is_file():
+            continue
+        fm, _ = parse_front_matter_text(
+            candidate.read_text(encoding="utf-8"), source=str(candidate)
+        )
+        if fm.get("tid") == tid:
+            matches.append((Path(path_text), fm))
+    if len(matches) > 1:
+        paths = ", ".join(str(p) for p, _ in matches)
+        raise ctx.TaskDataError(f"{tid} 有多个登记 worktree：{paths}")
+
+    if matches:
+        worktree_root, fm = matches[0]
+        return TaskLocation(
+            tid=tid,
+            status=str(fm.get("status", "")),
+            spec_source_sha=str(fm.get("spec_source_sha", "") or ""),
+            repo=ctx.RepoContext.for_root(worktree_root),
+            task_dir=(worktree_root / task_rel).resolve(),
+            worktree_root=worktree_root,
+        )
+    return TaskLocation(
+        tid=tid,
+        status=str(main_fm.get("status", "")),
+        spec_source_sha=str(main_fm.get("spec_source_sha", "") or ""),
+        repo=primary,
+        task_dir=main_dir.resolve(),
+        worktree_root=None,
+    )
+
+
+_REVIEW_TEMPLATE_DIR = ".repo_template/docs/review_prompts"
+_REVIEW_TEMPLATE_FILES = (
+    "code_prompt.txt", "test_prompt.txt", "general_prompt.txt", "share_prompt.txt",
+)
+
+
+def load_review_templates(spec_source_sha: str, *, repo: ctx.RepoContext) -> dict[str, str]:
+    """从 task 锁定的来源 commit 读取 review 提示词模板，规则与 spec 基线同源。
+
+    与 cwd、入口脚本位置、主仓当前模板内容无关；缺失或损坏 fail-closed。
+    """
+    if not spec_source_sha:
+        raise ctx.TaskDataError("review 模板读取失败：缺 spec_source_sha")
+    r = _git(
+        ["ls-tree", "-r", "-z", "--end-of-options", spec_source_sha, "--", _REVIEW_TEMPLATE_DIR],
+        repo=repo,
+    )
+    if r.returncode != 0:
+        raise ctx.TaskDataError(
+            f"无法读取 {spec_source_sha[:12]}:{_REVIEW_TEMPLATE_DIR}：{r.stderr.strip()}"
+        )
+    blobs: dict[str, str] = {}
+    for item in r.stdout.split("\0"):
+        if not item:
+            continue
+        meta, path = item.split("\t", 1)
+        parts = meta.split()
+        if len(parts) >= 3 and parts[1] == "blob":
+            blobs[path] = parts[2]
+    contents: dict[str, str] = {}
+    wanted: list[tuple[str, str]] = []
+    for name in _REVIEW_TEMPLATE_FILES:
+        rel = f"{_REVIEW_TEMPLATE_DIR}/{name}"
+        oid = blobs.get(rel)
+        if not oid:
+            raise ctx.TaskDataError(f"{spec_source_sha[:12]}:{rel} 不存在")
+        wanted.append((name, oid))
+    fetched = batch_cat_file([oid for _, oid in wanted], repo=repo)
+    for name, oid in wanted:
+        raw = fetched.get(oid)
+        if raw is None:
+            raise ctx.TaskDataError(f"{spec_source_sha[:12]}:{_REVIEW_TEMPLATE_DIR}/{name} 无法读取")
+        contents[name] = raw.decode("utf-8", errors="replace")
+    return contents
 
 
 def _discover_effective_entries(
