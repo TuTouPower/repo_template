@@ -20,6 +20,7 @@
   python3 .repo_template/scripts/pending.py park pNNN ... --reason "..." [--write]
   python3 .repo_template/scripts/pending.py revive pNNN ... [--write]
   python3 .repo_template/scripts/pending.py close pNNN ... --reason "..." [--fix-ref REF] [--resolution RES] [--write]
+  python3 .repo_template/scripts/pending.py update-ref pNNN ... --fix-ref REF --reason "..." [--write]
 
 旧仓残留 docs/pending.md 单文件总账时，先用 固定来源 repo_sync.py apply 内置迁移拆成一条目一文件，
 逐次批准并单次提交同步结果后再分配新编号；编号分配本身不解析旧正文。
@@ -562,6 +563,29 @@ def cmd_close(args: argparse.Namespace) -> None:
     _apply_state_updates(args.write, plan, note=note, repo=repo)
 
 
+def cmd_update_ref(args: argparse.Namespace) -> None:
+    repo = args.repo
+    fix_ref = args.fix_ref.strip()
+    reason = args.reason.strip()
+    for name, value in (("fix_ref", fix_ref), ("reason", reason)):
+        if not value or "\n" in value or "\r" in value:
+            raise IdScanError(f"{name} 必须为非空单行文本")
+
+    plan = []
+    for number in parse_ids(args.ids):
+        fm, body, sha, path, current = _entry_snapshot(number, repo=repo)
+        if current != "closed":
+            raise IdScanError(f"p{number:03d} 当前在 {current}；只有 closed 可更新引用")
+        old_ref = fm.get("fix_ref") or "（无）"
+        if old_ref == fix_ref:
+            raise IdScanError(f"p{number:03d} 引用未变化")
+        new_fm = dict(fm)
+        new_fm["fix_ref"] = fix_ref
+        new_body = body.rstrip() + f"\n\n- 引用更新：{old_ref} → {fix_ref}；原因：{reason}\n"
+        plan.append((number, path, new_fm, new_body, sha, current))
+    _apply_state_updates(args.write, plan, note=f"引用更新：{fix_ref}；原因：{reason}", repo=repo)
+
+
 def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> None:
     parser = argparse.ArgumentParser(description="待办条目分配与状态管理")
     parser.add_argument("--root", type=Path, help="目标仓库根（默认脚本所在仓库）")
@@ -604,6 +628,13 @@ def main(argv: list[str] | None = None, *, repo: RepoContext | None = None) -> N
     close_parser.add_argument("--reason", required=True, help="必填备注：处理结果与闭环依据，不能只填空白")
     close_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
     close_parser.set_defaults(func=cmd_close)
+
+    ref_parser = sub.add_parser("update-ref", help="更新 closed 条目的引用并记录原因")
+    ref_parser.add_argument("ids", nargs="+", metavar="pNNN")
+    ref_parser.add_argument("--fix-ref", required=True, help="新引用")
+    ref_parser.add_argument("--reason", required=True, help="更新原因")
+    ref_parser.add_argument("--write", action="store_true", help="落盘（默认 dry-run）")
+    ref_parser.set_defaults(func=cmd_update_ref)
 
     args = parser.parse_args(argv)
     args.repo = repo if repo is not None else (RepoContext.for_root(args.root) if args.root else RepoContext.from_code_location(__file__))

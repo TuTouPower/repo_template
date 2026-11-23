@@ -189,6 +189,26 @@ def test_close_direct_from_todo(repo: Path) -> None:
     assert "- 处理：t042；resolution=transferred；reason=已在 main 修复并通过回归" in body
 
 
+def test_update_ref_preserves_history_and_requires_closed(repo: Path) -> None:
+    pending_mod.main(["new", "demo"])
+    path = repo / "docs/pending/p001_demo.md"
+    with pytest.raises(SystemExit, match="只有 closed"):
+        pending_mod.main(["update-ref", "p001", "--fix-ref", "t086", "--reason", "转办", "--write"])
+    pending_mod.main(["close", "p001", "--reason", "转办", "--resolution", "transferred", "--fix-ref", "t084", "--write"])
+    before = path.read_text()
+    command = ["update-ref", "p001", "--fix-ref", "t086", "--reason", "原 task 已 drop"]
+    pending_mod.main(command)
+    assert path.read_text() == before
+    pending_mod.main(command + ["--write"])
+    fm, body = pending_mod.parse_pending_file(path, repo=RepoContext.for_root(repo))
+    assert fm["status"] == "closed"
+    assert fm["resolution"] == "transferred"
+    assert fm["reason"] == "转办"
+    assert fm["fix_ref"] == "t086"
+    assert "- 处理：t084；resolution=transferred；reason=转办" in body
+    assert "- 引用更新：t084 → t086；原因：原 task 已 drop" in body
+
+
 def test_close_defaults_to_resolved_without_fix_ref(repo: Path) -> None:
     pending_mod.main(["new", "demo"])
     path = repo / "docs/pending/p001_demo.md"

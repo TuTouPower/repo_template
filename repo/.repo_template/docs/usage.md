@@ -154,6 +154,8 @@ python3 .repo_template/scripts/repo_state.py --help  # 完整工作树 vs baseli
 
 pending 闭环必须提供非空 `--reason`，说明处理结果、验证依据或转办/去重去向；`--fix-ref` 可选，不要求 task ID，可记录 main、commit、PR、条目或 task。默认 resolution=resolved；转办显式用 `--resolution transferred`，其他类型为 obsolete/duplicate，所有类型均只强制备注，不强制引用。存在 task 时保留 pNNN 与 tid 双向关联；直接在 main 完成时如实写备注，不伪造 task ID。小而低风险的 pending 经用户授权后由 `pending-fix` 在 main 直修，准入与流程见该 skill。
 
+closed 条目的引用变更时，使用 `python3 .repo_template/scripts/pending.py update-ref p001 --fix-ref t086 --reason "原 task 已 drop，转交新 task" --write`。命令保留原闭环记录，在正文追加引用变更及原因；默认 dry-run。关联 task 的来源记录需同步维护。
+
 ```bash
 python3 .repo_template/scripts/pending.py close p001 --reason "按用户要求在 main 修复；专项测试通过" --write
 ```
